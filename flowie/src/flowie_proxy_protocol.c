@@ -1,7 +1,14 @@
+#include "flowie_stl_error_internal.h"
+
+#include <turbostl/deque.h>
+#include <turbostl/hash_map.h>
+#include <turbostl/hash_set.h>
+#include <turbostl/vec.h>
+
 #include "flowie_proxy_protocol_internal.h"
 
 #include "turbo_error.h"
-#include "turbo_vec.h"
+#include <turbostl/vec.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +47,7 @@ typedef struct flowie_proxy_trusted_network_s {
 } flowie_proxy_trusted_network_t;
 
 struct flowie_proxy_protocol_policy_s {
-  turbo_vec_t trusted_networks;
+  vec_t trusted_networks;
   size_t max_header_bytes;
   uint64_t header_timeout_ms;
   int trusted_networks_initialized;
@@ -119,10 +126,10 @@ static int flowie_proxy_protocol_peer_is_trusted(
   memset(&peer, 0, sizeof(peer));
   rc = coro_socket_get_peer_address(accepted, &peer);
   if (rc != TURBO_OK) return rc;
-  for (size_t i = 0u; i < turbo_vec_size(&policy->trusted_networks); ++i) {
+  for (size_t i = 0u; i < vec_size(&policy->trusted_networks); ++i) {
     const flowie_proxy_trusted_network_t *network =
         (const flowie_proxy_trusted_network_t *)
-            turbo_vec_at_const(&policy->trusted_networks, i);
+            vec_at_const(&policy->trusted_networks, i);
     if (network && flowie_proxy_protocol_network_matches(network, &peer)) {
       return coro_socket_get_peer_address_text(accepted, direct_address);
     }
@@ -528,8 +535,7 @@ int flowie_proxy_protocol_policy_create(
 
   policy = (flowie_proxy_protocol_policy_t *)calloc(1, sizeof(*policy));
   if (!policy) return TURBO_ENOMEM;
-  rc = turbo_vec_init(&policy->trusted_networks,
-                      sizeof(flowie_proxy_trusted_network_t));
+  rc = flowie_stl_error(vec_init_bytes(&policy->trusted_networks, sizeof(flowie_proxy_trusted_network_t), _Alignof(flowie_proxy_trusted_network_t), SIZE_MAX));
   if (rc != TURBO_OK) {
     free(policy);
     return rc;
@@ -541,7 +547,7 @@ int flowie_proxy_protocol_policy_create(
   for (size_t i = 0u; i < binding->trusted_peer_count; ++i) {
     flowie_proxy_trusted_network_t network;
     rc = flowie_proxy_protocol_cidr_parse(binding->trusted_peer_cidrs[i], &network);
-    if (rc == TURBO_OK) rc = turbo_vec_push(&policy->trusted_networks, &network);
+    if (rc == TURBO_OK) rc = flowie_stl_error(vec_push(&policy->trusted_networks, &network));
     if (rc != TURBO_OK) {
       flowie_proxy_protocol_policy_destroy(policy);
       return rc;
@@ -554,7 +560,7 @@ int flowie_proxy_protocol_policy_create(
 void flowie_proxy_protocol_policy_destroy(flowie_proxy_protocol_policy_t *policy) {
   if (!policy) return;
   if (policy->trusted_networks_initialized)
-    turbo_vec_destroy(&policy->trusted_networks);
+    vec_destroy(&policy->trusted_networks);
   free(policy);
 }
 

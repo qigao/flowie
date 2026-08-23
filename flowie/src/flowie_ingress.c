@@ -1,6 +1,6 @@
 #include "flowie_ingress_internal.h"
 
-#include "turbo_byte_buffer.h"
+#include "turbo_bytes.h"
 #include "turbo_error.h"
 #include "turbo_str.h"
 
@@ -11,13 +11,13 @@ struct flowie_ingress_s {
   flowie_ingress_dispatch_fn dispatch;
   void *dispatch_ctx;
   flowie_mqtt_parse_options_t parse_options;
-  turbo_byte_buffer_t framing;
+  turbo_bytes_t framing;
   flowie_protocol_route_t route;
   flowie_ingress_prepare_fn prepare;
   flowie_ingress_publish_complete_fn publish_complete;
   void *prepare_ctx;
   flowie_protocol_settlement_envelope_t protocol_settlement;
-  tstr_t publish_packet_override;
+  tstr publish_packet_override;
   int has_protocol_settlement;
   int has_route;
   int terminal_error;
@@ -66,7 +66,7 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
   if (!msg->buffer) return TURBO_ENOMEM;
   if (packet_size > 0u) memcpy(mem_buffer_data(msg->buffer), bytes, packet_size);
   mem_set_used(msg->buffer, packet_size);
-  msg->payload = tstr_v_from_buf(mem_buffer_data(msg->buffer), packet_size);
+  msg->payload = vstr_from_buf(mem_buffer_data(msg->buffer), packet_size);
   if (ingress->has_route) {
     rc = flowie_message_set_protocol_route(msg, &ingress->route);
     if (rc != TURBO_OK) {
@@ -87,13 +87,13 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
 static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
   int rc;
   for (;;) {
-    turbo_byte_buffer_view_t bytes;
+    turbo_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     flowie_message_t msg;
     size_t consumed = 0u;
     int stop_after_publish = 0;
-    rc = turbo_byte_buffer_view(&ingress->framing, &bytes);
+    rc = turbo_bytes_view(&ingress->framing, &bytes);
     if (rc != TURBO_OK) return rc;
     if (bytes.size == 0u) break;
     rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &ingress->parse_options, &packet,
@@ -135,7 +135,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       }
       if (!publish_packet) {
         tstr_freep(&ingress->publish_packet_override);
-        rc = turbo_byte_buffer_consume(&ingress->framing, consumed);
+        rc = turbo_bytes_consume(&ingress->framing, consumed);
         if (rc != TURBO_OK) return rc;
         if (stop_pump) break;
         continue;
@@ -153,7 +153,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
     tstr_freep(&ingress->publish_packet_override);
     ingress->has_protocol_settlement = 0;
     if (rc != TURBO_OK) return rc;
-    rc = turbo_byte_buffer_consume(&ingress->framing, consumed);
+    rc = turbo_bytes_consume(&ingress->framing, consumed);
     {
       flowie_publish_result_t result = FLOWIE_PUBLISH_RESULT_INIT;
       if (rc == TURBO_OK)
@@ -208,7 +208,7 @@ flowie_ingress_t *flowie_ingress_create(const flowie_ingress_config_t *config) {
     ingress->route.size = sizeof(ingress->route);
     ingress->has_route = 1;
   }
-  rc = turbo_byte_buffer_init(&ingress->framing, max_packet_size);
+  rc = turbo_bytes_init(&ingress->framing, max_packet_size);
   if (rc != TURBO_OK) goto fail;
   return ingress;
 
@@ -219,7 +219,7 @@ fail:
 
 void flowie_ingress_destroy(flowie_ingress_t *ingress) {
   if (!ingress) return;
-  turbo_byte_buffer_destroy(&ingress->framing);
+  turbo_bytes_destroy(&ingress->framing);
   tstr_freep(&ingress->publish_packet_override);
   free(ingress);
 }
@@ -233,16 +233,16 @@ int flowie_ingress_feed(flowie_ingress_t *ingress, const void *data, size_t size
   *published = 0u;
   if (ingress->terminal_error != TURBO_OK) return ingress->terminal_error;
   while (remaining != 0u) {
-    size_t writable = turbo_byte_buffer_available(&ingress->framing);
+    size_t writable = turbo_bytes_available(&ingress->framing);
     size_t chunk;
     if (writable == 0u) {
       rc = flowie_ingress_pump(ingress, published);
       if (rc != TURBO_OK) return flowie_ingress_terminal(ingress, rc);
-      writable = turbo_byte_buffer_available(&ingress->framing);
+      writable = turbo_bytes_available(&ingress->framing);
       if (writable == 0u) return flowie_ingress_terminal(ingress, TURBO_EMSGSIZE);
     }
     chunk = remaining < writable ? remaining : writable;
-    rc = turbo_byte_buffer_append(&ingress->framing, cursor, chunk);
+    rc = turbo_bytes_append(&ingress->framing, cursor, chunk);
     if (rc != TURBO_OK) return flowie_ingress_terminal(ingress, rc);
     cursor += chunk;
     remaining -= chunk;
@@ -262,7 +262,7 @@ int flowie_ingress_resume(flowie_ingress_t *ingress, size_t *published) {
 }
 
 size_t flowie_ingress_buffered_bytes(const flowie_ingress_t *ingress) {
-  return ingress ? turbo_byte_buffer_size(&ingress->framing) : 0u;
+  return ingress ? turbo_bytes_size(&ingress->framing) : 0u;
 }
 
 flowie_mqtt_version_t flowie_ingress_version(const flowie_ingress_t *ingress) {
@@ -302,7 +302,7 @@ int flowie_ingress_set_protocol_settlement(
 
 int flowie_ingress_set_publish_packet(flowie_ingress_t *ingress, const void *packet,
                                       size_t packet_size) {
-  tstr_t replacement;
+  tstr replacement;
   if (!ingress || !packet || packet_size == 0u || ingress->publish_packet_override)
     return TURBO_EINVAL;
   replacement = tstr_new_len(packet, packet_size);

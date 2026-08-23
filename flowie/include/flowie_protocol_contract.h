@@ -1,6 +1,7 @@
 #ifndef FLOWIE_PROTOCOL_H
 #define FLOWIE_PROTOCOL_H
 
+#include "flowie_export.h"
 #include "platform.h"
 #include "turbo_error.h"
 
@@ -235,43 +236,43 @@ typedef struct flowie_protocol_owner_ops_s {
 
 #define FLOWIE_PROTOCOL_OWNER_OPS_INIT {sizeof(flowie_protocol_owner_ops_t), NULL}
 
-CXX_C_API int flowie_protocol_message_validate(
+FLOWIE_C_API int flowie_protocol_message_validate(
     const flowie_protocol_message_t *message);
-CXX_C_API int flowie_protocol_origin_validate(const flowie_protocol_origin_t *origin);
-CXX_C_API int flowie_pattern_role_validate(flowie_pattern_role_t role);
-CXX_C_API int flowie_pattern_roles_compatible(flowie_pattern_role_t local,
+FLOWIE_C_API int flowie_protocol_origin_validate(const flowie_protocol_origin_t *origin);
+FLOWIE_C_API int flowie_pattern_role_validate(flowie_pattern_role_t role);
+FLOWIE_C_API int flowie_pattern_roles_compatible(flowie_pattern_role_t local,
                                                    flowie_pattern_role_t remote);
-CXX_C_API int flowie_pattern_selector_init(flowie_pattern_selector_t *selector);
-CXX_C_API int flowie_pattern_selection_begin(
+FLOWIE_C_API int flowie_pattern_selector_init(flowie_pattern_selector_t *selector);
+FLOWIE_C_API int flowie_pattern_selection_begin(
     flowie_pattern_selector_t *selector, flowie_pattern_selection_t selection,
     size_t candidate_count, flowie_pattern_selection_iterator_t *iterator);
 /** Returns TURBO_ENOENT after every candidate has been produced exactly once. */
-CXX_C_API int flowie_pattern_selection_next(
+FLOWIE_C_API int flowie_pattern_selection_next(
     flowie_pattern_selection_iterator_t *iterator, size_t *candidate_index);
-CXX_C_API int flowie_pattern_route_validate(const flowie_pattern_route_t *route);
-CXX_C_API int flowie_pattern_routes_match(const flowie_pattern_route_t *requested,
+FLOWIE_C_API int flowie_pattern_route_validate(const flowie_pattern_route_t *route);
+FLOWIE_C_API int flowie_pattern_routes_match(const flowie_pattern_route_t *requested,
                                                const flowie_pattern_route_t *candidate);
-CXX_C_API int flowie_pattern_exchange_init(flowie_pattern_exchange_t *exchange);
-CXX_C_API int flowie_pattern_exchange_snapshot(
+FLOWIE_C_API int flowie_pattern_exchange_init(flowie_pattern_exchange_t *exchange);
+FLOWIE_C_API int flowie_pattern_exchange_snapshot(
     const flowie_pattern_exchange_t *exchange, flowie_pattern_exchange_state_t *state,
     uint64_t *correlation_id);
-CXX_C_API int flowie_pattern_exchange_begin(
+FLOWIE_C_API int flowie_pattern_exchange_begin(
     flowie_pattern_exchange_t *exchange, flowie_pattern_exchange_state_t active_state,
     uint64_t correlation_id);
-CXX_C_API int flowie_pattern_exchange_match(
+FLOWIE_C_API int flowie_pattern_exchange_match(
     const flowie_pattern_exchange_t *exchange,
     flowie_pattern_exchange_state_t expected_state, uint64_t correlation_id);
-CXX_C_API int flowie_pattern_exchange_finish(
+FLOWIE_C_API int flowie_pattern_exchange_finish(
     flowie_pattern_exchange_t *exchange,
     flowie_pattern_exchange_state_t expected_state, uint64_t correlation_id,
     flowie_pattern_exchange_state_t terminal_state);
-CXX_C_API int flowie_pattern_exchange_mark_resetting(
+FLOWIE_C_API int flowie_pattern_exchange_mark_resetting(
     flowie_pattern_exchange_t *exchange);
-CXX_C_API int flowie_pattern_exchange_reset(flowie_pattern_exchange_t *exchange);
-CXX_C_API int flowie_protocol_settlement_policy_validate(
+FLOWIE_C_API int flowie_pattern_exchange_reset(flowie_pattern_exchange_t *exchange);
+FLOWIE_C_API int flowie_protocol_settlement_policy_validate(
     const flowie_protocol_settlement_policy_t *policy);
 /** Dispatch exactly one decision to the protocol owner; this function never generates an ACK. */
-CXX_C_API int flowie_protocol_owner_settle(
+FLOWIE_C_API int flowie_protocol_owner_settle(
     const flowie_protocol_owner_ops_t *owner, void *ctx,
     const flowie_protocol_settlement_policy_t *policy,
     const flowie_protocol_settlement_request_t *request);

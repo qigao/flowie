@@ -1,6 +1,7 @@
 #ifndef FLOWIE_SECURITY_H
 #define FLOWIE_SECURITY_H
 
+#include "flowie_export.h"
 #include "platform.h"
 
 #include <stddef.h>
@@ -151,15 +152,15 @@ typedef struct flowie_security_enhanced_auth_provider_s {
 #define FLOWIE_SECURITY_ENHANCED_AUTH_PROVIDER_INIT                                            \
   {sizeof(flowie_security_enhanced_auth_provider_t), NULL, NULL, NULL, NULL}
 
-CXX_C_API int flowie_security_enhanced_auth_begin(
+FLOWIE_C_API int flowie_security_enhanced_auth_begin(
     const flowie_security_enhanced_auth_provider_t *provider,
     const flowie_security_enhanced_auth_request_t *request, void **exchange_out,
     flowie_security_enhanced_auth_result_t *result_out);
-CXX_C_API int flowie_security_enhanced_auth_continue(
+FLOWIE_C_API int flowie_security_enhanced_auth_continue(
     const flowie_security_enhanced_auth_provider_t *provider, void *exchange,
     const flowie_security_enhanced_auth_request_t *request,
     flowie_security_enhanced_auth_result_t *result_out);
-CXX_C_API void flowie_security_enhanced_auth_cancel(
+FLOWIE_C_API void flowie_security_enhanced_auth_cancel(
     const flowie_security_enhanced_auth_provider_t *provider, void *exchange);
 
 typedef enum flowie_security_action_e {
@@ -228,14 +229,14 @@ typedef struct flowie_security_rule_s {
  * The parser copies into `rule_out`, performs no allocation, and returns TURBO_OK,
  * TURBO_EINVAL for invalid pointers/capacities, or TURBO_EPROTO for invalid syntax.
  */
-CXX_C_API int flowie_security_rule_parse_line(const char *line, size_t line_size,
+FLOWIE_C_API int flowie_security_rule_parse_line(const char *line, size_t line_size,
                                                   flowie_security_rule_t *rule_out);
 /**
  * Serialize one validated rule to the canonical line representation.
  * `line_out` is not NUL-terminated by contract; `line_size_out` receives its byte count.
  * Returns TURBO_OK, TURBO_EINVAL for invalid input, or TURBO_ENOSPC for insufficient capacity.
  */
-CXX_C_API int flowie_security_rule_format_line(const flowie_security_rule_t *rule,
+FLOWIE_C_API int flowie_security_rule_format_line(const flowie_security_rule_t *rule,
                                                    char *line_out, size_t line_capacity,
                                                    size_t *line_size_out);
 
@@ -375,6 +376,38 @@ typedef struct flowie_security_authorization_provider_s {
 #define FLOWIE_SECURITY_AUTHORIZATION_PROVIDER_INIT                                           \
   {sizeof(flowie_security_authorization_provider_t), NULL, NULL}
 
+typedef struct flowie_security_secret_lease_s {
+  size_t size;
+  const uint8_t *bytes;
+  size_t byte_count;
+  uint64_t version;
+  uint64_t expires_at;
+  void *provider_lease;
+} flowie_security_secret_lease_t;
+
+#define FLOWIE_SECURITY_SECRET_LEASE_INIT                                                     \
+  {sizeof(flowie_security_secret_lease_t), NULL, 0u, 0u, 0u, NULL}
+
+typedef int (*flowie_security_secret_acquire_fn)(void *ctx, const char *reference,
+                                                 flowie_security_secret_lease_t *lease_out);
+typedef void (*flowie_security_secret_release_fn)(void *ctx,
+                                                  flowie_security_secret_lease_t *lease);
+typedef struct flowie_security_key_provider_s {
+  size_t size;
+  void *ctx;
+  flowie_security_secret_acquire_fn acquire;
+  flowie_security_secret_release_fn release;
+} flowie_security_key_provider_t;
+
+#define FLOWIE_SECURITY_KEY_PROVIDER_INIT                                                     \
+  {sizeof(flowie_security_key_provider_t), NULL, NULL, NULL}
+
+FLOWIE_C_API int flowie_security_secret_acquire(const flowie_security_key_provider_t *provider,
+                                              const char *reference,
+                                              flowie_security_secret_lease_t *lease_out);
+FLOWIE_C_API void flowie_security_secret_release(const flowie_security_key_provider_t *provider,
+                                               flowie_security_secret_lease_t *lease);
+
 typedef struct flowie_security_realm_config_s {
   size_t size;
   uint32_t abi_version;
@@ -400,40 +433,40 @@ typedef struct flowie_security_realm_config_s {
    NULL}
 
 /** Validate provider output and authenticate without retaining credential bytes. */
-CXX_C_API int flowie_security_authenticate(const flowie_security_auth_provider_t *provider,
+FLOWIE_C_API int flowie_security_authenticate(const flowie_security_auth_provider_t *provider,
                                                const flowie_security_auth_request_t *request,
                                                flowie_security_principal_t *principal_out);
 
-CXX_C_API int flowie_security_realm_create(const flowie_security_realm_config_t *config,
+FLOWIE_C_API int flowie_security_realm_create(const flowie_security_realm_config_t *config,
                                                flowie_security_realm_t **out);
-CXX_C_API void flowie_security_realm_destroy(flowie_security_realm_t *realm);
+FLOWIE_C_API void flowie_security_realm_destroy(flowie_security_realm_t *realm);
 
 /** Borrowed configured source channel name, or NULL for a programmatic static realm. */
-CXX_C_API const char *
+FLOWIE_C_API const char *
 flowie_security_realm_policy_source(const flowie_security_realm_t *realm);
 
 /** Bind one borrowed provider before the realm becomes reachable by protocol adapters. */
-CXX_C_API int flowie_security_realm_bind_policy_provider(
+FLOWIE_C_API int flowie_security_realm_bind_policy_provider(
     flowie_security_realm_t *realm, const flowie_security_policy_provider_t *provider);
 
 /** Bind one per-request decision provider instead of a policy-bundle provider. */
-CXX_C_API int flowie_security_realm_bind_authorization_provider(
+FLOWIE_C_API int flowie_security_realm_bind_authorization_provider(
     flowie_security_realm_t *realm,
     const flowie_security_authorization_provider_t *provider);
 
 /** Fetch, validate, copy, and atomically install one exact generation. */
-CXX_C_API int flowie_security_realm_refresh(flowie_security_realm_t *realm,
+FLOWIE_C_API int flowie_security_realm_refresh(flowie_security_realm_t *realm,
                                                 uint64_t required_version,
                                                 uint64_t now_epoch_seconds);
 
 /** Complete one deterministic decision. Deny is a valid result and returns TURBO_OK. */
-CXX_C_API int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
+FLOWIE_C_API int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
                                                  const flowie_security_request_t *request,
                                                  uint64_t now_epoch_seconds,
                                                  flowie_security_decision_t *decision);
 
 /** Evaluate and map a deny decision to TURBO_EPERM for protocol-owner boundaries. */
-CXX_C_API int flowie_security_realm_authorize(flowie_security_realm_t *realm,
+FLOWIE_C_API int flowie_security_realm_authorize(flowie_security_realm_t *realm,
                                                   const flowie_security_request_t *request,
                                                   uint64_t now_epoch_seconds,
                                                   flowie_security_decision_t *decision);

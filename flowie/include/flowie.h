@@ -2,10 +2,11 @@
 #define FLOWIE_H
 
 #include "CoroNet/turbo_coro_context.h"
+#include "flowie_export.h"
 #include "flowie_execution.h"
 #include "flowie_message.h"
 #include "flowie_mqtt_protocol.h"
-#include "flowie_record_store.h"
+#include "flowie_protocol_repository.h"
 #include "flowie_security.h"
 
 #include <stddef.h>
@@ -123,21 +124,17 @@ typedef struct flowie_endpoint_security_binding_s {
   {sizeof(flowie_endpoint_security_binding_t), NULL, NULL, NULL, NULL, NULL}
 
 /**
- * Borrowed Record backend for managed MQTT protocol facts and retained publications.
- * Flowie adapts it into its internal ProtocolStore facade at registration; endpoint code never
- * calls backend callbacks directly. This binding is independent of business FlowStore channels.
+ * Borrowed V2 ORM repository for managed MQTT protocol facts and retained publications.
+ * The repository remains caller-owned and belongs to the endpoint's serialized owner lane.
  */
 typedef struct flowie_endpoint_persistence_binding_s {
   size_t size;
-  /** Resolved YAML channel name, or FLOWIE_IMPLICIT_PROTOCOL_STORE_CHANNEL; copied at
-   * registration. */
-  const char *store_channel;
-  /** Provider remains caller-owned and must outlive the registered endpoint. */
-  flowie_record_store_t *store;
+  /** Repository remains caller-owned and must outlive the registered endpoint. */
+  flowie_protocol_repository_t *repository;
 } flowie_endpoint_persistence_binding_t;
 
 #define FLOWIE_ENDPOINT_PERSISTENCE_BINDING_INIT                                                   \
-  {sizeof(flowie_endpoint_persistence_binding_t), NULL, NULL}
+  {sizeof(flowie_endpoint_persistence_binding_t), NULL}
 
 /** Maximum trusted proxy networks accepted by one endpoint binding. */
 #define FLOWIE_ENDPOINT_PROXY_MAX_TRUSTED_PEERS 64u
@@ -305,7 +302,6 @@ typedef struct flowie_endpoint_cluster_binding_s {
    NULL}
 
 /** Reserved channel name used for the composition root's standalone protocol store. */
-#define FLOWIE_IMPLICIT_PROTOCOL_STORE_CHANNEL "__flowie_protocol_store"
 /** Source-compatible name for integrations compiled against the former session-store contract. */
 #define FLOWIE_IMPLICIT_LOCAL_SESSION_STORE_CHANNEL FLOWIE_IMPLICIT_PROTOCOL_STORE_CHANNEL
 
@@ -358,7 +354,7 @@ typedef struct flowie_endpoint_core_options_s {
  * The Core owns listener, sessions, subscriptions, retained state and bounded
  * send queues. Product composition is outside this library boundary.
  */
-CXX_C_API int flowie_endpoint_core_create(const char *name, const flowie_endpoint_config_t *config,
+FLOWIE_C_API int flowie_endpoint_core_create(const char *name, const flowie_endpoint_config_t *config,
                                           const flowie_endpoint_core_options_t *options,
                                           flowie_endpoint_core_t **out);
 
@@ -368,24 +364,24 @@ CXX_C_API int flowie_endpoint_core_create(const char *name, const flowie_endpoin
  * destruction. Security and persistence bindings are copied/retained according
  * to their individual contracts.
  */
-CXX_C_API int
+FLOWIE_C_API int
 flowie_endpoint_core_create_ex(const char *name, const flowie_endpoint_config_t *config,
                                const flowie_endpoint_core_options_t *options,
                                const flowie_execution_binding_t *execution,
                                const flowie_endpoint_bindings_t *bindings,
                                flowie_endpoint_core_t **out);
 
-CXX_C_API int flowie_endpoint_core_start(flowie_endpoint_core_t *endpoint);
-CXX_C_API int flowie_endpoint_core_stop(flowie_endpoint_core_t *endpoint);
+FLOWIE_C_API int flowie_endpoint_core_start(flowie_endpoint_core_t *endpoint);
+FLOWIE_C_API int flowie_endpoint_core_stop(flowie_endpoint_core_t *endpoint);
 
 /**
  * Submit one complete owned/borrowed MQTT packet to the endpoint egress path.
  * The Core retains or copies backing storage before returning when asynchronous
  * owner-lane work is required.
  */
-CXX_C_API int flowie_endpoint_core_send_message(flowie_endpoint_core_t *endpoint,
+FLOWIE_C_API int flowie_endpoint_core_send_message(flowie_endpoint_core_t *endpoint,
                                                 flowie_message_t *message);
-CXX_C_API void flowie_endpoint_core_destroy(flowie_endpoint_core_t *endpoint);
+FLOWIE_C_API void flowie_endpoint_core_destroy(flowie_endpoint_core_t *endpoint);
 
 /**
  * Borrowed application ingress view produced at the protocol/data bridge.
@@ -411,7 +407,7 @@ typedef struct flowie_publish_message_view_s {
  * Returns TURBO_OK, TURBO_EINVAL for ABI/route errors, or TURBO_EPROTO for an
  * invalid MQTT publish contract. Output is modified only on success.
  */
-CXX_C_API int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
+FLOWIE_C_API int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
                                          flowie_mqtt_version_t version, uint64_t owner_instance_id,
                                          uint64_t session_id, uint64_t session_generation,
                                          flowie_publish_message_view_t *out);
@@ -440,7 +436,7 @@ typedef struct flowie_mqtt_security_context_s {
  * The matcher is stateless and may be shared when the realm itself is
  * externally synchronized according to its owner contract.
  */
-CXX_C_API int flowie_mqtt_security_matcher_init(flowie_security_matcher_t *out);
+FLOWIE_C_API int flowie_mqtt_security_matcher_init(flowie_security_matcher_t *out);
 
 #ifdef __cplusplus
 }

@@ -5,12 +5,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+int flowie_security_secret_acquire(const flowie_security_key_provider_t *provider,
+                                   const char *reference,
+                                   flowie_security_secret_lease_t *lease_out) {
+  int rc;
+  if (!provider || provider->size < sizeof(*provider) || !provider->acquire || !reference ||
+      !reference[0] || !lease_out || lease_out->size < sizeof(*lease_out))
+    return TURBO_EINVAL;
+  rc = provider->acquire(provider->ctx, reference, lease_out);
+  if (rc != TURBO_OK) return rc;
+  if (lease_out->size < sizeof(*lease_out) || !lease_out->bytes || lease_out->byte_count == 0u) {
+    if (provider->release) provider->release(provider->ctx, lease_out);
+    *lease_out = (flowie_security_secret_lease_t)FLOWIE_SECURITY_SECRET_LEASE_INIT;
+    return TURBO_EINVAL;
+  }
+  return TURBO_OK;
+}
+
+void flowie_security_secret_release(const flowie_security_key_provider_t *provider,
+                                    flowie_security_secret_lease_t *lease) {
+  if (!lease) return;
+  if ((lease->bytes || lease->byte_count != 0u || lease->provider_lease) && provider &&
+      provider->size >= sizeof(*provider) && provider->release)
+    provider->release(provider->ctx, lease);
+  *lease = (flowie_security_secret_lease_t)FLOWIE_SECURITY_SECRET_LEASE_INIT;
+}
+
 struct flowie_security_realm_s {
   uint64_t policy_version;
   flowie_security_rule_t *rules;
   size_t rule_count;
   flowie_security_matcher_t matcher;
   void *compiled_leaf;
+  size_t *matcher_rule_indices;
+  size_t matcher_rule_count;
   flowie_security_authorization_provider_t authorization;
   flowie_security_policy_provider_t policy;
   char *policy_source;
@@ -106,13 +134,19 @@ static int flowie_security_subject_matches(const flowie_security_rule_t *rule,
 
 typedef struct flowie_security_match_state_s {
   uint8_t *matches;
-  size_t count;
+  size_t rule_count;
+  const size_t *candidate_rule_indices;
+  size_t candidate_count;
 } flowie_security_match_state_t;
 
 static int flowie_security_emit_match(void *ctx, size_t position) {
   flowie_security_match_state_t *state = (flowie_security_match_state_t *)ctx;
-  if (!state || position >= state->count) return TURBO_EPROTO;
-  state->matches[position] = 1u;
+  size_t rule_index;
+  if (!state || position >= state->candidate_count || !state->candidate_rule_indices)
+    return TURBO_EPROTO;
+  rule_index = state->candidate_rule_indices[position];
+  if (rule_index >= state->rule_count) return TURBO_EPROTO;
+  state->matches[rule_index] = 1u;
   return TURBO_OK;
 }
 
@@ -145,19 +179,23 @@ int flowie_security_realm_create(const flowie_security_realm_config_t *config,
       return TURBO_ENOMEM;
     }
     memcpy(realm->rules, config->rules, realm->rule_count * sizeof(*realm->rules));
-    for (size_t i = 0u; i < realm->rule_count; ++i) indices[i] = i;
-    if (realm->matcher.compile_leaf) {
+    for (size_t i = 0u; i < realm->rule_count; ++i) {
+      if (realm->rules[i].match_kind == FLOWIE_SECURITY_MATCH_ADAPTER)
+        indices[realm->matcher_rule_count++] = i;
+    }
+    if (realm->matcher.compile_leaf && realm->matcher_rule_count != 0u) {
       int rc;
       leaf.rules = realm->rules;
       leaf.rule_count = realm->rule_count;
       leaf.candidate_rule_indices = indices;
-      leaf.candidate_count = realm->rule_count;
+      leaf.candidate_count = realm->matcher_rule_count;
       rc = realm->matcher.compile_leaf(realm->matcher.ctx, &leaf, &realm->compiled_leaf);
-      free(indices);
       if (rc != TURBO_OK) {
+        free(indices);
         flowie_security_realm_destroy(realm);
         return rc;
       }
+      realm->matcher_rule_indices = indices;
     } else {
       free(indices);
     }
@@ -174,6 +212,7 @@ void flowie_security_realm_destroy(flowie_security_realm_t *realm) {
   if (!realm) return;
   if (realm->compiled_leaf && realm->matcher.destroy_leaf)
     realm->matcher.destroy_leaf(realm->matcher.ctx, realm->compiled_leaf);
+  free(realm->matcher_rule_indices);
   free(realm->rules);
   free(realm->policy_source);
   free(realm);
@@ -233,7 +272,9 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
     flowie_security_match_state_t state;
     adapter_matches = (uint8_t *)calloc(realm->rule_count, 1u);
     if (!adapter_matches) return TURBO_ENOMEM;
-    state = (flowie_security_match_state_t){adapter_matches, realm->rule_count};
+    state = (flowie_security_match_state_t){adapter_matches, realm->rule_count,
+                                            realm->matcher_rule_indices,
+                                            realm->matcher_rule_count};
     rc = realm->matcher.evaluate_leaf(realm->matcher.ctx, realm->compiled_leaf, request,
                                       flowie_security_emit_match, &state);
     if (rc != TURBO_OK) {

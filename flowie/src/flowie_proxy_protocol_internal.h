@@ -26,7 +26,7 @@ typedef struct flowie_proxy_protocol_connection_context_s {
   char remote_address[CORO_SOCKET_ADDRESS_TEXT_CAPACITY];
   char transport_peer_address[CORO_SOCKET_ADDRESS_TEXT_CAPACITY];
   /** Owned exact TLV block; values remain opaque advisory metadata. */
-  tstr_t tlvs;
+  tstr tlvs;
 } flowie_proxy_protocol_connection_context_t;
 
 typedef enum flowie_proxy_protocol_command_e {

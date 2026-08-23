@@ -19,7 +19,9 @@
 #endif
 
 #ifdef __cplusplus
-extern "C" {
+  #define FLOWIE_MQTT_CLIENT_C_API extern "C" FLOWIE_MQTT_CLIENT_API
+#else
+  #define FLOWIE_MQTT_CLIENT_C_API FLOWIE_MQTT_CLIENT_API
 #endif
 
 #define FLOWIE_MQTT_CLIENT_DEFAULT_PORT 1883
@@ -217,18 +219,18 @@ typedef struct flowie_mqtt_client_config_s {
  * thread, receive loop, and bounded command queue. On failure, out is set to
  * NULL.
  */
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
-                                                     flowie_mqtt_client_t **out);
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
+                                                       flowie_mqtt_client_t **out);
 
 /**
  * Destroy the client outside its callbacks. Destruction stops admission,
  * interrupts current I/O, completes accepted queued commands with
  * TURBO_ESHUTDOWN, and joins its worker.
  */
-FLOWIE_MQTT_CLIENT_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
+FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
 
 /** Read-only connection state; this does not perform I/O. */
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_is_connected(const flowie_mqtt_client_t *client);
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_client_t *client);
 
 /**
  * Callback-driven operations. Returning TURBO_OK transfers a deep copy of the
@@ -240,36 +242,32 @@ FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_is_connected(const flowie_mqtt_cli
  * fail immediately without invoking a callback. Protocol or network errors are
  * delivered through the matching callback.
  */
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_connect(flowie_mqtt_client_t *client,
-                                                      const flowie_mqtt_connect_packet_t *packet);
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_connect(flowie_mqtt_client_t *client,
+                                                        const flowie_mqtt_connect_packet_t *packet);
 /** Atomically admits all topics or none; topics.count must be greater than zero. */
-FLOWIE_MQTT_CLIENT_API int
+FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_publish(flowie_mqtt_client_t *client,
                            const flowie_mqtt_client_publish_topic_vec_t *topics);
-FLOWIE_MQTT_CLIENT_API int
+FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_subscribe(flowie_mqtt_client_t *client,
                              const flowie_mqtt_subscribe_packet_t *packet);
-FLOWIE_MQTT_CLIENT_API int
+FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_unsubscribe(flowie_mqtt_client_t *client,
                                const flowie_mqtt_unsubscribe_packet_t *packet);
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_ping(flowie_mqtt_client_t *client);
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_ping(flowie_mqtt_client_t *client);
 /**
  * Start MQTT 5 re-authentication with AUTH reason 0x19. Properties must contain the selected
  * Authentication Method and may contain Authentication Data. Completion receives the final
  * successful AUTH packet; protocol, callback, or transport failures close the connection.
  */
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_authenticate(flowie_mqtt_client_t *client,
-                                                           flowie_mqtt_span_t properties);
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_authenticate(flowie_mqtt_client_t *client,
+                                                             flowie_mqtt_span_t properties);
 /**
  * Complete after the transport is closed. EOF/connection-reset observed while
  * performing this no-response MQTT shutdown is treated as successful closure.
  */
-FLOWIE_MQTT_CLIENT_API int flowie_mqtt_client_disconnect(flowie_mqtt_client_t *client,
-                                                         uint8_t reason_code,
-                                                         flowie_mqtt_span_t properties);
-
-#ifdef __cplusplus
-}
-#endif
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_disconnect(flowie_mqtt_client_t *client,
+                                                           uint8_t reason_code,
+                                                           flowie_mqtt_span_t properties);
 
 #endif /* FLOWIE_MQTT_CLIENT_H */

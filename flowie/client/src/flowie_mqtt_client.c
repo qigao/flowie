@@ -1,23 +1,25 @@
 #include "flowie_mqtt_client.h"
 
+#include "flowie_stl_error_internal.h"
+
+#include <turbostl/deque.h>
+#include <turbostl/hash_map.h>
+#include <turbostl/hash_set.h>
+#include <turbostl/vec.h>
+
 #include "CoroNet/turbo_coro_context.h"
 #include "CoroNet/turbo_coro_socket.h"
 #include "flowie_mqtt_protocol.h"
 #include "monocypher.h"
-#include "turbo_byte_buffer.h"
-#include "turbo_deque.h"
+#include "turbo_bytes.h"
 #include "turbo_error.h"
-#include "turbo_set.h"
 #include "turbo_str.h"
 #include "turbo_thread.h"
-#include "turbo_vec.h"
 
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-
-TURBO_SET_DEFINE(flowie_mqtt_packet_id_set_t, uint16_t)
 
 #define FLOWIE_MQTT_CLIENT_TLS_STRING_LIMIT 4096u
 
@@ -55,22 +57,19 @@ typedef struct flowie_mqtt_client_command_s {
   } packet;
 } flowie_mqtt_client_command_t;
 
-TURBO_DEQUE_DEFINE(flowie_mqtt_client_command_queue_t, flowie_mqtt_client_command_t *)
-TURBO_VEC_DEFINE(flowie_mqtt_client_command_vec_t, flowie_mqtt_client_command_t *)
-
 struct flowie_mqtt_client_s {
   coro_context_t *context;
   coro_socket_t *socket;
   flowie_mqtt_client_transport_t transport;
   flowie_mqtt_client_state_t state;
   flowie_mqtt_version_t version;
-  tstr_t host;
-  tstr_t path;
-  tstr_t tls_ca_file;
-  tstr_t tls_cert_file;
-  tstr_t tls_key_file;
-  tstr_t tls_key_password;
-  tstr_t auth_method;
+  tstr host;
+  tstr path;
+  tstr tls_ca_file;
+  tstr tls_cert_file;
+  tstr tls_key_file;
+  tstr tls_key_password;
+  tstr auth_method;
   int tls_configured;
   int port;
   uint64_t timeout_ms;
@@ -97,14 +96,14 @@ struct flowie_mqtt_client_s {
   flowie_mqtt_client_completion_fn on_disconnect;
   flowie_mqtt_client_error_fn on_error;
   void *user_data;
-  tstr_t send_buffer;
-  turbo_byte_buffer_t framing;
+  tstr send_buffer;
+  turbo_bytes_t framing;
   char *recv_data;
   size_t recv_size;
   size_t recv_offset;
   size_t pending_packet_size;
   uint16_t next_packet_id;
-  flowie_mqtt_packet_id_set_t inbound_qos2;
+  hash_set_t inbound_qos2;
   int framing_initialized;
   int qos2_initialized;
   int busy;
@@ -119,7 +118,7 @@ struct flowie_mqtt_client_s {
   size_t command_queue_capacity;
   size_t command_queue_max_bytes;
   size_t command_queue_bytes;
-  flowie_mqtt_client_command_queue_t commands;
+  deque_t commands;
   turbo_mutex_t command_mutex;
   turbo_thread_t worker;
   atomic_int public_connected;
@@ -272,7 +271,7 @@ static int flowie_mqtt_client_auth_method_select(flowie_mqtt_client_t *client,
                                                  flowie_mqtt_span_t properties) {
   flowie_mqtt_property_block_view_t block = FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
   flowie_mqtt_span_t method = {0};
-  tstr_t selected = NULL;
+  tstr selected = NULL;
   int rc;
   if (!client) return TURBO_EINVAL;
   block.values = properties;
@@ -313,8 +312,8 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   client->pending_packet_size = 0u;
-  if (reset_framing && client->framing_initialized) turbo_byte_buffer_reset(&client->framing);
-  if (client->qos2_initialized) flowie_mqtt_packet_id_set_t_clear(&client->inbound_qos2);
+  if (reset_framing && client->framing_initialized) turbo_bytes_reset(&client->framing);
+  if (client->qos2_initialized) hash_set_clear(&client->inbound_qos2);
 }
 
 static int flowie_mqtt_client_begin(flowie_mqtt_client_t *client, int require_connected) {
@@ -678,17 +677,17 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
   flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
   if (!client || !out) return TURBO_EINVAL;
   if (client->pending_packet_size != 0u) {
-    int rc = turbo_byte_buffer_consume(&client->framing, client->pending_packet_size);
+    int rc = turbo_bytes_consume(&client->framing, client->pending_packet_size);
     if (rc != TURBO_OK) return rc;
     client->pending_packet_size = 0u;
   }
   options.version = client->version;
   options.max_packet_size = client->max_packet_size;
   for (;;) {
-    turbo_byte_buffer_view_t bytes;
+    turbo_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     size_t consumed = 0u;
-    int rc = turbo_byte_buffer_view(&client->framing, &bytes);
+    int rc = turbo_bytes_view(&client->framing, &bytes);
     if (rc != TURBO_OK) return rc;
     if (bytes.size != 0u) {
       rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &options, &packet, &consumed, NULL);
@@ -703,10 +702,10 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
     }
     if (client->recv_data) {
       size_t remaining = client->recv_size - client->recv_offset;
-      size_t available = turbo_byte_buffer_available(&client->framing);
+      size_t available = turbo_bytes_available(&client->framing);
       size_t chunk = remaining < available ? remaining : available;
       if (chunk == 0u) return TURBO_EMSGSIZE;
-      rc = turbo_byte_buffer_append(&client->framing, client->recv_data + client->recv_offset,
+      rc = turbo_bytes_append(&client->framing, client->recv_data + client->recv_offset,
                                     chunk);
       if (rc != TURBO_OK) return rc;
       client->recv_offset += chunk;
@@ -748,15 +747,15 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
   int rc = flowie_mqtt_publish_parse(packet, &publish);
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
   if (publish.qos == 2u &&
-      flowie_mqtt_packet_id_set_t_contains(&client->inbound_qos2, publish.packet_id)) {
+      hash_set_contains(&client->inbound_qos2, &publish.packet_id)) {
     if (!publish.duplicate) return TURBO_EPROTO;
     return flowie_mqtt_client_send_control(client, FLOWIE_MQTT_PACKET_PUBREC, publish.packet_id,
                                            0u);
   }
   if (publish.qos == 2u) {
-    if (flowie_mqtt_packet_id_set_t_size(&client->inbound_qos2) >= client->max_inbound_qos2)
+    if (hash_set_size(&client->inbound_qos2) >= client->max_inbound_qos2)
       return TURBO_ENOSPC;
-    rc = flowie_mqtt_packet_id_set_t_add(&client->inbound_qos2, publish.packet_id);
+    rc = flowie_stl_error(hash_set_add(&client->inbound_qos2, &publish.packet_id));
     if (rc != TURBO_OK) return rc;
   }
   client->callback_active = 1;
@@ -776,7 +775,7 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
   if (rc == TURBO_OK && match_count == 0u) rc = TURBO_ENOTSUP;
   if (rc != TURBO_OK) {
     if (publish.qos == 2u)
-      (void)flowie_mqtt_packet_id_set_t_remove(&client->inbound_qos2, publish.packet_id);
+      (void)hash_set_remove(&client->inbound_qos2, &publish.packet_id);
     return rc;
   }
   if (publish.qos == 1u)
@@ -794,7 +793,7 @@ static int flowie_mqtt_client_handle_pubrel(flowie_mqtt_client_t *client,
   uint8_t reason_code = 0u;
   int rc = flowie_mqtt_control_packet_parse(packet, &control);
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
-  if (!flowie_mqtt_packet_id_set_t_remove(&client->inbound_qos2, control.packet_id) &&
+  if (hash_set_remove(&client->inbound_qos2, &control.packet_id) != STL_OK &&
       client->version == FLOWIE_MQTT_VERSION_5)
     reason_code = 0x92u;
   return flowie_mqtt_client_send_control(client, FLOWIE_MQTT_PACKET_PUBCOMP, control.packet_id,
@@ -902,7 +901,7 @@ static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
   turbo_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
   if (!stopping) {
-    if (!flowie_mqtt_client_command_queue_t_pop_front(&client->commands, out)) {
+    if (deque_pop_front(&client->commands, out) != STL_OK) {
       *out = NULL;
     } else {
       client->command_queue_bytes -= sizeof(**out) + (*out)->owned_size;
@@ -916,7 +915,7 @@ static void flowie_mqtt_client_cancel_commands(flowie_mqtt_client_t *client, int
   for (;;) {
     flowie_mqtt_client_command_t *command = NULL;
     turbo_mutex_lock(&client->command_mutex);
-    (void)flowie_mqtt_client_command_queue_t_pop_front(&client->commands, &command);
+    (void)deque_pop_front(&client->commands, &command);
     if (command) client->command_queue_bytes -= sizeof(*command) + command->owned_size;
     turbo_mutex_unlock(&client->command_mutex);
     if (!command) return;
@@ -1016,7 +1015,7 @@ static void flowie_mqtt_client_worker_pump(coro_t *co, void *arg) {
       continue;
     }
     turbo_mutex_lock(&client->command_mutex);
-    if (!client->stopping && flowie_mqtt_client_command_queue_t_empty(&client->commands)) {
+    if (!client->stopping && deque_empty(&client->commands)) {
       client->pump_active = 0;
       turbo_mutex_unlock(&client->command_mutex);
       return;
@@ -1072,7 +1071,7 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
   if (command->owned_size > SIZE_MAX - sizeof(*command)) return TURBO_EMSGSIZE;
   charge = sizeof(*command) + command->owned_size;
   turbo_mutex_lock(&client->command_mutex);
-  queue_size = flowie_mqtt_client_command_queue_t_size(&client->commands);
+  queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = TURBO_ESHUTDOWN;
   } else if (queue_size >= client->command_queue_capacity) {
@@ -1080,13 +1079,13 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
   } else if (charge > client->command_queue_max_bytes - client->command_queue_bytes) {
     rc = TURBO_ENOSPC;
   } else {
-    rc = flowie_mqtt_client_command_queue_t_push_back(&client->commands, command);
+    rc = flowie_stl_error(deque_push_back(&client->commands, &command));
     if (rc == TURBO_OK) {
       client->command_queue_bytes += charge;
       rc = coro_post(client->context, flowie_mqtt_client_worker_wake, client, NULL);
       if (rc != TURBO_OK) {
         flowie_mqtt_client_command_t *rolled_back = NULL;
-        (void)flowie_mqtt_client_command_queue_t_pop_back(&client->commands, &rolled_back);
+        (void)deque_pop_back(&client->commands, &rolled_back);
         client->command_queue_bytes -= charge;
       }
     }
@@ -1113,7 +1112,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   }
 
   turbo_mutex_lock(&client->command_mutex);
-  queue_size = flowie_mqtt_client_command_queue_t_size(&client->commands);
+  queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = TURBO_ESHUTDOWN;
   } else if (queue_size > client->command_queue_capacity ||
@@ -1124,7 +1123,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
     rc = TURBO_ENOSPC;
   } else {
     for (; inserted < command_count; ++inserted) {
-      rc = flowie_mqtt_client_command_queue_t_push_back(&client->commands, commands[inserted]);
+      rc = flowie_stl_error(deque_push_back(&client->commands, &commands[inserted]));
       if (rc != TURBO_OK) break;
     }
     if (rc == TURBO_OK) {
@@ -1139,7 +1138,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
     while (inserted != 0u) {
       flowie_mqtt_client_command_t *rolled_back = NULL;
       --inserted;
-      (void)flowie_mqtt_client_command_queue_t_pop_back(&client->commands, &rolled_back);
+      (void)deque_pop_back(&client->commands, &rolled_back);
     }
   }
   turbo_mutex_unlock(&client->command_mutex);
@@ -1212,21 +1211,25 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
     rc = TURBO_ENOMEM;
     goto fail;
   }
-  rc = turbo_byte_buffer_init(&client->framing, max_packet_size);
+  rc = turbo_bytes_init(&client->framing, max_packet_size);
   if (rc != TURBO_OK) goto fail;
   client->framing_initialized = 1;
-  rc = flowie_mqtt_packet_id_set_t_init(&client->inbound_qos2);
+  rc = flowie_stl_error(hash_set_init_bytes(
+      &client->inbound_qos2, sizeof(uint16_t), _Alignof(uint16_t),
+      client->max_inbound_qos2, hash_bytes, hash_key_equal, NULL));
   if (rc != TURBO_OK) goto fail;
   client->qos2_initialized = 1;
-  rc = flowie_mqtt_packet_id_set_t_reserve(&client->inbound_qos2, client->max_inbound_qos2);
+  rc = flowie_stl_error(hash_set_reserve(&client->inbound_qos2, client->max_inbound_qos2));
   if (rc != TURBO_OK) goto fail;
   turbo_mutex_init(&client->command_mutex);
   client->sync_initialized = 1;
-  rc = flowie_mqtt_client_command_queue_t_init(&client->commands);
+  rc = flowie_stl_error(deque_init_bytes(
+      &client->commands, sizeof(flowie_mqtt_client_command_t *),
+      _Alignof(flowie_mqtt_client_command_t *), client->command_queue_capacity));
   if (rc != TURBO_OK) goto fail;
   client->command_queue_initialized = 1;
   rc =
-      flowie_mqtt_client_command_queue_t_reserve(&client->commands, client->command_queue_capacity);
+      flowie_stl_error(deque_reserve(&client->commands, client->command_queue_capacity));
   if (rc != TURBO_OK) goto fail;
   client->context = coro_context_create(NULL);
   if (!client->context) {
@@ -1273,14 +1276,14 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   }
   flowie_mqtt_client_transport_close(client, 1);
   if (client->command_queue_initialized) {
-    while (flowie_mqtt_client_command_queue_t_pop_front(&client->commands, &command))
+    while (deque_pop_front(&client->commands, &command) == STL_OK)
       flowie_mqtt_client_command_destroy(command);
-    flowie_mqtt_client_command_queue_t_destroy(&client->commands);
+    deque_destroy(&client->commands);
   }
   if (client->sync_initialized) turbo_mutex_destroy(&client->command_mutex);
   if (client->context) coro_context_destroy(client->context);
-  if (client->qos2_initialized) flowie_mqtt_packet_id_set_t_destroy(&client->inbound_qos2);
-  if (client->framing_initialized) turbo_byte_buffer_destroy(&client->framing);
+  if (client->qos2_initialized) hash_set_destroy(&client->inbound_qos2);
+  if (client->framing_initialized) turbo_bytes_destroy(&client->framing);
   tstr_freep(&client->send_buffer);
   tstr_freep(&client->path);
   tstr_freep(&client->host);
@@ -1319,8 +1322,8 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
                                                          ? packet->properties
                                                          : (flowie_mqtt_span_t){0});
   if (rc != TURBO_OK) goto done;
-  turbo_byte_buffer_reset(&client->framing);
-  flowie_mqtt_packet_id_set_t_clear(&client->inbound_qos2);
+  turbo_bytes_reset(&client->framing);
+  hash_set_clear(&client->inbound_qos2);
   client->version = packet->version;
   client->socket = coro_socket_create(client->context,
                                       client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ||
@@ -1651,16 +1654,18 @@ int flowie_mqtt_client_connect(flowie_mqtt_client_t *client,
 
 int flowie_mqtt_client_publish(flowie_mqtt_client_t *client,
                                const flowie_mqtt_client_publish_topic_vec_t *topics) {
-  flowie_mqtt_client_command_vec_t commands;
+  vec_t commands = {0};
   int rc;
   if (!client || !topics || topics->size != sizeof(*topics) || !topics->data ||
       topics->count == 0u)
     return TURBO_EINVAL;
   if (!client->on_publish) return TURBO_ENOTSUP;
   if (topics->count > client->command_queue_capacity) return TURBO_ENOSPC;
-  rc = flowie_mqtt_client_command_vec_t_init(&commands);
+  rc = flowie_stl_error(vec_init_bytes(
+      &commands, sizeof(flowie_mqtt_client_command_t *),
+      _Alignof(flowie_mqtt_client_command_t *), topics->count));
   if (rc != TURBO_OK) return rc;
-  rc = flowie_mqtt_client_command_vec_t_reserve(&commands, topics->count);
+  rc = flowie_stl_error(vec_reserve(&commands, topics->count));
   for (size_t i = 0u; rc == TURBO_OK && i < topics->count; ++i) {
     flowie_mqtt_client_command_t *command = flowie_mqtt_client_command_new(
         FLOWIE_MQTT_CLIENT_COMMAND_PUBLISH, client->on_publish, client->user_data);
@@ -1669,17 +1674,18 @@ int flowie_mqtt_client_publish(flowie_mqtt_client_t *client,
       break;
     }
     rc = flowie_mqtt_client_clone_publish_topic(command, topics->version, &topics->data[i]);
-    if (rc == TURBO_OK) rc = flowie_mqtt_client_command_vec_t_push(&commands, command);
+    if (rc == TURBO_OK) rc = flowie_stl_error(vec_push(&commands, &command));
     if (rc != TURBO_OK) flowie_mqtt_client_command_destroy(command);
   }
   if (rc == TURBO_OK)
-    rc = flowie_mqtt_client_submit_many(client, flowie_mqtt_client_command_vec_t_data(&commands),
-                                        flowie_mqtt_client_command_vec_t_size(&commands));
+    rc = flowie_mqtt_client_submit_many(client, vec_data(&commands),
+                                        vec_size(&commands));
   if (rc != TURBO_OK) {
-    for (size_t i = 0u; i < flowie_mqtt_client_command_vec_t_size(&commands); ++i)
-      flowie_mqtt_client_command_destroy(*flowie_mqtt_client_command_vec_t_at(&commands, i));
+    for (size_t i = 0u; i < vec_size(&commands); ++i)
+      flowie_mqtt_client_command_destroy(
+          *(flowie_mqtt_client_command_t **)vec_at(&commands, i));
   }
-  flowie_mqtt_client_command_vec_t_destroy(&commands);
+  vec_destroy(&commands);
   return rc;
 }
 

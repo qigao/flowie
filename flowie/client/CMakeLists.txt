@@ -19,10 +19,12 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/flowie/protocol/include>
-         $<INSTALL_INTERFACE:include>)
+         $<INSTALL_INTERFACE:include>
+  PRIVATE ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(
   ${TARGET_NAME}
-  PRIVATE Flowie::Protocol TurboNet::CoroNet TurboUtils::Core monocypher)
+  PRIVATE Flowie::Protocol TurboNet::CoroNet TurboUtils::Core TurboUtils::STL
+          monocypher)
 
 install(FILES ${FLOWIE_CLIENT_HEADERS} DESTINATION include)
 

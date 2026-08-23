@@ -1,8 +1,9 @@
 # Iron rule: every Flowie feature/build switch is declared in this file.
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
-option(FLOWIE_BUILD_SERVER "Build the standalone Flowie MQTT server" ON)
 option(FLOWIE_BUILD_TESTS "Build and register Flowie tests" ON)
+option(FLOWIE_BUILD_CONTROL "Build the restored Flowie control plane" ON)
+option(FLOWIE_BUILD_CLUSTER "Build the TurboRaft-backed Flowie cluster runtime" ON)
 
 option(ENABLE_SANITIZER_ADDRESS "Enable AddressSanitizer" OFF)
 option(ENABLE_SANITIZER_UNDEFINED "Enable UndefinedBehaviorSanitizer" OFF)
@@ -15,6 +16,19 @@ option(FLOWIE_MQTT_PUBLIC_LIVE_TESTS
 option(FLOWIE_MQTT_FIXED_INTEROP_TESTS
        "Run Flowie and Mosquitto interoperability against one fixed broker" OFF)
 option(FLOWIE_MQTT_FUZZ_TARGETS "Build Flowie MQTT libFuzzer targets" OFF)
+option(FLOWIE_MQTT_SOAK_TESTS "Register scheduled Flowie MQTT soak tests" OFF)
+option(FLOWIE_MQTT_RELEASE_GATE "Register the strict Flowie MQTT release manifest" OFF)
+
+set(FLOWIE_RELEASE_REVISION "" CACHE STRING
+    "Immutable source revision written into Flowie release/nightly evidence")
+set(FLOWIE_MQTT_NIGHTLY_SEED "11794061671962178383" CACHE STRING
+    "Reproducible Flowie nightly seed")
+set(FLOWIE_MQTT_FUZZ_RUNS 100000 CACHE STRING
+    "Flowie nightly fuzz input count")
+set(FLOWIE_MQTT_NIGHTLY_SOAK_SHORT_MS 1800000 CACHE STRING
+    "Short Flowie nightly soak duration")
+set(FLOWIE_MQTT_NIGHTLY_SOAK_LONG_MS 3600000 CACHE STRING
+    "Long Flowie nightly soak duration")
 
 set(FLOWIE_MQTT_FIXED_BROKER_NAME "Mosquitto-2.0.22" CACHE STRING
     "Fixed broker implementation and exact version")

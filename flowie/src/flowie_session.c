@@ -1,9 +1,16 @@
+#include "flowie_stl_error_internal.h"
+
+#include <turbostl/deque.h>
+#include <turbostl/hash_map.h>
+#include <turbostl/hash_set.h>
+#include <turbostl/vec.h>
+
 #include "flowie_session_internal.h"
 
 #include "turbo_error.h"
 #include "turbo_parser.h"
 #include "turbo_str.h"
-#include "turbo_vec.h"
+#include <turbostl/vec.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -11,7 +18,7 @@
 #include <string.h>
 
 typedef struct flowie_session_subscription_owned_s {
-  tstr_t filter;
+  tstr filter;
   uint8_t qos;
   uint8_t no_local;
   uint8_t retain_as_published;
@@ -43,18 +50,18 @@ typedef struct flowie_session_delivery_s {
   uint8_t qos;
   flowie_session_delivery_state_t state;
   uint64_t expiry_at_epoch_seconds;
-  tstr_t packet;
+  tstr packet;
 } flowie_session_delivery_t;
 
 struct flowie_session_owner_s {
   flowie_session_config_t config;
-  tstr_t client_id;
-  turbo_vec_t subscriptions;
-  turbo_vec_t inflight;
-  turbo_vec_t deliveries;
-  tstr_t will_topic;
-  tstr_t will_properties;
-  tstr_t will_payload;
+  tstr client_id;
+  vec_t subscriptions;
+  vec_t inflight;
+  vec_t deliveries;
+  tstr will_topic;
+  tstr will_properties;
+  tstr will_payload;
   flowie_mqtt_version_t version;
   uint16_t keep_alive;
   uint32_t session_expiry_interval;
@@ -73,6 +80,196 @@ struct flowie_session_owner_s {
 
 static int flowie_session_record_delivery_validate(const flowie_session_owner_t *owner,
                                                    const flowie_session_delivery_t *delivery);
+static int flowie_session_config_valid(const flowie_session_config_t *config);
+
+void flowie_session_owner_repository_snapshot_cleanup(flowie_protocol_session_row_t *row) {
+  if (!row) return;
+  free((void *)row->subscriptions);
+  free((void *)row->inflight);
+  free((void *)row->deliveries);
+  row->subscriptions = NULL;
+  row->inflight = NULL;
+  row->deliveries = NULL;
+  row->subscription_count = 0u;
+  row->inflight_count = 0u;
+  row->delivery_count = 0u;
+}
+
+int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner,
+                                             flowie_protocol_session_row_t *out) {
+  flowie_protocol_session_row_t row = FLOWIE_PROTOCOL_SESSION_ROW_INIT;
+  size_t persisted_inflight = 0u;
+  size_t persisted_deliveries = 0u;
+  if (!owner || !out || !owner->initialized || !owner->client_id ||
+      owner->resource_generation == 0u)
+    return TURBO_EINVAL;
+  row.client_id = (flowie_mqtt_span_t){(const uint8_t *)owner->client_id,
+                                      tstr_len(owner->client_id)};
+  row.revision = owner->resource_generation;
+  row.session_id = owner->config.session_id;
+  row.session_generation = owner->session_generation;
+  row.mqtt_version = owner->version;
+  row.keep_alive = owner->keep_alive;
+  row.session_expiry_interval = owner->session_expiry_interval;
+  row.next_delivery_packet_id = owner->next_delivery_packet_id;
+  row.subscription_count = vec_size(&owner->subscriptions);
+  for (size_t i = 0u; i < vec_size(&owner->inflight); ++i) {
+    const flowie_session_inflight_t *entry =
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
+    if (entry && entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) ++persisted_inflight;
+  }
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
+    const flowie_session_delivery_t *entry =
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
+    if (entry && entry->state != FLOWIE_SESSION_DELIVERY_RESERVED) ++persisted_deliveries;
+  }
+  row.inflight_count = persisted_inflight;
+  row.delivery_count = persisted_deliveries;
+  row.subscriptions = (const flowie_protocol_subscription_row_t *)calloc(
+      row.subscription_count, sizeof(*row.subscriptions));
+  row.inflight = (const flowie_protocol_inflight_row_t *)calloc(
+      row.inflight_count, sizeof(*row.inflight));
+  row.deliveries = (const flowie_protocol_delivery_row_t *)calloc(
+      row.delivery_count, sizeof(*row.deliveries));
+  if ((row.subscription_count && !row.subscriptions) ||
+      (row.inflight_count && !row.inflight) || (row.delivery_count && !row.deliveries)) {
+    flowie_session_owner_repository_snapshot_cleanup(&row);
+    return TURBO_ENOMEM;
+  }
+  for (size_t i = 0u; i < row.subscription_count; ++i) {
+    const flowie_session_subscription_owned_t *source =
+        (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
+    flowie_protocol_subscription_row_t *target =
+        &((flowie_protocol_subscription_row_t *)row.subscriptions)[i];
+    if (!source || !source->filter) goto invalid;
+    target->filter = (flowie_mqtt_span_t){(const uint8_t *)source->filter,
+                                         tstr_len(source->filter)};
+    target->qos = source->qos;
+    target->no_local = source->no_local;
+    target->retain_as_published = source->retain_as_published;
+    target->retain_handling = source->retain_handling;
+    target->subscription_identifier = source->subscription_identifier;
+  }
+  for (size_t i = 0u, target_index = 0u; i < vec_size(&owner->inflight); ++i) {
+    const flowie_session_inflight_t *source =
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
+    if (!source || source->state != FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) continue;
+    ((flowie_protocol_inflight_row_t *)row.inflight)[target_index++] =
+        (flowie_protocol_inflight_row_t){source->packet_id, source->qos};
+  }
+  for (size_t i = 0u, target_index = 0u; i < vec_size(&owner->deliveries); ++i) {
+    const flowie_session_delivery_t *source =
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
+    flowie_protocol_delivery_row_t *target;
+    if (!source || source->state == FLOWIE_SESSION_DELIVERY_RESERVED) continue;
+    if (!source->packet) goto invalid;
+    target = &((flowie_protocol_delivery_row_t *)row.deliveries)[target_index++];
+    target->packet_id = source->packet_id;
+    target->qos = source->qos;
+    target->state = (uint8_t)(source->state == FLOWIE_SESSION_DELIVERY_QUEUED
+                                  ? source->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK
+                                                      : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC
+                                  : source->state);
+    target->expiry_at_epoch_seconds = source->expiry_at_epoch_seconds;
+    target->packet = (flowie_mqtt_span_t){(const uint8_t *)source->packet,
+                                         tstr_len(source->packet)};
+  }
+  if (owner->has_will) {
+    row.will.present = 1;
+    row.will.pending = owner->will_pending || owner->active;
+    row.will.qos = owner->will_qos;
+    row.will.retain = owner->will_retain;
+    row.will.delay_interval = owner->will_delay_interval;
+    row.will.topic = (flowie_mqtt_span_t){(const uint8_t *)owner->will_topic,
+                                         tstr_len(owner->will_topic)};
+    row.will.properties = (flowie_mqtt_span_t){(const uint8_t *)owner->will_properties,
+                                              tstr_len(owner->will_properties)};
+    row.will.payload = (flowie_mqtt_span_t){(const uint8_t *)owner->will_payload,
+                                           tstr_len(owner->will_payload)};
+  }
+  *out = row;
+  return TURBO_OK;
+invalid:
+  flowie_session_owner_repository_snapshot_cleanup(&row);
+  return TURBO_EPROTO;
+}
+
+int flowie_session_owner_repository_restore(const flowie_session_config_t *config,
+                                            const flowie_protocol_session_row_t *row,
+                                            flowie_session_owner_t **out) {
+  flowie_session_owner_t *owner = NULL;
+  int rc = TURBO_EPROTO;
+  if (out) *out = NULL;
+  if (!flowie_session_config_valid(config) || !row || row->size < sizeof(*row) || !out ||
+      !row->client_id.data || row->client_id.size == 0u || row->revision == 0u ||
+      row->subscription_count > config->max_subscriptions ||
+      row->inflight_count + row->delivery_count > config->max_inflight)
+    return TURBO_EINVAL;
+  owner = flowie_session_owner_create(config);
+  if (!owner) return TURBO_ENOMEM;
+  owner->client_id = tstr_new_len(row->client_id.data, row->client_id.size);
+  if (!owner->client_id) { rc = TURBO_ENOMEM; goto fail; }
+  owner->config.session_id = row->session_id;
+  owner->version = row->mqtt_version;
+  owner->keep_alive = row->keep_alive;
+  owner->session_expiry_interval = row->session_expiry_interval;
+  owner->session_generation = row->session_generation;
+  owner->resource_generation = row->revision;
+  owner->next_delivery_packet_id = row->next_delivery_packet_id;
+  for (size_t i = 0u; i < row->subscription_count; ++i) {
+    flowie_session_subscription_owned_t entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.filter = tstr_new_len(row->subscriptions[i].filter.data,
+                               row->subscriptions[i].filter.size);
+    if (!entry.filter) { rc = TURBO_ENOMEM; goto fail; }
+    entry.qos = row->subscriptions[i].qos;
+    entry.no_local = row->subscriptions[i].no_local;
+    entry.retain_as_published = row->subscriptions[i].retain_as_published;
+    entry.retain_handling = row->subscriptions[i].retain_handling;
+    entry.subscription_identifier = row->subscriptions[i].subscription_identifier;
+    rc = flowie_stl_error(vec_push(&owner->subscriptions, &entry));
+    if (rc != TURBO_OK) { tstr_freep(&entry.filter); goto fail; }
+  }
+  for (size_t i = 0u; i < row->inflight_count; ++i) {
+    flowie_session_inflight_t entry = {row->inflight[i].packet_id, row->inflight[i].qos,
+                                       FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE};
+    rc = flowie_stl_error(vec_push(&owner->inflight, &entry));
+    if (rc != TURBO_OK) goto fail;
+  }
+  for (size_t i = 0u; i < row->delivery_count; ++i) {
+    flowie_session_delivery_t entry;
+    memset(&entry, 0, sizeof(entry));
+    entry.packet_id = row->deliveries[i].packet_id;
+    entry.qos = row->deliveries[i].qos;
+    entry.state = (flowie_session_delivery_state_t)row->deliveries[i].state;
+    entry.expiry_at_epoch_seconds = row->deliveries[i].expiry_at_epoch_seconds;
+    entry.packet = tstr_new_len(row->deliveries[i].packet.data, row->deliveries[i].packet.size);
+    if (!entry.packet) { rc = TURBO_ENOMEM; goto fail; }
+    rc = flowie_session_record_delivery_validate(owner, &entry);
+    if (rc == TURBO_OK) rc = flowie_stl_error(vec_push(&owner->deliveries, &entry));
+    if (rc != TURBO_OK) { tstr_freep(&entry.packet); goto fail; }
+  }
+  if (row->will.present) {
+    owner->will_topic = tstr_new_len(row->will.topic.data, row->will.topic.size);
+    owner->will_properties = tstr_new_len(row->will.properties.data, row->will.properties.size);
+    owner->will_payload = tstr_new_len(row->will.payload.data, row->will.payload.size);
+    if (!owner->will_topic || !owner->will_properties || !owner->will_payload) {
+      rc = TURBO_ENOMEM; goto fail;
+    }
+    owner->has_will = 1u;
+    owner->will_pending = (uint8_t)row->will.pending;
+    owner->will_qos = row->will.qos;
+    owner->will_retain = row->will.retain;
+    owner->will_delay_interval = row->will.delay_interval;
+  }
+  owner->active = 0u;
+  owner->clean_start = 0u;
+  *out = owner;
+  return TURBO_OK;
+fail:
+  flowie_session_owner_destroy(owner);
+  return rc;
+}
 
 static int flowie_session_config_valid(const flowie_session_config_t *config) {
   return config && config->size >= sizeof(*config) &&
@@ -83,43 +280,43 @@ static int flowie_session_config_valid(const flowie_session_config_t *config) {
          flowie_protocol_settlement_policy_validate(&config->settlement) == TURBO_OK;
 }
 
-static void flowie_session_subscriptions_clear(turbo_vec_t *subscriptions) {
+static void flowie_session_subscriptions_clear(vec_t *subscriptions) {
   if (!subscriptions) return;
-  for (size_t i = 0u; i < turbo_vec_size(subscriptions); ++i) {
+  for (size_t i = 0u; i < vec_size(subscriptions); ++i) {
     flowie_session_subscription_owned_t *entry =
-        (flowie_session_subscription_owned_t *)turbo_vec_at(subscriptions, i);
+        (flowie_session_subscription_owned_t *)vec_at(subscriptions, i);
     if (entry) tstr_freep(&entry->filter);
   }
-  turbo_vec_clear(subscriptions);
+  vec_clear(subscriptions);
 }
 
-static void flowie_session_subscriptions_destroy(turbo_vec_t *subscriptions) {
+static void flowie_session_subscriptions_destroy(vec_t *subscriptions) {
   if (!subscriptions) return;
   flowie_session_subscriptions_clear(subscriptions);
-  turbo_vec_destroy(subscriptions);
+  vec_destroy(subscriptions);
 }
 
 static void flowie_session_inflight_clear(flowie_session_owner_t *owner, int keep_qos2_release) {
   size_t index = 0u;
-  while (index < turbo_vec_size(&owner->inflight)) {
+  while (index < vec_size(&owner->inflight)) {
     const flowie_session_inflight_t *entry =
-        (const flowie_session_inflight_t *)turbo_vec_at_const(&owner->inflight, index);
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, index);
     if (keep_qos2_release && entry && entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) {
       ++index;
     } else {
-      (void)turbo_vec_swap_remove(&owner->inflight, index, NULL);
+      (void)flowie_stl_error(vec_swap_remove(&owner->inflight, index, NULL));
     }
   }
 }
 
 static void flowie_session_deliveries_clear(flowie_session_owner_t *owner) {
   if (!owner) return;
-  for (size_t i = 0u; i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     flowie_session_delivery_t *delivery =
-        (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, i);
+        (flowie_session_delivery_t *)vec_at(&owner->deliveries, i);
     if (delivery) tstr_freep(&delivery->packet);
   }
-  turbo_vec_clear(&owner->deliveries);
+  vec_clear(&owner->deliveries);
 }
 
 static void flowie_session_will_clear(flowie_session_owner_t *owner) {
@@ -154,12 +351,12 @@ static int flowie_session_will_delay(const flowie_mqtt_connect_view_t *connect, 
   return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? TURBO_OK : TURBO_EPROTO;
 }
 
-static int flowie_session_subscriptions_clone(const turbo_vec_t *source, turbo_vec_t *out) {
-  int rc = turbo_vec_init(out, sizeof(flowie_session_subscription_owned_t));
+static int flowie_session_subscriptions_clone(const vec_t *source, vec_t *out) {
+  int rc = flowie_stl_error(vec_init_bytes(out, sizeof(flowie_session_subscription_owned_t), _Alignof(flowie_session_subscription_owned_t), SIZE_MAX));
   if (rc != TURBO_OK) return rc;
-  for (size_t i = 0u; i < turbo_vec_size(source); ++i) {
+  for (size_t i = 0u; i < vec_size(source); ++i) {
     const flowie_session_subscription_owned_t *entry =
-        (const flowie_session_subscription_owned_t *)turbo_vec_at_const(source, i);
+        (const flowie_session_subscription_owned_t *)vec_at_const(source, i);
     flowie_session_subscription_owned_t copy;
     if (!entry || !entry->filter) {
       rc = TURBO_EPROTO;
@@ -171,7 +368,7 @@ static int flowie_session_subscriptions_clone(const turbo_vec_t *source, turbo_v
       rc = TURBO_ENOMEM;
       goto fail;
     }
-    rc = turbo_vec_push(out, &copy);
+    rc = flowie_stl_error(vec_push(out, &copy));
     if (rc != TURBO_OK) {
       tstr_free(copy.filter);
       goto fail;
@@ -221,19 +418,19 @@ flowie_session_owner_t *flowie_session_owner_create(const flowie_session_config_
   owner->config = *config;
   owner->config.size = sizeof(owner->config);
   owner->resource_generation = 1u;
-  if (turbo_vec_init(&owner->subscriptions, sizeof(flowie_session_subscription_owned_t)) !=
+  if (flowie_stl_error(vec_init_bytes(&owner->subscriptions, sizeof(flowie_session_subscription_owned_t), _Alignof(flowie_session_subscription_owned_t), SIZE_MAX)) !=
       TURBO_OK) {
     free(owner);
     return NULL;
   }
-  if (turbo_vec_init(&owner->inflight, sizeof(flowie_session_inflight_t)) != TURBO_OK) {
-    turbo_vec_destroy(&owner->subscriptions);
+  if (flowie_stl_error(vec_init_bytes(&owner->inflight, sizeof(flowie_session_inflight_t), _Alignof(flowie_session_inflight_t), SIZE_MAX)) != TURBO_OK) {
+    vec_destroy(&owner->subscriptions);
     free(owner);
     return NULL;
   }
-  if (turbo_vec_init(&owner->deliveries, sizeof(flowie_session_delivery_t)) != TURBO_OK) {
-    turbo_vec_destroy(&owner->inflight);
-    turbo_vec_destroy(&owner->subscriptions);
+  if (flowie_stl_error(vec_init_bytes(&owner->deliveries, sizeof(flowie_session_delivery_t), _Alignof(flowie_session_delivery_t), SIZE_MAX)) != TURBO_OK) {
+    vec_destroy(&owner->inflight);
+    vec_destroy(&owner->subscriptions);
     free(owner);
     return NULL;
   }
@@ -259,20 +456,20 @@ flowie_session_owner_t *flowie_session_owner_clone(const flowie_session_owner_t 
   flowie_session_subscriptions_destroy(&copy->subscriptions);
   rc = flowie_session_subscriptions_clone(&owner->subscriptions, &copy->subscriptions);
   if (rc != TURBO_OK) goto fail;
-  for (size_t i = 0u; i < turbo_vec_size(&owner->inflight); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->inflight); ++i) {
     const flowie_session_inflight_t *entry =
-        (const flowie_session_inflight_t *)turbo_vec_at_const(&owner->inflight, i);
-    if (!entry || turbo_vec_push(&copy->inflight, entry) != TURBO_OK) goto fail;
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
+    if (!entry || flowie_stl_error(vec_push(&copy->inflight, entry)) != TURBO_OK) goto fail;
   }
-  for (size_t i = 0u; i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     flowie_session_delivery_t cloned;
     if (!entry) goto fail;
     cloned = *entry;
     cloned.packet = entry->packet ? tstr_clone(entry->packet) : NULL;
     if (entry->packet && !cloned.packet) goto fail;
-    rc = turbo_vec_push(&copy->deliveries, &cloned);
+    rc = flowie_stl_error(vec_push(&copy->deliveries, &cloned));
     if (rc != TURBO_OK) {
       tstr_freep(&cloned.packet);
       goto fail;
@@ -308,8 +505,8 @@ void flowie_session_owner_destroy(flowie_session_owner_t *owner) {
   if (!owner) return;
   flowie_session_subscriptions_destroy(&owner->subscriptions);
   flowie_session_deliveries_clear(owner);
-  turbo_vec_destroy(&owner->deliveries);
-  turbo_vec_destroy(&owner->inflight);
+  vec_destroy(&owner->deliveries);
+  vec_destroy(&owner->inflight);
   flowie_session_will_clear(owner);
   tstr_freep(&owner->client_id);
   free(owner);
@@ -318,10 +515,10 @@ void flowie_session_owner_destroy(flowie_session_owner_t *owner) {
 static int flowie_session_owner_open_impl(flowie_session_owner_t *owner,
                                            const flowie_mqtt_connect_view_t *connect,
                                            int allow_active) {
-  tstr_t client_id = NULL;
-  tstr_t will_topic = NULL;
-  tstr_t will_properties = NULL;
-  tstr_t will_payload = NULL;
+  tstr client_id = NULL;
+  tstr will_topic = NULL;
+  tstr will_properties = NULL;
+  tstr will_payload = NULL;
   uint32_t expiry;
   uint32_t will_delay = 0u;
   int rc;
@@ -487,9 +684,9 @@ int flowie_session_owner_snapshot(const flowie_session_owner_t *owner,
   snapshot.session_id = owner->config.session_id;
   snapshot.session_generation = owner->session_generation;
   snapshot.resource_generation = owner->resource_generation;
-  snapshot.subscription_count = turbo_vec_size(&owner->subscriptions);
+  snapshot.subscription_count = vec_size(&owner->subscriptions);
   snapshot.subscription_capacity = owner->config.max_subscriptions;
-  snapshot.inflight_count = turbo_vec_size(&owner->inflight) + turbo_vec_size(&owner->deliveries);
+  snapshot.inflight_count = vec_size(&owner->inflight) + vec_size(&owner->deliveries);
   snapshot.inflight_capacity = owner->config.max_inflight;
   snapshot.client_id.data = (const uint8_t *)owner->client_id;
   snapshot.client_id.size = owner->client_id ? tstr_len(owner->client_id) : 0u;
@@ -573,10 +770,10 @@ int flowie_session_owner_will_complete(flowie_session_owner_t *owner) {
 }
 
 static flowie_session_subscription_owned_t *
-flowie_session_subscription_find(turbo_vec_t *subscriptions, flowie_mqtt_span_t filter) {
-  for (size_t i = 0u; i < turbo_vec_size(subscriptions); ++i) {
+flowie_session_subscription_find(vec_t *subscriptions, flowie_mqtt_span_t filter) {
+  for (size_t i = 0u; i < vec_size(subscriptions); ++i) {
     flowie_session_subscription_owned_t *entry =
-        (flowie_session_subscription_owned_t *)turbo_vec_at(subscriptions, i);
+        (flowie_session_subscription_owned_t *)vec_at(subscriptions, i);
     if (entry && entry->filter && tstr_len(entry->filter) == filter.size &&
         memcmp(entry->filter, filter.data, filter.size) == 0)
       return entry;
@@ -584,7 +781,7 @@ flowie_session_subscription_find(turbo_vec_t *subscriptions, flowie_mqtt_span_t 
   return NULL;
 }
 
-static int flowie_session_subscription_apply(turbo_vec_t *subscriptions, size_t capacity,
+static int flowie_session_subscription_apply(vec_t *subscriptions, size_t capacity,
                                              const flowie_mqtt_subscription_view_t *entry,
                                              uint32_t subscription_identifier,
                                              int *changed) {
@@ -604,7 +801,7 @@ static int flowie_session_subscription_apply(turbo_vec_t *subscriptions, size_t 
     }
     return TURBO_OK;
   }
-  if (turbo_vec_size(subscriptions) >= capacity) return TURBO_ENOSPC;
+  if (vec_size(subscriptions) >= capacity) return TURBO_ENOSPC;
   {
     flowie_session_subscription_owned_t added;
     int rc;
@@ -616,7 +813,7 @@ static int flowie_session_subscription_apply(turbo_vec_t *subscriptions, size_t 
     added.retain_as_published = entry->retain_as_published;
     added.retain_handling = entry->retain_handling;
     added.subscription_identifier = subscription_identifier;
-    rc = turbo_vec_push(subscriptions, &added);
+    rc = flowie_stl_error(vec_push(subscriptions, &added));
     if (rc != TURBO_OK) {
       tstr_free(added.filter);
       return rc;
@@ -633,7 +830,7 @@ int flowie_session_owner_subscribe(flowie_session_owner_t *owner,
   flowie_mqtt_subscription_iterator_t iterator = FLOWIE_MQTT_SUBSCRIPTION_ITERATOR_INIT;
   flowie_mqtt_subscription_view_t entry;
   flowie_session_subscribe_result_t result = FLOWIE_SESSION_SUBSCRIBE_RESULT_INIT;
-  turbo_vec_t staged;
+  vec_t staged = {0};
   size_t count = 0u;
   uint32_t subscription_identifier = 0u;
   int changed = 0;
@@ -675,7 +872,7 @@ int flowie_session_owner_subscribe(flowie_session_owner_t *owner,
     goto fail;
   }
   if (changed) {
-    turbo_vec_t previous;
+    vec_t previous;
     rc = flowie_session_generation_advance(owner);
     if (rc != TURBO_OK) goto fail;
     previous = owner->subscriptions;
@@ -702,7 +899,7 @@ int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner, si
       out->abi_version != FLOWIE_SESSION_INTERNAL_ABI_V1)
     return TURBO_EINVAL;
   entry =
-      (const flowie_session_subscription_owned_t *)turbo_vec_at_const(&owner->subscriptions, index);
+      (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, index);
   if (!entry || !entry->filter) return TURBO_ENOENT;
   value.filter.data = (const uint8_t *)entry->filter;
   value.filter.size = tstr_len(entry->filter);
@@ -718,9 +915,9 @@ int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner, si
 static flowie_session_delivery_t *
 flowie_session_delivery_find(flowie_session_owner_t *owner, uint16_t packet_id, size_t *index_out) {
   if (!owner || packet_id == 0u) return NULL;
-  for (size_t i = 0u; i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     flowie_session_delivery_t *delivery =
-        (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, i);
+        (flowie_session_delivery_t *)vec_at(&owner->deliveries, i);
     if (delivery && delivery->packet_id == packet_id) {
       if (index_out) *index_out = i;
       return delivery;
@@ -737,7 +934,7 @@ int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t
   if (!owner || !packet_id || qos == 0u || qos > 2u) return TURBO_EINVAL;
   if (!owner->active && (!owner->initialized || owner->session_expiry_interval == 0u))
     return TURBO_EBUSY;
-  if (turbo_vec_size(&owner->inflight) + turbo_vec_size(&owner->deliveries) >=
+  if (vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
       owner->config.max_inflight)
     return TURBO_ENOSPC;
   candidate = owner->next_delivery_packet_id;
@@ -750,7 +947,7 @@ int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t
   delivery.packet_id = candidate;
   delivery.qos = qos;
   delivery.state = FLOWIE_SESSION_DELIVERY_RESERVED;
-  rc = turbo_vec_push(&owner->deliveries, &delivery);
+  rc = flowie_stl_error(vec_push(&owner->deliveries, &delivery));
   if (rc != TURBO_OK) return rc;
   owner->next_delivery_packet_id = candidate;
   *packet_id = candidate;
@@ -762,7 +959,7 @@ static int flowie_session_owner_delivery_commit_state(flowie_session_owner_t *ow
                                                       uint64_t expiry_at_epoch_seconds,
                                                       int queued) {
   flowie_session_delivery_t *delivery;
-  tstr_t owned;
+  tstr owned;
   if (!owner || !packet.data || packet.size == 0u) return TURBO_EINVAL;
   delivery = flowie_session_delivery_find(owner, packet_id, NULL);
   if (!delivery) return TURBO_ENOENT;
@@ -812,7 +1009,7 @@ int flowie_session_owner_delivery_cancel(flowie_session_owner_t *owner, uint16_t
   if (!owner || packet_id == 0u) return TURBO_EINVAL;
   if (!flowie_session_delivery_find(owner, packet_id, &index)) return TURBO_ENOENT;
   memset(&removed, 0, sizeof(removed));
-  rc = turbo_vec_swap_remove(&owner->deliveries, index, &removed);
+  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed.packet);
   return TURBO_OK;
@@ -824,18 +1021,18 @@ int flowie_session_owner_delivery_expire(flowie_session_owner_t *owner, uint64_t
   size_t index = 0u;
   if (!owner || !removed_count || now_epoch_seconds == 0u) return TURBO_EINVAL;
   *removed_count = 0u;
-  for (size_t i = 0u; i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *delivery =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     if (delivery && delivery->expiry_at_epoch_seconds != 0u &&
         delivery->expiry_at_epoch_seconds <= now_epoch_seconds)
       count += 1u;
   }
   if (count == 0u) return TURBO_OK;
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
-  while (index < turbo_vec_size(&owner->deliveries)) {
+  while (index < vec_size(&owner->deliveries)) {
     flowie_session_delivery_t *delivery =
-        (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, index);
+        (flowie_session_delivery_t *)vec_at(&owner->deliveries, index);
     if (!delivery || delivery->expiry_at_epoch_seconds == 0u ||
         delivery->expiry_at_epoch_seconds > now_epoch_seconds) {
       index += 1u;
@@ -845,7 +1042,7 @@ int flowie_session_owner_delivery_expire(flowie_session_owner_t *owner, uint64_t
       flowie_session_delivery_t removed;
       int rc;
       memset(&removed, 0, sizeof(removed));
-      rc = turbo_vec_swap_remove(&owner->deliveries, index, &removed);
+      rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
       if (rc != TURBO_OK) return rc;
       tstr_freep(&removed.packet);
     }
@@ -870,7 +1067,7 @@ int flowie_session_owner_delivery_expire_packet(flowie_session_owner_t *owner, u
     return TURBO_OK;
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   memset(&removed_delivery, 0, sizeof(removed_delivery));
-  rc = turbo_vec_swap_remove(&owner->deliveries, index, &removed_delivery);
+  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed_delivery));
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed_delivery.packet);
   owner->resource_generation += 1u;
@@ -930,7 +1127,7 @@ int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner, s
   flowie_session_delivery_t *delivery;
   int rc;
   if (!owner || !packet || !packet_id || !expiry_at_epoch_seconds) return TURBO_EINVAL;
-  delivery = (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, index);
+  delivery = (flowie_session_delivery_t *)vec_at(&owner->deliveries, index);
   if (!delivery || !delivery->packet || delivery->state == FLOWIE_SESSION_DELIVERY_RESERVED)
     return TURBO_ENOENT;
   if (delivery->expiry_at_epoch_seconds != 0u) {
@@ -967,7 +1164,7 @@ int flowie_session_owner_delivery_pending_at(flowie_session_owner_t *owner, size
   uint64_t expiry_at_epoch_seconds = 0u;
   flowie_session_delivery_t *delivery;
   if (!owner || !packet) return TURBO_EINVAL;
-  delivery = (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, index);
+  delivery = (flowie_session_delivery_t *)vec_at(&owner->deliveries, index);
   if (!delivery) return TURBO_ENOENT;
   if (delivery->expiry_at_epoch_seconds != 0u) return TURBO_EBUSY;
   return flowie_session_owner_delivery_pending_at_ex(owner, index, 0u, packet, &packet_id,
@@ -1007,7 +1204,7 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
       return TURBO_EPROTO;
     if (control.reason_code < UINT8_C(0x80)) {
       if (delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_PUBREC) {
-        tstr_t owned;
+        tstr owned;
         if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
         pubrel.version = owner->version;
         pubrel.type = FLOWIE_MQTT_PACKET_PUBREL;
@@ -1033,27 +1230,27 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
   }
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   memset(&removed, 0, sizeof(removed));
-  rc = turbo_vec_swap_remove(&owner->deliveries, index, &removed);
+  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed.packet);
   owner->resource_generation += 1u;
   return TURBO_OK;
 }
 
-static int flowie_session_subscription_remove(turbo_vec_t *subscriptions,
+static int flowie_session_subscription_remove(vec_t *subscriptions,
                                               flowie_mqtt_span_t filter, int *removed) {
   if (!subscriptions || !removed) return TURBO_EINVAL;
   *removed = 0;
-  for (size_t i = 0u; i < turbo_vec_size(subscriptions); ++i) {
+  for (size_t i = 0u; i < vec_size(subscriptions); ++i) {
     flowie_session_subscription_owned_t *entry =
-        (flowie_session_subscription_owned_t *)turbo_vec_at(subscriptions, i);
+        (flowie_session_subscription_owned_t *)vec_at(subscriptions, i);
     flowie_session_subscription_owned_t owned;
     int rc;
     if (!entry || !entry->filter || tstr_len(entry->filter) != filter.size ||
         memcmp(entry->filter, filter.data, filter.size) != 0)
       continue;
     memset(&owned, 0, sizeof(owned));
-    rc = turbo_vec_swap_remove(subscriptions, i, &owned);
+    rc = flowie_stl_error(vec_swap_remove(subscriptions, i, &owned));
     if (rc != TURBO_OK) return rc;
     tstr_freep(&owned.filter);
     *removed = 1;
@@ -1070,8 +1267,8 @@ int flowie_session_owner_unsubscribe(flowie_session_owner_t *owner,
   flowie_mqtt_topic_filter_iterator_t iterator = FLOWIE_MQTT_TOPIC_FILTER_ITERATOR_INIT;
   flowie_session_unsubscribe_result_t result = FLOWIE_SESSION_UNSUBSCRIBE_RESULT_INIT;
   flowie_mqtt_span_t filter;
-  turbo_vec_t staged;
-  tstr_t staged_reasons = NULL;
+  vec_t staged = {0};
+  tstr staged_reasons = NULL;
   size_t count = 0u;
   size_t removed_count = 0u;
   int rc;
@@ -1112,7 +1309,7 @@ int flowie_session_owner_unsubscribe(flowie_session_owner_t *owner,
     goto fail;
   }
   if (removed_count != 0u) {
-    turbo_vec_t previous;
+    vec_t previous;
     rc = flowie_session_generation_advance(owner);
     if (rc != TURBO_OK) goto fail;
     previous = owner->subscriptions;
@@ -1141,9 +1338,9 @@ fail_reasons:
 
 static flowie_session_inflight_t *
 flowie_session_inflight_find(flowie_session_owner_t *owner, uint16_t packet_id, size_t *index_out) {
-  for (size_t i = 0u; i < turbo_vec_size(&owner->inflight); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->inflight); ++i) {
     flowie_session_inflight_t *entry =
-        (flowie_session_inflight_t *)turbo_vec_at(&owner->inflight, i);
+        (flowie_session_inflight_t *)vec_at(&owner->inflight, i);
     if (entry && entry->packet_id == packet_id) {
       if (index_out) *index_out = i;
       return entry;
@@ -1235,14 +1432,14 @@ int flowie_session_owner_publish_begin(flowie_session_owner_t *owner,
     *out = result;
     return TURBO_OK;
   }
-  if (turbo_vec_size(&owner->inflight) >= owner->config.max_inflight) return TURBO_ENOSPC;
+  if (vec_size(&owner->inflight) >= owner->config.max_inflight) return TURBO_ENOSPC;
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   {
     flowie_session_inflight_t added;
     added.packet_id = publish->packet_id;
     added.qos = publish->qos;
     added.state = FLOWIE_SESSION_INFLIGHT_SETTLEMENT;
-    rc = turbo_vec_push(&owner->inflight, &added);
+    rc = flowie_stl_error(vec_push(&owner->inflight, &added));
     if (rc != TURBO_OK) return rc;
   }
   owner->resource_generation += 1u;
@@ -1288,7 +1485,7 @@ int flowie_session_owner_publish_settle(flowie_session_owner_t *owner,
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   if (entry->qos == 1u) {
     ack = flowie_session_ack(FLOWIE_SESSION_ACK_PUBACK, entry->packet_id);
-    rc = turbo_vec_swap_remove(&owner->inflight, index, NULL);
+    rc = flowie_stl_error(vec_swap_remove(&owner->inflight, index, NULL));
     if (rc != TURBO_OK) return rc;
   } else {
     ack = flowie_session_ack(FLOWIE_SESSION_ACK_PUBREC, entry->packet_id);
@@ -1317,7 +1514,7 @@ int flowie_session_owner_qos2_release(flowie_session_owner_t *owner,
   if (entry->qos != 2u || entry->state != FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) return TURBO_EPROTO;
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   ack = flowie_session_ack(FLOWIE_SESSION_ACK_PUBCOMP, packet_id);
-  rc = turbo_vec_swap_remove(&owner->inflight, index, NULL);
+  rc = flowie_stl_error(vec_swap_remove(&owner->inflight, index, NULL));
   if (rc != TURBO_OK) return rc;
   owner->resource_generation += 1u;
   *out = ack;
@@ -1397,31 +1594,31 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
     return TURBO_EINVAL;
   rc = flowie_session_record_size_add(&required, sizeof(header));
   if (rc == TURBO_OK) rc = flowie_session_record_size_add(&required, sizeof(metadata));
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->subscriptions); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->subscriptions); ++i) {
     const flowie_session_subscription_owned_t *entry =
-        (const flowie_session_subscription_owned_t *)turbo_vec_at_const(&owner->subscriptions, i);
+        (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
     if (!entry || !entry->filter) return TURBO_EPROTO;
     rc = flowie_session_record_size_add(&required, tstr_len(entry->filter));
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->subscriptions); ++i)
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->subscriptions); ++i)
     rc = flowie_session_record_size_add(&required, 8u);
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->inflight); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->inflight); ++i) {
     const flowie_session_inflight_t *entry =
-        (const flowie_session_inflight_t *)turbo_vec_at_const(&owner->inflight, i);
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
     if (entry && entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE)
       rc = flowie_session_record_size_add(&required, 3u);
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     if (entry && entry->state != FLOWIE_SESSION_DELIVERY_RESERVED) {
       if (!entry->packet) return TURBO_EPROTO;
       rc = flowie_session_record_size_add(&required, 12u);
     }
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     if (entry && entry->state != FLOWIE_SESSION_DELIVERY_RESERVED)
       rc = flowie_session_record_size_add(&required, tstr_len(entry->packet));
   }
@@ -1452,32 +1649,32 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
   rc = flowie_session_record_append(out, capacity, &offset, 1u, header, sizeof(header));
   if (rc == TURBO_OK)
     rc = flowie_session_record_append(out, capacity, &offset, 2u, metadata, sizeof(metadata));
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->subscriptions); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->subscriptions); ++i) {
     const flowie_session_subscription_owned_t *entry =
-        (const flowie_session_subscription_owned_t *)turbo_vec_at_const(&owner->subscriptions, i);
+        (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
     rc = flowie_session_record_append(out, capacity, &offset, 3u,
                                       (const uint8_t *)entry->filter, tstr_len(entry->filter));
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->subscriptions); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->subscriptions); ++i) {
     const flowie_session_subscription_owned_t *entry =
-        (const flowie_session_subscription_owned_t *)turbo_vec_at_const(&owner->subscriptions, i);
+        (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
     uint8_t options[8] = {entry->qos, entry->no_local, entry->retain_as_published,
                           entry->retain_handling, 0u, 0u, 0u, 0u};
     flowie_session_record_write_u32(options + 4u, entry->subscription_identifier);
     rc = flowie_session_record_append(out, capacity, &offset, 4u, options, sizeof(options));
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->inflight); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->inflight); ++i) {
     const flowie_session_inflight_t *entry =
-        (const flowie_session_inflight_t *)turbo_vec_at_const(&owner->inflight, i);
+        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
     uint8_t state[3];
     if (!entry || entry->state != FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) continue;
     flowie_session_record_write_u16(state, entry->packet_id);
     state[2] = entry->qos;
     rc = flowie_session_record_append(out, capacity, &offset, 5u, state, sizeof(state));
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     uint8_t state[12];
     flowie_session_delivery_state_t persisted_state;
     if (!entry || entry->state == FLOWIE_SESSION_DELIVERY_RESERVED) continue;
@@ -1491,9 +1688,9 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
     flowie_session_record_write_u64(state + 4u, entry->expiry_at_epoch_seconds);
     rc = flowie_session_record_append(out, capacity, &offset, 6u, state, sizeof(state));
   }
-  for (size_t i = 0u; rc == TURBO_OK && i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; rc == TURBO_OK && i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     if (!entry || entry->state == FLOWIE_SESSION_DELIVERY_RESERVED) continue;
     rc = flowie_session_record_append(out, capacity, &offset, 7u,
                                       (const uint8_t *)entry->packet, tstr_len(entry->packet));
@@ -1593,7 +1790,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
   if (!flowie_session_config_valid(config) || !out || !data || data_size == 0u ||
       !client_id.data || client_id.size == 0u || client_id.size > UINT16_MAX ||
       !flowie_mqtt_utf8_validate(client_id) || revision == 0u ||
-      revision > (uint64_t)FLOWIE_RECORD_REVISION_MAX)
+      revision > (uint64_t)INT64_MAX)
     return TURBO_EINVAL;
   owner = flowie_session_owner_create(config);
   if (!owner) return TURBO_ENOMEM;
@@ -1669,7 +1866,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     } else if (type == 3u) {
       flowie_mqtt_span_t filter = {value, value_size};
       flowie_session_subscription_owned_t subscription;
-      if (!metadata_seen || turbo_vec_size(&owner->subscriptions) >= config->max_subscriptions ||
+      if (!metadata_seen || vec_size(&owner->subscriptions) >= config->max_subscriptions ||
           !flowie_mqtt_topic_filter_validate(filter) ||
           flowie_session_subscription_find(&owner->subscriptions, filter)) {
         turbo_free_ltv(&message);
@@ -1683,7 +1880,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
         rc = TURBO_ENOMEM;
         goto fail;
       }
-      rc = turbo_vec_push(&owner->subscriptions, &subscription);
+      rc = flowie_stl_error(vec_push(&owner->subscriptions, &subscription));
       if (rc != TURBO_OK) {
         tstr_freep(&subscription.filter);
         turbo_free_ltv(&message);
@@ -1691,7 +1888,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       }
     } else if (type == 4u) {
       flowie_session_subscription_owned_t *subscription =
-          (flowie_session_subscription_owned_t *)turbo_vec_at(&owner->subscriptions, option_index);
+          (flowie_session_subscription_owned_t *)vec_at(&owner->subscriptions, option_index);
       if (!subscription || value_size != (record_minor >= 2u ? 8u : 4u) || value[0] > 2u ||
           value[1] > 1u ||
           value[2] > 1u || value[3] > 2u) {
@@ -1714,7 +1911,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     } else if (type == 5u) {
       flowie_session_inflight_t inflight;
       if (value_size != 3u || value[2] != 2u ||
-          turbo_vec_size(&owner->inflight) + turbo_vec_size(&owner->deliveries) >=
+          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
               config->max_inflight) {
         turbo_free_ltv(&message);
         rc = TURBO_EPROTO;
@@ -1728,7 +1925,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
         rc = TURBO_EPROTO;
         goto fail;
       }
-      rc = turbo_vec_push(&owner->inflight, &inflight);
+      rc = flowie_stl_error(vec_push(&owner->inflight, &inflight));
       if (rc != TURBO_OK) {
         turbo_free_ltv(&message);
         goto fail;
@@ -1736,7 +1933,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     } else if (type == 6u) {
       flowie_session_delivery_t delivery;
       if (value_size != (record_minor >= 3u ? 12u : 4u) ||
-          turbo_vec_size(&owner->inflight) + turbo_vec_size(&owner->deliveries) >=
+          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
               config->max_inflight) {
         turbo_free_ltv(&message);
         rc = TURBO_EPROTO;
@@ -1757,14 +1954,14 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
         rc = TURBO_EPROTO;
         goto fail;
       }
-      rc = turbo_vec_push(&owner->deliveries, &delivery);
+      rc = flowie_stl_error(vec_push(&owner->deliveries, &delivery));
       if (rc != TURBO_OK) {
         turbo_free_ltv(&message);
         goto fail;
       }
     } else if (type == 7u) {
       flowie_session_delivery_t *delivery =
-          (flowie_session_delivery_t *)turbo_vec_at(&owner->deliveries, packet_index);
+          (flowie_session_delivery_t *)vec_at(&owner->deliveries, packet_index);
       if (!delivery || delivery->packet || value_size == 0u) {
         turbo_free_ltv(&message);
         rc = TURBO_EPROTO;
@@ -1836,16 +2033,16 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     turbo_free_ltv(&message);
     offset += wire_size;
   }
-  if (!header_seen || !metadata_seen || option_index != turbo_vec_size(&owner->subscriptions) ||
-      packet_index != turbo_vec_size(&owner->deliveries) ||
+  if (!header_seen || !metadata_seen || option_index != vec_size(&owner->subscriptions) ||
+      packet_index != vec_size(&owner->deliveries) ||
       (record_minor == 0u && will_metadata_seen) ||
       (will_metadata_seen && (!will_topic_seen || !will_properties_seen || !will_payload_seen))) {
     rc = TURBO_EPROTO;
     goto fail;
   }
-  for (size_t i = 0u; i < turbo_vec_size(&owner->deliveries); ++i) {
+  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *delivery =
-        (const flowie_session_delivery_t *)turbo_vec_at_const(&owner->deliveries, i);
+        (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     rc = flowie_session_record_delivery_validate(owner, delivery);
     if (rc != TURBO_OK) goto fail;
   }

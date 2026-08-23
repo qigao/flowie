@@ -1,7 +1,7 @@
 // re2c $INPUT -o $OUTPUT
 #include "flowie_mqtt_grammar_gen.h"
 #include "flowie_mqtt_internal.h"
-#include <turbo_str_view.h>
+#include <turbo_vstr.h>
 
 #include <ctype.h>
 #include <string.h>
@@ -107,12 +107,12 @@ static int flowie_mqtt_noncharacter(uint32_t codepoint) {
 }
 
 int flowie_mqtt_utf8_validate(flowie_mqtt_span_t value) {
-  tstr_v rest;
+  vstr rest;
   if (!value.data && value.size != 0u) return 0;
-  rest = tstr_v_from_buf((const char *)value.data, value.size);
+  rest = vstr_from_buf((const char *)value.data, value.size);
   while (rest.len != 0u) {
     uint32_t codepoint;
-    if (!tstr_v_utf8_next(&rest, &codepoint) || codepoint == 0u ||
+    if (!vstr_utf8_next(&rest, &codepoint) || codepoint == 0u ||
         flowie_mqtt_noncharacter(codepoint))
       return 0;
   }

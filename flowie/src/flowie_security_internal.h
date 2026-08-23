@@ -31,13 +31,13 @@ typedef struct flowie_mqtt_validated_security_context_s {
    {NULL, 0u},                                                                                     \
    NULL}
 
-CXX_C_API int
+FLOWIE_C_API int
 flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_context_t *out,
                                             flowie_mqtt_security_resource_kind_t kind,
-                                            tstr_t parser_validated_resource);
+                                            tstr parser_validated_resource);
 
 /** Validate one complete authentication result before persistence or peer transfer. */
-CXX_C_API int flowie_security_principal_validate(const flowie_security_principal_t *principal);
+FLOWIE_C_API int flowie_security_principal_validate(const flowie_security_principal_t *principal);
 
 #ifdef __cplusplus
 }

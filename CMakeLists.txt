@@ -41,18 +41,28 @@ find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(TurboNet CONFIG REQUIRED PATHS "${TURBO_NET_ROOT}")
 find_package(xxHash CONFIG REQUIRED)
-
+find_package(TurboDB CONFIG REQUIRED PATHS "${TURBODB_ROOT}")
+if(TARGET TurboParser::DataBind AND NOT TARGET TurboUtils::DataBind)
+  add_library(TurboUtils::DataBind ALIAS TurboParser::DataBind)
+endif()
+set(TurboRaft_DIR "${TURBORAFT_ROOT}/lib/cmake/TurboRaft" CACHE PATH
+    "TurboRaft package directory" FORCE)
+set(FlowMQ_DIR "${FLOWMQ_ROOT}/lib/cmake/FlowMQ" CACHE PATH
+    "FlowMQ package directory" FORCE)
+find_package(TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwner DataStream FlowMQ
+             PATHS "${TURBORAFT_ROOT}" NO_DEFAULT_PATH)
+find_package(TurboHttp CONFIG REQUIRED PATHS "${TURBO_HTTP_ROOT}")
+find_package(SQLite3 REQUIRED)
 add_subdirectory(tools)
 include(FindTools)
-add_subdirectory(vendor/monocypher)
-add_subdirectory(vendor/croar)
+add_subdirectory(vendor)
 add_subdirectory(flowie/runtime)
 add_subdirectory(flowie)
-
-if(FLOWIE_BUILD_SERVER)
-  add_subdirectory(flowie/server)
+add_subdirectory(cluster)
+add_subdirectory(server)
+if(FLOWIE_BUILD_CONTROL)
+  add_subdirectory(control)
 endif()
-
 set(FLOWIE_EXPORT_TARGETS flowie_protocol flowie_client flowie)
 
 install(

@@ -59,7 +59,7 @@ static void check_typed_failure_preserves_output(const flowie_mqtt_packet_view_t
     value.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
     before = value;
     rc = flowie_mqtt_connect_parse(packet, &value);
-    if (rc != FLOWIE_MQTT_PARSE_OK) check_mem_eq(&value, &before, sizeof(value));
+    if (rc != FLOWIE_MQTT_PARSE_OK) check_equal(&value, &before, sizeof(value));
   } else if (packet->type == FLOWIE_MQTT_PACKET_PUBLISH) {
     flowie_mqtt_publish_view_t value;
     flowie_mqtt_publish_view_t before;
@@ -68,7 +68,7 @@ static void check_typed_failure_preserves_output(const flowie_mqtt_packet_view_t
     value.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
     before = value;
     rc = flowie_mqtt_publish_parse(packet, &value);
-    if (rc != FLOWIE_MQTT_PARSE_OK) check_mem_eq(&value, &before, sizeof(value));
+    if (rc != FLOWIE_MQTT_PARSE_OK) check_equal(&value, &before, sizeof(value));
   } else if (packet->type == FLOWIE_MQTT_PACKET_SUBSCRIBE) {
     flowie_mqtt_subscribe_view_t value;
     flowie_mqtt_subscribe_view_t before;
@@ -77,7 +77,7 @@ static void check_typed_failure_preserves_output(const flowie_mqtt_packet_view_t
     value.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
     before = value;
     rc = flowie_mqtt_subscribe_parse(packet, &value);
-    if (rc != FLOWIE_MQTT_PARSE_OK) check_mem_eq(&value, &before, sizeof(value));
+    if (rc != FLOWIE_MQTT_PARSE_OK) check_equal(&value, &before, sizeof(value));
   } else if (packet->type == FLOWIE_MQTT_PACKET_UNSUBSCRIBE) {
     flowie_mqtt_unsubscribe_view_t value;
     flowie_mqtt_unsubscribe_view_t before;
@@ -86,7 +86,7 @@ static void check_typed_failure_preserves_output(const flowie_mqtt_packet_view_t
     value.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
     before = value;
     rc = flowie_mqtt_unsubscribe_parse(packet, &value);
-    if (rc != FLOWIE_MQTT_PARSE_OK) check_mem_eq(&value, &before, sizeof(value));
+    if (rc != FLOWIE_MQTT_PARSE_OK) check_equal(&value, &before, sizeof(value));
   } else if (packet->type == FLOWIE_MQTT_PACKET_CONNACK ||
              packet->type == FLOWIE_MQTT_PACKET_PUBACK ||
              packet->type == FLOWIE_MQTT_PACKET_PUBREC ||
@@ -104,7 +104,7 @@ static void check_typed_failure_preserves_output(const flowie_mqtt_packet_view_t
     value.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
     before = value;
     rc = flowie_mqtt_control_packet_parse(packet, &value);
-    if (rc != FLOWIE_MQTT_PARSE_OK) check_mem_eq(&value, &before, sizeof(value));
+    if (rc != FLOWIE_MQTT_PARSE_OK) check_equal(&value, &before, sizeof(value));
   }
 }
 
@@ -177,14 +177,14 @@ static void check_success_reencodes(const flowie_mqtt_packet_view_t *packet) {
     rc = flowie_mqtt_subscribe_parse(packet, &decoded);
     check_true(typed_parse_result_known(rc));
     if (rc != FLOWIE_MQTT_PARSE_OK) return;
-    check_size_le(decoded.entry_count, MAX_ENTRIES);
+    check_less_equal(decoded.entry_count, MAX_ENTRIES);
     if (decoded.entry_count > MAX_ENTRIES) return;
     rc = flowie_mqtt_subscription_iterator_init(packet, &decoded, &iterator);
-    check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
+    check_equal(rc, FLOWIE_MQTT_PARSE_OK);
     if (rc != FLOWIE_MQTT_PARSE_OK) return;
     for (size_t i = 0u; i < decoded.entry_count; ++i) {
       rc = flowie_mqtt_subscription_iterator_next(&iterator, &entries[i]);
-      check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
+      check_equal(rc, FLOWIE_MQTT_PARSE_OK);
       if (rc != FLOWIE_MQTT_PARSE_OK) return;
     }
     rebuilt.version = packet->version;
@@ -203,14 +203,14 @@ static void check_success_reencodes(const flowie_mqtt_packet_view_t *packet) {
     rc = flowie_mqtt_unsubscribe_parse(packet, &decoded);
     check_true(typed_parse_result_known(rc));
     if (rc != FLOWIE_MQTT_PARSE_OK) return;
-    check_size_le(decoded.filter_count, MAX_ENTRIES);
+    check_less_equal(decoded.filter_count, MAX_ENTRIES);
     if (decoded.filter_count > MAX_ENTRIES) return;
     rc = flowie_mqtt_topic_filter_iterator_init(&decoded, &iterator);
-    check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
+    check_equal(rc, FLOWIE_MQTT_PARSE_OK);
     if (rc != FLOWIE_MQTT_PARSE_OK) return;
     for (size_t i = 0u; i < decoded.filter_count; ++i) {
       rc = flowie_mqtt_topic_filter_iterator_next(&iterator, &filters[i]);
-      check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
+      check_equal(rc, FLOWIE_MQTT_PARSE_OK);
       if (rc != FLOWIE_MQTT_PARSE_OK) return;
     }
     rebuilt.version = packet->version;
@@ -241,14 +241,14 @@ static void check_success_reencodes(const flowie_mqtt_packet_view_t *packet) {
     break;
   }
   }
-  check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
+  check_equal(rc, FLOWIE_MQTT_PARSE_OK);
   if (rc != FLOWIE_MQTT_PARSE_OK) return;
   check(written > 0u);
   options.version = packet->version;
-  check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &reparsed, &consumed, NULL),
+  check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &reparsed, &consumed, NULL),
                FLOWIE_MQTT_PARSE_OK);
-  check_size_eq(consumed, written);
-  check_int_eq(reparsed.type, packet->type);
+  check_equal(consumed, written);
+  check_equal(reparsed.type, packet->type);
 }
 
 static void check_parse_invariants(const uint8_t *bytes, size_t size,
@@ -264,11 +264,11 @@ static void check_parse_invariants(const uint8_t *bytes, size_t size,
   before = packet;
   rc = flowie_mqtt_packet_parse(bytes, size, &options, &packet, &consumed, &error);
   check_true(parse_result_known(rc));
-  check_int_eq(error.code, rc);
+  check_equal(error.code, rc);
   if (rc == FLOWIE_MQTT_PARSE_OK) {
     check(consumed > 0u);
     check(consumed <= size);
-    check_size_eq(packet.packet.size, consumed);
+    check_equal(packet.packet.size, consumed);
     check(packet.packet.data == bytes);
     check(packet.body.data >= bytes);
     check(packet.body.data <= bytes + consumed);
@@ -276,8 +276,8 @@ static void check_parse_invariants(const uint8_t *bytes, size_t size,
     check_typed_failure_preserves_output(&packet);
     check_success_reencodes(&packet);
   } else {
-    check_size_eq(consumed, 0u);
-    check_mem_eq(&packet, &before, sizeof(packet));
+    check_equal(consumed, 0u);
+    check_equal(&packet, &before, sizeof(packet));
   }
 }
 
@@ -299,10 +299,10 @@ spec("flowie mqtt deterministic parser corpus") {
         flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
         size_t consumed = SIZE_MAX;
         options.version = corpus[corpus_index].version;
-        check_int_eq(flowie_mqtt_packet_parse(corpus[corpus_index].bytes, prefix, &options, &packet,
+        check_equal(flowie_mqtt_packet_parse(corpus[corpus_index].bytes, prefix, &options, &packet,
                                               &consumed, NULL),
                      FLOWIE_MQTT_PARSE_NEED_MORE);
-        check_size_eq(consumed, 0u);
+        check_equal(consumed, 0u);
       }
       check_parse_invariants(corpus[corpus_index].bytes, corpus[corpus_index].size,
                              corpus[corpus_index].version);
@@ -354,10 +354,10 @@ spec("flowie mqtt deterministic parser corpus") {
     ast.keep_alive = 60u;
     ast.properties = (flowie_mqtt_span_t){properties, sizeof(properties)};
     ast.client_id = (flowie_mqtt_span_t){(const uint8_t *)"cli", 3u};
-    check_int_eq(flowie_mqtt_connect_packet_encode(&ast, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&ast, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(connect_v5));
-    check_mem_eq(encoded, connect_v5, sizeof(connect_v5));
+    check_equal(written, sizeof(connect_v5));
+    check_equal(encoded, connect_v5, sizeof(connect_v5));
     check_parse_invariants(encoded, written, FLOWIE_MQTT_VERSION_UNSPECIFIED);
     for (size_t i = 0u; i < sizeof(mutations) / sizeof(mutations[0]); ++i) {
       memcpy(mutated, encoded, written);
@@ -389,12 +389,12 @@ spec("flowie mqtt deterministic parser corpus") {
                                            &first_error);
         second_rc = flowie_mqtt_packet_parse(generated, size, &options, &second, &second_consumed,
                                             &second_error);
-        check_int_eq(second_rc, first_rc);
-        check_size_eq(second_consumed, first_consumed);
-        check_int_eq(second_error.code, first_error.code);
+        check_equal(second_rc, first_rc);
+        check_equal(second_consumed, first_consumed);
+        check_equal(second_error.code, first_error.code);
         if (first_rc == FLOWIE_MQTT_PARSE_OK) {
-          check_int_eq(second.type, first.type);
-          check_size_eq(second.packet.size, first.packet.size);
+          check_equal(second.type, first.type);
+          check_equal(second.packet.size, first.packet.size);
         }
       }
     }
@@ -424,8 +424,8 @@ spec("flowie mqtt deterministic parser corpus") {
         assembled_size += chunk;
         source_offset += chunk;
       }
-      check_size_eq(assembled_size, stream_size);
-      check_mem_eq(assembled, stream, stream_size);
+      check_equal(assembled_size, stream_size);
+      check_equal(assembled, stream, stream_size);
       for (size_t i = 0u; i < packet_count; ++i)
         check_parse_invariants(assembled + offsets[i], offsets[i + 1u] - offsets[i],
                                corpus[i].version);

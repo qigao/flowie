@@ -10,8 +10,8 @@ static flowie_mqtt_span_t span(const char *value) {
 }
 
 static void check_span(flowie_mqtt_span_t value, const char *expected) {
-  check_size_eq(value.size, strlen(expected));
-  check_int_eq(memcmp(value.data, expected, value.size), 0);
+  check_equal(value.size, strlen(expected));
+  check_equal(memcmp(value.data, expected, value.size), 0);
 }
 
 spec("flowie mqtt protocol") {
@@ -22,15 +22,15 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     size_t consumed = 0u;
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, &consumed, &error),
         FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(packet.type, FLOWIE_MQTT_PACKET_PUBLISH);
-    check_int_eq(packet.flags, 0u);
-    check_uint_eq(packet.remaining_length, 5u);
-    check_size_eq(packet.fixed_header_size, 2u);
-    check_size_eq(packet.body.size, 5u);
-    check_size_eq(consumed, 7u);
+    check_equal(packet.type, FLOWIE_MQTT_PACKET_PUBLISH);
+    check_equal(packet.flags, 0u);
+    check_equal(packet.remaining_length, 5u);
+    check_equal(packet.fixed_header_size, 2u);
+    check_equal(packet.body.size, 5u);
+    check_equal(consumed, 7u);
     check(packet.packet.data == bytes);
   }
 
@@ -43,22 +43,22 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(incomplete, sizeof(incomplete), &options, &packet, NULL, &error),
         FLOWIE_MQTT_PARSE_NEED_MORE);
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(overlong, sizeof(overlong), &options, &packet, NULL, &error),
         FLOWIE_MQTT_PARSE_MALFORMED);
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(bad_flags, sizeof(bad_flags), &options, &packet, NULL, &error),
         FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     options.max_packet_size = 4u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(incomplete, sizeof(incomplete), &options, &packet, NULL, &error),
         FLOWIE_MQTT_PARSE_TOO_LARGE);
     options.max_packet_size = FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE;
     options.version = FLOWIE_MQTT_VERSION_3_1_1;
-    check_int_eq(flowie_mqtt_packet_parse(auth, sizeof(auth), &options, &packet, NULL, &error),
+    check_equal(flowie_mqtt_packet_parse(auth, sizeof(auth), &options, &packet, NULL, &error),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
@@ -90,17 +90,17 @@ spec("flowie mqtt protocol") {
 
   it("matches shared filters and applies the system-topic wildcard rule") {
     int matched = 0;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_topic_matches(span("$share/workers/jobs/+"), span("jobs/42"), &matched),
         FLOWIE_MQTT_PARSE_OK);
     check(matched);
-    check_int_eq(flowie_mqtt_topic_matches(span("sensors/#"), span("sensors"), &matched),
+    check_equal(flowie_mqtt_topic_matches(span("sensors/#"), span("sensors"), &matched),
                  FLOWIE_MQTT_PARSE_OK);
     check(matched);
-    check_int_eq(flowie_mqtt_topic_matches(span("#"), span("$SYS/status"), &matched),
+    check_equal(flowie_mqtt_topic_matches(span("#"), span("$SYS/status"), &matched),
                  FLOWIE_MQTT_PARSE_OK);
     check(!matched);
-    check_int_eq(flowie_mqtt_topic_matches(span("$SYS/#"), span("$SYS/status"), &matched),
+    check_equal(flowie_mqtt_topic_matches(span("$SYS/#"), span("$SYS/status"), &matched),
                  FLOWIE_MQTT_PARSE_OK);
     check(matched);
   }
@@ -110,18 +110,18 @@ spec("flowie mqtt protocol") {
         "allow:readwrite:device:domain:user-1:client.1:$share/workers/root/+/events/#\n";
     static const char invalid_text[] = "allow:execute:*:*:*:*:events/#";
     flowie_mqtt_acl_rule_view_t rule = FLOWIE_MQTT_ACL_RULE_VIEW_INIT;
-    check_int_eq(flowie_mqtt_acl_parse_line(rule_text, sizeof(rule_text) - 1u, &rule),
+    check_equal(flowie_mqtt_acl_parse_line(rule_text, sizeof(rule_text) - 1u, &rule),
                  FLOWIE_MQTT_ACL_PARSE_OK);
-    check_int_eq(rule.effect, FLOWIE_MQTT_ACL_ALLOW);
-    check_int_eq(rule.permission, FLOWIE_MQTT_ACL_READ_WRITE);
+    check_equal(rule.effect, FLOWIE_MQTT_ACL_ALLOW);
+    check_equal(rule.permission, FLOWIE_MQTT_ACL_READ_WRITE);
     check_span(rule.role, "device");
     check_span(rule.scope, "domain");
     check_span(rule.username, "user-1");
     check_span(rule.client_id, "client.1");
     check_span(rule.topic_filter, "$share/workers/root/+/events/#");
-    check_int_eq(flowie_mqtt_acl_parse_line(invalid_text, sizeof(invalid_text) - 1u, &rule),
+    check_equal(flowie_mqtt_acl_parse_line(invalid_text, sizeof(invalid_text) - 1u, &rule),
                  FLOWIE_MQTT_ACL_PARSE_INVALID_PERMISSION);
-    check_int_eq(flowie_mqtt_acl_parse_line(" # comment", sizeof(" # comment") - 1u, &rule),
+    check_equal(flowie_mqtt_acl_parse_line(" # comment", sizeof(" # comment") - 1u, &rule),
                  FLOWIE_MQTT_ACL_PARSE_SKIP);
   }
 
@@ -135,25 +135,25 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_property_iterator_t iterator = FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
     flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
     options.version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
-    check_int_eq(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(packet.size, sizeof(packet));
-    check_uint_eq(packet.abi_version, FLOWIE_MQTT_PROTOCOL_ABI_V1);
-    check_int_eq(packet.type, FLOWIE_MQTT_PACKET_CONNECT);
-    check_size_eq(connect.size, sizeof(connect));
+    check_equal(packet.size, sizeof(packet));
+    check_equal(packet.abi_version, FLOWIE_MQTT_PROTOCOL_ABI_V1);
+    check_equal(packet.type, FLOWIE_MQTT_PACKET_CONNECT);
+    check_equal(connect.size, sizeof(connect));
     check_not_null(packet.body.data);
-    check_size_eq(packet.body.size, packet.remaining_length);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &connect), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(connect.version, FLOWIE_MQTT_VERSION_5);
+    check_equal(packet.body.size, packet.remaining_length);
+    check_equal(flowie_mqtt_connect_parse(&packet, &connect), FLOWIE_MQTT_PARSE_OK);
+    check_equal(connect.version, FLOWIE_MQTT_VERSION_5);
     check(connect.clean_start);
-    check_uint_eq(connect.keep_alive, 60u);
+    check_equal(connect.keep_alive, 60u);
     check_span(connect.client_id, "cli");
-    check_int_eq(flowie_mqtt_property_iterator_init(&connect.properties, &iterator),
+    check_equal(flowie_mqtt_property_iterator_init(&connect.properties, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(property.identifier, FLOWIE_MQTT_PROPERTY_AUTHENTICATION_METHOD);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
+    check_equal(property.identifier, FLOWIE_MQTT_PROPERTY_AUTHENTICATION_METHOD);
     check_span(property.value, "none");
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
   }
 
@@ -168,34 +168,34 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
     uint8_t malformed[sizeof(bytes)];
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(publish.size, sizeof(publish));
-    check_int_eq(packet.type, FLOWIE_MQTT_PACKET_PUBLISH);
-    check_int_eq(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(publish.qos, 1);
-    check_uint_eq(publish.packet_id, 42u);
+    check_equal(publish.size, sizeof(publish));
+    check_equal(packet.type, FLOWIE_MQTT_PACKET_PUBLISH);
+    check_equal(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_OK);
+    check_equal(publish.qos, 1);
+    check_equal(publish.packet_id, 42u);
     check_span(publish.topic, "req");
     check_span(publish.payload, "ok");
     check(publish.payload.data == bytes + sizeof(bytes) - 2u);
-    check_int_eq(flowie_mqtt_property_iterator_init(&publish.properties, &iterator),
+    check_equal(flowie_mqtt_property_iterator_init(&publish.properties, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(property.identifier, FLOWIE_MQTT_PROPERTY_RESPONSE_TOPIC);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
+    check_equal(property.identifier, FLOWIE_MQTT_PROPERTY_RESPONSE_TOPIC);
     check_span(property.value, "reply");
     property = (flowie_mqtt_property_view_t)FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(property.identifier, FLOWIE_MQTT_PROPERTY_CORRELATION_DATA);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
+    check_equal(property.identifier, FLOWIE_MQTT_PROPERTY_CORRELATION_DATA);
     check_span(property.value, "id");
 
     memcpy(malformed, bytes, sizeof(bytes));
     malformed[9] = 0x20u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     publish = (flowie_mqtt_publish_view_t)FLOWIE_MQTT_PUBLISH_VIEW_INIT;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(malformed, sizeof(malformed), &options, &packet, NULL, NULL),
         FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_MALFORMED);
+    check_equal(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_MALFORMED);
   }
 
   it("parses shared subscriptions and rejects shared no-local") {
@@ -209,27 +209,27 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_subscription_iterator_t iterator = FLOWIE_MQTT_SUBSCRIPTION_ITERATOR_INIT;
     flowie_mqtt_subscription_view_t entry;
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(subscribe.size, sizeof(subscribe));
-    check_int_eq(packet.type, FLOWIE_MQTT_PACKET_SUBSCRIBE);
-    check_int_eq(flowie_mqtt_subscribe_parse(&packet, &subscribe), FLOWIE_MQTT_PARSE_OK);
-    check_uint_eq(subscribe.packet_id, 7u);
-    check_size_eq(subscribe.entry_count, 1u);
-    check_int_eq(flowie_mqtt_subscription_iterator_init(&packet, &subscribe, &iterator),
+    check_equal(subscribe.size, sizeof(subscribe));
+    check_equal(packet.type, FLOWIE_MQTT_PACKET_SUBSCRIBE);
+    check_equal(flowie_mqtt_subscribe_parse(&packet, &subscribe), FLOWIE_MQTT_PARSE_OK);
+    check_equal(subscribe.packet_id, 7u);
+    check_equal(subscribe.entry_count, 1u);
+    check_equal(flowie_mqtt_subscription_iterator_init(&packet, &subscribe, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_subscription_iterator_next(&iterator, &entry), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_subscription_iterator_next(&iterator, &entry), FLOWIE_MQTT_PARSE_OK);
     check_span(entry.filter, "$share/g/jobs/+");
-    check_int_eq(entry.qos, 1);
+    check_equal(entry.qos, 1);
     check(entry.retain_as_published);
 
     memcpy(invalid, bytes, sizeof(bytes));
     invalid[sizeof(invalid) - 1u] = 0x05u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     subscribe = (flowie_mqtt_subscribe_view_t)FLOWIE_MQTT_SUBSCRIBE_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(invalid, sizeof(invalid), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(invalid, sizeof(invalid), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_subscribe_parse(&packet, &subscribe),
+    check_equal(flowie_mqtt_subscribe_parse(&packet, &subscribe),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
@@ -253,27 +253,27 @@ spec("flowie mqtt protocol") {
     connect.clean_start = 1u;
     connect.keep_alive = 60u;
     connect.client_id = span("cli");
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v31));
-    check_mem_eq(encoded, expected_v31, sizeof(expected_v31));
+    check_equal(written, sizeof(expected_v31));
+    check_equal(encoded, expected_v31, sizeof(expected_v31));
     options.version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.version, FLOWIE_MQTT_VERSION_3_1);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.version, FLOWIE_MQTT_VERSION_3_1);
     check_span(decoded.client_id, "cli");
 
     connect.version = FLOWIE_MQTT_VERSION_3_1_1;
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v311));
-    check_mem_eq(encoded, expected_v311, sizeof(expected_v311));
+    check_equal(written, sizeof(expected_v311));
+    check_equal(encoded, expected_v311, sizeof(expected_v311));
     options.version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.version, FLOWIE_MQTT_VERSION_3_1_1);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.version, FLOWIE_MQTT_VERSION_3_1_1);
     check_span(decoded.client_id, "cli");
 
     connect = (flowie_mqtt_connect_packet_t)FLOWIE_MQTT_CONNECT_PACKET_INIT;
@@ -282,17 +282,17 @@ spec("flowie mqtt protocol") {
     connect.keep_alive = 60u;
     connect.properties = (flowie_mqtt_span_t){auth_method, sizeof(auth_method)};
     connect.client_id = span("cli");
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v5));
-    check_mem_eq(encoded, expected_v5, sizeof(expected_v5));
+    check_equal(written, sizeof(expected_v5));
+    check_equal(encoded, expected_v5, sizeof(expected_v5));
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_connect_view_t)FLOWIE_MQTT_CONNECT_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.version, FLOWIE_MQTT_VERSION_5);
-    check_size_eq(decoded.properties.values.size, sizeof(auth_method));
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.version, FLOWIE_MQTT_VERSION_5);
+    check_equal(decoded.properties.values.size, sizeof(auth_method));
   }
 
   it("enforces MQTT 3.1 client identifiers and legacy acknowledgement limits") {
@@ -314,38 +314,38 @@ spec("flowie mqtt protocol") {
     connect.version = FLOWIE_MQTT_VERSION_3_1;
     connect.clean_start = 1u;
     connect.client_id = span("");
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     connect.client_id = (flowie_mqtt_span_t){too_long_id, sizeof(too_long_id) - 1u};
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
-    check_int_eq(flowie_mqtt_packet_parse(mismatched_name, sizeof(mismatched_name), &options,
+    check_equal(flowie_mqtt_packet_parse(mismatched_name, sizeof(mismatched_name), &options,
                                           &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_connect_view_t)FLOWIE_MQTT_CONNECT_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(mismatched_legacy_name, sizeof(mismatched_legacy_name),
+    check_equal(flowie_mqtt_packet_parse(mismatched_legacy_name, sizeof(mismatched_legacy_name),
                                           &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
 
     control.version = FLOWIE_MQTT_VERSION_3_1;
     control.type = FLOWIE_MQTT_PACKET_CONNACK;
     control.session_present = 1u;
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     control.session_present = 0u;
     control.type = FLOWIE_MQTT_PACKET_SUBACK;
     control.packet_id = 7u;
     control.reason_codes = (flowie_mqtt_span_t){(const uint8_t *)"\x80", 1u};
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     control.reason_codes = (flowie_mqtt_span_t){suback_ok + 4u, 1u};
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(suback_ok));
-    check_mem_eq(encoded, suback_ok, sizeof(suback_ok));
+    check_equal(written, sizeof(suback_ok));
+    check_equal(encoded, suback_ok, sizeof(suback_ok));
   }
 
   it("round-trips optional CONNECT payload fields") {
@@ -370,20 +370,20 @@ spec("flowie mqtt protocol") {
     connect.will_payload = (flowie_mqtt_span_t){will_payload, sizeof(will_payload)};
     connect.username = span("user");
     connect.password = (flowie_mqtt_span_t){password, sizeof(password)};
-    check_int_eq(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
     options.version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     check_true(decoded.clean_start);
-    check_uint_eq(decoded.will_qos, 1u);
+    check_equal(decoded.will_qos, 1u);
     check_true(decoded.will_retain);
     check_span(decoded.will_topic, "status/client-1");
-    check_mem_eq(decoded.will_payload.data, will_payload, sizeof(will_payload));
+    check_equal(decoded.will_payload.data, will_payload, sizeof(will_payload));
     check_span(decoded.username, "user");
-    check_size_eq(decoded.password.size, sizeof(password));
-    check_mem_eq(decoded.password.data, password, sizeof(password));
+    check_equal(decoded.password.size, sizeof(password));
+    check_equal(decoded.password.data, password, sizeof(password));
   }
 
   it("encodes and parses MQTT 3.1.1 and MQTT 5 PUBLISH packets") {
@@ -405,14 +405,14 @@ spec("flowie mqtt protocol") {
     publish.packet_id = 42u;
     publish.topic = span("req");
     publish.payload = span("ok");
-    check_int_eq(flowie_mqtt_publish_packet_encode(&publish, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_publish_packet_encode(&publish, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v311));
-    check_mem_eq(encoded, expected_v311, sizeof(expected_v311));
+    check_equal(written, sizeof(expected_v311));
+    check_equal(encoded, expected_v311, sizeof(expected_v311));
     options.version = FLOWIE_MQTT_VERSION_3_1_1;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     check_span(decoded.payload, "ok");
 
     publish = (flowie_mqtt_publish_packet_t)FLOWIE_MQTT_PUBLISH_PACKET_INIT;
@@ -422,17 +422,17 @@ spec("flowie mqtt protocol") {
     publish.topic = span("req");
     publish.properties = (flowie_mqtt_span_t){properties, sizeof(properties)};
     publish.payload = span("ok");
-    check_int_eq(flowie_mqtt_publish_packet_encode(&publish, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_publish_packet_encode(&publish, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v5));
-    check_mem_eq(encoded, expected_v5, sizeof(expected_v5));
+    check_equal(written, sizeof(expected_v5));
+    check_equal(encoded, expected_v5, sizeof(expected_v5));
     options.version = FLOWIE_MQTT_VERSION_5;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_publish_view_t)FLOWIE_MQTT_PUBLISH_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(decoded.properties.values.size, sizeof(properties));
+    check_equal(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.properties.values.size, sizeof(properties));
   }
 
   it("encodes and parses MQTT 3.1.1 and MQTT 5 SUBSCRIBE packets") {
@@ -457,11 +457,11 @@ spec("flowie mqtt protocol") {
     subscribe.packet_id = 7u;
     subscribe.subscriptions = &entry;
     subscribe.subscription_count = 1u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_subscribe_packet_encode(&subscribe, encoded, sizeof(encoded), &written),
         FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v311));
-    check_mem_eq(encoded, expected_v311, sizeof(expected_v311));
+    check_equal(written, sizeof(expected_v311));
+    check_equal(encoded, expected_v311, sizeof(expected_v311));
 
     entry = (flowie_mqtt_subscription_t){0};
     entry.filter = span("$share/g/jobs/+");
@@ -473,18 +473,18 @@ spec("flowie mqtt protocol") {
     subscribe.properties = (flowie_mqtt_span_t){subscribe_properties, sizeof(subscribe_properties)};
     subscribe.subscriptions = &entry;
     subscribe.subscription_count = 1u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_subscribe_packet_encode(&subscribe, encoded, sizeof(encoded), &written),
         FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v5));
-    check_mem_eq(encoded, expected_v5, sizeof(expected_v5));
+    check_equal(written, sizeof(expected_v5));
+    check_equal(encoded, expected_v5, sizeof(expected_v5));
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_subscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_subscription_iterator_init(&packet, &decoded, &iterator),
+    check_equal(flowie_mqtt_subscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_subscription_iterator_init(&packet, &decoded, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_subscription_iterator_next(&iterator, &decoded_entry),
+    check_equal(flowie_mqtt_subscription_iterator_next(&iterator, &decoded_entry),
                  FLOWIE_MQTT_PARSE_OK);
     check_span(decoded_entry.filter, "$share/g/jobs/+");
     check_true(decoded_entry.retain_as_published);
@@ -508,11 +508,11 @@ spec("flowie mqtt protocol") {
     unsubscribe.packet_id = 7u;
     unsubscribe.filters = filters;
     unsubscribe.filter_count = 1u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_unsubscribe_packet_encode(&unsubscribe, encoded, sizeof(encoded), &written),
         FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v311));
-    check_mem_eq(encoded, expected_v311, sizeof(expected_v311));
+    check_equal(written, sizeof(expected_v311));
+    check_equal(encoded, expected_v311, sizeof(expected_v311));
 
     unsubscribe = (flowie_mqtt_unsubscribe_packet_t)FLOWIE_MQTT_UNSUBSCRIBE_PACKET_INIT;
     unsubscribe.version = FLOWIE_MQTT_VERSION_5;
@@ -520,16 +520,16 @@ spec("flowie mqtt protocol") {
     unsubscribe.properties = (flowie_mqtt_span_t){user_property, sizeof(user_property)};
     unsubscribe.filters = filters;
     unsubscribe.filter_count = 2u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_unsubscribe_packet_encode(&unsubscribe, encoded, sizeof(encoded), &written),
         FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v5));
-    check_mem_eq(encoded, expected_v5, sizeof(expected_v5));
+    check_equal(written, sizeof(expected_v5));
+    check_equal(encoded, expected_v5, sizeof(expected_v5));
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_unsubscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(decoded.filter_count, 2u);
+    check_equal(flowie_mqtt_unsubscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.filter_count, 2u);
   }
 
   it("encodes PINGREQ and rejects client packets before modifying output") {
@@ -542,43 +542,43 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     size_t written = 99u;
     memset(unchanged, 0xa5, sizeof(unchanged));
-    check_int_eq(flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_3_1_1, unchanged, sizeof(unchanged),
+    check_equal(flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_3_1_1, unchanged, sizeof(unchanged),
                                             &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_ping));
-    check_mem_eq(unchanged, expected_ping, sizeof(expected_ping));
-    check_int_eq(flowie_mqtt_packet_parse(invalid_ping, sizeof(invalid_ping), &options, &packet,
+    check_equal(written, sizeof(expected_ping));
+    check_equal(unchanged, expected_ping, sizeof(expected_ping));
+    check_equal(flowie_mqtt_packet_parse(invalid_ping, sizeof(invalid_ping), &options, &packet,
                                           NULL, NULL),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
 
     memset(unchanged, 0xa5, sizeof(unchanged));
-    check_int_eq(flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_5, unchanged, 1u, &written),
+    check_equal(flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_5, unchanged, 1u, &written),
                  FLOWIE_MQTT_PARSE_TOO_LARGE);
-    check_size_eq(written, 0u);
+    check_equal(written, 0u);
     for (size_t i = 0u; i < sizeof(unchanged); ++i)
-      check_uint_eq(unchanged[i], 0xa5u);
+      check_equal(unchanged[i], 0xa5u);
 
     publish.version = FLOWIE_MQTT_VERSION_5;
     publish.topic = span("a");
     publish.duplicate = 1u;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_publish_packet_encode(&publish, unchanged, sizeof(unchanged), &written),
         FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
-    check_size_eq(written, 0u);
+    check_equal(written, 0u);
     for (size_t i = 0u; i < sizeof(unchanged); ++i)
-      check_uint_eq(unchanged[i], 0xa5u);
+      check_equal(unchanged[i], 0xa5u);
 
     publish = (flowie_mqtt_publish_packet_t)FLOWIE_MQTT_PUBLISH_PACKET_INIT;
     publish.version = FLOWIE_MQTT_VERSION_5;
     publish.topic = span("a");
     publish.properties =
         (flowie_mqtt_span_t){invalid_publish_property, sizeof(invalid_publish_property)};
-    check_int_eq(
+    check_equal(
         flowie_mqtt_publish_packet_encode(&publish, unchanged, sizeof(unchanged), &written),
         FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
-    check_size_eq(written, 0u);
+    check_equal(written, 0u);
     for (size_t i = 0u; i < sizeof(unchanged); ++i)
-      check_uint_eq(unchanged[i], 0xa5u);
+      check_equal(unchanged[i], 0xa5u);
   }
 
   it("encodes and decodes bounded MQTT 3.1.1 server acknowledgements") {
@@ -595,33 +595,33 @@ spec("flowie mqtt protocol") {
     control.version = FLOWIE_MQTT_VERSION_3_1_1;
     control.type = FLOWIE_MQTT_PACKET_CONNACK;
     control.session_present = 1u;
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_connack));
-    check_mem_eq(encoded, expected_connack, sizeof(expected_connack));
+    check_equal(written, sizeof(expected_connack));
+    check_equal(encoded, expected_connack, sizeof(expected_connack));
 
     control = (flowie_mqtt_control_packet_t)FLOWIE_MQTT_CONTROL_PACKET_INIT;
     control.version = FLOWIE_MQTT_VERSION_3_1_1;
     control.type = FLOWIE_MQTT_PACKET_PUBACK;
     control.packet_id = 0x1234u;
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_mem_eq(encoded, expected_puback, sizeof(expected_puback));
+    check_equal(encoded, expected_puback, sizeof(expected_puback));
 
     control.type = FLOWIE_MQTT_PACKET_SUBACK;
     control.packet_id = 7u;
     control.reason_codes = (flowie_mqtt_span_t){suback_codes, sizeof(suback_codes)};
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_mem_eq(encoded, expected_suback, sizeof(expected_suback));
+    check_equal(encoded, expected_suback, sizeof(expected_suback));
     options.version = FLOWIE_MQTT_VERSION_3_1_1;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.type, FLOWIE_MQTT_PACKET_SUBACK);
-    check_uint_eq(decoded.packet_id, 7u);
-    check_size_eq(decoded.reason_codes.size, sizeof(suback_codes));
-    check_mem_eq(decoded.reason_codes.data, suback_codes, sizeof(suback_codes));
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.type, FLOWIE_MQTT_PACKET_SUBACK);
+    check_equal(decoded.packet_id, 7u);
+    check_equal(decoded.reason_codes.size, sizeof(suback_codes));
+    check_equal(decoded.reason_codes.data, suback_codes, sizeof(suback_codes));
   }
 
   it("encodes MQTT 5 acknowledgement properties and fails before overflowing output") {
@@ -643,32 +643,32 @@ spec("flowie mqtt protocol") {
     control.packet_id = 42u;
     control.reason_code = 0x10u;
     control.properties = (flowie_mqtt_span_t){properties, sizeof(properties)};
-    check_int_eq(
+    check_equal(
         flowie_mqtt_control_packet_encode(&control, unchanged, sizeof(expected) - 1u, &written),
         FLOWIE_MQTT_PARSE_TOO_LARGE);
-    check_size_eq(written, 0u);
+    check_equal(written, 0u);
     for (size_t i = 0u; i < sizeof(unchanged); ++i)
-      check_uint_eq(unchanged[i], 0xa5u);
+      check_equal(unchanged[i], 0xa5u);
 
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected));
-    check_mem_eq(encoded, expected, sizeof(expected));
+    check_equal(written, sizeof(expected));
+    check_equal(encoded, expected, sizeof(expected));
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.type, FLOWIE_MQTT_PACKET_PUBREC);
-    check_uint_eq(decoded.packet_id, 42u);
-    check_uint_eq(decoded.reason_code, 0x10u);
-    check_int_eq(flowie_mqtt_property_iterator_init(&decoded.properties, &iterator),
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.type, FLOWIE_MQTT_PACKET_PUBREC);
+    check_equal(decoded.packet_id, 42u);
+    check_equal(decoded.reason_code, 0x10u);
+    check_equal(flowie_mqtt_property_iterator_init(&decoded.properties, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(property.identifier, FLOWIE_MQTT_PROPERTY_REASON_STRING);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
+    check_equal(property.identifier, FLOWIE_MQTT_PROPERTY_REASON_STRING);
     check_span(property.value, "ok");
 
     control.packet_id = 0u;
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
@@ -679,18 +679,18 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_control_packet_view_t decoded = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(pubrel, sizeof(pubrel), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(pubrel, sizeof(pubrel), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.type, FLOWIE_MQTT_PACKET_PUBREL);
-    check_uint_eq(decoded.packet_id, 42u);
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.type, FLOWIE_MQTT_PACKET_PUBREL);
+    check_equal(decoded.packet_id, 42u);
     options.version = FLOWIE_MQTT_VERSION_3_1_1;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_control_packet_view_t)FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(invalid_puback, sizeof(invalid_puback), &options, &packet,
+    check_equal(flowie_mqtt_packet_parse(invalid_puback, sizeof(invalid_puback), &options, &packet,
                                           NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded),
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
@@ -705,25 +705,25 @@ spec("flowie mqtt protocol") {
     flowie_mqtt_topic_filter_iterator_t iterator = FLOWIE_MQTT_TOPIC_FILTER_ITERATOR_INIT;
     flowie_mqtt_span_t filter;
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(bytes, sizeof(bytes), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_unsubscribe_parse(&packet, &unsubscribe), FLOWIE_MQTT_PARSE_OK);
-    check_uint_eq(unsubscribe.packet_id, 7u);
-    check_size_eq(unsubscribe.filter_count, 2u);
-    check_int_eq(flowie_mqtt_topic_filter_iterator_init(&unsubscribe, &iterator),
+    check_equal(flowie_mqtt_unsubscribe_parse(&packet, &unsubscribe), FLOWIE_MQTT_PARSE_OK);
+    check_equal(unsubscribe.packet_id, 7u);
+    check_equal(unsubscribe.filter_count, 2u);
+    check_equal(flowie_mqtt_topic_filter_iterator_init(&unsubscribe, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter), FLOWIE_MQTT_PARSE_OK);
     check_span(filter, "a/+");
-    check_int_eq(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter), FLOWIE_MQTT_PARSE_OK);
     check_span(filter, "b/#");
-    check_int_eq(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter),
+    check_equal(flowie_mqtt_topic_filter_iterator_next(&iterator, &filter),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     unsubscribe = (flowie_mqtt_unsubscribe_view_t)FLOWIE_MQTT_UNSUBSCRIBE_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(empty, sizeof(empty), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(empty, sizeof(empty), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_unsubscribe_parse(&packet, &unsubscribe),
+    check_equal(flowie_mqtt_unsubscribe_parse(&packet, &unsubscribe),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
@@ -741,25 +741,25 @@ spec("flowie mqtt protocol") {
     control.type = FLOWIE_MQTT_PACKET_UNSUBACK;
     control.packet_id = 7u;
     control.reason_codes = (flowie_mqtt_span_t){reasons, sizeof(reasons)};
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v5));
-    check_mem_eq(encoded, expected_v5, sizeof(expected_v5));
+    check_equal(written, sizeof(expected_v5));
+    check_equal(encoded, expected_v5, sizeof(expected_v5));
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(decoded.reason_codes.size, sizeof(reasons));
-    check_mem_eq(decoded.reason_codes.data, reasons, sizeof(reasons));
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.reason_codes.size, sizeof(reasons));
+    check_equal(decoded.reason_codes.data, reasons, sizeof(reasons));
 
     control = (flowie_mqtt_control_packet_t)FLOWIE_MQTT_CONTROL_PACKET_INIT;
     control.version = FLOWIE_MQTT_VERSION_3_1_1;
     control.type = FLOWIE_MQTT_PACKET_UNSUBACK;
     control.packet_id = 7u;
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_v311));
-    check_mem_eq(encoded, expected_v311, sizeof(expected_v311));
+    check_equal(written, sizeof(expected_v311));
+    check_equal(encoded, expected_v311, sizeof(expected_v311));
   }
 
   it("encodes and decodes MQTT 5 DISCONNECT and AUTH reason properties") {
@@ -781,37 +781,37 @@ spec("flowie mqtt protocol") {
     control.type = FLOWIE_MQTT_PACKET_DISCONNECT;
     control.reason_code = 0x8eu;
     control.properties = (flowie_mqtt_span_t){reason_string, sizeof(reason_string)};
-    check_int_eq(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(written, sizeof(expected_disconnect));
-    check_mem_eq(encoded, expected_disconnect, sizeof(expected_disconnect));
+    check_equal(written, sizeof(expected_disconnect));
+    check_equal(encoded, expected_disconnect, sizeof(expected_disconnect));
     options.version = FLOWIE_MQTT_VERSION_5;
-    check_int_eq(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(encoded, written, &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_uint_eq(decoded.reason_code, 0x8eu);
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.reason_code, 0x8eu);
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_control_packet_view_t)FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
-    check_int_eq(flowie_mqtt_packet_parse(auth, sizeof(auth), &options, &packet, NULL, NULL),
+    check_equal(flowie_mqtt_packet_parse(auth, sizeof(auth), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.type, FLOWIE_MQTT_PACKET_AUTH);
-    check_uint_eq(decoded.reason_code, 0x18u);
-    check_int_eq(flowie_mqtt_property_iterator_init(&decoded.properties, &iterator),
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.type, FLOWIE_MQTT_PACKET_AUTH);
+    check_equal(decoded.reason_code, 0x18u);
+    check_equal(flowie_mqtt_property_iterator_init(&decoded.properties, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(property.identifier, FLOWIE_MQTT_PROPERTY_AUTHENTICATION_METHOD);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property), FLOWIE_MQTT_PARSE_OK);
+    check_equal(property.identifier, FLOWIE_MQTT_PROPERTY_AUTHENTICATION_METHOD);
     check_span(property.value, "scram");
 
     memcpy(invalid_auth, auth, sizeof(auth));
     invalid_auth[2] = 0x01u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     decoded = (flowie_mqtt_control_packet_view_t)FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
-    check_int_eq(
+    check_equal(
         flowie_mqtt_packet_parse(invalid_auth, sizeof(invalid_auth), &options, &packet, NULL, NULL),
         FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded),
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 }

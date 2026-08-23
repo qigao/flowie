@@ -23,7 +23,7 @@ suite("Flowie standalone core") {
     config.port = 1883;
     config.manage_sessions = 1;
     options.on_message = flowie_test_dispatch;
-    check_int_eq(flowie_endpoint_core_create("standalone", &config, &options, &endpoint),
+    check_equal(flowie_endpoint_core_create("standalone", &config, &options, &endpoint),
                  TURBO_OK);
     check_not_null(endpoint);
     flowie_endpoint_core_destroy(endpoint);
@@ -40,7 +40,7 @@ suite("Flowie standalone core") {
     route.owner_instance_id = 7u;
     route.session_id = 11u;
     route.session_generation = 13u;
-    check_int_eq(flowie_message_set_protocol_route(&message, &route), TURBO_OK);
+    check_equal(flowie_message_set_protocol_route(&message, &route), TURBO_OK);
     settlement.message.protocol = FLOWIE_PROTOCOL_MQTT;
     settlement.message.protocol_version = FLOWIE_MQTT_VERSION_5;
     settlement.message.kind = FLOWIE_PROTOCOL_MESSAGE_DATA;
@@ -48,11 +48,11 @@ suite("Flowie standalone core") {
     settlement.message.packet_id = 3u;
     settlement.message.session_generation = route.session_generation;
     settlement.requested_point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
-    check_int_eq(flowie_message_set_protocol_settlement(&message, &settlement), TURBO_OK);
-    check_int_eq(flowie_message_complete_protocol_settlement(
+    check_equal(flowie_message_set_protocol_settlement(&message, &settlement), TURBO_OK);
+    check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
                  TURBO_OK);
-    check_int_eq(flowie_message_complete_protocol_settlement(
+    check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
                  TURBO_EALREADY);
     flowie_message_cleanup(&message);

@@ -71,14 +71,14 @@ static void check_packet_result(const uint8_t *bytes, size_t byte_count,
   initialize_packet_sentinel(&packet);
   before = packet;
   rc = flowie_mqtt_packet_parse(bytes, byte_count, &options, &packet, &consumed, &error);
-  check_int_eq(rc, expected);
-  check_int_eq(error.code, expected);
+  check_equal(rc, expected);
+  check_equal(error.code, expected);
   if (expected == FLOWIE_MQTT_PARSE_OK) {
-    check_size_eq(consumed, packet.packet.size);
+    check_equal(consumed, packet.packet.size);
     check(packet.packet.data == bytes);
   } else {
-    check_size_eq(consumed, 0u);
-    check_mem_eq(&packet, &before, sizeof(packet));
+    check_equal(consumed, 0u);
+    check_equal(&packet, &before, sizeof(packet));
   }
 }
 
@@ -109,7 +109,7 @@ static size_t build_v5_connect(uint8_t *output, size_t capacity, const uint8_t *
   output[offset++] = 0x00u;
   output[offset++] = 0x01u;
   output[offset++] = 'c';
-  check_size_eq(offset, remaining + 2u);
+  check_equal(offset, remaining + 2u);
   return offset;
 }
 
@@ -130,7 +130,7 @@ static size_t build_v5_publish(uint8_t *output, size_t capacity, const uint8_t *
     memcpy(output + offset, properties, property_size);
     offset += property_size;
   }
-  check_size_eq(offset, remaining + 2u);
+  check_equal(offset, remaining + 2u);
   return offset;
 }
 
@@ -152,7 +152,7 @@ static size_t build_v5_publish_topic(uint8_t *output, size_t capacity, const uin
     offset += topic_size;
   }
   output[offset++] = 0x00u;
-  check_size_eq(offset, remaining + 2u);
+  check_equal(offset, remaining + 2u);
   return offset;
 }
 
@@ -180,7 +180,7 @@ static size_t build_connect_dialect(uint8_t *output, size_t capacity, const char
   output[offset++] = 0x00u;
   output[offset++] = 0x01u;
   output[offset++] = 'c';
-  check_size_eq(offset, remaining + 2u);
+  check_equal(offset, remaining + 2u);
   return offset;
 }
 
@@ -381,17 +381,17 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
   check_not_null(wire);
   check(wire->size <= sizeof(encoded));
   options.version = version;
-  check_int_eq(flowie_mqtt_packet_parse(wire->bytes, wire->size, &options, &packet, &consumed, NULL),
+  check_equal(flowie_mqtt_packet_parse(wire->bytes, wire->size, &options, &packet, &consumed, NULL),
                FLOWIE_MQTT_PARSE_OK);
-  check_size_eq(consumed, wire->size);
-  check_int_eq(packet.version, version);
+  check_equal(consumed, wire->size);
+  check_equal(packet.version, version);
 
   switch (packet.type) {
   case FLOWIE_MQTT_PACKET_CONNECT: {
     flowie_mqtt_connect_view_t decoded = FLOWIE_MQTT_CONNECT_VIEW_INIT;
     flowie_mqtt_connect_packet_t rebuilt = FLOWIE_MQTT_CONNECT_PACKET_INIT;
-    check_int_eq(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(decoded.version, version);
+    check_equal(flowie_mqtt_connect_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.version, version);
     rebuilt.version = decoded.version;
     rebuilt.clean_start = decoded.clean_start;
     rebuilt.has_will = decoded.will_topic.data != NULL;
@@ -413,7 +413,7 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
   case FLOWIE_MQTT_PACKET_PUBLISH: {
     flowie_mqtt_publish_view_t decoded = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
     flowie_mqtt_publish_packet_t rebuilt = FLOWIE_MQTT_PUBLISH_PACKET_INIT;
-    check_int_eq(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_publish_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     rebuilt.version = version;
     rebuilt.qos = decoded.qos;
     rebuilt.retain = decoded.retain;
@@ -430,13 +430,13 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
     flowie_mqtt_subscription_iterator_t iterator = FLOWIE_MQTT_SUBSCRIPTION_ITERATOR_INIT;
     flowie_mqtt_subscription_t entries[ROUND_TRIP_MAX_ENTRIES];
     flowie_mqtt_subscribe_packet_t rebuilt = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
-    check_int_eq(flowie_mqtt_subscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_subscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     check(decoded.entry_count <= ROUND_TRIP_MAX_ENTRIES);
     if (decoded.entry_count > ROUND_TRIP_MAX_ENTRIES) return;
-    check_int_eq(flowie_mqtt_subscription_iterator_init(&packet, &decoded, &iterator),
+    check_equal(flowie_mqtt_subscription_iterator_init(&packet, &decoded, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
     for (size_t i = 0u; i < decoded.entry_count; ++i)
-      check_int_eq(flowie_mqtt_subscription_iterator_next(&iterator, &entries[i]),
+      check_equal(flowie_mqtt_subscription_iterator_next(&iterator, &entries[i]),
                    FLOWIE_MQTT_PARSE_OK);
     rebuilt.version = version;
     rebuilt.packet_id = decoded.packet_id;
@@ -451,13 +451,13 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
     flowie_mqtt_topic_filter_iterator_t iterator = FLOWIE_MQTT_TOPIC_FILTER_ITERATOR_INIT;
     flowie_mqtt_span_t filters[ROUND_TRIP_MAX_ENTRIES];
     flowie_mqtt_unsubscribe_packet_t rebuilt = FLOWIE_MQTT_UNSUBSCRIBE_PACKET_INIT;
-    check_int_eq(flowie_mqtt_unsubscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_unsubscribe_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     check(decoded.filter_count <= ROUND_TRIP_MAX_ENTRIES);
     if (decoded.filter_count > ROUND_TRIP_MAX_ENTRIES) return;
-    check_int_eq(flowie_mqtt_topic_filter_iterator_init(&decoded, &iterator),
+    check_equal(flowie_mqtt_topic_filter_iterator_init(&decoded, &iterator),
                  FLOWIE_MQTT_PARSE_OK);
     for (size_t i = 0u; i < decoded.filter_count; ++i)
-      check_int_eq(flowie_mqtt_topic_filter_iterator_next(&iterator, &filters[i]),
+      check_equal(flowie_mqtt_topic_filter_iterator_next(&iterator, &filters[i]),
                    FLOWIE_MQTT_PARSE_OK);
     rebuilt.version = version;
     rebuilt.packet_id = decoded.packet_id;
@@ -473,7 +473,7 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
   default: {
     flowie_mqtt_control_packet_view_t decoded = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
     flowie_mqtt_control_packet_t rebuilt = FLOWIE_MQTT_CONTROL_PACKET_INIT;
-    check_int_eq(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
     rebuilt.version = decoded.version;
     rebuilt.type = decoded.type;
     rebuilt.session_present = decoded.session_present;
@@ -486,9 +486,9 @@ static void check_canonical_round_trip_pass(const round_trip_wire_t *wire,
   }
   }
 
-  check_int_eq(rc, FLOWIE_MQTT_PARSE_OK);
-  check_size_eq(written, wire->size);
-  check_mem_eq(encoded, wire->bytes, wire->size);
+  check_equal(rc, FLOWIE_MQTT_PARSE_OK);
+  check_equal(written, wire->size);
+  check_equal(encoded, wire->bytes, wire->size);
   if (remaining_passes > 1u) {
     const round_trip_wire_t canonical = {encoded, written};
     check_canonical_round_trip_pass(&canonical, version, remaining_passes - 1u);
@@ -535,22 +535,22 @@ spec("flowie mqtt protocol legality matrix") {
     size_t consumed = SIZE_MAX;
     memset(property_127, 0u, sizeof(property_127));
     property_127[0] = 0x7fu;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){property_127, sizeof(property_127)}, &block, &consumed),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, sizeof(property_127));
-    check_size_eq(block.values.size, 127u);
+    check_equal(consumed, sizeof(property_127));
+    check_equal(block.values.size, 127u);
 
     memset(property_128, 0u, sizeof(property_128));
     property_128[0] = 0x80u;
     property_128[1] = 0x01u;
     block = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){property_128, sizeof(property_128)}, &block, &consumed),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, sizeof(property_128));
-    check_size_eq(block.values.size, 128u);
+    check_equal(consumed, sizeof(property_128));
+    check_equal(block.values.size, 128u);
 
     check_packet_result(incomplete, sizeof(incomplete), FLOWIE_MQTT_VERSION_5,
                         FLOWIE_MQTT_PARSE_NEED_MORE);
@@ -569,50 +569,50 @@ spec("flowie mqtt protocol legality matrix") {
     flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     size_t consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_0, sizeof(remaining_0), &options, &packet,
+    check_equal(flowie_mqtt_packet_parse(remaining_0, sizeof(remaining_0), &options, &packet,
                                           &consumed, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, sizeof(remaining_0));
+    check_equal(consumed, sizeof(remaining_0));
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_1, sizeof(remaining_1), &options, &packet,
+    check_equal(flowie_mqtt_packet_parse(remaining_1, sizeof(remaining_1), &options, &packet,
                                           &consumed, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, sizeof(remaining_1));
+    check_equal(consumed, sizeof(remaining_1));
 
     options.max_packet_size = sizeof(remaining_127_header) + 127u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_127_header, sizeof(remaining_127_header),
+    check_equal(flowie_mqtt_packet_parse(remaining_127_header, sizeof(remaining_127_header),
                                           &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
-    check_size_eq(consumed, 0u);
+    check_equal(consumed, 0u);
     --options.max_packet_size;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_127_header, sizeof(remaining_127_header),
+    check_equal(flowie_mqtt_packet_parse(remaining_127_header, sizeof(remaining_127_header),
                                           &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_TOO_LARGE);
 
     options.max_packet_size = sizeof(remaining_128_header) + 128u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_128_header, sizeof(remaining_128_header),
+    check_equal(flowie_mqtt_packet_parse(remaining_128_header, sizeof(remaining_128_header),
                                           &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
-    check_size_eq(consumed, 0u);
+    check_equal(consumed, 0u);
     --options.max_packet_size;
-    check_int_eq(flowie_mqtt_packet_parse(remaining_128_header, sizeof(remaining_128_header),
+    check_equal(flowie_mqtt_packet_parse(remaining_128_header, sizeof(remaining_128_header),
                                           &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_TOO_LARGE);
 
     options.max_packet_size = FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(maximum_header, sizeof(maximum_header), &options, &packet,
+    check_equal(flowie_mqtt_packet_parse(maximum_header, sizeof(maximum_header), &options, &packet,
                                           &consumed, NULL),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
-    check_size_eq(consumed, 0u);
+    check_equal(consumed, 0u);
     options.max_packet_size = FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE + 1u;
-    check_int_eq(flowie_mqtt_packet_parse(maximum_header, sizeof(maximum_header), &options, &packet,
+    check_equal(flowie_mqtt_packet_parse(maximum_header, sizeof(maximum_header), &options, &packet,
                                           &consumed, NULL),
                  FLOWIE_MQTT_PARSE_INVALID_ARGUMENT);
   }
@@ -637,11 +637,11 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
       const size_t size = build_connect_dialect(bytes, sizeof(bytes), cases[i].name,
                                                 cases[i].name_size, cases[i].level);
-      check_int_eq(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
+      check_equal(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
                    FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_connect_parse(&packet, &connect), cases[i].expected);
+      check_equal(flowie_mqtt_connect_parse(&packet, &connect), cases[i].expected);
       if (cases[i].expected == FLOWIE_MQTT_PARSE_OK)
-        check_int_eq(connect.version, cases[i].level);
+        check_equal(connect.version, cases[i].level);
     }
   }
 
@@ -727,17 +727,17 @@ spec("flowie mqtt protocol legality matrix") {
     for (size_t prefix = 1u; prefix < sizeof(complete); ++prefix) {
       packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
       consumed = SIZE_MAX;
-      check_int_eq(flowie_mqtt_packet_parse(complete, prefix, &options, &packet, &consumed, NULL),
+      check_equal(flowie_mqtt_packet_parse(complete, prefix, &options, &packet, &consumed, NULL),
                    FLOWIE_MQTT_PARSE_NEED_MORE);
-      check_size_eq(consumed, 0u);
+      check_equal(consumed, 0u);
     }
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(sticky, sizeof(sticky), &options, &packet, &consumed,
+    check_equal(flowie_mqtt_packet_parse(sticky, sizeof(sticky), &options, &packet, &consumed,
                                           NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, sizeof(complete));
-    check_size_eq(packet.packet.size, sizeof(complete));
+    check_equal(consumed, sizeof(complete));
+    check_equal(packet.packet.size, sizeof(complete));
     check(packet.packet.data == sticky);
   }
 
@@ -756,7 +756,7 @@ spec("flowie mqtt protocol legality matrix") {
     publish.version = FLOWIE_MQTT_VERSION_5;
     publish.topic = literal_span("fragment/boundary");
     publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload)};
-    check_int_eq(flowie_mqtt_publish_packet_encode(&publish, wire, sizeof(wire), &written),
+    check_equal(flowie_mqtt_publish_packet_encode(&publish, wire, sizeof(wire), &written),
                  FLOWIE_MQTT_PARSE_OK);
     check(written > 128u);
     options.version = FLOWIE_MQTT_VERSION_5;
@@ -765,26 +765,26 @@ spec("flowie mqtt protocol legality matrix") {
       packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
       consumed = SIZE_MAX;
       check(fixed_boundaries[i] < written);
-      check_int_eq(flowie_mqtt_packet_parse(wire, fixed_boundaries[i], &options, &packet,
+      check_equal(flowie_mqtt_packet_parse(wire, fixed_boundaries[i], &options, &packet,
                                             &consumed, NULL),
                    FLOWIE_MQTT_PARSE_NEED_MORE);
-      check_size_eq(consumed, 0u);
+      check_equal(consumed, 0u);
     }
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(wire, written - 1u, &options, &packet, &consumed, NULL),
+    check_equal(flowie_mqtt_packet_parse(wire, written - 1u, &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_NEED_MORE);
-    check_size_eq(consumed, 0u);
-    check_int_eq(flowie_mqtt_packet_parse(wire, written, &options, &packet, &consumed, NULL),
+    check_equal(consumed, 0u);
+    check_equal(flowie_mqtt_packet_parse(wire, written, &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, written);
+    check_equal(consumed, written);
 
     options.max_packet_size = written - 1u;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(wire, written, &options, &packet, &consumed, NULL),
+    check_equal(flowie_mqtt_packet_parse(wire, written, &options, &packet, &consumed, NULL),
                  FLOWIE_MQTT_PARSE_TOO_LARGE);
-    check_size_eq(consumed, 0u);
+    check_equal(consumed, 0u);
 
     memcpy(sticky, wire, written);
     sticky[written] = 0xc0u;
@@ -792,10 +792,10 @@ spec("flowie mqtt protocol legality matrix") {
     options.max_packet_size = written;
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     consumed = SIZE_MAX;
-    check_int_eq(flowie_mqtt_packet_parse(sticky, written + 2u, &options, &packet, &consumed,
+    check_equal(flowie_mqtt_packet_parse(sticky, written + 2u, &options, &packet, &consumed,
                                           NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_size_eq(consumed, written);
+    check_equal(consumed, written);
     check(packet.packet.data == sticky);
   }
 
@@ -807,42 +807,42 @@ spec("flowie mqtt protocol legality matrix") {
     flowie_mqtt_property_block_view_t block = FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     flowie_mqtt_property_iterator_t iterator = FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
     flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){unknown, sizeof(unknown)}, &block, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+    check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
 
     block = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     iterator = (flowie_mqtt_property_iterator_t)FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
     property = (flowie_mqtt_property_view_t)FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){truncated_utf8, sizeof(truncated_utf8)}, &block, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+    check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
 
     block = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     iterator = (flowie_mqtt_property_iterator_t)FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
     property = (flowie_mqtt_property_view_t)FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){truncated_value, sizeof(truncated_value)}, &block, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+    check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                  FLOWIE_MQTT_PARSE_MALFORMED);
 
     block = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     iterator = (flowie_mqtt_property_iterator_t)FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
     property = (flowie_mqtt_property_view_t)FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-    check_int_eq(flowie_mqtt_property_block_parse(
+    check_equal(flowie_mqtt_property_block_parse(
                      (flowie_mqtt_span_t){truncated_binary, sizeof(truncated_binary)}, &block,
                      NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+    check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                  FLOWIE_MQTT_PARSE_MALFORMED);
   }
 
@@ -973,7 +973,7 @@ spec("flowie mqtt protocol legality matrix") {
             (properties[property_index].allowed_contexts & PROPERTY_CONTEXT_BIT(context)) != 0u;
         size_t written = SIZE_MAX;
         memset(output, 0xa5, sizeof(output));
-        check_int_eq(encode_property_context(context, properties[property_index].values,
+        check_equal(encode_property_context(context, properties[property_index].values,
                                              properties[property_index].value_size, output,
                                              sizeof(output), &written),
                      allowed ? FLOWIE_MQTT_PARSE_OK : FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
@@ -984,22 +984,22 @@ spec("flowie mqtt protocol legality matrix") {
               (identifier == FLOWIE_MQTT_PROPERTY_SUBSCRIPTION_IDENTIFIER &&
                context == PROPERTY_CONTEXT_PUBLISH);
           check(written > 0u);
-          check_int_eq(parse_property_context(context, output, written), FLOWIE_MQTT_PARSE_OK);
+          check_equal(parse_property_context(context, output, written), FLOWIE_MQTT_PARSE_OK);
           check(properties[property_index].value_size * 2u <= sizeof(repeated));
           memcpy(repeated, properties[property_index].values, properties[property_index].value_size);
           memcpy(repeated + properties[property_index].value_size,
                  properties[property_index].values, properties[property_index].value_size);
-          check_int_eq(encode_property_context(context, repeated,
+          check_equal(encode_property_context(context, repeated,
                                                properties[property_index].value_size * 2u, output,
                                                sizeof(output), &written),
                        repeatable ? FLOWIE_MQTT_PARSE_OK : FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
           if (repeatable)
-            check_int_eq(parse_property_context(context, output, written), FLOWIE_MQTT_PARSE_OK);
+            check_equal(parse_property_context(context, output, written), FLOWIE_MQTT_PARSE_OK);
           else
-            check_size_eq(written, 0u);
+            check_equal(written, 0u);
         } else {
-          check_size_eq(written, 0u);
-          for (size_t i = 0u; i < sizeof(output); ++i) check_uint_eq(output[i], 0xa5u);
+          check_equal(written, 0u);
+          for (size_t i = 0u; i < sizeof(output); ++i) check_equal(output[i], 0xa5u);
         }
       }
     }
@@ -1010,12 +1010,12 @@ spec("flowie mqtt protocol legality matrix") {
            i < sizeof(authentication_contexts) / sizeof(authentication_contexts[0]); ++i) {
         size_t written = SIZE_MAX;
         memset(output, 0xa5, sizeof(output));
-        check_int_eq(encode_property_context(authentication_contexts[i],
+        check_equal(encode_property_context(authentication_contexts[i],
                                              duplicate_authentication_data,
                                              sizeof(duplicate_authentication_data), output,
                                              sizeof(output), &written),
                      FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
-        check_size_eq(written, 0u);
+        check_equal(written, 0u);
       }
     }
   }
@@ -1028,17 +1028,17 @@ spec("flowie mqtt protocol legality matrix") {
     size_t written = SIZE_MAX;
     memcpy(repeated, user_property, sizeof(user_property));
     memcpy(repeated + sizeof(user_property), user_property, sizeof(user_property));
-    check_int_eq(encode_property_context(PROPERTY_CONTEXT_PUBLISH, repeated,
+    check_equal(encode_property_context(PROPERTY_CONTEXT_PUBLISH, repeated,
                                          sizeof(user_property) * 2u, output, sizeof(output),
                                          &written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(parse_property_context(PROPERTY_CONTEXT_PUBLISH, output, written),
+    check_equal(parse_property_context(PROPERTY_CONTEXT_PUBLISH, output, written),
                  FLOWIE_MQTT_PARSE_OK);
-    check_int_eq(encode_property_context(PROPERTY_CONTEXT_PUBLISH, repeated,
+    check_equal(encode_property_context(PROPERTY_CONTEXT_PUBLISH, repeated,
                                          sizeof(user_property) * 2u, output, written - 1u,
                                          &written),
                  FLOWIE_MQTT_PARSE_TOO_LARGE);
-    check_size_eq(written, 0u);
+    check_equal(written, 0u);
   }
 
   it("MQTT-PROTO-006 rejects invalid UTF-8 in every string property type") {
@@ -1056,11 +1056,11 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_property_iterator_t iterator = FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
       flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
       encoded[1] = string_properties[i];
-      check_int_eq(flowie_mqtt_property_block_parse(
+      check_equal(flowie_mqtt_property_block_parse(
                        (flowie_mqtt_span_t){encoded, sizeof(encoded)}, &block, NULL),
                    FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+      check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+      check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                    FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     }
 
@@ -1070,12 +1070,12 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_property_block_view_t block = FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
       flowie_mqtt_property_iterator_t iterator = FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
       flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
-      check_int_eq(flowie_mqtt_property_block_parse(
+      check_equal(flowie_mqtt_property_block_parse(
                        (flowie_mqtt_span_t){invalid_user_property, sizeof(invalid_user_property)},
                        &block, NULL),
                    FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_property_iterator_next(&iterator, &property),
+      check_equal(flowie_mqtt_property_iterator_init(&block, &iterator), FLOWIE_MQTT_PARSE_OK);
+      check_equal(flowie_mqtt_property_iterator_next(&iterator, &property),
                    FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
     }
   }
@@ -1107,23 +1107,23 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_publish_view_t before;
       const size_t wire_size =
           build_v5_publish_topic(wire, sizeof(wire), invalid[i].bytes, invalid[i].size);
-      check_int_eq(flowie_mqtt_packet_parse(wire, wire_size, &options, &packet, NULL, NULL),
+      check_equal(flowie_mqtt_packet_parse(wire, wire_size, &options, &packet, NULL, NULL),
                    FLOWIE_MQTT_PARSE_OK);
       memset(&publish, 0xa5, sizeof(publish));
       publish.size = sizeof(publish);
       publish.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
       before = publish;
-      check_int_eq(flowie_mqtt_publish_parse(&packet, &publish),
+      check_equal(flowie_mqtt_publish_parse(&packet, &publish),
                    FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
-      check_mem_eq(&publish, &before, sizeof(publish));
+      check_equal(&publish, &before, sizeof(publish));
     }
     {
       flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
       flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
-      check_int_eq(flowie_mqtt_packet_parse(truncated_span, sizeof(truncated_span), &options,
+      check_equal(flowie_mqtt_packet_parse(truncated_span, sizeof(truncated_span), &options,
                                             &packet, NULL, NULL),
                    FLOWIE_MQTT_PARSE_OK);
-      check_int_eq(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_MALFORMED);
+      check_equal(flowie_mqtt_publish_parse(&packet, &publish), FLOWIE_MQTT_PARSE_MALFORMED);
     }
     memset(utf8_boundary, 'a', sizeof(utf8_boundary));
     check_true(flowie_mqtt_topic_name_validate(
@@ -1163,15 +1163,15 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_connect_view_t connect;
       flowie_mqtt_connect_view_t before;
       size_t size = build_v5_connect(bytes, sizeof(bytes), cases[i].values, cases[i].value_size);
-      check_int_eq(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
+      check_equal(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
                    FLOWIE_MQTT_PARSE_OK);
       memset(&connect, 0xa5, sizeof(connect));
       connect.size = sizeof(connect);
       connect.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
       before = connect;
-      check_int_eq(flowie_mqtt_connect_parse(&packet, &connect), cases[i].expected);
+      check_equal(flowie_mqtt_connect_parse(&packet, &connect), cases[i].expected);
       if (cases[i].expected != FLOWIE_MQTT_PARSE_OK)
-        check_mem_eq(&connect, &before, sizeof(connect));
+        check_equal(&connect, &before, sizeof(connect));
     }
   }
 
@@ -1203,15 +1203,15 @@ spec("flowie mqtt protocol legality matrix") {
       flowie_mqtt_publish_view_t publish;
       flowie_mqtt_publish_view_t before;
       size_t size = build_v5_publish(bytes, sizeof(bytes), cases[i].values, cases[i].value_size);
-      check_int_eq(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
+      check_equal(flowie_mqtt_packet_parse(bytes, size, &options, &packet, NULL, NULL),
                    FLOWIE_MQTT_PARSE_OK);
       memset(&publish, 0xa5, sizeof(publish));
       publish.size = sizeof(publish);
       publish.abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1;
       before = publish;
-      check_int_eq(flowie_mqtt_publish_parse(&packet, &publish), cases[i].expected);
+      check_equal(flowie_mqtt_publish_parse(&packet, &publish), cases[i].expected);
       if (cases[i].expected != FLOWIE_MQTT_PARSE_OK)
-        check_mem_eq(&publish, &before, sizeof(publish));
+        check_equal(&publish, &before, sizeof(publish));
     }
   }
 
@@ -1244,13 +1244,13 @@ spec("flowie mqtt protocol legality matrix") {
           control.packet_id = 1u;
           control.reason_code = reason;
         }
-        check_int_eq(flowie_mqtt_control_packet_encode(&control, output, sizeof(output), &written),
+        check_equal(flowie_mqtt_control_packet_encode(&control, output, sizeof(output), &written),
                      valid ? FLOWIE_MQTT_PARSE_OK : FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
         if (valid) {
           check(written > 0u);
         } else {
-          check_size_eq(written, 0u);
-          for (size_t i = 0u; i < sizeof(output); ++i) check_uint_eq(output[i], 0xa5u);
+          check_equal(written, 0u);
+          for (size_t i = 0u; i < sizeof(output); ++i) check_equal(output[i], 0xa5u);
         }
       }
     }

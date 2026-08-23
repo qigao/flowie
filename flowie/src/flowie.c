@@ -96,7 +96,7 @@ int flowie_security_principal_validate(const flowie_security_principal_t *princi
 
 int flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_context_t *out,
                                                 flowie_mqtt_security_resource_kind_t kind,
-                                                tstr_t parser_validated_resource) {
+                                                tstr parser_validated_resource) {
   flowie_mqtt_validated_security_context_t initialized =
       FLOWIE_MQTT_VALIDATED_SECURITY_CONTEXT_INIT;
   if (!out || (kind != FLOWIE_MQTT_SECURITY_TOPIC && kind != FLOWIE_MQTT_SECURITY_TOPIC_FILTER) ||
@@ -313,7 +313,7 @@ static int flowie_mqtt_security_evaluate_leaf(void *ctx, const void *compiled_le
   (void)ctx;
   if (!compiled || !request || request->size < sizeof(*request) || !emit || !request->resource)
     return TURBO_EINVAL;
-  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return TURBO_EPROTO;
+  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return TURBO_OK;
   rc = flowie_mqtt_security_resource(request, &resource, &kind, &validated, &security_context);
   if (rc != TURBO_OK) return rc;
   emit_context = (flowie_mqtt_security_emit_context_t){compiled, security_context, resource, emit,

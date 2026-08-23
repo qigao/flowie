@@ -1,6 +1,7 @@
 #ifndef FLOWIE_MQTT_PROTOCOL_H
 #define FLOWIE_MQTT_PROTOCOL_H
 
+#include "flowie_protocol_export.h"
 #include "platform.h"
 #include "flowie_mqtt_types.h"
 
@@ -70,22 +71,22 @@ typedef struct flowie_mqtt_parse_error_s {
  * Parse exactly the first MQTT packet from bytes. Trailing bytes are allowed
  * and reported through consumed. Output is modified only on success.
  */
-CXX_C_API int flowie_mqtt_packet_parse(const uint8_t *bytes, size_t byte_count,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_packet_parse(const uint8_t *bytes, size_t byte_count,
                                        const flowie_mqtt_parse_options_t *options,
                                        flowie_mqtt_packet_view_t *out, size_t *consumed,
                                        flowie_mqtt_parse_error_t *error);
 
 /** Validate MQTT UTF-8 rules without requiring a trailing NUL. */
-CXX_C_API int flowie_mqtt_utf8_validate(flowie_mqtt_span_t value);
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_utf8_validate(flowie_mqtt_span_t value);
 
 /** Validate a Topic Name (wildcards are forbidden). */
-CXX_C_API int flowie_mqtt_topic_name_validate(flowie_mqtt_span_t topic);
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_topic_name_validate(flowie_mqtt_span_t topic);
 
 /** Validate a normal or MQTT 5 shared Topic Filter. */
-CXX_C_API int flowie_mqtt_topic_filter_validate(flowie_mqtt_span_t filter);
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_topic_filter_validate(flowie_mqtt_span_t filter);
 
 /** Validate and match a Topic Name against a normal or shared Topic Filter. */
-CXX_C_API int flowie_mqtt_topic_matches(flowie_mqtt_span_t filter, flowie_mqtt_span_t topic,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_topic_matches(flowie_mqtt_span_t filter, flowie_mqtt_span_t topic,
                                         int *matched_out);
 
 typedef enum flowie_mqtt_acl_effect_e {
@@ -130,7 +131,7 @@ typedef enum flowie_mqtt_acl_parse_result_e {
  * Parse `action:permission:role:scope:username:client_id:topic_filter`.
  * The result borrows the line buffer and performs no allocation or I/O.
  */
-CXX_C_API int flowie_mqtt_acl_parse_line(const char *line, size_t line_size,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_acl_parse_line(const char *line, size_t line_size,
                                          flowie_mqtt_acl_rule_view_t *out);
 
 typedef enum flowie_mqtt_property_id_e {
@@ -196,13 +197,13 @@ typedef struct flowie_mqtt_property_iterator_s {
 #define FLOWIE_MQTT_PROPERTY_ITERATOR_INIT                                                         \
   {sizeof(flowie_mqtt_property_iterator_t), FLOWIE_MQTT_PROTOCOL_ABI_V1, NULL, NULL}
 
-CXX_C_API int flowie_mqtt_property_block_parse(flowie_mqtt_span_t bytes,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_property_block_parse(flowie_mqtt_span_t bytes,
                                                flowie_mqtt_property_block_view_t *out,
                                                size_t *consumed);
-CXX_C_API int flowie_mqtt_property_iterator_init(const flowie_mqtt_property_block_view_t *block,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_property_iterator_init(const flowie_mqtt_property_block_view_t *block,
                                                  flowie_mqtt_property_iterator_t *iterator);
 /** Return OK for one property and NEED_MORE when the iterator is exhausted. */
-CXX_C_API int flowie_mqtt_property_iterator_next(flowie_mqtt_property_iterator_t *iterator,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_property_iterator_next(flowie_mqtt_property_iterator_t *iterator,
                                                  flowie_mqtt_property_view_t *out);
 
 typedef struct flowie_mqtt_connect_view_s {
@@ -271,44 +272,44 @@ typedef struct flowie_mqtt_topic_filter_iterator_s {
 #define FLOWIE_MQTT_TOPIC_FILTER_ITERATOR_INIT                                                     \
   {sizeof(flowie_mqtt_topic_filter_iterator_t), FLOWIE_MQTT_PROTOCOL_ABI_V1, NULL, NULL}
 
-CXX_C_API int flowie_mqtt_connect_parse(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_connect_parse(const flowie_mqtt_packet_view_t *packet,
                                         flowie_mqtt_connect_view_t *out);
-CXX_C_API int flowie_mqtt_publish_parse(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_publish_parse(const flowie_mqtt_packet_view_t *packet,
                                         flowie_mqtt_publish_view_t *out);
-CXX_C_API int flowie_mqtt_subscribe_parse(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_subscribe_parse(const flowie_mqtt_packet_view_t *packet,
                                           flowie_mqtt_subscribe_view_t *out);
-CXX_C_API int flowie_mqtt_subscription_iterator_init(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_subscription_iterator_init(const flowie_mqtt_packet_view_t *packet,
                                                      const flowie_mqtt_subscribe_view_t *subscribe,
                                                      flowie_mqtt_subscription_iterator_t *iterator);
 /** Return OK for one entry and NEED_MORE when the iterator is exhausted. */
-CXX_C_API int flowie_mqtt_subscription_iterator_next(flowie_mqtt_subscription_iterator_t *iterator,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_subscription_iterator_next(flowie_mqtt_subscription_iterator_t *iterator,
                                                      flowie_mqtt_subscription_view_t *out);
-CXX_C_API int flowie_mqtt_unsubscribe_parse(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_unsubscribe_parse(const flowie_mqtt_packet_view_t *packet,
                                             flowie_mqtt_unsubscribe_view_t *out);
-CXX_C_API int
+FLOWIE_PROTOCOL_C_API int
 flowie_mqtt_topic_filter_iterator_init(const flowie_mqtt_unsubscribe_view_t *unsubscribe,
                                        flowie_mqtt_topic_filter_iterator_t *iterator);
 /** Return OK for one Topic Filter and NEED_MORE when the iterator is exhausted. */
-CXX_C_API int flowie_mqtt_topic_filter_iterator_next(flowie_mqtt_topic_filter_iterator_t *iterator,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_topic_filter_iterator_next(flowie_mqtt_topic_filter_iterator_t *iterator,
                                                      flowie_mqtt_span_t *out);
 
 /**
  * Bounded client encoders. Output is modified only on success. `written` is
  * reset to zero before validation and receives the complete wire packet size.
  */
-CXX_C_API int flowie_mqtt_connect_packet_encode(const flowie_mqtt_connect_packet_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_connect_packet_encode(const flowie_mqtt_connect_packet_t *packet,
                                                 uint8_t *output, size_t output_capacity,
                                                 size_t *written);
-CXX_C_API int flowie_mqtt_publish_packet_encode(const flowie_mqtt_publish_packet_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_publish_packet_encode(const flowie_mqtt_publish_packet_t *packet,
                                                 uint8_t *output, size_t output_capacity,
                                                 size_t *written);
-CXX_C_API int flowie_mqtt_subscribe_packet_encode(const flowie_mqtt_subscribe_packet_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_subscribe_packet_encode(const flowie_mqtt_subscribe_packet_t *packet,
                                                   uint8_t *output, size_t output_capacity,
                                                   size_t *written);
-CXX_C_API int flowie_mqtt_unsubscribe_packet_encode(const flowie_mqtt_unsubscribe_packet_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_unsubscribe_packet_encode(const flowie_mqtt_unsubscribe_packet_t *packet,
                                                     uint8_t *output, size_t output_capacity,
                                                     size_t *written);
-CXX_C_API int flowie_mqtt_pingreq_encode(flowie_mqtt_version_t version, uint8_t *output,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_pingreq_encode(flowie_mqtt_version_t version, uint8_t *output,
                                          size_t output_capacity, size_t *written);
 
 /**
@@ -336,12 +337,12 @@ typedef struct flowie_mqtt_control_packet_s {
  * SUBACK, UNSUBACK, PINGRESP, DISCONNECT, and AUTH. Output is
  * modified only on success.
  */
-CXX_C_API int flowie_mqtt_control_packet_encode(const flowie_mqtt_control_packet_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_control_packet_encode(const flowie_mqtt_control_packet_t *packet,
                                                 uint8_t *output, size_t output_capacity,
                                                 size_t *written);
 
 /** Decode every packet supported by flowie_mqtt_control_packet_encode(). */
-CXX_C_API int flowie_mqtt_control_packet_parse(const flowie_mqtt_packet_view_t *packet,
+FLOWIE_PROTOCOL_C_API int flowie_mqtt_control_packet_parse(const flowie_mqtt_packet_view_t *packet,
                                                flowie_mqtt_control_packet_view_t *out);
 
 #ifdef __cplusplus

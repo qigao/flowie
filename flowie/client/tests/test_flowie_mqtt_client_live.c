@@ -389,8 +389,8 @@ static void flowie_mqtt_live_check(const flowie_mqtt_live_case_t *test_case) {
   int rc = flowie_mqtt_live_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d stage=%s", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version, state.stage ? state.stage : "create");
-  check_int_eq(rc, TURBO_OK);
-  check_uint_eq(state.received_mask, FLOWIE_MQTT_LIVE_RECEIVED_ALL);
+  check_equal(rc, TURBO_OK);
+  check_equal(state.received_mask, FLOWIE_MQTT_LIVE_RECEIVED_ALL);
 }
 
 static int flowie_mqtt_live_property_append(uint8_t identifier, const char *value, uint8_t *output,
@@ -688,7 +688,7 @@ static void flowie_mqtt_live_reqrep_check(const flowie_mqtt_live_case_t *test_ca
   int rc = flowie_mqtt_live_reqrep_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version);
-  check_int_eq(rc, TURBO_OK);
+  check_equal(rc, TURBO_OK);
   check_true(state.request_received);
   check_true(state.response_received);
 }
@@ -882,9 +882,9 @@ static void flowie_mqtt_live_alias_check(const flowie_mqtt_live_case_t *test_cas
   int rc = flowie_mqtt_live_alias_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version);
-  check_int_eq(rc, TURBO_OK);
-  check_uint_eq(state.received_count, 2u);
-  check_uint_eq(state.publish_completions, 2u);
+  check_equal(rc, TURBO_OK);
+  check_equal(state.received_count, 2u);
+  check_equal(state.publish_completions, 2u);
 }
 
 #if defined(FLOWIE_MQTT_FIXED_INTEROP)
@@ -1476,21 +1476,21 @@ spec("Flowie MQTT fixed-version broker interoperability") {
   }
 
   it("MQTT-INTEROP-003 receives and clears retained state through the fixed broker") {
-    check_int_eq(flowie_mqtt_fixed_retained_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
+    check_equal(flowie_mqtt_fixed_retained_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
   }
 
   it("MQTT-INTEROP-003 resumes a fixed-broker session and replays its offline QoS1 message") {
-    check_int_eq(flowie_mqtt_fixed_offline_replay_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
+    check_equal(flowie_mqtt_fixed_offline_replay_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
   }
 
   it("MQTT-INTEROP-003 suppresses a fixed-broker offline message after its expiry interval") {
     int rc = flowie_mqtt_fixed_message_expiry_run(&FLOWIE_MQTT_FIXED_TCP_5);
     if (rc == TURBO_ETIMEDOUT) rc = flowie_mqtt_fixed_message_expiry_run(&FLOWIE_MQTT_FIXED_TCP_5);
-    check_int_eq(rc, TURBO_OK);
+    check_equal(rc, TURBO_OK);
   }
 
   it("MQTT-INTEROP-003 receives a fixed-broker Will after an ungraceful Flowie close") {
-    check_int_eq(flowie_mqtt_fixed_will_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
+    check_equal(flowie_mqtt_fixed_will_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
   }
 
 #if FLOWIE_MQTT_FIXED_SUPPORT_31

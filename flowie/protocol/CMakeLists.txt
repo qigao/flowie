@@ -10,6 +10,7 @@ if(MSVC)
 endif()
 
 set(FLOWIE_PROTOCOL_HEADERS
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_protocol_export.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_mqtt_protocol.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_mqtt_types.h)
 
@@ -30,7 +31,7 @@ cmake_config_target(
   FOLDER "flowie/protocol"
   EXPORT_NAME Protocol)
 
-target_compile_definitions(${TARGET_NAME} PRIVATE SHARED_CXX)
+target_compile_definitions(${TARGET_NAME} PRIVATE FLOWIE_PROTOCOL_BUILD)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

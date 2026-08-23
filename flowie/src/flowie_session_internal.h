@@ -3,6 +3,7 @@
 
 #include "flowie.h"
 #include "flowie_protocol_contract.h"
+#include "flowie_protocol_repository.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -142,7 +143,7 @@ typedef struct flowie_session_ack_intent_s {
    0u, 0u}
 
 /** Convert a committed session ACK intent into a pure protocol encoder command. */
-CXX_C_API int flowie_session_ack_control_packet(const flowie_session_ack_intent_t *ack,
+FLOWIE_C_API int flowie_session_ack_control_packet(const flowie_session_ack_intent_t *ack,
                                                 flowie_mqtt_version_t version,
                                                 flowie_mqtt_control_packet_t *out);
 
@@ -163,19 +164,29 @@ typedef struct flowie_session_publish_begin_result_s {
    FLOWIE_PUBLISH_MESSAGE_VIEW_INIT,                                                               \
    FLOWIE_SESSION_ACK_INTENT_INIT}
 
-CXX_C_API flowie_session_owner_t *
+FLOWIE_C_API flowie_session_owner_t *
 flowie_session_owner_create(const flowie_session_config_t *config);
-CXX_C_API flowie_session_owner_t *
+FLOWIE_C_API flowie_session_owner_t *
 flowie_session_owner_clone(const flowie_session_owner_t *owner);
-CXX_C_API int flowie_session_owner_touch(flowie_session_owner_t *owner);
-CXX_C_API void flowie_session_owner_destroy(flowie_session_owner_t *owner);
+FLOWIE_C_API int flowie_session_owner_touch(flowie_session_owner_t *owner);
+FLOWIE_C_API void flowie_session_owner_destroy(flowie_session_owner_t *owner);
+
+/** Build a synchronous ORM DTO whose spans borrow the owner; row arrays are cleanup-owned. */
+FLOWIE_C_API int flowie_session_owner_repository_snapshot(
+    const flowie_session_owner_t *owner, flowie_protocol_session_row_t *out);
+FLOWIE_C_API void flowie_session_owner_repository_snapshot_cleanup(
+    flowie_protocol_session_row_t *row);
+/** Restore an inactive owner from one validated V2 repository row. */
+FLOWIE_C_API int flowie_session_owner_repository_restore(
+    const flowie_session_config_t *config, const flowie_protocol_session_row_t *row,
+    flowie_session_owner_t **out);
 
 /** Encode only durable MQTT session state into a canonical versioned LTV record. */
-CXX_C_API int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint8_t *out,
+FLOWIE_C_API int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint8_t *out,
                                                  size_t capacity, size_t *out_size);
 
 /** Restore one inactive owner; routes and unsettled delivery attempts are never restored. */
-CXX_C_API int flowie_session_owner_record_restore(
+FLOWIE_C_API int flowie_session_owner_record_restore(
     const flowie_session_config_t *config, flowie_mqtt_span_t client_id, uint64_t revision,
     const uint8_t *data, size_t data_size, flowie_session_owner_t **out);
 
@@ -183,7 +194,7 @@ CXX_C_API int flowie_session_owner_record_restore(
  * Copy CONNECT-owned state into the session. Empty client IDs are rejected
  * until the endpoint implements Assigned Client Identifier replies.
  */
-CXX_C_API int flowie_session_owner_open(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_open(flowie_session_owner_t *owner,
                                         const flowie_mqtt_connect_view_t *connect);
 
 /**
@@ -191,31 +202,31 @@ CXX_C_API int flowie_session_owner_open(flowie_session_owner_t *owner,
  * A protocol-level rejection returns TURBO_OK with accepted=0 and
  * close_after_reply=1; internal/state-owner failures are returned directly.
  */
-CXX_C_API int flowie_session_owner_connect(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_connect(flowie_session_owner_t *owner,
                                             const flowie_mqtt_connect_view_t *connect,
                                             flowie_session_connect_result_t *out);
 /** Reconnect an already-active owner after MQTT Client ID takeover without arming its Will. */
-CXX_C_API int flowie_session_owner_connect_takeover(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_connect_takeover(flowie_session_owner_t *owner,
                                                      const flowie_mqtt_connect_view_t *connect,
                                                      flowie_session_connect_result_t *out);
-CXX_C_API int flowie_session_owner_close(flowie_session_owner_t *owner);
-CXX_C_API int flowie_session_owner_snapshot(const flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_close(flowie_session_owner_t *owner);
+FLOWIE_C_API int flowie_session_owner_snapshot(const flowie_session_owner_t *owner,
                                             flowie_session_snapshot_t *out);
-CXX_C_API int flowie_session_owner_route(const flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_route(const flowie_session_owner_t *owner,
                                          flowie_protocol_route_t *out);
 /** Apply MQTT 5 DISCONNECT session-expiry override before the connection closes. */
-CXX_C_API int flowie_session_owner_disconnect(
+FLOWIE_C_API int flowie_session_owner_disconnect(
     flowie_session_owner_t *owner, const flowie_mqtt_control_packet_view_t *disconnect);
 
 /** Clear a pending/configured Will after application admission and fan-out complete. */
-CXX_C_API int flowie_session_owner_will_complete(flowie_session_owner_t *owner);
+FLOWIE_C_API int flowie_session_owner_will_complete(flowie_session_owner_t *owner);
 
 /** Apply one complete SUBSCRIBE atomically; no partial subscription set is visible on error. */
-CXX_C_API int flowie_session_owner_subscribe(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_subscribe(flowie_session_owner_t *owner,
                                              const flowie_mqtt_packet_view_t *packet,
                                              const flowie_mqtt_subscribe_view_t *subscribe,
                                              flowie_session_subscribe_result_t *out);
-CXX_C_API int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner,
                                                    size_t index,
                                                    flowie_session_subscription_t *out);
 
@@ -223,51 +234,51 @@ CXX_C_API int flowie_session_owner_subscription_at(const flowie_session_owner_t 
  * Reserve one broker-owned outbound packet identifier. The reservation and
  * every following delivery operation run only on the endpoint owner lane.
  */
-CXX_C_API int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t qos,
+FLOWIE_C_API int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t qos,
                                                     uint16_t *packet_id);
 /** Commit an encoded outbound PUBLISH so a persistent reconnect can retransmit it. */
-CXX_C_API int flowie_session_owner_delivery_commit(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_commit(flowie_session_owner_t *owner,
                                                    uint16_t packet_id, flowie_mqtt_span_t packet,
                                                    uint64_t expiry_at_epoch_seconds);
 /** Commit a delivery accepted while its persistent subscriber is offline. */
-CXX_C_API int flowie_session_owner_delivery_commit_queued(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_commit_queued(flowie_session_owner_t *owner,
                                                           uint16_t packet_id,
                                                           flowie_mqtt_span_t packet,
                                                           uint64_t expiry_at_epoch_seconds);
 /** Roll back a reservation or a committed delivery that was not admitted to the send Queue. */
-CXX_C_API int flowie_session_owner_delivery_cancel(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_cancel(flowie_session_owner_t *owner,
                                                    uint16_t packet_id);
 /** Remove every expired outbound PUBLISH and advance the durable resource generation once. */
-CXX_C_API int flowie_session_owner_delivery_expire(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_expire(flowie_session_owner_t *owner,
                                                    uint64_t now_epoch_seconds,
                                                    size_t *removed_count);
 /** Remove one expired outbound PUBLISH identified by its broker packet identifier. */
-CXX_C_API int flowie_session_owner_delivery_expire_packet(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_expire_packet(flowie_session_owner_t *owner,
                                                           uint16_t packet_id,
                                                           uint64_t now_epoch_seconds, int *removed);
 /** Return a borrowed pending packet; only retransmissions, not first queued sends, set DUP. */
-CXX_C_API int flowie_session_owner_delivery_pending_at(flowie_session_owner_t *owner, size_t index,
+FLOWIE_C_API int flowie_session_owner_delivery_pending_at(flowie_session_owner_t *owner, size_t index,
                                                        flowie_mqtt_span_t *packet);
 /**
  * Return one pending packet with Message Expiry derived from the absolute delivery deadline.
  * The caller must prune expired deliveries before iterating.
  */
-CXX_C_API int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner,
                                                           size_t index, uint64_t now_epoch_seconds,
                                                           flowie_mqtt_span_t *packet,
                                                           uint16_t *packet_id,
                                                           uint64_t *expiry_at_epoch_seconds);
 /** Rewrite the fixed-width MQTT 5 Message Expiry value without changing packet ownership/size. */
-CXX_C_API int flowie_session_delivery_packet_expiry_refresh(flowie_mqtt_version_t version,
+FLOWIE_C_API int flowie_session_delivery_packet_expiry_refresh(flowie_mqtt_version_t version,
                                                             uint8_t *packet, size_t packet_size,
                                                             uint64_t expiry_at_epoch_seconds,
                                                             uint64_t now_epoch_seconds);
 /** Consume PUBACK/PUBREC/PUBCOMP for one broker-owned outbound delivery. */
-CXX_C_API int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
                                                 const flowie_mqtt_packet_view_t *packet,
                                                 flowie_session_ack_intent_t *reply);
 /** Apply one complete UNSUBSCRIBE atomically and emit MQTT 5 per-filter reasons on success. */
-CXX_C_API int flowie_session_owner_unsubscribe(
+FLOWIE_C_API int flowie_session_owner_unsubscribe(
     flowie_session_owner_t *owner, const flowie_mqtt_packet_view_t *packet,
     const flowie_mqtt_unsubscribe_view_t *unsubscribe, uint8_t *reason_codes,
     size_t reason_code_capacity, flowie_session_unsubscribe_result_t *out);
@@ -276,17 +287,17 @@ CXX_C_API int flowie_session_owner_unsubscribe(
  * Begin one inbound PUBLISH. A duplicate pending packet is consumed with
  * admit_application=0; a completed QoS 2 first phase also returns a PUBREC intent.
  */
-CXX_C_API int flowie_session_owner_publish_begin(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_publish_begin(flowie_session_owner_t *owner,
                                                  const flowie_mqtt_publish_view_t *publish,
                                                  flowie_session_publish_begin_result_t *out);
 
 /** Advance QoS only when the configured application settlement point succeeds. */
-CXX_C_API int flowie_session_owner_publish_settle(
+FLOWIE_C_API int flowie_session_owner_publish_settle(
     flowie_session_owner_t *owner, const flowie_protocol_route_t *route,
     const flowie_protocol_settlement_request_t *request, flowie_session_ack_intent_t *out);
 
 /** Consume PUBREL for a QoS 2 record that has already produced PUBREC. */
-CXX_C_API int flowie_session_owner_qos2_release(flowie_session_owner_t *owner,
+FLOWIE_C_API int flowie_session_owner_qos2_release(flowie_session_owner_t *owner,
                                                 const flowie_protocol_route_t *route,
                                                 uint16_t packet_id,
                                                 flowie_session_ack_intent_t *out);
