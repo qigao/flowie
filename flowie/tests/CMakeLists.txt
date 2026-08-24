@@ -7,6 +7,30 @@ cmake_add_test(
 set_tests_properties(test_flowie_core PROPERTIES LABELS "flowie;flowie-release;mqtt-fast")
 
 cmake_add_test(
+  test_flowie_session_delivery_index
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_session_delivery_index.c
+  LIBS Flowie::App TurboUtils::TinyTest
+  FOLDER "flowie/tests")
+target_include_directories(test_flowie_session_delivery_index
+                           PRIVATE ${PROJECT_SOURCE_DIR}/flowie/src)
+set_tests_properties(test_flowie_session_delivery_index
+                     PROPERTIES LABELS "flowie;flowie-release;mqtt-fast;session")
+
+cmake_add_test(
+  test_flowie_transport_baseline
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_transport_baseline.c
+  LIBS Flowie::App Flowie::Client TurboUtils::TinyTest
+  FOLDER "flowie/tests")
+if(WIN32)
+  target_link_libraries(test_flowie_transport_baseline PRIVATE ws2_32)
+endif()
+
+set_tests_properties(
+  test_flowie_transport_baseline
+  PROPERTIES LABELS "flowie;flowie-release;mqtt-transport;mqtt-security"
+             TIMEOUT 120)
+
+cmake_add_test(
   test_flowie_protocol_repository
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository.c
   LIBS Flowie::App TurboUtils::TinyTest

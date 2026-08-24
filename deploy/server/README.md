@@ -1,143 +1,143 @@
 # Flowie server container
 
-该部署把 standalone MQTT server 和 embedded Control 放在同一个非 root 运行镜像；cluster 是独立
-产品和容器，不由本镜像启动。`compose.yml` 只运行已构建镜像，不包含源码构建配置。镜像通过
-`docker buildx build` 向 Dockerfile 传入 BuildKit named contexts；Dockerfile 在独立 stage 中安装
-TurboUtils、TurboNet、TurboHTTP、RulesForge 私有 SDK，最终 stage 只编译 TurboFlow。运行容器不依赖
-宿主机 SDK 或源码。
+该目录构建和运行独立的 Flowie MQTT broker。Flowie 不依赖 TurboFlow；当前 server 直接接收 listener
+参数，不读取 Flowie config、graph 或 embedded Control 配置。镜像以 UID/GID `10001` 运行，默认只监听
+`127.0.0.1:18883`。
 
-## 部署边界
+## 运行契约
 
-- server 与同机 HAProxy/Nginx 继续使用 Linux host network。默认 MQTT backend listener 是
-  `127.0.0.1:18883`，Control listener 是配置文件中的 `127.0.0.1:8443`。
-- `/etc/flowie`、`/etc/flowie/certs` 和 `/opt/flowie/plugins` 只读；Control SQLite 和明确配置的业务
-  数据可写入命名卷 `/var/lib/flowie`。MQTT ProtocolStore 固定为 SQLite `:memory:`，不写入该卷。
-- 入口始终传入 `--require-security`，并要求 `FLOWIE_PROTOCOL_STORE_PATH=:memory:`。缺少 server
-  config、graph、Control config，或尝试把协议存储改为文件路径时，容器直接失败。
-- 容器以 UID/GID `10001` 运行，根文件系统只读，移除全部 Linux capabilities，并启用
-  `no-new-privileges`。
+入口脚本把以下环境变量映射到 `flowie_server` 的同名参数：
 
-## 构建上下文
+| 环境变量 | 默认值 | CLI 参数 |
+| --- | --- | --- |
+| `FLOWIE_HOST` | `127.0.0.1` | `--host` |
+| `FLOWIE_PORT` | `18883` | `--port` |
+| `FLOWIE_TRANSPORT` | `tcp` | `--transport` |
+| `FLOWIE_PATH` | `/mqtt` | `--path` |
+| `FLOWIE_MAX_PACKET_SIZE` | `1048576` | `--max-packet-size` |
+| `FLOWIE_MAX_CONNECTIONS` | `1024` | `--max-connections` |
+| `FLOWIE_MAX_SESSIONS` | 跟随 `FLOWIE_MAX_CONNECTIONS` | `--max-sessions` |
+| `FLOWIE_MAX_SUBSCRIPTIONS_PER_SESSION` | `1024` | `--max-subscriptions-per-session` |
+| `FLOWIE_MAX_INFLIGHT_PER_SESSION` | `64` | `--max-inflight` |
+| `FLOWIE_MAX_RETAINED_MESSAGES` | 跟随 `FLOWIE_MAX_SESSIONS` | `--max-retained-messages` |
+| `FLOWIE_SEND_HWM_BYTES` | `1048576` | `--send-hwm-bytes` |
+| `FLOWIE_COROUTINE_STACK_SIZE` | `0`（组件默认值） | `--coroutine-stack-size` |
+| `FLOWIE_STREAM_RECV_BUFFER_BYTES` | `0`（组件默认值） | `--stream-recv-buffer-bytes` |
+| `FLOWIE_SOCKET_RECV_BUFFER_BYTES` | `0`（操作系统默认值） | `--socket-recv-buffer-bytes` |
+| `FLOWIE_SOCKET_SEND_BUFFER_BYTES` | `0`（操作系统默认值） | `--socket-send-buffer-bytes` |
+| `FLOWIE_TIMEOUT_MS` | `0`（禁用默认超时） | `--timeout-ms` |
+| `FLOWIE_RECV_TIMEOUT_MS` | `0`（跟随默认超时） | `--recv-timeout-ms` |
+| `FLOWIE_TCP_KEEPALIVE` | `0` | `--tcp-keepalive` |
+| `FLOWIE_TCP_KEEPALIVE_IDLE_MS` | `0`（操作系统默认值） | `--tcp-keepalive-idle-ms` |
+| `FLOWIE_TCP_KEEPALIVE_INTERVAL_MS` | `0`（操作系统默认值） | `--tcp-keepalive-interval-ms` |
+| `FLOWIE_TCP_KEEPALIVE_COUNT` | `0`（操作系统默认值） | `--tcp-keepalive-count` |
+| `FLOWIE_REUSE_PORT` | `0` | `--reuse-port` |
+| `FLOWIE_LOG_LEVEL` | `INFO` | `--log-level` |
 
-默认目录布局如下：
+`FLOWIE_HEALTH_HOST` 和 `FLOWIE_HEALTH_PORT` 只控制容器健康检查；它们必须指向实际 listener。向容器传入
+显式命令时，入口脚本直接执行该命令，例如 `flowie_server --check --port 18883`。
+布尔环境变量只接受 `0/1/false/true/no/yes/off/on`，其他值会在启动前失败。keepalive 的 idle、interval
+或 count 非零时必须同时启用 `FLOWIE_TCP_KEEPALIVE`。全部参数均在进程启动时确定，修改环境变量后需要重启
+broker；当前不支持运行时热更新。
+
+连接、session、subscription、inflight 和 retained 分别是并发连接、受管会话总数、单会话订阅数、单会话
+待确认 QoS 消息数和 endpoint retained 总数的独立边界。`FLOWIE_SEND_HWM_BYTES` 是每连接待发送字节的
+高水位，不是启动时预分配内存；慢连接耗尽该预算时按既有背压策略断开。私有 CoroNet 上下文的 coroutine
+pool 容量上界为 `2 × max_connections + 32`，每个 coroutine 都有独立 stack；stream receive buffer
+则为每个连接使用的两个 chunk。因此提高连接数、stack 或 receive buffer 前必须计算内存上界并用 RSS
+实测校验。socket buffer 只是向内核提出的请求，内核可能按平台策略调整实际值。
+
+`reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数；多
+worker/supervisor 拓扑属于完整的 Flowie YAML runtime，不在这个容器入口的职责范围内。建议先用
+`flowie_server --check --log-level DEBUG ...` 校验参数，并保存三条不含 MQTT 身份或内容的
+`effective-config` DEBUG 记录。
+`64` 是库级 session inflight 默认值，不是客户端 MQTT 5 Receive Maximum。高并发诊断可显式设置
+`FLOWIE_MAX_INFLIGHT_PER_SESSION=1024`；容量仍需按单 session 的待发送 QoS 消息峰值评估。
+
+当前独立 broker 的 session、subscription、inflight、retained 和 pending Will 都是进程内状态；容器重启
+后不会恢复。命名卷保留为以后扩展的数据边界，但当前 broker 不把 MQTT 状态写入其中。
+
+## 构建
+
+默认源码布局是八个同级仓库：
 
 ```text
 cpp/
   TurboHTTP/
-  rulesforge/
+  flowmq/
+  turbodb/
+  turboraft/
   turbonet/
     turbo-utils/
+    turbo-parser/
     turbonet/
-    turbo-flow/
+    flowie/
 ```
 
-从 `turbo-flow` Repository 根目录构建本地镜像：
+从 Flowie 仓库根目录执行：
 
 ```sh
 export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
 
 docker buildx build \
-  --file flowie/deploy/server/Dockerfile \
+  --file deploy/server/Dockerfile \
   --build-context turbo_utils=../turbo-utils \
+  --build-context turbo_parser=../turbo-parser \
   --build-context turbo_net=../turbonet \
+  --build-context turbo_db=../../turbodb \
   --build-context turbo_http=../../TurboHTTP \
-  --build-context rules_forge=../../rulesforge \
+  --build-context flow_mq=../../flowmq \
+  --build-context turbo_raft=../../turboraft \
   --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
   --tag "${FLOWIE_SERVER_IMAGE}" \
   --load \
   .
 ```
 
-CI 发布镜像时使用 registry tag 并把 `--load` 替换为 `--push`。发布后应记录 Buildx 输出的 digest，并让
-部署环境的 `FLOWIE_SERVER_IMAGE` 引用该 digest，而不是浮动 tag。
+Dockerfile 分别构建并安装七个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server`。运行镜像不依赖宿主
+SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest 或不可变 tag 部署。
 
-在本目录创建不入库的 `.env`，以 `.env.example` 为起点设置配置、graph、证书和插件目录。证书路径应与
-`control.yml` 以及 server 配置中的绝对容器路径一致，例如 `/etc/flowie/certs/server.pem`。
-`FLOWIE_SECRET_ENV_FILE` 必须指向一个权限为 `0600`、不入库的 env 文件，内容提供配置中所有
-`env://NAME` 引用，例如 `FLOWIE_AUTH_SERVICE_TOKEN=...`。该文件即使当前为空也必须存在，使缺少 secret
-注入边界在 Compose 展开阶段失败，而不是启动后隐式降级。
+需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
 
 ```sh
-mkdir -p config certs plugins
-install -m 0600 /dev/null secrets.env
-docker compose config
-docker compose up -d --no-build flowie-server
-docker compose ps
-docker compose logs --tail=200 flowie-server
+docker buildx build \
+  --build-arg FLOWIE_BUILD_PRESET=linux-dev-user \
+  --build-arg FLOWIE_INSTALL_PRESET=install-linux-dev-user \
+  --build-arg FLOWIE_PROFILE=debug \
+  --build-arg FLOWIE_ENABLE_ASAN=OFF \
+  ...
 ```
 
-生产部署不执行上面的构建命令，而是由 CI 构建并推送 `FLOWIE_SERVER_IMAGE`，最好将它设置为 registry
-digest。部署主机只需要运行以下命令，不需要五个源码仓库或编译工具链：
+前三个 profile 参数必须成组切换，不能把 Debug/Release SDK 混在同一构建中。原生日志排查默认关闭
+ASan；需要 sanitizer 时显式设为 `ON` 并确保运行镜像提供匹配 runtime。运行排查时设置
+`FLOWIE_LOG_LEVEL=DEBUG`；Debug 输出包含 source，INFO 生产输出不逐包记录 MQTT 数据。慢订阅者隔离只记录
+第 1 次及累计次数为 2 的幂次的摘要；QoS 2 满窗/释放每连接各最多一条。两者均不包含 client ID、用户名、
+topic 或 payload。
+
+## Compose 部署
+
+`compose.yml` 使用 host network，适合作为同机 Nginx/HAProxy 后端。默认 listener 仅绑定 loopback；需要
+对外监听时必须显式设置 `FLOWIE_HOST`，并在外部代理或防火墙处配置访问边界。
 
 ```sh
-docker compose config
-docker compose pull flowie-server
-docker compose up -d --no-build flowie-server
-```
-
-`FLOWIE_SOURCE_REVISION` 必须在构建时设置为实际 TurboFlow commit。五个仓库的 manifest 都固定同一
-vcpkg baseline；Dockerfile 使用固定 commit 的 vcpkg 工具，避免使用浮动 `master`。
-
-### SDK 构建缓存
-
-依赖 SDK stage 只复制自身源码和它实际依赖的上游 SDK。TurboUtils stage 还封装完整产品构建所需的
-DataBind `tbe_compiler` 及其模板资源，最终 TurboFlow stage 通过显式 CMake 路径消费该宿主工具。TurboFlow 源码或
-`FLOWIE_SOURCE_REVISION` 变化时，TurboUtils、TurboNet、TurboHTTP 与 RulesForge stage 应命中
-BuildKit cache；TurboNet 变化只会使 TurboNet、TurboHTTP 和最终 TurboFlow stage 失效。生产构建把
-依赖仓库的测试/示例选项设为关闭且不执行测试；若上游 `install` target 仍依赖其 `all` target，首次 SDK
-构建可能继续编译部分测试程序。各仓库的实际验证仍由其 preset/CI 独立执行。
-
-连续运行两次相同构建可检查缓存是否生效：
-
-```sh
-export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
-
-build_flowie_server() {
-  docker buildx build \
-    --file flowie/deploy/server/Dockerfile \
-    --build-context turbo_utils=../turbo-utils \
-    --build-context turbo_net=../turbonet \
-    --build-context turbo_http=../../TurboHTTP \
-    --build-context rules_forge=../../rulesforge \
-    --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
-    --tag "${FLOWIE_SERVER_IMAGE}" \
-    --progress=plain \
-    --load \
-    .
-}
-
-build_flowie_server 2>&1 | tee first-build.log
-build_flowie_server 2>&1 | tee cached-build.log
-grep -E 'turboutils_builder|turbonet_builder|turbohttp_builder|rulesforge_builder|CACHED' \
-  cached-build.log
+docker compose -f deploy/server/compose.yml config
+docker compose -f deploy/server/compose.yml up -d --no-build flowie-server
+docker compose -f deploy/server/compose.yml ps
+docker compose -f deploy/server/compose.yml logs --tail=200 flowie-server
 ```
 
-不要从宿主机 `/usr/local/lib` 复制现成 `.so`。它缺少同一构建链的 headers、CMake package 和 ABI
-来源信息。跨构建主机复用时，应把上述 SDK stages 发布为按依赖 commit 固定、可按 digest 引用的 SDK
-基础镜像，或配置 BuildKit registry cache；不能使用浮动 tag 作为发布事实源。
+健康检查确认 PID 1 存活并能连接 `FLOWIE_HEALTH_HOST:FLOWIE_HEALTH_PORT`。运行态验收还应执行 MQTT 5
+CONNECT/CONNACK 和 QoS 1 publish/subscribe，不能只依赖 TCP 探针。
 
-## 健康检查
-
-健康检查同时确认 PID 1 存活，并对 `FLOWIE_HEALTH_HOST:FLOWIE_HEALTH_PORT` 建立 TCP 连接。该探针验证
-实际 listener 已绑定，但不证明 Redis、PostgreSQL 或 Control 的完整业务链路可用；部署监控仍应增加经过
-认证的 MQTT CONNECT/CONNACK 与 Control HTTPS 探针。`flowie_server --check` 只校验配置和 graph，不能
-替代运行态 readiness。
-
-## 运维命令
+## 验证与运维
 
 ```sh
-docker compose exec flowie-server flowie_server --help
-docker compose exec flowie-server sh -c 'id && test -w /var/lib/flowie && test ! -w /etc/flowie'
+sh deploy/server/tests/test-docker-entrypoint.sh
+docker compose -f deploy/server/compose.yml exec flowie-server flowie_server --help
 docker inspect --format '{{.State.Health.Status}}' flowie-server
 ```
 
-TurboDB ORM 的连接参数属于 Flowie/Control 配置，不在入口脚本中提供
-隐式默认值。Compose `env_file` 注入的值会出现在容器进程环境和 `docker inspect` 中；部署主机与 Docker
-daemon 访问权限必须视为密钥权限。若需要文件型 secret，必须先扩展 Flowie 的 key-provider 契约，不能在
-入口脚本中把任意文件静默转换为环境变量。
-
-容器重启会清空 session、subscription、inflight、retained 和 pending Will。Client 必须重连并重订阅。
-需要长期保存的业务消息和设备业务状态必须进入独立业务 ORM repository；该 repository 不会
-恢复或替代 ProtocolStore。
+`flowie_server --check` 校验 listener 参数并退出，不启动服务。TLS/WSS 虽是 CLI 可选 transport，但投入生产
+前仍需完成证书配置路径和握手验收；当前已验证的容器默认契约是 TCP。

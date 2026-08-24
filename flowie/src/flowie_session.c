@@ -59,6 +59,7 @@ struct flowie_session_owner_s {
   vec_t subscriptions;
   vec_t inflight;
   vec_t deliveries;
+  hash_map_t delivery_index;
   tstr will_topic;
   tstr will_properties;
   tstr will_payload;
@@ -81,6 +82,81 @@ struct flowie_session_owner_s {
 static int flowie_session_record_delivery_validate(const flowie_session_owner_t *owner,
                                                    const flowie_session_delivery_t *delivery);
 static int flowie_session_config_valid(const flowie_session_config_t *config);
+
+/* Average O(1) time, O(D) derived space for D outbound deliveries. */
+static int flowie_session_delivery_lookup(flowie_session_owner_t *owner, uint16_t packet_id,
+                                          flowie_session_delivery_t **delivery_out,
+                                          size_t *index_out) {
+  const size_t *mapped_index;
+  flowie_session_delivery_t *delivery;
+  if (!owner || packet_id == 0u) return TURBO_EINVAL;
+  mapped_index =
+      (const size_t *)hash_map_get_const(&owner->delivery_index, &packet_id);
+  if (!mapped_index) return TURBO_ENOENT;
+  delivery = (flowie_session_delivery_t *)vec_at(&owner->deliveries, *mapped_index);
+  if (!delivery || delivery->packet_id != packet_id) return TURBO_EPROTO;
+  if (delivery_out) *delivery_out = delivery;
+  if (index_out) *index_out = *mapped_index;
+  return TURBO_OK;
+}
+
+/* Amortized O(1) time. The vector remains unchanged if index insertion fails. */
+static int flowie_session_delivery_append(flowie_session_owner_t *owner,
+                                          const flowie_session_delivery_t *delivery) {
+  size_t index;
+  int rc;
+  if (!owner || !delivery || delivery->packet_id == 0u) return TURBO_EINVAL;
+  rc = flowie_session_delivery_lookup(owner, delivery->packet_id, NULL, NULL);
+  if (rc == TURBO_OK) return TURBO_EALREADY;
+  if (rc != TURBO_ENOENT) return rc;
+  index = vec_size(&owner->deliveries);
+  rc = flowie_stl_error(vec_push(&owner->deliveries, delivery));
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_stl_error(
+      hash_map_put(&owner->delivery_index, &delivery->packet_id, &index));
+  if (rc != TURBO_OK) {
+    if (flowie_stl_error(vec_pop(&owner->deliveries, NULL)) != TURBO_OK)
+      return TURBO_EPROTO;
+    return rc;
+  }
+  return TURBO_OK;
+}
+
+/* Average O(1) time; updates the slot of any vector element moved by swap-remove. */
+static int flowie_session_delivery_remove_at(flowie_session_owner_t *owner, size_t index,
+                                             flowie_session_delivery_t *removed_out) {
+  flowie_session_delivery_t *delivery;
+  const flowie_session_delivery_t *last;
+  size_t *mapped_index;
+  uint16_t packet_id;
+  uint16_t moved_packet_id = 0u;
+  size_t count;
+  int rc;
+  if (!owner) return TURBO_EINVAL;
+  count = vec_size(&owner->deliveries);
+  delivery = (flowie_session_delivery_t *)vec_at(&owner->deliveries, index);
+  if (!delivery) return TURBO_ENOENT;
+  packet_id = delivery->packet_id;
+  mapped_index = (size_t *)hash_map_get(&owner->delivery_index, &packet_id);
+  if (!mapped_index || *mapped_index != index) return TURBO_EPROTO;
+  if (index + 1u < count) {
+    last = (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, count - 1u);
+    if (!last) return TURBO_EPROTO;
+    moved_packet_id = last->packet_id;
+    mapped_index = (size_t *)hash_map_get(&owner->delivery_index, &moved_packet_id);
+    if (!mapped_index || *mapped_index != count - 1u) return TURBO_EPROTO;
+  }
+  rc = flowie_stl_error(hash_map_remove(&owner->delivery_index, &packet_id, NULL));
+  if (rc != TURBO_OK) return TURBO_EPROTO;
+  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, removed_out));
+  if (rc != TURBO_OK) return rc;
+  if (moved_packet_id != 0u) {
+    mapped_index = (size_t *)hash_map_get(&owner->delivery_index, &moved_packet_id);
+    if (!mapped_index) return TURBO_EPROTO;
+    *mapped_index = index;
+  }
+  return TURBO_OK;
+}
 
 void flowie_session_owner_repository_snapshot_cleanup(flowie_protocol_session_row_t *row) {
   if (!row) return;
@@ -246,7 +322,8 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
     entry.packet = tstr_new_len(row->deliveries[i].packet.data, row->deliveries[i].packet.size);
     if (!entry.packet) { rc = TURBO_ENOMEM; goto fail; }
     rc = flowie_session_record_delivery_validate(owner, &entry);
-    if (rc == TURBO_OK) rc = flowie_stl_error(vec_push(&owner->deliveries, &entry));
+    if (rc == TURBO_OK) rc = flowie_session_delivery_append(owner, &entry);
+    if (rc == TURBO_EALREADY) rc = TURBO_EPROTO;
     if (rc != TURBO_OK) { tstr_freep(&entry.packet); goto fail; }
   }
   if (row->will.present) {
@@ -317,6 +394,7 @@ static void flowie_session_deliveries_clear(flowie_session_owner_t *owner) {
     if (delivery) tstr_freep(&delivery->packet);
   }
   vec_clear(&owner->deliveries);
+  hash_map_clear(&owner->delivery_index);
 }
 
 static void flowie_session_will_clear(flowie_session_owner_t *owner) {
@@ -434,6 +512,16 @@ flowie_session_owner_t *flowie_session_owner_create(const flowie_session_config_
     free(owner);
     return NULL;
   }
+  if (flowie_stl_error(hash_map_init_bytes(
+          &owner->delivery_index, sizeof(uint16_t), _Alignof(uint16_t),
+          sizeof(size_t), _Alignof(size_t), config->max_inflight, hash_bytes,
+          hash_key_equal, NULL)) != TURBO_OK) {
+    vec_destroy(&owner->deliveries);
+    vec_destroy(&owner->inflight);
+    vec_destroy(&owner->subscriptions);
+    free(owner);
+    return NULL;
+  }
   return owner;
 }
 
@@ -469,7 +557,7 @@ flowie_session_owner_t *flowie_session_owner_clone(const flowie_session_owner_t 
     cloned = *entry;
     cloned.packet = entry->packet ? tstr_clone(entry->packet) : NULL;
     if (entry->packet && !cloned.packet) goto fail;
-    rc = flowie_stl_error(vec_push(&copy->deliveries, &cloned));
+    rc = flowie_session_delivery_append(copy, &cloned);
     if (rc != TURBO_OK) {
       tstr_freep(&cloned.packet);
       goto fail;
@@ -505,6 +593,7 @@ void flowie_session_owner_destroy(flowie_session_owner_t *owner) {
   if (!owner) return;
   flowie_session_subscriptions_destroy(&owner->subscriptions);
   flowie_session_deliveries_clear(owner);
+  hash_map_destroy(&owner->delivery_index);
   vec_destroy(&owner->deliveries);
   vec_destroy(&owner->inflight);
   flowie_session_will_clear(owner);
@@ -912,20 +1001,6 @@ int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner, si
   return TURBO_OK;
 }
 
-static flowie_session_delivery_t *
-flowie_session_delivery_find(flowie_session_owner_t *owner, uint16_t packet_id, size_t *index_out) {
-  if (!owner || packet_id == 0u) return NULL;
-  for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
-    flowie_session_delivery_t *delivery =
-        (flowie_session_delivery_t *)vec_at(&owner->deliveries, i);
-    if (delivery && delivery->packet_id == packet_id) {
-      if (index_out) *index_out = i;
-      return delivery;
-    }
-  }
-  return NULL;
-}
-
 int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t qos,
                                           uint16_t *packet_id) {
   flowie_session_delivery_t delivery;
@@ -940,14 +1015,16 @@ int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t
   candidate = owner->next_delivery_packet_id;
   for (size_t attempt = 0u; attempt < UINT16_MAX; ++attempt) {
     candidate = candidate == UINT16_MAX ? 1u : (uint16_t)(candidate + 1u);
-    if (!flowie_session_delivery_find(owner, candidate, NULL)) break;
+    rc = flowie_session_delivery_lookup(owner, candidate, NULL, NULL);
+    if (rc == TURBO_ENOENT) break;
+    if (rc != TURBO_OK) return rc;
   }
-  if (flowie_session_delivery_find(owner, candidate, NULL)) return TURBO_ENOSPC;
+  if (rc != TURBO_ENOENT) return TURBO_ENOSPC;
   memset(&delivery, 0, sizeof(delivery));
   delivery.packet_id = candidate;
   delivery.qos = qos;
   delivery.state = FLOWIE_SESSION_DELIVERY_RESERVED;
-  rc = flowie_stl_error(vec_push(&owner->deliveries, &delivery));
+  rc = flowie_session_delivery_append(owner, &delivery);
   if (rc != TURBO_OK) return rc;
   owner->next_delivery_packet_id = candidate;
   *packet_id = candidate;
@@ -961,8 +1038,10 @@ static int flowie_session_owner_delivery_commit_state(flowie_session_owner_t *ow
   flowie_session_delivery_t *delivery;
   tstr owned;
   if (!owner || !packet.data || packet.size == 0u) return TURBO_EINVAL;
-  delivery = flowie_session_delivery_find(owner, packet_id, NULL);
-  if (!delivery) return TURBO_ENOENT;
+  {
+    int rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, NULL);
+    if (rc != TURBO_OK) return rc;
+  }
   if (delivery->state != FLOWIE_SESSION_DELIVERY_RESERVED || delivery->packet) return TURBO_EALREADY;
   owned = tstr_new_len(packet.data, packet.size);
   if (!owned) return TURBO_ENOMEM;
@@ -1007,9 +1086,10 @@ int flowie_session_owner_delivery_cancel(flowie_session_owner_t *owner, uint16_t
   size_t index;
   int rc;
   if (!owner || packet_id == 0u) return TURBO_EINVAL;
-  if (!flowie_session_delivery_find(owner, packet_id, &index)) return TURBO_ENOENT;
+  rc = flowie_session_delivery_lookup(owner, packet_id, NULL, &index);
+  if (rc != TURBO_OK) return rc;
   memset(&removed, 0, sizeof(removed));
-  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
+  rc = flowie_session_delivery_remove_at(owner, index, &removed);
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed.packet);
   return TURBO_OK;
@@ -1042,7 +1122,7 @@ int flowie_session_owner_delivery_expire(flowie_session_owner_t *owner, uint64_t
       flowie_session_delivery_t removed;
       int rc;
       memset(&removed, 0, sizeof(removed));
-      rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
+      rc = flowie_session_delivery_remove_at(owner, index, &removed);
       if (rc != TURBO_OK) return rc;
       tstr_freep(&removed.packet);
     }
@@ -1060,14 +1140,14 @@ int flowie_session_owner_delivery_expire_packet(flowie_session_owner_t *owner, u
   int rc;
   if (!owner || packet_id == 0u || now_epoch_seconds == 0u || !removed) return TURBO_EINVAL;
   *removed = 0;
-  delivery = flowie_session_delivery_find(owner, packet_id, &index);
-  if (!delivery) return TURBO_ENOENT;
+  rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, &index);
+  if (rc != TURBO_OK) return rc;
   if (delivery->expiry_at_epoch_seconds == 0u ||
       delivery->expiry_at_epoch_seconds > now_epoch_seconds)
     return TURBO_OK;
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   memset(&removed_delivery, 0, sizeof(removed_delivery));
-  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed_delivery));
+  rc = flowie_session_delivery_remove_at(owner, index, &removed_delivery);
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed_delivery.packet);
   owner->resource_generation += 1u;
@@ -1191,8 +1271,9 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
     return TURBO_EPROTO;
   rc = flowie_mqtt_control_packet_parse(packet, &control);
   if (rc != FLOWIE_MQTT_PARSE_OK) return TURBO_EPROTO;
-  delivery = flowie_session_delivery_find(owner, control.packet_id, &index);
-  if (!delivery || delivery->state == FLOWIE_SESSION_DELIVERY_RESERVED) return TURBO_ENOENT;
+  rc = flowie_session_delivery_lookup(owner, control.packet_id, &delivery, &index);
+  if (rc != TURBO_OK || delivery->state == FLOWIE_SESSION_DELIVERY_RESERVED)
+    return rc == TURBO_OK ? TURBO_ENOENT : rc;
   *reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
   if (packet->type == FLOWIE_MQTT_PACKET_PUBACK) {
     if (delivery->qos != 1u || delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_ACK)
@@ -1230,7 +1311,7 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
   }
   if (owner->resource_generation == UINT64_MAX) return TURBO_ERANGE;
   memset(&removed, 0, sizeof(removed));
-  rc = flowie_stl_error(vec_swap_remove(&owner->deliveries, index, &removed));
+  rc = flowie_session_delivery_remove_at(owner, index, &removed);
   if (rc != TURBO_OK) return rc;
   tstr_freep(&removed.packet);
   owner->resource_generation += 1u;
@@ -1932,6 +2013,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       }
     } else if (type == 6u) {
       flowie_session_delivery_t delivery;
+      int delivery_lookup_rc;
       if (value_size != (record_minor >= 3u ? 12u : 4u) ||
           vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
               config->max_inflight) {
@@ -1945,16 +2027,18 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       delivery.state = (flowie_session_delivery_state_t)value[3];
       delivery.expiry_at_epoch_seconds =
           record_minor >= 3u ? flowie_session_record_read_u64(value + 4u) : 0u;
+      delivery_lookup_rc =
+          flowie_session_delivery_lookup(owner, delivery.packet_id, NULL, NULL);
       if (delivery.packet_id == 0u || delivery.qos == 0u || delivery.qos > 2u ||
           delivery.state < FLOWIE_SESSION_DELIVERY_WAIT_ACK ||
           delivery.state > FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP ||
-          flowie_session_delivery_find(owner, delivery.packet_id, NULL) ||
+          delivery_lookup_rc != TURBO_ENOENT ||
           flowie_session_inflight_find(owner, delivery.packet_id, NULL)) {
         turbo_free_ltv(&message);
         rc = TURBO_EPROTO;
         goto fail;
       }
-      rc = flowie_stl_error(vec_push(&owner->deliveries, &delivery));
+      rc = flowie_session_delivery_append(owner, &delivery);
       if (rc != TURBO_OK) {
         turbo_free_ltv(&message);
         goto fail;

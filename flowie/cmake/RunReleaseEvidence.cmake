@@ -38,7 +38,7 @@ set(records
     "test_flowie_mosquitto_interop|local|${PROJECT_VERSION}|TCP"
     "test_flowie_mosquitto_fixed_interop|fixed|${FIXED_BROKER_VERSION}|TCP"
     "test_flowie_protocol_repository|sqlite-orm|${PROJECT_VERSION}|none"
-    "test_flowie_transport|local|OpenSSL|TLS/WSS"
+    "test_flowie_transport_baseline|local|${PROJECT_VERSION}|TLS/WSS"
     "test_flowie_mqtt_endurance|memory|${PROJECT_VERSION}|none"
     "test_flowie_mqtt_soak|memory|${PROJECT_VERSION}|none"
     "test_flowie_cluster_raft_store|turboraft|${PROJECT_VERSION}|none"

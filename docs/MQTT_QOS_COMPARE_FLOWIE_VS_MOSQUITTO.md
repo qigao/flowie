@@ -104,7 +104,7 @@
 
 ## 证据来源
 
-- flowie：`flowie/benchmarks/README.md`（单方容量/性能基准，非对照）、`flowie/src/flowie_session.c`、`flowie/src/flowie_endpoint.c`、`flowie/src/flowie_ingress.c`、`cluster/flowie_cluster_session_bind.c`、`flowie/include/flowie.h`。
+- flowie：`deploy/server/tests/run-mqtt-scale-load.sh` 与 `flowie/LINUX_REMOTE_TEST_RUNBOOK.md`（单方远端负载验证，非对照）、`flowie/src/flowie_session.c`、`flowie/src/flowie_endpoint.c`、`flowie/src/flowie_ingress.c`、`cluster/flowie_cluster_session_bind.c`、`flowie/include/flowie.h`。
 - Mosquitto：`C:\tmp\mosquitto`（master @ 5cd2546511596a269dbf53f85858c623b09ebdd6），文件 `src/handle_publish.c`、`src/database.c`、`src/conf.c`、`src/persist.h`、`src/plugin_persist.c`、`lib/handle_pubrec.c`、`lib/handle_pubrel.c`、`lib/handle_pubackcomp.c`、`lib/messages_mosq.c`、`lib/mosquitto_internal.h`、`man/mosquitto.conf.5.xml`；I/O 层 `src/loop.c`、`src/net.c`、`src/mux_epoll.c`、`src/mux_poll.c`、`lib/packet_mosq.c`、`lib/net_mosq.c`。
 
 ## 6. I/O 模型对比（源码级）
@@ -134,7 +134,7 @@
 ### 6.5 背压与慢订阅者（事实）
 
 - **Mosquitto**：无每连接字节 HWM；慢订阅者导致 `out_packet` 队列堆积，受 `max_queued_messages`（默认 1000）限制，超限丢弃或断开由上层逻辑决定；TCP 背压通过 EWOULDBLOCK 挂起写。
-- **flowie**：显式字节预算 `send_hwm_bytes`，超预算 admission FAIL → 慢订阅者策略 `disconnect`（`flowie_endpoint.c:2816-2821`）；仓库 benchmark 有专项 `real TCP stalled-subscriber isolation`（`flowie/benchmarks/README.md`）验证慢客户端只被隔离、健康连接不受影响。
+- **flowie**：显式字节预算 `send_hwm_bytes`，超预算 admission FAIL → 慢订阅者策略 `disconnect`（`flowie_endpoint.c:2816-2821`）；当前远端 runner 验证正常 subscriber fan-out，尚未注入 stopped-reader，因此慢客户端隔离仍需新增负载用例验证。
 
 ### 6.6 与 QoS1/2 状态机的关系（事实 + 推论）
 
@@ -144,7 +144,7 @@
 ### 6.7 容量边界（事实）
 
 - **Mosquitto**：每连接 in/out packet 动态内存；出站队列由 `max_queued_messages`（默认 1000）/`max_inflight_messages`（默认 20）约束。
-- **flowie**：显式配置 `max_connections` / `max_inflight_per_session` / `send_hwm_bytes` / `max_packet_size` / `coroutine_stack_size`（最小 64 KiB）/ `stream_recv_buffer_bytes`；`flowie/benchmarks/README.md` 将 100k 实时 TCP 连接作为容量门禁。
+- **flowie**：显式配置 `max_connections` / `max_inflight_per_session` / `send_hwm_bytes` / `max_packet_size` / `coroutine_stack_size`（最小 64 KiB）/ `stream_recv_buffer_bytes`；当前远端 runner 默认验证 96/192/384 个实时 TCP 客户端，更高连接数必须作为独立容量档实测，不能由配置上限推定。
 
 ## 7. 理论性能对比（flowie vs Mosquitto，未实测）
 
@@ -156,7 +156,7 @@
 |---|---|---|
 | 多核扩展上限 | Mosquitto broker 单线程主循环（`src/loop.c` `mosquitto_main_loop`，核心路径无线程创建）；flowie 协程可多线程调度（`io/common/include/flow_coronet_execution.h`） | 订阅匹配、大扇出、QoS 状态迁移等 CPU 密集路径，Mosquitto 受单核瓶颈；flowie 理论上限更高。注意 flowie 示例默认 `runtime.ingress.workers: 1`，需配置才吃多核 |
 | 同连接出站批量写 | Mosquitto `packet__write` 逐包 `net__write`（`lib/packet_mosq.c:272`）；flowie `flowie_connection_reply_drain` 用 `coro_socket_sendv` 批量写（`flowie_endpoint.c:4140-4141`） | 同连接高消息率流水线场景，flowie 系统调用更少、小包聚合更好 |
-| 背压粒度与慢订阅者隔离 | Mosquitto 无每连接字节 HWM，靠 `max_queued_messages`（默认 1000）限队列；flowie 有 `send_hwm_bytes` 预算 + `slow_subscriber_policy=disconnect`（`flowie_endpoint.c:2816-2821`），并有 `stalled-subscriber isolation` 专项基准 | 大扇出 + 个别慢客户端场景，flowie 理论隔离性更好 |
+| 背压粒度与慢订阅者隔离 | Mosquitto 无每连接字节 HWM，靠 `max_queued_messages`（默认 1000）限队列；flowie 有 `send_hwm_bytes` 预算 + `slow_subscriber_policy=disconnect`（`flowie_endpoint.c:2816-2821`），但当前远端 runner 尚未注入 stopped-reader | 大扇出 + 个别慢客户端场景，flowie 理论隔离性更好，仍需同负载验证 |
 | 水平扩展 | Mosquitto 无原生集群（bridge/共享订阅不是集群语义）；flowie 原生多节点协议图 | 单机天花板之后，flowie 有架构扩展路径，Mosquitto 没有 |
 
 ### 7.2 Mosquitto 理论上可能占优或相当的维度（推论）
@@ -169,7 +169,7 @@
 
 ### 7.3 必须强调的两点（事实）
 
-1. **没有同负载对照数据**：`flowie/benchmarks/README.md` 中的 `149,606 msg/s`（64 包 pipeline burst）、`24,280 deliveries/s`（16 扇出）、100k 连接峰值约 5.93 GiB private commit 等都是 flowie 单方、特定负载的测量，**不能**直接与 Mosquitto 比较；Mosquitto 侧本轮未运行任何基准。
+1. **没有同负载对照数据**：当前 `run-mqtt-scale-load.sh` 结果是 Flowie 单方、EU Debug、特定 fan-out 负载的测量，**不能**直接与 Mosquitto 比较；Mosquitto 侧本轮未运行同配置基准。
 2. **QoS1/2 的额外成本是 trade-off，不是免费优势**：默认 `settlement=received` 时 flowie 的 ack 时机 ≈ Mosquitto；配置 `accepted/processed/durable` 后发布方 ack 延迟增大，单发布者吞吐下降，换取"确认前已完成图处理/持久化"的语义保证。
 
 ### 7.4 一句话结论（推论）

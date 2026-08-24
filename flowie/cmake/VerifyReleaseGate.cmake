@@ -20,7 +20,7 @@ set(required_tests
     test_flowie_mosquitto_interop
     test_flowie_mosquitto_fixed_interop
     test_flowie_protocol_repository
-    test_flowie_transport
+    test_flowie_transport_baseline
     test_flowie_mqtt_endurance
     test_flowie_mqtt_soak
     test_flowie_cluster_raft_store

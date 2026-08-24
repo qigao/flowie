@@ -12,9 +12,9 @@ MQTT 规范符合性或生产稳定性。
 backend 当作 cluster 正确性的证据，也不允许 endpoint-local repository 与 cluster 同时存在。
 
 已覆盖的行为范围包括协议、client、endpoint、standalone repository fault、TurboRaft
-log/snapshot/state-machine recovery、真实 TCP/TLS/WS/WSS/Pipe、BDD、ACL/RPC/dashboard 以及 Flowie Graph integration。现有测试已覆盖 MQTT 3.1/3.1.1/5、QoS 0/1/2、retained、
+log/snapshot/state-machine recovery、真实 TCP/TLS/WS/WSS、BDD、ACL/RPC/dashboard 以及 Flowie Graph integration。现有测试已覆盖 MQTT 3.1/3.1.1/5、QoS 0/1/2、retained、
 Will/Will Delay、session resume、Topic Alias、Subscription Identifier、Receive Maximum、
-Enhanced AUTH、ACL、真实 TCP/TLS/WS/WSS/Pipe 基本往返及 WS/WSS admission 安全边界。
+Enhanced AUTH、ACL、真实 TCP/TLS/WS/WSS 基本往返及 WS/WSS admission 安全边界。
 
 上述注册数来自 CTest 配置，修复与复验结果来自测试输出；不代表组合状态空间已穷尽。与 Mosquitto 官方
 broker suite 的场景分类相比，固定版本跨 broker 互操作、持续 sanitizer fuzz 和规定时长的长稳仍属于
@@ -31,6 +31,22 @@ canonical round-trip；这些是对应 ID 的第一批可执行样本，不是
 `test_flowie_mqtt_protocol_corpus` 另外对 MQTT 3.1/3.1.1/5 固定 corpus 执行所有截断、逐 bit
 变异和固定 seed 随机流，作为 MQTT-FUZZ-001/002/003 的 deterministic replay 层；它不替代
 sanitizer 持续 fuzz job。
+
+### Transport 发布范围与 TODO
+
+当前 Flowie server 的发布基线仅为 **TCP/TLS/WS/WSS**。这四种 transport 必须通过真实连接、MQTT
+QoS 0/1/2、异常关闭、资源回收及对应安全门禁；不能用 CoroNet 或 runtime adapter 的底层测试替代
+Flowie endpoint/server 的端到端证据。
+
+- **TODO — UDP**：CoroNet datagram 与 Flowie runtime adapter 的低层 round-trip 已验证，但 Flowie
+  public endpoint 和 standalone server 尚未声明 UDP listener。进入发布范围前需先定义协议模型（例如
+  MQTT-SN，而不是把标准 MQTT stream framing 直接套在 datagram 上）、配置/API、session/重传边界和
+  端到端用例。
+- **TODO — Unix Pipe**：CoroNet pipe 与 Flowie runtime adapter 的低层 round-trip 已验证，Flowie
+  transport enum 也保留 `PIPE`，但 standalone server CLI 与当前 release gate 不启用。进入发布范围前
+  需补齐 listener 配置、跨平台命名/权限、backpressure/close 语义及 endpoint/server 回归用例。
+
+上述 TODO 不作为当前 Linux runbook 的成功条件，也不得标记为 Flowie server 已支持。
 
 ## 支持标签与验证证据
 
@@ -72,7 +88,7 @@ auth cache 对应 SEC；public HiveMQ/EMQX live suite 只作为可选公网连�
 - parser 失败不得暴露未验证 span，`consumed` 不得超过输入长度，输出对象保持调用前的无效态。
 - session owner 是连接、订阅、QoS、retained 和 Will 状态的唯一权威；Queue/store 只验证其明确
   拥有的记录。失败后必须从权威状态读取验证，不从日志推断。
-- 真实网络测试使用 CoroNet TCP/TLS/WS/WSS/Pipe，保持 event-loop/socket 单 owner；不得用裸平台
+- 真实网络测试使用 CoroNet TCP/TLS/WS/WSS，保持 event-loop/socket 单 owner；不得用裸平台
   socket 绕过生产传输路径。
 - 每例使用随机 client ID、topic prefix、数据库 namespace/schema；清理只删除该例资源。即使断言
   失败，也必须走 fixture teardown，关闭 socket、drain/stop owner 并释放证书和临时目录。
@@ -132,7 +148,7 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 | MQTT-OWNER-001 | HIGH | `[🪟][🐧]` | QoS 1 PUBLISH 在 graph 成功、失败、超时和 ACK enqueue 失败点各执行一次 | 仅配置 settlement 达成后 PUBACK；失败不承诺 ACK | session inflight 为权威；已提交 Queue 记录不回滚，重投可重复 | `mqtt-fast;mqtt-negative` / 20 s |
 | MQTT-OWNER-002 | HIGH | `[🪟][🐧]` | QoS 2 在 PUBLISH、PUBREC、PUBREL、PUBCOMP 前后断开并以同 session 重连 | reason/packet ID/DUP 符合阶段；完成一次业务 settlement | durable session inflight 阶段为权威；逐阶段新 namespace | `mqtt-fast;mqtt-persistence` / 60 s |
 | MQTT-OWNER-003 | HIGH | `[🪟][🐧]` | 相同 client ID 建立第二连接，在旧连接 pending send/recv 时 takeover | 旧连接关闭，新 generation 独占 route；旧 completion 不可发到新连接 | session generation 为权威；等待旧 callback drain | `mqtt-transport;mqtt-negative` / 60 s |
-| MQTT-OWNER-004 | HIGH | `[🪟][🐧]` | Receive Maximum=1，连续生成多条 outbound QoS 1/2，再逐条 ACK | wire 同时最多一个未确认包，ACK 后按序释放窗口 | outbound inflight 为权威；断开并清空 session | `mqtt-fast` / 20 s |
+| MQTT-OWNER-004 | HIGH | `[🪟][🐧]` | Receive Maximum=1，连续生成多条 outbound QoS 1/2，再逐条 ACK | wire 同时最多一个未完成包；QoS 1 在 PUBACK、QoS 2 在 PUBCOMP 后按序释放窗口，PUBREL 不被待发送 PUBLISH 阻塞 | outbound inflight 为权威；断开并清空 session | `mqtt-fast` / 20 s |
 | MQTT-OWNER-005 | HIGH | `[🪟][🐧]` | 达到 connection/session/subscription/inflight/retained/send HWM 后再加一项 | 返回版本可表达的 quota reason；无法表达时关闭；无 silent drop | 对应 owner count 不超过上限且失败项不存在 | `mqtt-negative` / 30 s |
 | MQTT-OWNER-006 | HIGH | `[🪟][🐧]` | retained 新增、替换、零 payload 删除；订阅 RAP/RH/NL 组合 | retain flag 与投递次数符合 option；删除后新订阅无历史消息 | retained store 为权威；随机 topic 清理 | `mqtt-fast` / 30 s |
 | MQTT-OWNER-007 | HIGH | `[🪟][🐧]` | persistent session 订阅后断开，期间发布，再以 Clean Start false/true 重连 | false 恢复并投递；true 丢弃旧 session；Session Present 正确 | session store 为权威；结束时显式 clean session | `mqtt-fast;mqtt-persistence` / 60 s |
@@ -144,13 +160,14 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 
 ## C. 真实传输与生命周期
 
-扩展 `flowie/tests/test_flowie_transport.c`，并按 transport 参数生成具名用例。测试使用仓库已有证书 fixture
-与 CoroNet helper，验证真实握手和关闭，不以 YAML 解析成功代替网络证据。
+当前发布基线由已注册的 `flowie/tests/test_flowie_transport_baseline.c` 提供，并按 transport 生成具名
+用例。测试使用仓库已有证书 fixture 与 CoroNet helper，验证真实握手和关闭，不以 YAML 解析成功代替
+网络证据。更深的 framing、admission 和 shutdown 用例应继续迁移到当前 `flowie_endpoint_core` API。
 
 | ID | 优先级 | 支持/环境标签 | 前置条件与事件序列 | 预期 wire/错误 | 权威终态、隔离 | 标签/超时 |
 |---|---|---|---|---|---|---|
-| MQTT-NET-001 | HIGH | `[🪟][🐧]` | TCP/TLS/WS/WSS/Pipe x level 3/4/5：CONNECT、SUBSCRIBE、QoS 0/1/2 publish、UNSUBSCRIBE、PING、DISCONNECT | 每步收到版本正确的 ACK/投递；正常 EOF | connection/session owner 归零；每组合随机端口/pipe | `mqtt-transport` / 90 s |
-| MQTT-NET-002 | HIGH | `[🪟][🐧]` | TCP/TLS/WS/WSS/Pipe 将两字节 Remaining Length 的 CONNECT 逐 byte 发送，再合并发送两个 PING | CONNECT 只完成一次；CONNACK 与两个 PINGRESP wire 结果、顺序正确 | 每个 transport 独立 endpoint；断开后 session load 归零 | `mqtt-transport;mqtt-negative` / 90 s |
+| MQTT-NET-001 | HIGH | `[🪟][🐧]` | TCP/TLS/WS/WSS x level 3/4/5：CONNECT、SUBSCRIBE、QoS 0/1/2 publish、UNSUBSCRIBE、PING、DISCONNECT | 每步收到版本正确的 ACK/投递；正常 EOF | connection/session owner 归零；每组合随机端口 | `mqtt-transport` / 90 s |
+| MQTT-NET-002 | HIGH | `[🪟][🐧]` | TCP/TLS/WS/WSS 将两字节 Remaining Length 的 CONNECT 逐 byte 发送，再合并发送两个 PING | CONNECT 只完成一次；CONNACK 与两个 PINGRESP wire 结果、顺序正确 | 每个 transport 独立 endpoint；断开后 session load 归零 | `mqtt-transport;mqtt-negative` / 90 s |
 | MQTT-NET-003 | HIGH | `[🪟][🐧]` | 每种 stream transport 单次 write 合并 CONNECT+两个 PING；owner lane 单次 write 合并两个 QoS1 PUBLISH，以及两个 PUBACK+PING | CONNACK/PINGRESP、publisher PUBACK 与 subscriber delivery 均按 packet 顺序生成，无丢帧或重复消费 | framing consumed 精确；ACK 后 inflight 释放，断开后 session 归零 | `mqtt-transport` / 90 s |
 | MQTT-NET-004 | HIGH | `[🪟][🐧]` | pending recv、pending send、TLS handshake、WS close 各阶段触发 server stop | operation 以 shutdown/closed 结束，无 callback 访问已释放 owner | stop -> interrupt -> drain -> destroy 顺序；句柄回基线 | `mqtt-transport;mqtt-negative` / 90 s |
 | MQTT-NET-005 | MED | `[🪟][🐧]` | client worker callback 内 enqueue 后续异步命令，再并发 destroy | accepted command 完成一次；拒收命令返回 shutdown；无死锁 | client worker 是状态 owner；join 后释放 context | `mqtt-transport` / 90 s |
@@ -159,12 +176,11 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 `MQTT-NET-004` 已覆盖确定性 shutdown、Windows process handle 与 Linux `/proc/self/fd` 基线；TLS/WSS
 在取基线前先完成一次 OpenSSL warm-up，避免把全局一次性初始化误判为泄漏。
 
-当前 `test_flowie_transport` 已为 MQTT-NET-002 提供五种 transport 的真实连接证据，并覆盖
-MQTT-NET-003 的 CONNECT+PING 合包；`test_flowie_endpoint` 进一步验证两个 QoS1 PUBLISH 合包及
-PUBACK+下一 PING 合包的 owner/inflight 终态。MQTT-NET-004 由 `test_flowie_transport` 覆盖
-established TCP pending recv、已建 session 的 MQTT 半包、TLS/WSS 半开握手和 WSS 未完成 close frame；
-`test_flowie_endpoint` 以实时 Queue load 证明大包 fan-out send 仍在途后触发 stop。所有 stop 均受 2 秒
-上限约束，并在返回后验证 connection、session、Queue 与 send budget 归零。
+当前 `test_flowie_transport_baseline` 已注册到 `flowie-release`，并提供 TCP/TLS/WS/WSS × MQTT
+3.1/3.1.1/5 × QoS 0/1/2 的真实 CONNECT、SUBSCRIBE、PUBLISH ACK、UNSUBSCRIBE、PING 和正常
+DISCONNECT 证据。它只关闭 NET-001 的发布基线子集；NET-002..006 的 framing、异常 shutdown、资源
+基线与 WS/WSS admission 仍需用当前 Core API 提供独立已注册结果。旧
+`flowie/tests/test_flowie_transport.c` 依赖已移除的 turbo-flow API，未注册到当前 CTest，不能作为通过证据。
 
 ## D. 持久化与故障注入
 
@@ -287,11 +303,10 @@ wire、owner 和持久化三类断言同时成立。
   `flowie/tests/test_flowie_endpoint.c` 覆盖，并包含相应非法组合与状态故障点。
 - standalone repository commit 故障、重建恢复与二进制边界由 ORM harness 复用统一
   row/revision/故障契约覆盖。
-- TCP/TLS/WS/WSS/Pipe 的基本 CONNECT/PING/DISCONNECT 已在
-  `flowie/tests/test_flowie_transport.c` 覆盖；该 target 还验证 TLS/WSS 半开握手 shutdown，client target
-  验证真实 mTLS 无证书拒绝、有效证书身份、错误 CA、SAN 不匹配与不受信客户端证书拒绝；TLS listener
-  同时验证证书缺失和证书/私钥不匹配在启动边界 fail fast；WS/WSS path、subprotocol、frame type、
-  单帧/累计分片超限和非法 close 负例均由 transport target 覆盖。
+- TCP/TLS/WS/WSS 的基本 CONNECT/SUBSCRIBE/QoS 0/1/2 PUBLISH/UNSUBSCRIBE/PING/DISCONNECT 已由
+  已注册的 `flowie/tests/test_flowie_transport_baseline.c` 覆盖；更深的 TLS/mTLS 失败矩阵、半开握手
+  shutdown、WS/WSS path/subprotocol/frame 负例只有在迁移为当前 API 的已注册测试后才计入 release
+  evidence。
 - standalone CONNECT commit 失败、无脏 session 重试、丢失 CONNACK 后重建恢复已在
   `flowie/tests/test_flowie_protocol_repository.c` 覆盖；QoS checkpoint、CAS、丢失 commit reply、损坏记录、
   expiry revision fencing 和二进制边界已经进入统一 trace。

@@ -29,6 +29,7 @@
 #include "turbo_str.h"
 #include "turbo_thread.h"
 #include "turbo_uuid.h"
+#include "tlog.h"
 #include <turbostl/vec.h>
 
 #include <limits.h>
@@ -140,6 +141,8 @@ struct flowie_endpoint_connection_s {
   uint32_t client_maximum_packet_size;
   uint16_t client_receive_maximum;
   uint16_t outbound_qos_inflight;
+  int qos2_window_full_logged;
+  int qos2_window_release_logged;
   void *enhanced_auth_exchange;
   tstr enhanced_auth_method;
   tstr pending_connect_packet;
@@ -306,6 +309,8 @@ flowie_connection_find(flowie_endpoint_t *endpoint, const flowie_protocol_route_
 static void flowie_connection_close(flowie_endpoint_connection_t *connection, int status);
 static int flowie_connection_reply_enqueue(flowie_endpoint_connection_t *connection,
                                            flowie_reply_request_t *request);
+static int flowie_connection_reply_enqueue_with_priority(
+    flowie_endpoint_connection_t *connection, flowie_reply_request_t *request, int prioritize);
 static int flowie_reply_control_request_create(flowie_endpoint_t *endpoint,
                                                const flowie_protocol_route_t *route,
                                                const flowie_mqtt_control_packet_t *control,
@@ -2269,14 +2274,34 @@ static void flowie_connection_close_after_terminal_replies(flowie_endpoint_conne
 static void flowie_slow_subscriber_disconnect(flowie_endpoint_connection_t *connection,
                                               int status) {
   uint_fast64_t current;
+  uint_fast64_t total = 0u;
+  int incremented = 0;
   if (!connection || connection->closing) return;
   current = atomic_load_explicit(&connection->endpoint->slow_subscriber_disconnects,
                                  memory_order_relaxed);
-  while (current != UINT_FAST64_MAX &&
-         !atomic_compare_exchange_weak_explicit(&connection->endpoint->slow_subscriber_disconnects,
-                                                &current, current + 1u, memory_order_relaxed,
-                                                memory_order_relaxed)) {
+  while (current != UINT_FAST64_MAX) {
+    if (atomic_compare_exchange_weak_explicit(&connection->endpoint->slow_subscriber_disconnects,
+                                              &current, current + 1u, memory_order_relaxed,
+                                              memory_order_relaxed)) {
+      total = current + 1u;
+      incremented = 1;
+      break;
+    }
   }
+  if (incremented && (total & (total - 1u)) == 0u)
+    TURBO_LOG_WARNF(
+        tlog_peek_default(), "Flowie.Endpoint",
+        "slow-subscriber-isolation status={} reason={} total_disconnects={} "
+        "outbound_qos_inflight={} client_receive_maximum={} queued_replies={} "
+        "max_inflight_per_session={} send_hwm_bytes={} action=connection-closed",
+        status, turbo_strerror(status), (unsigned long long)total,
+        (unsigned int)connection->outbound_qos_inflight,
+        (unsigned int)connection->client_receive_maximum,
+        (unsigned long long)(connection->send_queue_initialized
+                                 ? deque_size(&connection->send_queue)
+                                 : 0u),
+        (unsigned long long)connection->endpoint->max_inflight_per_session,
+        (unsigned long long)connection->endpoint->send_hwm_bytes);
   flowie_connection_close(connection, status);
 }
 
@@ -3474,6 +3499,11 @@ static int flowie_connection_schedule_reply_drain(flowie_endpoint_connection_t *
 /* Owner-lane handoff. This function always consumes request, including failures. */
 static int flowie_connection_reply_enqueue(flowie_endpoint_connection_t *connection,
                                            flowie_reply_request_t *request) {
+  return flowie_connection_reply_enqueue_with_priority(connection, request, 0);
+}
+
+static int flowie_connection_reply_enqueue_with_priority(
+    flowie_endpoint_connection_t *connection, flowie_reply_request_t *request, int prioritize) {
   size_t queue_size;
   size_t bytes;
   int rc;
@@ -3500,8 +3530,28 @@ static int flowie_connection_reply_enqueue(flowie_endpoint_connection_t *connect
   rc = queue_size == SIZE_MAX
            ? TURBO_ERANGE
            : flowie_stl_error(deque_reserve(&connection->send_queue, queue_size + 1u));
-  if (rc == TURBO_OK)
-    rc = flowie_stl_error(deque_push_back(&connection->send_queue, &request));
+  if (rc == TURBO_OK) rc = flowie_stl_error(deque_push_back(&connection->send_queue, &request));
+  if (rc == TURBO_OK && prioritize) {
+    size_t insert_index = queue_size;
+    int can_prioritize = 1;
+    for (size_t i = 0u; i <= queue_size; ++i) {
+      flowie_reply_request_t **queued = deque_at(&connection->send_queue, i);
+      if (!queued || !*queued) {
+        can_prioritize = 0;
+        break;
+      }
+      if (i < queue_size && insert_index == queue_size && (*queued)->qos_delivery)
+        insert_index = i;
+    }
+    if (can_prioritize && insert_index < queue_size) {
+      for (size_t i = queue_size; i > insert_index; --i) {
+        flowie_reply_request_t **destination = deque_at(&connection->send_queue, i);
+        flowie_reply_request_t **source = deque_at(&connection->send_queue, i - 1u);
+        *destination = *source;
+      }
+      *(flowie_reply_request_t **)deque_at(&connection->send_queue, insert_index) = request;
+    }
+  }
   if (rc != TURBO_OK) {
     flowie_connection_reply_request_release(connection, request);
     flowie_connection_close(connection, rc);
@@ -3910,7 +3960,11 @@ static int flowie_endpoint_ack_enqueue(flowie_endpoint_connection_t *connection,
   rc = flowie_reply_control_request_create(connection->endpoint, &connection->route, &control, 0, 1,
                                            &request);
   if (rc != TURBO_OK) return rc;
-  return flowie_connection_reply_enqueue(connection, request);
+  /* A QoS 2 PUBREL completes the acknowledgement half of an already-sent
+   * PUBLISH. It must not sit behind unsent QoS deliveries when the peer's
+   * Receive Maximum window is full. */
+  return flowie_connection_reply_enqueue_with_priority(
+      connection, request, ack->kind == FLOWIE_SESSION_ACK_PUBREL);
 }
 
 static int flowie_endpoint_delivery_replay_enqueue(flowie_endpoint_connection_t *connection) {
@@ -3975,9 +4029,33 @@ static int flowie_endpoint_prepare_delivery_ack(flowie_endpoint_connection_t *co
       return rc;
     }
   }
-  if (packet->type == FLOWIE_MQTT_PACKET_PUBACK || packet->type == FLOWIE_MQTT_PACKET_PUBREC) {
+  if (packet->type == FLOWIE_MQTT_PACKET_PUBREC &&
+      connection->outbound_qos_inflight >= connection->client_receive_maximum &&
+      !connection->qos2_window_full_logged) {
+    connection->qos2_window_full_logged = 1;
+    TURBO_LOG_DEBUGF(tlog_peek_default(), "Flowie.Endpoint",
+                     "qos2-window ack=PUBREC outbound_qos_inflight={} "
+                     "client_receive_maximum={} queued_replies={} window_released=0 "
+                     "action=pubrel-prioritized",
+                     (unsigned int)connection->outbound_qos_inflight,
+                     (unsigned int)connection->client_receive_maximum,
+                     (unsigned long long)deque_size(&connection->send_queue));
+  }
+  if (packet->type == FLOWIE_MQTT_PACKET_PUBACK || packet->type == FLOWIE_MQTT_PACKET_PUBCOMP) {
     if (connection->outbound_qos_inflight == 0u) return TURBO_EPROTO;
     connection->outbound_qos_inflight -= 1u;
+    if (packet->type == FLOWIE_MQTT_PACKET_PUBCOMP &&
+        connection->outbound_qos_inflight + 1u >= connection->client_receive_maximum &&
+        !connection->qos2_window_release_logged) {
+      connection->qos2_window_release_logged = 1;
+      TURBO_LOG_DEBUGF(tlog_peek_default(), "Flowie.Endpoint",
+                       "qos2-window ack=PUBCOMP outbound_qos_inflight={} "
+                       "client_receive_maximum={} queued_replies={} window_released=1 "
+                       "action=delivery-drain-resumed",
+                       (unsigned int)connection->outbound_qos_inflight,
+                       (unsigned int)connection->client_receive_maximum,
+                       (unsigned long long)deque_size(&connection->send_queue));
+    }
   }
   if (reply.kind == FLOWIE_SESSION_ACK_NONE)
     return deque_size(&connection->send_queue) != 0u

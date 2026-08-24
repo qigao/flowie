@@ -35,23 +35,40 @@ include(CmakeUtils)
 
 # Flowie is an independent MQTT product. Its broker depends only on CoroNet and
 # foundational libraries; product orchestration belongs to downstream adapters.
-find_package(TurboUtils CONFIG REQUIRED PATHS "${TURBO_UTILS_ROOT}")
-find_package(TurboParser CONFIG REQUIRED PATHS "${TURBOPARSER_ROOT}")
+foreach(_flowie_dependency_root IN ITEMS
+        TURBOUTILS_ROOT TURBOPARSER_ROOT TURBONET_ROOT TURBODB_ROOT
+        TURBOHTTP_ROOT TURBORAFT_ROOT FLOWMQ_ROOT)
+  if(NOT DEFINED ENV{${_flowie_dependency_root}} OR
+     "$ENV{${_flowie_dependency_root}}" STREQUAL "")
+    message(FATAL_ERROR
+            "Required dependency root is not defined: ${_flowie_dependency_root}")
+  endif()
+  if(NOT IS_DIRECTORY "$ENV{${_flowie_dependency_root}}")
+    message(FATAL_ERROR
+            "${_flowie_dependency_root} is not a directory: $ENV{${_flowie_dependency_root}}")
+  endif()
+endforeach()
+
+find_package(TurboUtils CONFIG REQUIRED
+             PATHS "$ENV{TURBOUTILS_ROOT}" NO_DEFAULT_PATH)
+find_package(TurboParser CONFIG REQUIRED
+             PATHS "$ENV{TURBOPARSER_ROOT}" NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(TurboNet CONFIG REQUIRED PATHS "${TURBO_NET_ROOT}")
+find_package(TurboNet CONFIG REQUIRED
+             PATHS "$ENV{TURBONET_ROOT}" NO_DEFAULT_PATH)
 find_package(xxHash CONFIG REQUIRED)
-find_package(TurboDB CONFIG REQUIRED PATHS "${TURBODB_ROOT}")
+find_package(TurboDB CONFIG REQUIRED
+             PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 if(TARGET TurboParser::DataBind AND NOT TARGET TurboUtils::DataBind)
   add_library(TurboUtils::DataBind ALIAS TurboParser::DataBind)
 endif()
-set(TurboRaft_DIR "${TURBORAFT_ROOT}/lib/cmake/TurboRaft" CACHE PATH
-    "TurboRaft package directory" FORCE)
-set(FlowMQ_DIR "${FLOWMQ_ROOT}/lib/cmake/FlowMQ" CACHE PATH
-    "FlowMQ package directory" FORCE)
+find_package(FlowMQ CONFIG REQUIRED
+             PATHS "$ENV{FLOWMQ_ROOT}" NO_DEFAULT_PATH)
 find_package(TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwner DataStream FlowMQ
-             PATHS "${TURBORAFT_ROOT}" NO_DEFAULT_PATH)
-find_package(TurboHttp CONFIG REQUIRED PATHS "${TURBO_HTTP_ROOT}")
+             PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
+find_package(TurboHttp CONFIG REQUIRED
+             PATHS "$ENV{TURBOHTTP_ROOT}" NO_DEFAULT_PATH)
 find_package(SQLite3 REQUIRED)
 add_subdirectory(tools)
 include(FindTools)

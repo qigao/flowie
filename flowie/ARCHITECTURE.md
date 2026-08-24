@@ -493,14 +493,13 @@ reuse inactive entry slots, so subscribe/unsubscribe churn does not retain remov
 CRoaring deduplicates overlapping ordinary matches and selects shared members by rank without
 copying a candidate array. Unrelated mutations preserve each shared filter's cursor. The trie also
 enforces the MQTT `$SYS` root-wildcard boundary before the defensive protocol matcher.
-The internal capacity benchmark holds 100k session owners concurrently and builds/matches a
-100k-filter derived trie containing exact, `+`, `#`, and shared filters. A second workload performs
-eight complete 100k wildcard/shared rebuilds and 256 matches returning exactly 100k candidates each.
-The live-TCP workload adds one publisher plus 100,000 real MQTT 5 subscribers, verifies the
-Connection and ProtocolAggregate counts, and byte-compares one complete QoS 0 delivery at every
-subscriber. The exact Windows/MSVC Release run on 2026-07-16 completed with
-`connected=100000`, `delivered=100000`, and `status=0`; this closes the functional deployment-capacity
-gate, not a portable connection-rate or latency SLA.
+The repository-owned remote load runner at
+`deploy/server/tests/run-mqtt-scale-load.sh` is the current executable capacity evidence. Its default
+tiers create 96, 192, and 384 simultaneous MQTT 5 clients across QoS 0/1/2 and validate exact payload
+counts, multiset equality, per-publisher FIFO, server/listener survival, CPU, RSS/VM, threads, file
+descriptors, connection peaks, and bounded diagnostic logs. The 2026-08-24 EU Debug runs passed all
+three tiers. These results are correctness and resource evidence for that host/build/workload, not a
+portable connection-rate, latency, or production-capacity SLA.
 
 The endpoint derives the private CoroNet object-pool capacity from `max_connections` plus fixed
 headroom and exposes `coroutine_stack_size` and `stream_recv_buffer_bytes` for that private context.
@@ -510,11 +509,10 @@ because their host owns capacity. Flowie defaults each of CoroNet's two ping-pon
 two fixed 128 KiB receive chunks plus a 32 KiB coroutine stack accounted for about 288 KiB of fixed
 per-connection capacity. The private-context minimum stack is 64 KiB for managed
 security and MQTT 5 AUTH state, so 4 KiB receive chunks now account for about 72 KiB
-(`2 * 4 KiB + 64 KiB`). Explicit 32 KiB configurations must migrate to at least 64 KiB. The 100k
-run peaked near 5.93 GiB private commit on the reference host; the
-50k run peaked near 3.07 GiB. Those live-TCP setup timings predate incremental selector mutation and
-combine serial TCP/MQTT handshakes, owner creation, subscription commits, and test-driver overhead;
-they are functional capacity evidence, not a current connection- or subscription-rate benchmark.
+(`2 * 4 KiB + 64 KiB`). Explicit 32 KiB configurations must migrate to at least 64 KiB. The remote
+runner records peak and settled memory for every tier instead of treating the theoretical pool
+capacity as committed memory. Capacity changes must be validated by repeated runs on a stable host;
+a single Debug high-water measurement is not a connection- or subscription-rate benchmark.
 
 One owner-lane dispatcher preserves command order up to route admission; it never waits for socket
 I/O. Each connection coroutine owns both receive/framing and its bounded FIFO send drain. Enqueue
@@ -525,13 +523,11 @@ always the final vector item, and queue budgets are released only after the send
 therefore does not transiently allocate a second coroutine per recipient.
 Different socket owners can still make progress independently, while one connection keeps strict
 FIFO and one mutable transport owner. Shutdown closes admission, interrupts socket waits, releases
-both global and connection budgets, and waits for connection owners before destroying state. Real
-TCP tests cover peer-local HWM
-closure, outbound-inflight exhaustion, continued delivery to a healthy subscriber, QoS replay, and
-stop/drain cleanup. A Release benchmark additionally forces a 1 KiB receive-buffer subscriber to
-stop reading 512 KiB packets over repeated connection cycles; all healthy deliveries complete and
-only the stalled connection is removed. Its latency remains a platform-specific capacity reference,
-not a portable SLA.
+both global and connection budgets, and waits for connection owners before destroying state. The
+current remote runner covers active-subscriber fan-out and owner cleanup after each tier. A
+stalled-subscriber injection, reconnect/replay workload, and shutdown-under-load phase are explicit
+runner extensions; until those cases are implemented and executed, the configured HWM/disconnect
+policy remains a code contract rather than current load-test evidence.
 
 The endpoint owner lane also owns a bounded exact-topic retained table. A retained PUBLISH replaces
 the previous packet only after the complete graph command reaches the configured Flowie fan-out

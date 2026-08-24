@@ -26,3 +26,7 @@ target_include_directories(
 target_link_libraries(
   flowie_transport
   PUBLIC TurboNet::CoroNet TurboUtils::Core)
+
+if(FLOWIE_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
