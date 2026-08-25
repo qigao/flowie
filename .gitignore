@@ -89,3 +89,6 @@ license_encryption.key
 **/license_encryption.key
 **/*_key.rsa
 **/*.lic
+
+# Isolated feature worktrees
+.worktrees/
