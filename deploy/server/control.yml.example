@@ -1,0 +1,55 @@
+version: 1
+
+listener:
+  # The Compose service uses host networking so loopback is shared with the host proxy and Broker.
+  host: 127.0.0.1
+  port: 8443
+  coroutine_stack_size: 262144
+  tls:
+    cert_file: /etc/flowie/certs/flowie-control-server-chain.pem
+    key_file: /etc/flowie/certs/flowie-control-server-key.pem
+    key_password_ref: env://FLOWIE_CONTROL_KEY_PASSWORD
+    client_auth: none
+  limits:
+    max_header_name_length: 128
+    max_header_value_length: 4096
+    max_url_length: 2048
+    max_cookie_name_length: 128
+    max_cookie_value_length: 4096
+    max_json_depth: 32
+    max_log_message_length: 2048
+    max_request_body_size: 65536
+    max_headers_count: 64
+
+storage:
+  control_store: sqlite
+  sqlite:
+    path: /var/lib/flowie/control/flowie-control.sqlite3
+    busy_timeout_ms: 1000
+
+management:
+  rpc_path: /v2/control/rpc
+  rpc_max_request_size: 65536
+  session:
+    capacity: 1024
+    max_sessions_per_principal: 5
+    ttl_seconds: 3600
+  login_executor:
+    workers: 4
+    queue_capacity: 128
+    deadline_ms: 10000
+
+dashboard:
+  enabled: true
+
+auth:
+  enabled: true
+  listener_id: flowie-control-auth
+  method: password
+  principal_ttl_seconds: 300
+  credential_cache_capacity: 4096
+  credential_cache_ttl_seconds: 60
+  local_executor:
+    workers: 4
+    queue_capacity: 128
+    deadline_ms: 10000
