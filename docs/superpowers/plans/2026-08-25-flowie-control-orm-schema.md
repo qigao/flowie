@@ -4,7 +4,7 @@
 
 **Goal:** Move Flowie Control SQLite/PostgreSQL persistence behind one schema-first TurboDB ORM adapter while preserving the existing repository, transaction, migration, audit, timeout, shutdown, and security contracts.
 
-**Architecture:** TurboDB first gains structured PostgreSQL diagnostics, real live coverage, and generated-C composite-key support. Flowie then defines one Control schema, builds a bounded pool of ORM connections, implements the existing `flowie_control_repository_t` operation table on that pool, proves differential parity with the current providers, and switches composition without dual-writing or fallback.
+**Architecture:** TurboDB first separates PostgreSQL into an explicitly linked ORM driver component, adds structured diagnostics, real live coverage, and generated-C composite-key support. Flowie then defines one Control schema, builds a bounded pool of ORM connections, implements the existing `flowie_control_repository_t` operation table on that pool, proves differential parity with the current providers, and switches composition without dual-writing or fallback.
 
 **Tech Stack:** C11, C++17, TurboDB::ORM, TurboParser TBE schema tools/DataBind, TurboUtils threads/errors/TinyTest, SQLite3, PostgreSQL 17/libpq, CMake presets, CTest.
 
@@ -20,23 +20,48 @@
 - Keep passwords separate from public conninfo and never log passwords, credentials, SQL parameters, tokens, or full connection strings.
 - Use INFO only for startup/shutdown/schema milestones; rate-limit retryable WARN events; keep redacted backend details at DEBUG.
 - Build and test through version-controlled `CMakeUserPresets.json`; run the smallest target/filter first.
+- `TurboDB::ORM` and its package config must not find or link PostgreSQL; only
+  `OrmPostgreSQL::Driver` and explicit PG-enabled product profiles may depend on libpq.
 - Follow strict RED-GREEN-REFACTOR for every behavior change.
 
 ---
 
-### Task 1: Preserve PostgreSQL SQLSTATE through the TurboDB ORM ABI
+### Task 1: Isolate the PostgreSQL driver and preserve SQLSTATE diagnostics
 
 **Files:**
 - Modify: `../turbodb/orm/include/orm/orm.h`
+- Create: `../turbodb/orm/include/orm/orm_postgresql.h`
 - Modify: `../turbodb/orm/src/abi/orm_c_internal.hpp`
 - Modify: `../turbodb/orm/src/abi/orm_c.cpp`
 - Modify: `../turbodb/orm/include/orm/dbs/postgres/pg_detail.hpp`
 - Modify: `../turbodb/orm/src/dbs/postgres/backend.cpp`
+- Create: `../turbodb/orm/src/dbs/postgres/driver.cpp`
+- Modify: `../turbodb/orm/CMakeLists.txt`
+- Modify: `../turbodb/orm/cmake/OrmConfig.cmake.in`
+- Create: `../turbodb/orm/cmake/OrmPostgreSQLConfig.cmake.in`
+- Create: `../turbodb/orm/tests/package_consumer/core/CMakeLists.txt`
+- Create: `../turbodb/orm/tests/package_consumer/core/main.c`
+- Create: `../turbodb/orm/tests/package_consumer/postgresql/CMakeLists.txt`
+- Create: `../turbodb/orm/tests/package_consumer/postgresql/main.c`
+- Modify: `../turbodb/CMakeUserPresets.json`
 - Modify: `../turbodb/orm/tests/abi/c_api_fake_libpq.cpp`
 - Modify: `../turbodb/orm/tests/abi/c_api_test.c`
 - Modify: `../turbodb/orm/README.md`
 
 **Interfaces:**
+- `TurboDB::ORM`/`Orm::C` contains no PostgreSQL backend object and has no libpq
+  link or package-config dependency.
+- New installed target `OrmPostgreSQL::Driver` links `Orm::C` and
+  `PostgreSQL::PostgreSQL` and exports:
+
+```c
+ORM_POSTGRESQL_C_API orm_status_t ORM_C_CALL orm_postgresql_register(
+    orm_error_t *error);
+```
+
+- Registration is idempotent, bounded, and safe before concurrent connects.
+  `orm_connect(driver="postgresql")` returns `ORM_STATUS_UNSUPPORTED` until the
+  component is linked and explicitly registered.
 - Extend `orm_error_t` at the tail with `char backend_code[ORM_C_BACKEND_CODE_CAPACITY]`.
 - Keep the existing `orm_error_init()` symbol limited to the legacy prefix and add
   `orm_error_init_s(orm_error_t *error, uint32_t struct_size)` for callers that opt
@@ -45,7 +70,13 @@
 - Add `const char *orm_error_backend_code(const orm_error_t *error)`; it returns `""` when unavailable.
 - Carry optional backend code in internal `status_error`; PostgreSQL stores the five-character SQLSTATE.
 
-- [ ] **Step 1: Write ABI and PostgreSQL diagnostic tests**
+- [ ] **Step 1: Write driver-isolation, registration, and diagnostic tests**
+
+Add a core-only package consumer that calls SQLite ORM APIs and links only
+`Orm::C`. Its generated link interface and configure trace must contain neither
+`PostgreSQL::PostgreSQL` nor `libpq`. Add a PostgreSQL consumer that explicitly
+finds `OrmPostgreSQL`, links `OrmPostgreSQL::Driver`, calls
+`orm_postgresql_register()`, and then opens the driver.
 
 Add tests that initialize a full `orm_error_t` with
 `orm_error_init_s(&error, sizeof(error))`, script fake libpq with SQLSTATE
@@ -58,21 +89,35 @@ require_true(strcmp(orm_error_backend_code(&error), "23505") == 0,
              "PostgreSQL SQLSTATE was not preserved");
 ```
 
-Also pass a legacy prefix-sized error buffer to an internal test hook and assert no byte beyond the reported size changes.
+Before registration, assert PostgreSQL connect returns `ORM_STATUS_UNSUPPORTED`.
+Call registration twice and assert both calls succeed. Also pass a legacy
+prefix-sized error buffer to an internal test hook and assert no byte beyond the
+reported size changes.
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
-Run the TurboDB public development preset and target:
+Configure the normal core-only preset, then a PG-component build without changing
+the normal preset's `ORM_WITH_PGSQL=OFF` release policy:
 
 ```powershell
 cmake --fresh --preset win-dev-user
-cmake --build --preset win-dev-user --target orm_postgres_c_api_test
-ctest --preset win-dev-user -R '^orm_postgres_c_api$' --output-on-failure
+cmake --build --preset win-dev-user --target orm_core_package_consumer_test
+cmake --fresh --preset win-dev-pg-user
+cmake --build --preset win-dev-pg-user --target orm_postgres_c_api_test
+ctest --preset win-dev-pg-user -R '^orm_postgres_c_api$|^orm_package_' --output-on-failure
 ```
 
-Expected: compile failure because `orm_error_backend_code` and the backend-code field do not exist.
+Expected: RED because the optional component/registration API and structured
+diagnostic do not exist; the current PG-enabled `OrmConfig.cmake` also exposes
+PostgreSQL globally.
 
-- [ ] **Step 3: Implement structured backend diagnostics and status mapping**
+- [ ] **Step 3: Implement explicit driver registration and structured diagnostics**
+
+Move `backend.cpp` out of `orm_c`. Add a small package-private driver registry in
+the core and make `driver.cpp` register `make_postgres_backend`. The installed C
+header exposes only `orm_postgresql_register()`; no C++ backend type crosses the
+public ABI. `OrmPostgreSQLConfig.cmake` alone calls
+`find_dependency(PostgreSQL)`.
 
 Add a tail field without changing earlier offsets:
 
@@ -105,17 +150,19 @@ Read SQLSTATE with `PQresultErrorField(result, PG_DIAG_SQLSTATE)`, preserve it i
 - [ ] **Step 4: Run RED test to GREEN and regress the ORM ABI suite**
 
 ```powershell
-cmake --build --preset win-dev-user --target orm_postgres_c_api_test
-ctest --preset win-dev-user -R '^orm_postgres_c_api$|^orm_abi_' --output-on-failure
+cmake --build --preset win-dev-pg-user --target orm_postgres_c_api_test
+ctest --preset win-dev-pg-user -R '^orm_postgres_c_api$|^orm_abi_|^orm_package_' --output-on-failure
 ```
 
-Expected: all selected tests pass and the fake libpq result/connection counts remain balanced.
+Expected: all selected tests pass, fake libpq result/connection counts remain
+balanced, the core-only package consumer has no PostgreSQL dependency, and the
+PG consumer fails if registration is removed.
 
 - [ ] **Step 5: Commit TurboDB diagnostic support**
 
 ```powershell
-git add orm/include/orm/orm.h orm/src/abi/orm_c_internal.hpp orm/src/abi/orm_c.cpp orm/include/orm/dbs/postgres/pg_detail.hpp orm/src/dbs/postgres/backend.cpp orm/tests/abi/c_api_fake_libpq.cpp orm/tests/abi/c_api_test.c orm/README.md
-git commit -m "feat(orm): expose PostgreSQL backend diagnostics"
+git add orm/include/orm/orm.h orm/include/orm/orm_postgresql.h orm/src/abi/orm_c_internal.hpp orm/src/abi/orm_c.cpp orm/include/orm/dbs/postgres/pg_detail.hpp orm/src/dbs/postgres/backend.cpp orm/src/dbs/postgres/driver.cpp orm/CMakeLists.txt orm/cmake/OrmConfig.cmake.in orm/cmake/OrmPostgreSQLConfig.cmake.in orm/tests/package_consumer orm/tests/abi/c_api_fake_libpq.cpp orm/tests/abi/c_api_test.c orm/README.md CMakeUserPresets.json
+git commit -m "feat(orm): isolate PostgreSQL driver component"
 ```
 
 ### Task 2: Add a real PostgreSQL TurboDB ORM integration gate
@@ -130,6 +177,8 @@ git commit -m "feat(orm): expose PostgreSQL backend diagnostics"
 - Add cache option `ORM_POSTGRES_LIVE_TESTS` defaulting to `OFF`.
 - Live test reads `TURBODB_ORM_PGSQL_TEST_CONNINFO` and optional `PGPASSWORD`; secrets are not printed.
 - The test uses a process-unique `orm_pg_live_<pid>_<timestamp>` schema and always drops it.
+- The live binary links `OrmPostgreSQL::Driver` and explicitly calls
+  `orm_postgresql_register()` before the first connection.
 
 - [ ] **Step 1: Register a disabled live target and write the failing behavior test**
 
@@ -489,7 +538,8 @@ int flowie_control_orm_repository_destroy(
 ```
 
 - Runtime still exposes `control_store: sqlite|postgresql`; both now compose the ORM provider.
-- A binary whose installed TurboDB lacks PostgreSQL support rejects PostgreSQL at configure/startup with an actionable error.
+- A Flowie build without `OrmPostgreSQL::Driver` does not link libpq and rejects
+  PostgreSQL configuration with an actionable capability error.
 - Keep the old providers available only to differential tests until Task 9 passes.
 
 - [ ] **Step 1: Add runtime composition and capability failure tests**

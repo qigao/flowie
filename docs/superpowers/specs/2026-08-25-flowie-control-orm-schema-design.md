@@ -198,25 +198,36 @@ The external Control configuration remains compatible:
 - literal PostgreSQL passwords remain rejected;
 - provider failure never changes the selected provider.
 
-TurboDB must be built and exported with PostgreSQL support for a Flowie build that
-offers the PostgreSQL Control provider. CMake detects this capability and either
-builds the PG adapter and tests or reports a clear configuration error. It must
-not silently accept PostgreSQL configuration in a SQLite-only binary.
+PostgreSQL is an optional TurboDB ORM driver component, not a compile definition
+or link dependency of `TurboDB::ORM`. The core ORM package must configure, build,
+install, and serve downstream consumers without finding or linking libpq. A
+separate `OrmPostgreSQL::Driver` target owns libpq and exposes an explicit,
+idempotent registration function. Only a Flowie Control build that enables the
+PostgreSQL provider finds, links, and registers that component.
+
+The release matrix publishes a normal TurboDB SDK and an explicit PostgreSQL
+variant/component. It must not force Broker-only builds or unrelated TurboDB
+downstreams to compile, install, discover, or deploy PostgreSQL. Flowie CMake
+detects the optional component and either builds the Control PG adapter/tests or
+reports a clear configuration error. Runtime configuration must not silently
+accept PostgreSQL in a binary that did not link and register the component.
 
 ## Migration Strategy
 
 1. Capture the existing SQLite and PostgreSQL repository behavior in a shared
    provider-parameterized contract suite.
 2. Define and validate the normalized Control schema and fingerprint.
-3. Add real PostgreSQL live tests to TurboDB ORM for connection, parameter,
+3. Split PostgreSQL into an explicitly linked ORM driver component and prove
+   core-only package consumers have no PostgreSQL dependency.
+4. Add real PostgreSQL live tests to TurboDB ORM for connection, parameter,
    transaction, rollback, isolation, binary values, limits, and diagnostics.
-4. Implement the bounded ORM connection pool and schema lifecycle.
-5. Implement the ORM-backed Control repository behind an internal build/runtime
+5. Implement the bounded ORM connection pool and schema lifecycle.
+6. Implement the ORM-backed Control repository behind an internal build/runtime
    selection used only by tests.
-6. Run differential tests against the existing providers, including seeded
+7. Run differential tests against the existing providers, including seeded
    databases and migration/validate behavior.
-7. Make ORM adapters the production SQLite/PostgreSQL providers after parity.
-8. Remove handwritten query/command duplication in a later cleanup commit while
+8. Make ORM adapters the production SQLite/PostgreSQL providers after parity.
+9. Remove handwritten query/command duplication in a later cleanup commit while
    retaining migration compatibility tests.
 
 Existing production databases are validated in place. No destructive automatic
@@ -227,7 +238,8 @@ explicit versioned migration must transform it transactionally.
 
 The change is complete only when all of the following pass:
 
-- TurboDB ORM unit tests with SQLite and PostgreSQL enabled;
+- TurboDB ORM core-only package/link test with no PostgreSQL dependency;
+- TurboDB ORM PostgreSQL component unit tests;
 - a real PostgreSQL live suite, not fake-libpq-only coverage;
 - the shared Control repository contract against SQLite and PostgreSQL;
 - migration followed by validate-only restart;
