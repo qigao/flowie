@@ -1,8 +1,9 @@
-# Flowie server container
+# Flowie server and Control containers
 
-该目录构建和运行独立的 Flowie MQTT broker。Flowie 不依赖 TurboFlow；当前 server 直接接收 listener
-参数，不读取 Flowie config、graph 或 embedded Control 配置。镜像以 UID/GID `10001` 运行，默认只监听
-`127.0.0.1:18883`。
+该目录构建一个同时包含 `flowie_server` 与 `flowie-control` 的运行镜像。Compose 将它们作为两个独立
+service 运行，使 MQTT 数据面和 HTTPS 控制面保持独立进程、健康状态与持久卷。当前 server 仍直接接收
+listener 参数，不读取 Flowie config、graph 或 embedded Control 配置；Control 必须通过独立 service
+启动。两个进程都以 UID/GID `10001` 运行，默认只监听 host loopback。
 
 ## 运行契约
 
@@ -55,7 +56,26 @@ worker/supervisor 拓扑属于完整的 Flowie YAML runtime，不在这个容器
 `FLOWIE_MAX_INFLIGHT_PER_SESSION=1024`；容量仍需按单 session 的待发送 QoS 消息峰值评估。
 
 当前独立 broker 的 session、subscription、inflight、retained 和 pending Will 都是进程内状态；容器重启
-后不会恢复。命名卷保留为以后扩展的数据边界，但当前 broker 不把 MQTT 状态写入其中。
+后不会恢复。`flowie-data` 保留为以后扩展的数据边界，但当前 broker 不把 MQTT 状态写入其中。
+`flowie-control-data` 不同：它保存 Control SQLite Repository，包含 Domain、用户、credential verifier、
+Role、Group、ACL 与审计，必须纳入备份。
+
+## Control 运行契约
+
+`flowie-control-entrypoint` 默认要求 `/etc/flowie/control.yml` 是普通可读文件，然后执行：
+
+```text
+flowie-control --config /etc/flowie/control.yml
+```
+
+`FLOWIE_CONTROL_CONFIG` 可选择其他容器内路径；`FLOWIE_CONTROL_CHECK=1` 添加 `--check` 并只执行完整配置、
+TLS 和 secret reference 预检。布尔值只接受 `0/1/false/true/no/yes/off/on`。显式传入命令时 entrypoint
+原样执行，不拼接 Control 参数。
+
+本示例保留 Dashboard，因此 `listener.tls.client_auth` 必须为 `none`，管理员使用首次登录密码进入改密流程。
+若部署纯机器控制面，可关闭 Dashboard，改为 `client_auth: required` 并配置 `client_ca_file`；mTLS 只增加
+传输端身份校验，Broker 调用 `/v4/authenticate` 和 `/v4/acl/check` 时仍需 Repository 中生成的 service
+credential 与对应 Role。
 
 ## 构建
 
@@ -95,8 +115,10 @@ docker buildx build \
   .
 ```
 
-Dockerfile 分别构建并安装七个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server`。运行镜像不依赖宿主
-SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest 或不可变 tag 部署。
+Dockerfile 分别构建并安装七个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server` 和
+`flowie-control`。构建层与最终运行层分别对两个 executable 执行 `ldd`，任一动态库缺失都会使镜像构建
+失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest 或不可变
+tag 部署。
 
 需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
 
@@ -117,26 +139,98 @@ topic 或 payload。
 
 ## Compose 部署
 
-`compose.yml` 使用 host network，适合作为同机 Nginx/HAProxy 后端。默认 listener 仅绑定 loopback；需要
-对外监听时必须显式设置 `FLOWIE_HOST`，并在外部代理或防火墙处配置访问边界。
+`compose.yml` 使用 host network，适合作为同机 Nginx/HAProxy 后端。MQTT 默认绑定
+`127.0.0.1:18883`，Control 默认绑定 `127.0.0.1:8443`。需要对外监听时必须修改对应配置，并在外部代理
+或防火墙处配置访问边界。
+
+首次启动前准备部署材料。`config/`、`certs/` 与 `secrets/` 已同时从 Git 和 Docker build context
+排除，不会进入镜像层：
+
+```sh
+mkdir -p deploy/server/config deploy/server/certs deploy/server/secrets
+cp deploy/server/.env.example deploy/server/.env
+cp deploy/server/control.yml.example deploy/server/config/control.yml
+umask 077
+touch deploy/server/secrets/control-key-password
+```
+
+将证书链和私钥分别保存为：
+
+```text
+deploy/server/certs/flowie-control-server-chain.pem
+deploy/server/certs/flowie-control-server-key.pem
+```
+
+若私钥加密，通过本机 secret 管理工具或不会留下 shell history 的编辑器，把口令本身写入
+`deploy/server/secrets/control-key-password`；不要写 `KEY=value`。不要把 secret 写进 `.env`、Compose YAML、
+Control YAML、命令行或镜像。若私钥未加密，从 `config/control.yml` 删除 `key_password_ref`，该 secret 文件
+仍需作为显式、权限受控的空文件存在。
+
+这里的 secret 只解锁 Control HTTPS 服务端私钥，不是 `system/admin` 登录密码。Vault、云 Secret Manager
+或其他第三方平台应在启动前把 secret 原子地落地到该文件，并保持下述 group/mode。entrypoint 只在进程
+启动时读取一次，因此更新文件后执行：
+
+```sh
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  up -d --no-deps --force-recreate flowie-control
+```
+
+Compose file-backed secret 的 UID/GID/mode 不能重映射，参见
+[Docker Compose secrets](https://docs.docker.com/reference/compose-file/services/#secrets)。
+
+配置、证书链与私钥必须可由容器 UID/GID `10001:10001` 读取。以下是 rootful Linux Docker 的一组权限
+示例；rootless Docker 或启用 user namespace 时，应改用其映射后的 UID/GID：
+
+```sh
+sudo chown -R 10001:10001 deploy/server/config deploy/server/certs
+sudo chgrp 10001 deploy/server/secrets/control-key-password
+chmod 0750 deploy/server/config deploy/server/certs
+chmod 0640 deploy/server/config/control.yml \
+  deploy/server/certs/flowie-control-server-chain.pem
+chmod 0600 deploy/server/certs/flowie-control-server-key.pem
+chmod 0440 deploy/server/secrets/control-key-password
+```
+
+先验证 Control 配置，不打开 listener 或 SQLite：
 
 ```sh
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
-docker compose -f deploy/server/compose.yml config
-docker compose -f deploy/server/compose.yml up -d --no-build flowie-server
-docker compose -f deploy/server/compose.yml ps
-docker compose -f deploy/server/compose.yml logs --tail=200 flowie-server
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml config
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  run --rm --no-deps \
+  -e FLOWIE_CONTROL_CHECK=1 flowie-control
 ```
 
-健康检查确认 PID 1 存活并能连接 `FLOWIE_HEALTH_HOST:FLOWIE_HEALTH_PORT`。运行态验收还应执行 MQTT 5
-CONNECT/CONNACK 和 QoS 1 publish/subscribe，不能只依赖 TCP 探针。
+然后启动两个 service：
+
+```sh
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  up -d --no-build flowie-server flowie-control
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml ps
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  logs --tail=200 flowie-server flowie-control
+```
+
+空 Control Repository 会建立固定的 `system/admin`，首次密码为公开 bootstrap 值
+`Flowie@ChangeMe!`。首次登录 `https://<control-host>/v2/control/dashboard` 后必须立即改密；改密会撤销当前
+session，需要重新登录。不得把该公开密码作为生产 secret 或通过网络暴露首次启动中的 Control。
+
+两个健康检查都只是 TCP listener 探针。运行态验收还应执行 MQTT 5 CONNECT/CONNACK、QoS 1
+publish/subscribe、Control 管理登录，以及 `/v4/authenticate` 与 `/v4/acl/check` 的 allow/deny 路径。
+升级或迁移前应停止 Control 写入，并备份 `flowie-control-data`；恢复时必须保持 Repository、配置和证书
+版本的一致性。
 
 ## 验证与运维
 
 ```sh
 sh deploy/server/tests/test-docker-entrypoint.sh
-docker compose -f deploy/server/compose.yml exec flowie-server flowie_server --help
+sh deploy/server/tests/test-flowie-control-entrypoint.sh
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  exec flowie-server flowie_server --help
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  run --rm --no-deps -e FLOWIE_CONTROL_CHECK=1 flowie-control
 docker inspect --format '{{.State.Health.Status}}' flowie-server
+docker inspect --format '{{.State.Health.Status}}' flowie-control
 ```
 
 `flowie_server --check` 校验 listener 参数并退出，不启动服务。TLS/WSS 虽是 CLI 可选 transport，但投入生产

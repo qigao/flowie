@@ -69,6 +69,11 @@ Thumbs.db
 
 # User specific settings
 .env
+
+# Runtime deployment material
+deploy/server/config/
+deploy/server/certs/
+deploy/server/secrets/
  
 # agents
 .codex-*
