@@ -2,6 +2,8 @@ services:
   flowie-server:
     image: ${FLOWIE_SERVER_IMAGE:?set FLOWIE_SERVER_IMAGE to an immutable tag or digest}
     container_name: flowie-server
+    entrypoint:
+      - /usr/local/bin/flowie-combined-entrypoint
     network_mode: host
     restart: unless-stopped
     stop_grace_period: 30s
@@ -39,45 +41,22 @@ services:
       FLOWIE_TCP_KEEPALIVE_COUNT: ${FLOWIE_TCP_KEEPALIVE_COUNT:-0}
       FLOWIE_REUSE_PORT: ${FLOWIE_REUSE_PORT:-0}
       FLOWIE_LOG_LEVEL: ${FLOWIE_LOG_LEVEL:-INFO}
-      FLOWIE_HEALTH_HOST: ${FLOWIE_HEALTH_HOST:-127.0.0.1}
-      FLOWIE_HEALTH_PORT: ${FLOWIE_HEALTH_PORT:-${FLOWIE_PORT:-18883}}
-    volumes:
-      - flowie-data:/var/lib/flowie
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-      - /run:size=16m,mode=0755
-
-  flowie-control:
-    image: ${FLOWIE_SERVER_IMAGE:?set FLOWIE_SERVER_IMAGE to an immutable tag or digest}
-    container_name: flowie-control
-    entrypoint:
-      - /usr/local/bin/flowie-control-entrypoint
-    network_mode: host
-    restart: unless-stopped
-    stop_grace_period: 30s
-    read_only: true
-    init: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    environment:
+      FLOWIE_COMBINED_CHECK: ${FLOWIE_COMBINED_CHECK:-0}
       FLOWIE_CONTROL_CONFIG: /etc/flowie/control.yml
       FLOWIE_CONTROL_CHECK: ${FLOWIE_CONTROL_CHECK:-0}
       FLOWIE_CONTROL_KEY_PASSWORD_FILE: /run/secrets/flowie-control-key-password
-      FLOWIE_HEALTH_HOST: ${FLOWIE_CONTROL_HEALTH_HOST:-127.0.0.1}
-      FLOWIE_HEALTH_PORT: ${FLOWIE_CONTROL_HEALTH_PORT:-8443}
+      FLOWIE_HEALTH_HOST: ${FLOWIE_HEALTH_HOST:-127.0.0.1}
+      FLOWIE_HEALTH_PORT: ${FLOWIE_HEALTH_PORT:-${FLOWIE_PORT:-18883}}
+      FLOWIE_HEALTH_SECONDARY_HOST: ${FLOWIE_CONTROL_HEALTH_HOST:-127.0.0.1}
+      FLOWIE_HEALTH_SECONDARY_PORT: ${FLOWIE_CONTROL_HEALTH_PORT:-8443}
     secrets:
       - source: flowie-control-key-password
         target: flowie-control-key-password
     volumes:
+      - flowie-data:/var/lib/flowie
       - ${FLOWIE_CONTROL_CONFIG_FILE:?set FLOWIE_CONTROL_CONFIG_FILE}:/etc/flowie/control.yml:ro
       - ${FLOWIE_CERT_DIR:?set FLOWIE_CERT_DIR}:/etc/flowie/certs:ro
-      - flowie-control-data:/var/lib/flowie
+      - flowie-control-data:/var/lib/flowie/control
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /run:size=16m,mode=0755

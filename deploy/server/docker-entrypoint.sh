@@ -38,12 +38,17 @@ flowie_validate_bool() {
 : "${FLOWIE_LOG_LEVEL:=INFO}"
 : "${FLOWIE_TCP_KEEPALIVE:=0}"
 : "${FLOWIE_REUSE_PORT:=0}"
+: "${FLOWIE_CHECK:=0}"
 
 flowie_validate_bool FLOWIE_TCP_KEEPALIVE "$FLOWIE_TCP_KEEPALIVE"
 flowie_validate_bool FLOWIE_REUSE_PORT "$FLOWIE_REUSE_PORT"
+flowie_validate_bool FLOWIE_CHECK "$FLOWIE_CHECK"
 
-set -- \
-  flowie_server \
+set -- flowie_server
+case "$FLOWIE_CHECK" in
+  1|true|yes|on) set -- "$@" --check ;;
+esac
+set -- "$@" \
   --host "$FLOWIE_HOST" \
   --port "$FLOWIE_PORT" \
   --transport "$FLOWIE_TRANSPORT" \
