@@ -565,6 +565,9 @@ int flowie_control_dashboard_process_form_result(
                                            "principal_type", "request_id"};
   static const char *const user_disable_keys[] = {"csrf", "operation", "principal_id",
                                                   "request_id"};
+  static const char *const password_keys[] = {"csrf",          "operation",    "principal_id",
+                                               "mode",          "new_password", "confirm_password",
+                                               "request_id"};
   static const char *const group_keys[] = {
       "csrf", "operation", "group_id", "parent_group_id", "request_id"};
   static const char *const group_delete_keys[] = {"csrf", "operation", "group_id", "request_id"};
@@ -646,6 +649,49 @@ int flowie_control_dashboard_process_form_result(
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_disable(dashboard->service, caller, &command, &result);
+  } else if (strcmp(operation, "password.set") == 0) {
+    flowie_control_password_set_command_t command = FLOWIE_CONTROL_PASSWORD_SET_COMMAND_INIT;
+    const char *new_password;
+    const char *confirm_password;
+    const char *mode;
+    size_t password_size;
+    size_t confirmation_size;
+    if (!flowie_control_dashboard_form_exact(&form, password_keys,
+                                             sizeof(password_keys) / sizeof(password_keys[0]))) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    new_password = flowie_control_dashboard_form_get(&form, "new_password");
+    confirm_password = flowie_control_dashboard_form_get(&form, "confirm_password");
+    mode = flowie_control_dashboard_form_get(&form, "mode");
+    password_size =
+        new_password ? strnlen(new_password, FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX + 1u) : 0u;
+    confirmation_size =
+        confirm_password ? strnlen(confirm_password, FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX + 1u)
+                         : 0u;
+    if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE ||
+        password_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX ||
+        confirmation_size != password_size ||
+        memcmp(new_password, confirm_password, password_size) != 0) {
+      rc = TURBO_EINVAL;
+      goto done;
+    }
+    if (strcmp(mode, "create") == 0)
+      command.mode = FLOWIE_CONTROL_PASSWORD_CREATE;
+    else if (strcmp(mode, "replace") == 0)
+      command.mode = FLOWIE_CONTROL_PASSWORD_REPLACE;
+    else {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    command.domain_id = caller->domain_id;
+    command.principal_id = flowie_control_dashboard_form_get(&form, "principal_id");
+    command.new_password = new_password;
+    command.new_password_size = password_size;
+    command.actor = caller->actor;
+    command.request_id = request_id;
+    command.occurred_at = occurred_at;
+    rc = flowie_control_management_password_set(dashboard->service, caller, &command, &result);
   } else if (strcmp(operation, "credential.issue") == 0) {
     flowie_control_credential_issue_command_t command =
         FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
@@ -870,6 +916,12 @@ int flowie_control_dashboard_process_form_result(
   }
 
 done:
+  {
+    char *new_password = (char *)flowie_control_dashboard_form_get(&form, "new_password");
+    char *confirm_password = (char *)flowie_control_dashboard_form_get(&form, "confirm_password");
+    if (new_password) crypto_wipe(new_password, strlen(new_password));
+    if (confirm_password) crypto_wipe(confirm_password, strlen(confirm_password));
+  }
   flowie_control_dashboard_form_destroy(&form);
   return rc;
 }

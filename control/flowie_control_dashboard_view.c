@@ -642,6 +642,9 @@ static int flowie_control_dashboard_add_users(json_value_t *model,
     if (rc == TURBO_OK)
       rc = flowie_control_dashboard_json_bool(
           item, "is_service", strcmp(users[index].principal_type, "service") == 0);
+    if (rc == TURBO_OK)
+      rc = flowie_control_dashboard_json_bool(
+          item, "is_human", strcmp(users[index].principal_type, "human") == 0);
     if (rc == TURBO_OK) rc = flowie_control_dashboard_json_array_take(array, item);
     else flowie_control_dashboard_json_free(item);
   }

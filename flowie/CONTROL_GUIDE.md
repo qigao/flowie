@@ -197,6 +197,12 @@ mode，不会从 create 失败自动降级为替换。之后把 PostgreSQL `sche
 `migrate` 恢复为 `validate`。后续只通过登录 session 保护的 JSON-RPC 创建/禁用用户，生成/轮换/
 撤销 credential，维护 Group/Role，验证并发布 ACL；不得再次添加 bootstrap，也不得直接修改数据库。
 
+Dashboard 对该流程提供同一组命令的可视化入口。`system/admin` 重新登录后，在 Overview 的
+“Third-party platform setup” 中先创建并切换到第三方专属 Domain，再在 Users 中创建 `human` 用户。
+对该用户执行 “Set password” 时，首次设置必须显式选择 `create`；只有确认覆盖已有密码时才选择
+`replace`。两种模式都要求操作者输入并确认密码，Control 不生成、不回显 human 密码。`service` 用户
+不会显示该密码操作，而是使用独立的 “Issue token”；生成的 token 只在成功响应中显示一次。
+
 升级前必须备份非空 Control Repository。由相同 `system/admin` bootstrap 建立且已改密的 Repository 可以
 直接重放校验；旧版若配置了其他 bootstrap username，其现有数据不会自动迁移，新版本会 fail closed，
 需要先通过旧版本管理 RPC 迁移到固定系统身份或恢复旧版本与数据库备份。
@@ -210,7 +216,7 @@ Repository replay；每步只依赖前一步成功，因此中断后可继续，
 $env:FLOWIE_SYSTEM_ADMIN_PASSWORD = "<current-system-admin-password>"
 $env:FLOWIE_ROOT_ADMIN_PASSWORD = "<new-root-admin-password>"
 
-pwsh ./flowie/deploy/provision-root.ps1 `
+pwsh ./deploy/provision-root.ps1 `
   -ControlUrl https://mqtt.dev.my-photo.xyz `
   -RootGroup root-a `
   -AdminPrincipal admin-a

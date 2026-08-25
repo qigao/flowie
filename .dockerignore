@@ -12,6 +12,9 @@ vcpkg_installed/
 !.env.example
 *.env
 **/state/
+deploy/server/config/
+deploy/server/certs/
+deploy/server/secrets/
 *.key
 *.p12
 *.pfx

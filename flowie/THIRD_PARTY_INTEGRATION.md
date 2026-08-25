@@ -61,6 +61,44 @@ MQTT 客户端
 Role 不隐式包含 `viewer`。需要写入和查询的集成必须同时分配相应写 Role 与 `viewer`。不要把
 `system/admin` 或 `system_admin` 账号交给业务系统。
 
+### 平台管理员通过 Dashboard 开通
+
+平台管理员登录 `https://<control-host>/v2/control/dashboard` 后，按以下顺序操作：
+
+1. 如果当前仍是空库 bootstrap 登录，先修改 `system/admin` 的公开初始密码并重新登录。
+2. 在 Overview 选择 **Add domain**，创建第三方专属 Domain，然后在页面顶部切换到该 Domain。
+3. 在 Users 选择 **Add user**，创建 Type 为 `human` 的专用管理账号。不要复用个人账号，也不要选择
+   `service`；service principal 的 token 用于受信后端 endpoint，不是 Control 管理登录密码。
+4. 对该 human 用户选择 **Set password**，首次设置必须选择 `create`，输入并确认至少 16 bytes 的
+   密码。Control 不生成或回显人类密码；已有密码的轮换必须明确选择 `replace`，系统不会在
+   `create` 冲突时自动改为覆盖。
+5. 在 Roles 创建所需的保留 Role，再分配给该用户。只读集成为 `viewer`；用户/Group 管理通常为
+   `viewer` + `user_admin`；策略管理通常为 `viewer` + `policy_admin`；只有第三方确实拥有整个 Domain
+   管理权时才分配 `security_admin`。
+6. 退出 `system/admin`，使用新 Domain、principal 和密码做一次独立登录验收，并确认看不到其他
+   Domain。
+
+普通第三方账号不会继承 bootstrap 账号的固定密码或自动改密状态。初始密码应由密码管理器生成，
+通过与 Domain/principal 不同的受控通道交付，并在接入方完成保存后删除临时副本。
+
+### 交付给第三方的接入资料
+
+| 项目 | 示例/要求 |
+| --- | --- |
+| Control base URL | `https://control.example.com`；不得包含凭据、query 或 fragment |
+| Management RPC URL | 默认 `/v2/control/rpc`；若部署修改了 `management.rpc_path`，交付完整实际 URL |
+| Domain | `warehouse` |
+| Principal | `warehouse-control`；不要交付 `system/admin` |
+| 初始密码 | 单独安全交付，不写入邮件正文、工单日志或客户端配置仓库 |
+| TLS trust | 受信 CA chain 与预期 hostname；客户端必须验证二者 |
+| Role 范围 | 明确列出 `viewer`、`user_admin`、`policy_admin` 或 `security_admin` |
+| Session 策略 | 当前 TTL、重新登录条件以及停用/撤权联系人 |
+
+不要交付 Broker 的 service token。它只供 Broker 调用 `/v4/authenticate` 和 `/v4/acl/check`，不能
+登录 Dashboard 或 Management RPC。
+
+### 第三方后端登录验收
+
 管理后端通过同源 HTTPS 登录：
 
 ```http
@@ -86,6 +124,11 @@ Content-Type: application/json
 Management session 有容量和 TTL 限制，Flowie 重启后也必须重新登录。账号 disabled、Role 被移除、
 session 过期或被淘汰后，请求立即失效。浏览器跨域应用应通过自己的后端调用 Flowie，不能把管理
 密码或 session token 放到前端。
+
+后端必须把 `303` 作为登录成功，并从 `Set-Cookie` 中提取名为 `flowie_session` 的 64 字符不透明值；
+不要跟随跳转后再猜测登录结果，也不要解析 token。RPC 通常返回 HTTP `200`，调用方仍必须检查 JSON-RPC
+响应中是 `result` 还是 `error`。收到 `-32001` 时重新登录；收到 `-32003` 时停止重试并检查 Domain 与
+Role；写操作传输结果不确定时，以相同 `request_id` 重试，不得换 ID 猜测提交状态。
 
 完整 method、参数、分页、幂等和错误码见
 [MANAGEMENT_RPC_API.md](MANAGEMENT_RPC_API.md)。
@@ -347,7 +390,11 @@ Control 记录；客户端应用只负责对配置中的 topic 收发消息。
 
 ## 接入验收清单
 
+- Dashboard 已使用 `create` 为 human 管理账号设置首个密码，并以该账号独立登录成功。
+- 交付资料不包含 `system/admin`、`system_admin` 或 Broker service token。
 - 第三方管理账号只能访问自己的 Domain，且只有所需 Management Role。
+- 后端验证 Control 证书链与 hostname，并把登录 `303` 和 JSON-RPC `result`/`error` 分别处理。
+- Management session 过期、重启或 `-32001` 后会重新登录，`-32003` 不做无界重试。
 - username 在所有 enabled Domain 中唯一。
 - ACL topic 的首段与用户 Domain 一致，Group path 与数据库父链一致。
 - ACL 已 validate 并 publish，而不只是保存到 draft。
