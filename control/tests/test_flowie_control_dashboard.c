@@ -909,6 +909,11 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "popovertarget=\"acl-add\"");
     check_contains(html, "popovertarget=\"acl-publish\"");
     check_contains(html, "popovertarget=\"domain-add\"");
+    check_contains(html, "Third-party platform setup");
+    check_contains(html, "Create an isolated domain");
+    check_contains(html, "Add a human administrator");
+    check_contains(html, "Set the first password");
+    check_contains(html, "Assign only the required roles");
     check_contains(html, "operation\" value=\"domain.create");
     check_contains(html, "operation\" value=\"user.create");
     check_contains(html, "operation\" value=\"group.create");
@@ -942,6 +947,114 @@ spec("Flowie ACL dashboard") {
       check_false(strstr(html, "popovertarget=\"domain-add\"") != NULL);
       flowie_control_dashboard_html_free(html);
     }
+
+    dashboard_close(dashboard, service, store, path);
+  }
+
+  it("sets and replaces human passwords without exposing password controls for services") {
+    static const char initial_password[] = "Root-A-Admin-Password-2026";
+    static const char replacement_password[] = "Root-A-Replaced-Password-2026";
+    char *path = NULL;
+    char body[2048];
+    char *html = NULL;
+    size_t html_size = 0u;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_dashboard_t *dashboard = NULL;
+    flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_dashboard_page_t page = FLOWIE_CONTROL_DASHBOARD_PAGE_INIT;
+    flowie_control_credential_verify_result_t verified =
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    uint64_t revision = 0u;
+
+    caller.domain_id = "root-a";
+    caller.actor = "security-admin";
+    caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    dashboard = dashboard_open(&path, &store, &service, &caller);
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=user.create&principal_id=admin-a&principal_type=human&"
+                   "request_id=request-human",
+                   DASHBOARD_CSRF);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_OK);
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=user.create&principal_id=service-api&principal_type=service&"
+                   "request_id=request-service",
+                   DASHBOARD_CSRF);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_OK);
+
+    page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
+    check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
+                                                      &html, &html_size),
+                 TURBO_OK);
+    check_contains(html, "popovertarget=\"human-password-1\"");
+    check_contains(html, "id=\"human-password-1\"");
+    check_contains(html, "operation\" value=\"password.set");
+    check_contains(html, "option value=\"create\"");
+    check_contains(html, "option value=\"replace\"");
+    check_contains(html, "name=\"new_password\"");
+    check_contains(html, "name=\"confirm_password\"");
+    check_false(strstr(html, "human-password-2") != NULL);
+    check_contains(html, "popovertarget=\"service-token-2\"");
+    flowie_control_dashboard_html_free(html);
+    html = NULL;
+
+    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(revision, 3u);
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=password.set&principal_id=admin-a&mode=create&"
+                   "new_password=%s&confirm_password=does-not-match&request_id=request-password",
+                   DASHBOARD_CSRF, initial_password);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_EINVAL);
+    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(revision, 3u);
+
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=password.set&principal_id=admin-a&mode=automatic&"
+                   "new_password=%s&confirm_password=%s&request_id=request-password-mode",
+                   DASHBOARD_CSRF, initial_password, initial_password);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_EPROTO);
+    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(revision, 3u);
+
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=password.set&principal_id=admin-a&mode=create&"
+                   "new_password=%s&confirm_password=%s&request_id=request-password-create",
+                   DASHBOARD_CSRF, initial_password, initial_password);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a",
+                                                        initial_password,
+                                                        sizeof(initial_password) - 1u, &verified),
+                 TURBO_OK);
+
+    (void)snprintf(body, sizeof(body),
+                   "csrf=%s&operation=password.set&principal_id=admin-a&mode=replace&"
+                   "new_password=%s&confirm_password=%s&request_id=request-password-replace",
+                   DASHBOARD_CSRF, replacement_password, replacement_password);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                       strlen(body)),
+                 TURBO_OK);
+    verified = (flowie_control_credential_verify_result_t)
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(flowie_control_store_credential_verify(
+                    store, "root-a", "admin-a", replacement_password,
+                    sizeof(replacement_password) - 1u, &verified),
+                TURBO_OK);
+    verified = (flowie_control_credential_verify_result_t)
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a",
+                                                        initial_password,
+                                                        sizeof(initial_password) - 1u, &verified),
+                 TURBO_EPERM);
 
     dashboard_close(dashboard, service, store, path);
   }
