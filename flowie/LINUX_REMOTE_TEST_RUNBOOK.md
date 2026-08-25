@@ -688,6 +688,47 @@ export LD_LIBRARY_PATH="$TR/lib:$FM/lib:$TH/lib:$TD/lib:$TN/lib:$TP/lib:$TU/lib$
 `LD_LIBRARY_PATH` 必须保持本次 run 的 SDK 在主机系统路径之前，避免
 `/usr/local/lib` 中旧版本库满足同名 SONAME 后造成 ABI 符号错配。
 
+### 6.1 可选的 TurboDB ORM PostgreSQL 真实门禁
+
+PG 门禁使用独立构建树、独立 vcpkg 安装树，不改变上面的核心 `TD` SDK，也不会让普通
+`TurboDB::ORM` 下游编译或链接 libpq。它只读取既有 PostgreSQL 容器的环境，密码只进入当前 shell
+变量，不输出到日志：
+
+```bash
+PG_CONTAINER=flowie-booth-dev-postgres-1
+PG_BUILD="$TURBO_DB_SRC/build/linux-eu-pg-release"
+PG_VCPKG="$TURBO_DB_SRC/vcpkg_installed_pg"
+
+PG_USER="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  "$PG_CONTAINER" | sed -n 's/^POSTGRES_USER=//p')"
+PG_PASSWORD="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  "$PG_CONTAINER" | sed -n 's/^POSTGRES_PASSWORD=//p')"
+PG_DATABASE="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  "$PG_CONTAINER" | sed -n 's/^POSTGRES_DB=//p')"
+test -n "$PG_USER" && test -n "$PG_PASSWORD" && test -n "$PG_DATABASE"
+
+env TURBOUTILS_ROOT="$TU" TURBOPARSER_ROOT="$TP" TURBONET_ROOT="$TN" \
+cmake -S "$TURBO_DB_SRC" -B "$PG_BUILD" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_INSTALLED_DIR="$PG_VCPKG" \
+  -DVCPKG_TARGET_TRIPLET=x64-linux -DVCPKG_MANIFEST_MODE=ON \
+  -DORM_WITH_PGSQL=ON -DORM_POSTGRES_LIVE_TESTS=ON
+cmake --build "$PG_BUILD" --target orm_postgres_live_test --parallel "$(nproc)"
+
+export TURBODB_ORM_PGSQL_TEST_CONNINFO="host=127.0.0.1 port=5432 dbname=$PG_DATABASE user=$PG_USER sslmode=disable connect_timeout=5"
+export PGPASSWORD="$PG_PASSWORD"
+ctest --test-dir "$PG_BUILD" -R '^orm_postgres_live$' --output-on-failure \
+  --output-junit "$ARTIFACT_ROOT/turbodb-orm-postgres-live.xml"
+unset PGPASSWORD TURBODB_ORM_PGSQL_TEST_CONNINFO PG_PASSWORD
+
+docker exec "$PG_CONTAINER" sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "\dn" | grep -c "^orm_pg_live_" || true'
+```
+
+最后一条命令必须输出 `0`。该门禁只创建并删除 `orm_pg_live_*` schema，不重启或修改既有
+PostgreSQL 容器；失败时先保留测试输出，再确认 teardown 是否完成。
+
 ## 7. 配置并构建 Flowie release gate
 
 ```bash
