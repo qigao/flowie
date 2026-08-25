@@ -214,6 +214,8 @@ docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
 空 Control Repository 会建立固定的 `system/admin`，首次密码为公开 bootstrap 值
 `Flowie@ChangeMe!`。首次登录 `https://<control-host>/v2/control/dashboard` 后必须立即改密；改密会撤销当前
 session，需要重新登录。不得把该公开密码作为生产 secret 或通过网络暴露首次启动中的 Control。
+改密后创建第三方 Domain、human 管理账号、密码与最小 Role，并交付 Management/MQTT 接入资料的完整
+步骤见 [Flowie 第三方系统接入指南](../../flowie/THIRD_PARTY_INTEGRATION.md)。
 
 两个健康检查都只是 TCP listener 探针。运行态验收还应执行 MQTT 5 CONNECT/CONNACK、QoS 1
 publish/subscribe、Control 管理登录，以及 `/v4/authenticate` 与 `/v4/acl/check` 的 allow/deny 路径。
