@@ -237,6 +237,8 @@ COPY --from=builder /opt/flowie-runtime/flowie-control.ldd /usr/share/doc/flowie
 COPY --chmod=0755 deploy/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --chmod=0755 deploy/server/flowie-control-entrypoint.sh \
   /usr/local/bin/flowie-control-entrypoint
+COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh \
+  /usr/local/bin/flowie-combined-entrypoint
 COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
 
 RUN ldconfig \

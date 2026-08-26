@@ -88,6 +88,13 @@ EOF
 
 cmp "$TEST_ROOT/expected.txt" "$TEST_ROOT/arguments.txt"
 
+FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/check-arguments.txt" \
+FLOWIE_CHECK=yes \
+PATH="$TEST_ROOT:$PATH" \
+  sh "$ENTRYPOINT"
+test "$(sed -n '1p' "$TEST_ROOT/check-arguments.txt")" = '--check'
+test "$(sed -n '2p' "$TEST_ROOT/check-arguments.txt")" = '--host'
+
 FLOWIE_TEST_PASSTHROUGH=ok sh "$ENTRYPOINT" sh -c \
   'test "$FLOWIE_TEST_PASSTHROUGH" = ok'
 
@@ -98,5 +105,14 @@ if FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/invalid-arguments.txt" \
   echo "docker-entrypoint accepted invalid FLOWIE_TCP_KEEPALIVE" >&2
   exit 1
 fi
+
+if FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/invalid-check-arguments.txt" \
+  FLOWIE_CHECK=maybe \
+  PATH="$TEST_ROOT:$PATH" \
+  sh "$ENTRYPOINT"; then
+  echo "docker-entrypoint accepted invalid FLOWIE_CHECK" >&2
+  exit 1
+fi
+test ! -e "$TEST_ROOT/invalid-check-arguments.txt"
 
 echo "docker-entrypoint contract: PASS"
