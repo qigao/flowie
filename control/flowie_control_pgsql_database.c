@@ -13,7 +13,7 @@
 #include <string.h>
 
 #define FLOWIE_CONTROL_PGSQL_MIGRATION_LOCK_SEED "194728351"
-#define FLOWIE_CONTROL_PGSQL_SCHEMA_FINGERPRINT "flowie-control-acl-document-schema-v3-20260805"
+#define FLOWIE_CONTROL_PGSQL_SCHEMA_FINGERPRINT "flowie-control-subject-policy-schema-v4-20260827"
 #define FLOWIE_CONTROL_PGSQL_STRINGIFY_VALUE(value) #value
 #define FLOWIE_CONTROL_PGSQL_STRINGIFY(value) FLOWIE_CONTROL_PGSQL_STRINGIFY_VALUE(value)
 
@@ -316,10 +316,12 @@ static tstr flowie_control_pgsql_schema_sql(const char *schema) {
       schema, schema, schema);
   FLOWIE_CONTROL_PGSQL_APPEND(
       "CREATE TABLE IF NOT EXISTS %s.policy_draft("
-      "domain_id TEXT NOT NULL,ordinal INTEGER NOT NULL CHECK(ordinal>=0 AND ordinal<4096),"
-      "rule_line TEXT NOT NULL CHECK(length(rule_line)>0 AND length(rule_line)<=16383),"
+      "domain_id TEXT NOT NULL,subject_kind INTEGER NOT NULL CHECK(subject_kind IN(1,2,3)),"
+      "subject_id TEXT NOT NULL CHECK(length(subject_id)>0 AND length(subject_id)<=255),"
+      "ordinal INTEGER NOT NULL CHECK(ordinal>=0 AND ordinal<4096),"
+      "rule_document TEXT NOT NULL CHECK(length(rule_document)>0 AND length(rule_document)<=16383),"
       "revision BIGINT NOT NULL CHECK(revision>0),updated_at BIGINT NOT NULL CHECK(updated_at>0),"
-      "PRIMARY KEY(domain_id,ordinal),"
+      "PRIMARY KEY(domain_id,subject_kind,subject_id),UNIQUE(domain_id,ordinal),"
       "FOREIGN KEY(domain_id) REFERENCES %s.domain(domain_id));",
       schema, schema);
   FLOWIE_CONTROL_PGSQL_APPEND(
@@ -429,6 +431,33 @@ static int flowie_control_pgsql_schema_prepare(PGconn *connection, const char *s
   result = PQexecParams(connection, lock_sql, 1, NULL, lock_values, NULL, NULL, 0);
   rc = flowie_control_pgsql_result_status(result, PGRES_TUPLES_OK);
   if (result) PQclear(result);
+  if (rc != TURBO_OK) goto done;
+  sql = tstr_new();
+  if (!sql) {
+    rc = TURBO_ENOMEM;
+    goto done;
+  }
+  {
+    tstr next = tstr_cat_fmt(
+        sql,
+        "DO $flowie$ BEGIN IF pg_catalog.to_regclass('%s.schema_version') IS NOT NULL THEN "
+        "IF EXISTS(SELECT 1 FROM %s.schema_version WHERE singleton=1 AND version=3 AND "
+        "fingerprint='flowie-control-acl-document-schema-v3-20260805') THEN "
+        "DROP TABLE %s.policy_publish_result;DROP TABLE %s.acl_rule;"
+        "DROP TABLE %s.acl_bundle;DROP TABLE %s.policy_draft;"
+        "UPDATE %s.schema_version SET version=4,fingerprint='"
+        FLOWIE_CONTROL_PGSQL_SCHEMA_FINGERPRINT
+        "' WHERE singleton=1;END IF;END IF;END $flowie$;",
+        schema, schema, schema, schema, schema, schema, schema);
+    if (!next) {
+      rc = TURBO_ENOMEM;
+      goto done;
+    }
+    sql = next;
+  }
+  rc = flowie_control_pgsql_exec(connection, sql, PGRES_COMMAND_OK);
+  tstr_free(sql);
+  sql = NULL;
   if (rc != TURBO_OK) goto done;
   sql = flowie_control_pgsql_schema_sql(schema);
   if (!sql) {

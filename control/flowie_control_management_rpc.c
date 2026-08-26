@@ -51,9 +51,10 @@ static const char *const FLOWIE_CONTROL_RPC_METHODS[] = {"control.system.status"
                                                          "control.role.remove",
                                                          "control.role.effective",
                                                          "control.policy.status",
-                                                         "control.policy.rule.list",
-                                                         "control.policy.rule.put",
-                                                         "control.policy.rule.delete",
+                                                         "control.policy.subject_rule.get",
+                                                         "control.policy.subject_rule.list",
+                                                         "control.policy.subject_rule.put",
+                                                         "control.policy.subject_rule.delete",
                                                          "control.policy.validate",
                                                          "control.policy.publish",
                                                          "control.audit.list",
@@ -1267,57 +1268,278 @@ static int flowie_control_rpc_policy_status(flowie_control_management_rpc_server
   return flowie_control_rpc_result(response, object);
 }
 
-static int flowie_control_rpc_policy_rule_list(flowie_control_management_rpc_server_t *server,
-                                               const flowie_control_management_caller_t *caller,
-                                               const rpc_request_t *request,
-                                               rpc_response_t *response) {
-  static const char *const allowed[] = {"domain_id", "after_ordinal", "limit"};
+static int flowie_control_rpc_subject_kind_parse(const char *text,
+                                                 flowie_security_subject_kind_t *out) {
+  if (!text || !out) return TURBO_EINVAL;
+  if (strcmp(text, "user") == 0)
+    *out = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+  else if (strcmp(text, "role") == 0)
+    *out = FLOWIE_SECURITY_SUBJECT_ROLE;
+  else if (strcmp(text, "group") == 0)
+    *out = FLOWIE_SECURITY_SUBJECT_GROUP;
+  else
+    return TURBO_EPROTO;
+  return TURBO_OK;
+}
+
+static const char *
+flowie_control_rpc_subject_kind_name(flowie_security_subject_kind_t subject_kind) {
+  switch (subject_kind) {
+  case FLOWIE_SECURITY_SUBJECT_PRINCIPAL:
+    return "user";
+  case FLOWIE_SECURITY_SUBJECT_ROLE:
+    return "role";
+  case FLOWIE_SECURITY_SUBJECT_GROUP:
+    return "group";
+  default:
+    return NULL;
+  }
+}
+
+static const char *flowie_control_rpc_effect_name(flowie_security_effect_t effect) {
+  return effect == FLOWIE_SECURITY_ALLOW
+             ? "allow"
+             : (effect == FLOWIE_SECURITY_DENY ? "deny" : NULL);
+}
+
+static const char *flowie_control_rpc_access_name(uint32_t action_mask) {
+  if (action_mask == FLOWIE_SECURITY_ACTION_SUBSCRIBE) return "read";
+  if (action_mask == FLOWIE_SECURITY_ACTION_PUBLISH) return "write";
+  if (action_mask == (FLOWIE_SECURITY_ACTION_SUBSCRIBE | FLOWIE_SECURITY_ACTION_PUBLISH))
+    return "readwrite";
+  return NULL;
+}
+
+static int flowie_control_rpc_subject_document(const json_value_t *params,
+                                               flowie_control_acl_document_t *out) {
+  static const char *const entry_allowed[] = {"effect", "access", "topic"};
+  flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  json_value_t *entries;
+  const char *subject_kind = NULL;
+  const char *subject_id = NULL;
+  const char *connection = NULL;
+  int rc;
+  if (!params || !out) return TURBO_EINVAL;
+  rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &subject_kind);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1,
+                                   &subject_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "connection", sizeof("allow") - 1u, 1,
+                                   &connection);
+  if (rc == TURBO_OK) rc = flowie_control_rpc_subject_kind_parse(subject_kind,
+                                                                 &document.subject_kind);
+  if (rc == TURBO_OK) {
+    size_t subject_size = strlen(subject_id);
+    memcpy(document.subject, subject_id, subject_size + 1u);
+    if (strcmp(connection, "allow") == 0)
+      document.connection_effect = FLOWIE_SECURITY_ALLOW;
+    else if (strcmp(connection, "deny") == 0)
+      document.connection_effect = FLOWIE_SECURITY_DENY;
+    else
+      rc = TURBO_EPROTO;
+  }
+  entries = turbo_json_object_get(params, "entries");
+  if (rc == TURBO_OK &&
+      (!entries || turbo_json_type(entries) != TURBO_JSON_ARRAY ||
+       turbo_json_array_size(entries) > FLOWIE_CONTROL_ACL_MAX_ENTRIES))
+    rc = TURBO_EPROTO;
+  for (size_t index = 0u; rc == TURBO_OK && index < turbo_json_array_size(entries); ++index) {
+    flowie_control_acl_entry_t *entry = &document.entries[index];
+    json_value_t *item = turbo_json_array_get(entries, index);
+    const char *effect = NULL;
+    const char *access = NULL;
+    const char *topic = NULL;
+    if (!item || turbo_json_type(item) != TURBO_JSON_OBJECT) {
+      rc = TURBO_EPROTO;
+      break;
+    }
+    for (size_t key_index = 0u; key_index < turbo_json_object_size(item); ++key_index) {
+      const char *key = turbo_json_object_key(item, key_index);
+      int known = 0;
+      for (size_t allowed_index = 0u;
+           allowed_index < sizeof(entry_allowed) / sizeof(entry_allowed[0]); ++allowed_index) {
+        if (key && strcmp(key, entry_allowed[allowed_index]) == 0) {
+          known = 1;
+          break;
+        }
+      }
+      if (!known) {
+        rc = TURBO_EPROTO;
+        break;
+      }
+    }
+    if (rc == TURBO_OK)
+      rc = flowie_control_rpc_string(item, "effect", sizeof("allow") - 1u, 1, &effect);
+    if (rc == TURBO_OK)
+      rc = flowie_control_rpc_string(item, "access", sizeof("readwrite") - 1u, 1, &access);
+    if (rc == TURBO_OK)
+      rc = flowie_control_rpc_string(item, "topic", FLOWIE_SECURITY_PATTERN_MAX, 1, &topic);
+    if (rc == TURBO_OK) {
+      if (strcmp(effect, "allow") == 0)
+        entry->effect = FLOWIE_SECURITY_ALLOW;
+      else if (strcmp(effect, "deny") == 0)
+        entry->effect = FLOWIE_SECURITY_DENY;
+      else
+        rc = TURBO_EPROTO;
+    }
+    if (rc == TURBO_OK) {
+      if (strcmp(access, "read") == 0)
+        entry->action_mask = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
+      else if (strcmp(access, "write") == 0)
+        entry->action_mask = FLOWIE_SECURITY_ACTION_PUBLISH;
+      else if (strcmp(access, "readwrite") == 0)
+        entry->action_mask = FLOWIE_SECURITY_ACTION_SUBSCRIBE | FLOWIE_SECURITY_ACTION_PUBLISH;
+      else
+        rc = TURBO_EPROTO;
+    }
+    if (rc == TURBO_OK) {
+      memcpy(entry->topic, topic, strlen(topic) + 1u);
+      entry->alternative_count = 1u;
+      ++document.entry_count;
+    }
+  }
+  if (rc == TURBO_OK && document.connection_effect == FLOWIE_SECURITY_DENY &&
+      document.entry_count != 0u)
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK) *out = document;
+  return rc;
+}
+
+static json_value_t *flowie_control_rpc_subject_rule_json(
+    const flowie_control_policy_subject_rule_view_t *view) {
+  json_value_t *object = NULL;
+  json_value_t *entries = NULL;
+  const char *subject_kind;
+  const char *connection;
+  int rc = TURBO_OK;
+  if (!view || view->size < sizeof(*view) ||
+      !(subject_kind = flowie_control_rpc_subject_kind_name(view->document.subject_kind)) ||
+      !(connection = flowie_control_rpc_effect_name(view->document.connection_effect)))
+    return NULL;
+  object = turbo_json_create_object();
+  entries = turbo_json_create_array();
+  if (!object || !entries) rc = TURBO_ENOMEM;
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "subject_kind", turbo_json_create_string(subject_kind));
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "subject_id",
+                                turbo_json_create_string(view->document.subject));
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "ordinal", turbo_json_create_uint64(view->ordinal));
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "connection", turbo_json_create_string(connection));
+  for (size_t index = 0u; rc == TURBO_OK && index < view->document.entry_count; ++index) {
+    const flowie_control_acl_entry_t *entry = &view->document.entries[index];
+    const char *effect = flowie_control_rpc_effect_name(entry->effect);
+    const char *access = flowie_control_rpc_access_name(entry->action_mask);
+    json_value_t *item = turbo_json_create_object();
+    if (!effect || !access || !item ||
+        flowie_control_rpc_add(item, "effect", turbo_json_create_string(effect)) != TURBO_OK ||
+        flowie_control_rpc_add(item, "access", turbo_json_create_string(access)) != TURBO_OK ||
+        flowie_control_rpc_add(item, "topic", turbo_json_create_string(entry->topic)) != TURBO_OK) {
+      flowie_control_rpc_free_json_value(item);
+      rc = TURBO_ENOMEM;
+    } else {
+      rc = flowie_control_rpc_array_add(entries, item);
+    }
+  }
+  if (rc == TURBO_OK) {
+    rc = flowie_control_rpc_add(object, "entries", entries);
+    if (rc == TURBO_OK) entries = NULL;
+  }
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "revision", turbo_json_create_uint64(view->revision));
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_add(object, "updated_at",
+                                turbo_json_create_uint64(view->updated_at));
+  flowie_control_rpc_free_json_value(entries);
+  if (rc != TURBO_OK) {
+    flowie_control_rpc_free_json_value(object);
+    return NULL;
+  }
+  return object;
+}
+
+static int flowie_control_rpc_policy_subject_rule_get(
+    flowie_control_management_rpc_server_t *server,
+    const flowie_control_management_caller_t *caller, const rpc_request_t *request,
+    rpc_response_t *response) {
+  static const char *const allowed[] = {"domain_id", "subject_kind", "subject_id"};
   flowie_control_management_caller_t scoped = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+  flowie_control_policy_subject_rule_view_t view =
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
   turbo_json_doc_t *params = NULL;
-  flowie_control_policy_rule_view_t *items = NULL;
+  const char *kind_text = NULL;
+  const char *subject_id = NULL;
+  flowie_security_subject_kind_t subject_kind = FLOWIE_SECURITY_SUBJECT_ANY;
+  json_value_t *object;
+  int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
+  if (rc == TURBO_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
+  if (rc == TURBO_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1,
+                                   &subject_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_management_policy_subject_rule_get(server->service, &scoped, subject_kind,
+                                                            subject_id, &view);
+  turbo_free_json(&params);
+  if (rc != TURBO_OK) return flowie_control_rpc_error(response, rc);
+  object = flowie_control_rpc_subject_rule_json(&view);
+  return object ? flowie_control_rpc_result(response, object)
+                : flowie_control_rpc_error(response, TURBO_ENOMEM);
+}
+
+static int flowie_control_rpc_policy_subject_rule_list(
+    flowie_control_management_rpc_server_t *server,
+    const flowie_control_management_caller_t *caller, const rpc_request_t *request,
+    rpc_response_t *response) {
+  static const char *const allowed[] = {"domain_id", "subject_kind", "after_ordinal", "limit"};
+  flowie_control_management_caller_t scoped = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+  flowie_control_policy_subject_rule_view_t *items = NULL;
+  turbo_json_doc_t *params = NULL;
   json_value_t *result = NULL;
   json_value_t *array = NULL;
+  const char *kind_text = NULL;
+  flowie_security_subject_kind_t subject_kind = FLOWIE_SECURITY_SUBJECT_ANY;
   uint64_t after = 0u;
   size_t capacity = 0u;
   size_t count = 0u;
   int has_after = 0;
   int has_more = 0;
-  int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
+  int rc = flowie_control_rpc_params(request, allowed, 4u, &params);
   if (rc == TURBO_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == TURBO_OK && turbo_json_object_get(params, "subject_kind")) {
+    rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
+    if (rc == TURBO_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
+  }
   if (rc == TURBO_OK && turbo_json_object_get(params, "after_ordinal")) {
     has_after = 1;
     rc = flowie_control_rpc_u64(params, "after_ordinal", 1, &after);
-    if (rc == TURBO_OK && after > UINT32_MAX) rc = TURBO_ERANGE;
+    if (rc == TURBO_OK && after >= FLOWIE_SECURITY_MAX_RULES) rc = TURBO_ERANGE;
   }
   if (rc == TURBO_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
   if (rc == TURBO_OK) {
-    items = (flowie_control_policy_rule_view_t *)calloc(capacity, sizeof(*items));
+    items = (flowie_control_policy_subject_rule_view_t *)calloc(capacity, sizeof(*items));
     if (!items) rc = TURBO_ENOMEM;
   }
   for (size_t index = 0u; rc == TURBO_OK && index < capacity; ++index)
-    items[index] = (flowie_control_policy_rule_view_t)FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT;
+    items[index] =
+        (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
   if (rc == TURBO_OK)
-    rc = flowie_control_management_policy_rule_list(server->service, &scoped, (uint32_t)after,
-                                                    has_after, items, capacity, &count, &has_more);
+    rc = flowie_control_management_policy_subject_rule_list(
+        server->service, &scoped, subject_kind, (uint32_t)after, has_after, items, capacity, &count,
+        &has_more);
   if (rc == TURBO_OK) {
     result = turbo_json_create_object();
     array = turbo_json_create_array();
     if (!result || !array) rc = TURBO_ENOMEM;
   }
   for (size_t index = 0u; rc == TURBO_OK && index < count; ++index) {
-    json_value_t *item = turbo_json_create_object();
-    if (!item ||
-        flowie_control_rpc_add(item, "ordinal", turbo_json_create_uint64(items[index].ordinal)) !=
-            TURBO_OK ||
-        flowie_control_rpc_add(item, "rule_line",
-                               turbo_json_create_string(items[index].rule_line)) != TURBO_OK ||
-        flowie_control_rpc_add(item, "updated_at",
-                               turbo_json_create_uint64(items[index].updated_at)) != TURBO_OK) {
-      flowie_control_rpc_free_json_value(item);
-      rc = TURBO_ENOMEM;
-    } else {
-      rc = flowie_control_rpc_array_add(array, item);
-    }
+    json_value_t *item = flowie_control_rpc_subject_rule_json(&items[index]);
+    rc = item ? flowie_control_rpc_array_add(array, item) : TURBO_ENOMEM;
   }
   if (rc == TURBO_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
@@ -1335,51 +1557,66 @@ static int flowie_control_rpc_policy_rule_list(flowie_control_management_rpc_ser
   return flowie_control_rpc_result(response, result);
 }
 
-static int flowie_control_rpc_policy_rule_write(flowie_control_management_rpc_server_t *server,
-                                                const flowie_control_management_caller_t *caller,
-                                                const rpc_request_t *request,
-                                                rpc_response_t *response, int remove) {
-  static const char *const put_allowed[] = {"domain_id", "ordinal", "rule_line", "request_id"};
-  static const char *const delete_allowed[] = {"domain_id", "ordinal", "request_id"};
-  turbo_json_doc_t *params = NULL;
+static int flowie_control_rpc_policy_subject_rule_write(
+    flowie_control_management_rpc_server_t *server,
+    const flowie_control_management_caller_t *caller, const rpc_request_t *request,
+    rpc_response_t *response, int remove) {
+  static const char *const put_allowed[] = {"domain_id", "subject_kind", "subject_id", "ordinal",
+                                            "connection", "entries", "request_id"};
+  static const char *const delete_allowed[] = {"domain_id", "subject_kind", "subject_id",
+                                               "request_id"};
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  const char *rule_line = NULL;
-  const char *request_id = NULL;
+  flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  turbo_json_doc_t *params = NULL;
   const char *domain_id = NULL;
+  const char *request_id = NULL;
+  const char *kind_text = NULL;
+  const char *subject_id = NULL;
+  flowie_security_subject_kind_t subject_kind = FLOWIE_SECURITY_SUBJECT_ANY;
   uint64_t ordinal = 0u;
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, remove ? delete_allowed : put_allowed,
-                                     remove ? 3u : 4u, &params);
+                                     remove ? 4u : 7u, &params);
   if (rc == TURBO_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == TURBO_OK) rc = flowie_control_rpc_u64(params, "ordinal", 1, &ordinal);
-  if (rc == TURBO_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = TURBO_ERANGE;
-  if (rc == TURBO_OK && !remove)
-    rc = flowie_control_rpc_string(params, "rule_line", FLOWIE_SECURITY_RULE_LINE_MAX, 1,
-                                   &rule_line);
   if (rc == TURBO_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == TURBO_OK)
-  occurred_at = server->clock(server->clock_ctx);
+  if (rc == TURBO_OK && remove)
+    rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
+  if (rc == TURBO_OK && remove)
+    rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
+  if (rc == TURBO_OK && remove)
+    rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1,
+                                   &subject_id);
+  if (rc == TURBO_OK && !remove) rc = flowie_control_rpc_subject_document(params, &document);
+  if (rc == TURBO_OK && !remove) {
+    rc = flowie_control_rpc_u64(params, "ordinal", 1, &ordinal);
+    if (rc == TURBO_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = TURBO_ERANGE;
+  }
+  if (rc == TURBO_OK) occurred_at = server->clock(server->clock_ctx);
   if (rc == TURBO_OK && occurred_at == 0u) rc = TURBO_EIO;
   if (rc == TURBO_OK && remove) {
-    flowie_control_policy_rule_delete_command_t command =
-        FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT;
+    flowie_control_policy_subject_rule_delete_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
     command.domain_id = domain_id;
-    command.ordinal = (uint32_t)ordinal;
+    command.subject_kind = subject_kind;
+    command.subject_id = subject_id;
     command.actor = caller->actor;
     command.request_id = request_id;
     command.occurred_at = occurred_at;
-    rc = flowie_control_management_policy_rule_delete(server->service, caller, &command, &result);
+    rc = flowie_control_management_policy_subject_rule_delete(server->service, caller, &command,
+                                                               &result);
   } else if (rc == TURBO_OK) {
-    flowie_control_policy_rule_put_command_t command = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_subject_rule_put_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     command.domain_id = domain_id;
     command.ordinal = (uint32_t)ordinal;
-    command.rule_line = rule_line;
+    command.document = &document;
     command.actor = caller->actor;
     command.request_id = request_id;
     command.occurred_at = occurred_at;
-    rc = flowie_control_management_policy_rule_put(server->service, caller, &command, &result);
+    rc = flowie_control_management_policy_subject_rule_put(server->service, caller, &command,
+                                                            &result);
   }
   turbo_free_json(&params);
   return rc == TURBO_OK
@@ -1585,12 +1822,14 @@ static int flowie_control_rpc_dispatch(flowie_control_management_rpc_server_t *s
     return flowie_control_rpc_effective(server, caller, request, response, 0);
   if (strcmp(method, "control.policy.status") == 0)
     return flowie_control_rpc_policy_status(server, caller, request, response);
-  if (strcmp(method, "control.policy.rule.list") == 0)
-    return flowie_control_rpc_policy_rule_list(server, caller, request, response);
-  if (strcmp(method, "control.policy.rule.put") == 0)
-    return flowie_control_rpc_policy_rule_write(server, caller, request, response, 0);
-  if (strcmp(method, "control.policy.rule.delete") == 0)
-    return flowie_control_rpc_policy_rule_write(server, caller, request, response, 1);
+  if (strcmp(method, "control.policy.subject_rule.get") == 0)
+    return flowie_control_rpc_policy_subject_rule_get(server, caller, request, response);
+  if (strcmp(method, "control.policy.subject_rule.list") == 0)
+    return flowie_control_rpc_policy_subject_rule_list(server, caller, request, response);
+  if (strcmp(method, "control.policy.subject_rule.put") == 0)
+    return flowie_control_rpc_policy_subject_rule_write(server, caller, request, response, 0);
+  if (strcmp(method, "control.policy.subject_rule.delete") == 0)
+    return flowie_control_rpc_policy_subject_rule_write(server, caller, request, response, 1);
   if (strcmp(method, "control.policy.validate") == 0)
     return flowie_control_rpc_policy_validate(server, caller, request, response);
   if (strcmp(method, "control.policy.publish") == 0)

@@ -102,20 +102,26 @@ typedef struct flowie_control_repository_role_ops_s {
 } flowie_control_repository_role_ops_t;
 
 typedef struct flowie_control_repository_policy_ops_s {
-  int (*rule_put)(void *ctx, const flowie_control_policy_rule_put_command_t *command,
-                  flowie_control_command_result_t *result);
-  int (*rule_delete)(void *ctx, const flowie_control_policy_rule_delete_command_t *command,
-                     flowie_control_command_result_t *result);
   int (*validate)(void *ctx, const char *domain_id, flowie_control_policy_validation_t *out);
   int (*publish)(void *ctx, const flowie_control_policy_publish_command_t *command,
                  flowie_control_policy_publish_result_t *result);
-  int (*rule_list)(void *ctx, const char *domain_id, uint32_t after_ordinal, int has_after,
-                   flowie_control_policy_rule_view_t *items, size_t item_capacity,
-                   size_t *count_out, int *has_more_out);
   int (*status)(void *ctx, const char *domain_id, flowie_control_policy_status_t *out);
   int (*bundle_load)(void *ctx, const char *domain_id, uint64_t required_version,
                      flowie_security_policy_bundle_t *bundle_out);
   void (*bundle_release)(void *ctx, flowie_security_policy_bundle_t *bundle);
+  int (*subject_rule_put)(
+      void *ctx, const flowie_control_policy_subject_rule_put_command_t *command,
+      flowie_control_command_result_t *result);
+  int (*subject_rule_delete)(
+      void *ctx, const flowie_control_policy_subject_rule_delete_command_t *command,
+      flowie_control_command_result_t *result);
+  int (*subject_rule_get)(void *ctx, const char *domain_id,
+                          flowie_security_subject_kind_t subject_kind, const char *subject_id,
+                          flowie_control_policy_subject_rule_view_t *out);
+  int (*subject_rule_list)(
+      void *ctx, const char *domain_id, flowie_security_subject_kind_t subject_kind,
+      uint32_t after_ordinal, int has_after, flowie_control_policy_subject_rule_view_t *items,
+      size_t item_capacity, size_t *count_out, int *has_more_out);
 } flowie_control_repository_policy_ops_t;
 
 typedef struct flowie_control_repository_audit_ops_s {

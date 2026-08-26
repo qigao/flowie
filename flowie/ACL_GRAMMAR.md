@@ -130,7 +130,7 @@ Control UI 会从类型化主体表单生成 canonical 文档，并在提交前�
 | 编译后的单个 topic pattern | 511 bytes |
 | Repository 内部 ACL 文档 | 16383 bytes |
 | Control UI topic 输入 | 16000 characters |
-| Management JSON-RPC `rule_line` | 2047 bytes |
+| Management JSON-RPC topic value | 511 bytes |
 | 一个已发布 bundle 的内部规则 | 4096 |
 
 每份文档固定产生 1 条 CONNECT 规则；普通 topic 语句产生 1 条规则，alternatives 产生候选值数量的
@@ -151,17 +151,23 @@ Control UI 会从类型化主体表单生成 canonical 文档，并在提交前�
 ## 通过 Management JSON-RPC 使用
 
 Management RPC 的 endpoint、登录与 bearer session 见
-[MANAGEMENT_RPC_API.md](MANAGEMENT_RPC_API.md)。`rule_line` 是 JSON string，因此换行写为 `\n`。
+[MANAGEMENT_RPC_API.md](MANAGEMENT_RPC_API.md)。RPC 接受结构化 subject 与 entry，不接受 ACL 文本。
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "acl-put-1",
-  "method": "control.policy.rule.put",
+  "method": "control.policy.subject_rule.put",
   "params": {
     "domain_id": "root-a",
+    "subject_kind": "role",
+    "subject_id": "publisher",
     "ordinal": 10,
-    "rule_line": "role publisher allow {\n  write topic root-a/telemetry/%u/{event,heartbeat}\n  read topic root-a/commands/%c/+\n}",
+    "connection": "allow",
+    "entries": [
+      {"effect": "allow", "access": "write", "topic": "root-a/telemetry/%u/{event,heartbeat}"},
+      {"effect": "allow", "access": "read", "topic": "root-a/commands/%c/+"}
+    ],
     "request_id": "acl-publisher-v1"
   }
 }
@@ -173,8 +179,8 @@ Management RPC 的 endpoint、登录与 bearer session 见
 ## 常见拒绝原因
 
 - 主体类型不是 `user`、`role` 或 `group`。
-- 主体不存在、已 disabled，或同一 Domain 的其他 ordinal 已使用相同 `(类型, ID)`。
-- 文本可解析但不是 canonical 格式，或提交了旧 pipe 格式/Mosquitto ACL 行。
+- 主体不存在、已 disabled，或同一 Domain 的其他 subject 已使用相同 ordinal。
+- 提交了旧 `rule_line`、pipe 格式或 Mosquitto ACL 行。
 - topic 的 Domain 与请求 Domain 不一致。
 - topic 包含空 segment、partial wildcard/placeholder，或非末尾 `#`/alternatives。
 - `deny` 顶层文档仍包含 topic block。

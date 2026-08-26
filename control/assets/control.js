@@ -430,6 +430,6 @@
       event.detail.parameters.request_id = requestId.value;
     }
     ruleInput = command.querySelector("[data-acl-rule]");
-    if (ruleInput) event.detail.parameters.rule_line = ruleInput.value;
+    if (ruleInput) event.detail.parameters.rule_document = ruleInput.value;
   });
 }());

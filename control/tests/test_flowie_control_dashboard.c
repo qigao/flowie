@@ -490,7 +490,9 @@ spec("Flowie ACL dashboard") {
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
     flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
-    flowie_control_policy_rule_put_command_t rule = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+    flowie_control_acl_document_t policy_document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    flowie_control_policy_subject_rule_put_command_t rule =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     iris_app_t *app = iris_app_create();
 
@@ -537,15 +539,21 @@ spec("Flowie ACL dashboard") {
     check_equal(flowie_control_management_role_create(service, &caller, &role, &result), TURBO_OK);
     rule.domain_id = caller.domain_id;
     rule.ordinal = 10u;
-    rule.rule_line =
-        "role publisher allow {\n"
-        "  readwrite topic root-a/telemetry/%u/events\n"
-        "}";
+    check_equal(flowie_control_acl_parse("role publisher allow {\n"
+                                         "  readwrite topic root-a/telemetry/%u/events\n"
+                                         "}",
+                                         sizeof("role publisher allow {\n"
+                                                "  readwrite topic root-a/telemetry/%u/events\n"
+                                                "}") -
+                                             1u,
+                                         &policy_document),
+                TURBO_OK);
+    rule.document = &policy_document;
     rule.actor = caller.actor;
     rule.request_id = "request-rule";
     rule.expected_revision = 6u;
     rule.occurred_at = 2005u;
-    check_equal(flowie_control_management_policy_rule_put(service, &caller, &rule, &result),
+    check_equal(flowie_control_management_policy_subject_rule_put(service, &caller, &rule, &result),
                  TURBO_OK);
 
     check_equal(
@@ -558,7 +566,7 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "operation\" value=\"user.disable");
     check_contains(html, "operation\" value=\"group.member.add");
     check_contains(html, "operation\" value=\"role.assign");
-    check_contains(html, "operation\" value=\"policy.rule.delete");
+    check_contains(html, "operation\" value=\"policy.subject_rule.delete");
     check_contains(html, "hx-post=\"/v2/control/dashboard/action\"");
     check_contains(html, "hx-include=\"closest .command\"");
     check_contains(html, "hx-target=\"#dashboard\"");
@@ -923,7 +931,7 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "operation\" value=\"user.create");
     check_contains(html, "operation\" value=\"group.create");
     check_contains(html, "operation\" value=\"role.create");
-    check_contains(html, "operation\" value=\"policy.rule.put");
+    check_contains(html, "operation\" value=\"policy.subject_rule.put");
     check_contains(html, "hx-post=\"/v2/control/dashboard/action\"");
     check_contains(html, "id=\"domain-scope\"");
     check_contains(html, "hx-trigger=\"change from:#domain-scope\"");
@@ -1273,7 +1281,8 @@ spec("Flowie ACL dashboard") {
     flowie_control_dashboard_t *dashboard = NULL;
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
-    flowie_control_policy_rule_view_t rule = FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT;
+    flowie_control_policy_subject_rule_view_t rule =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
     uint64_t revision = 0u;
     size_t count = 0u;
     int has_more = 0;
@@ -1347,15 +1356,16 @@ spec("Flowie ACL dashboard") {
                                                        strlen(body)),
                  TURBO_OK);
     (void)snprintf(body, sizeof(body),
-                    "csrf=%s&operation=policy.rule.put&ordinal=10&"
-                    "rule_line=user%%20device-1%%20allow&"
+                    "csrf=%s&operation=policy.subject_rule.put&ordinal=10&"
+                    "rule_document=user%%20device-1%%20allow&"
                     "request_id=request-rule-put",
                     DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
                                                        strlen(body)),
                  TURBO_OK);
     (void)snprintf(body, sizeof(body),
-                   "csrf=%s&operation=policy.rule.delete&ordinal=10&"
+                   "csrf=%s&operation=policy.subject_rule.delete&subject_kind=user&"
+                   "subject_id=device-1&"
                    "request_id=request-rule-delete",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
@@ -1372,8 +1382,9 @@ spec("Flowie ACL dashboard") {
     check_equal(flowie_control_management_user_get(service, &caller, "device-1", &user), TURBO_OK);
     check_false(user.enabled);
     check_equal(user.revision, 13u);
-    check_equal(flowie_control_management_policy_rule_list(service, &caller, 0u, 0, &rule, 1u,
-                                                            &count, &has_more),
+    check_equal(flowie_control_management_policy_subject_rule_list(
+                    service, &caller, FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, &rule, 1u, &count,
+                    &has_more),
                  TURBO_OK);
     check_equal(count, 0u);
     check_false(has_more);

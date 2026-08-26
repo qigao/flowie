@@ -198,15 +198,22 @@ warehouse/telemetry/warehouse-device-202/event
 {"jsonrpc":"2.0","method":"control.role.assign","params":{"principal_id":"warehouse-device-202","role_id":"device-publisher","request_id":"warehouse-device-202-publisher-assign"},"id":"role-assign-1"}
 ```
 
-再为业务 Role 保存一份 canonical ACL 文档：
+再为业务 Role 保存一份结构化 ACL：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "control.policy.rule.put",
+  "method": "control.policy.subject_rule.put",
   "params": {
+    "subject_kind": "role",
+    "subject_id": "device-publisher",
     "ordinal": 10,
-    "rule_line": "role device-publisher allow {\n  write topic warehouse/telemetry/%u/{event,heartbeat}\n  read topic warehouse/commands/%c/+\n  deny readwrite topic warehouse/telemetry/%u/private\n}",
+    "connection": "allow",
+    "entries": [
+      {"effect": "allow", "access": "write", "topic": "warehouse/telemetry/%u/{event,heartbeat}"},
+      {"effect": "allow", "access": "read", "topic": "warehouse/commands/%c/+"},
+      {"effect": "deny", "access": "readwrite", "topic": "warehouse/telemetry/%u/private"}
+    ],
     "request_id": "warehouse-device-publisher-acl-v1"
   },
   "id": "acl-put-1"

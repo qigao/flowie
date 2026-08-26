@@ -1,6 +1,7 @@
 #ifndef FLOWIE_CONTROL_STORE_INTERNAL_H
 #define FLOWIE_CONTROL_STORE_INTERNAL_H
 
+#include "flowie_control_acl_internal.h"
 #include "flowie_security.h"
 #include "flowie_control_acl_internal.h"
 
@@ -393,6 +394,47 @@ typedef struct flowie_control_policy_rule_view_s {
 #define FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT                                                       \
   {sizeof(flowie_control_policy_rule_view_t), 0u, "", 0u, 0u}
 
+typedef struct flowie_control_policy_subject_rule_put_command_s {
+  size_t size;
+  const char *domain_id;
+  uint32_t ordinal;
+  const flowie_control_acl_document_t *document;
+  const char *actor;
+  const char *request_id;
+  uint64_t expected_revision;
+  uint64_t occurred_at;
+} flowie_control_policy_subject_rule_put_command_t;
+
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT                                      \
+  {sizeof(flowie_control_policy_subject_rule_put_command_t), NULL, 0u, NULL, NULL, NULL, 0u, 0u}
+
+typedef struct flowie_control_policy_subject_rule_delete_command_s {
+  size_t size;
+  const char *domain_id;
+  flowie_security_subject_kind_t subject_kind;
+  const char *subject_id;
+  const char *actor;
+  const char *request_id;
+  uint64_t expected_revision;
+  uint64_t occurred_at;
+} flowie_control_policy_subject_rule_delete_command_t;
+
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT                                    \
+  {sizeof(flowie_control_policy_subject_rule_delete_command_t), NULL,                             \
+   FLOWIE_SECURITY_SUBJECT_ANY, NULL, NULL, NULL, 0u, 0u}
+
+typedef struct flowie_control_policy_subject_rule_view_s {
+  size_t size;
+  uint32_t ordinal;
+  flowie_control_acl_document_t document;
+  uint64_t revision;
+  uint64_t updated_at;
+} flowie_control_policy_subject_rule_view_t;
+
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT                                              \
+  {sizeof(flowie_control_policy_subject_rule_view_t), 0u, FLOWIE_CONTROL_ACL_DOCUMENT_INIT, 0u,   \
+   0u}
+
 typedef struct flowie_control_group_view_s {
   size_t size;
   char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
@@ -601,6 +643,23 @@ int flowie_control_store_policy_rule_list(flowie_control_store_t *store, const c
                                           flowie_control_policy_rule_view_t *items,
                                           size_t item_capacity, size_t *count_out,
                                           int *has_more_out);
+int flowie_control_store_policy_subject_rule_put(
+    flowie_control_store_t *store,
+    const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_store_policy_subject_rule_delete(
+    flowie_control_store_t *store,
+    const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_store_policy_subject_rule_get(
+    flowie_control_store_t *store, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out);
+int flowie_control_store_policy_subject_rule_list(
+    flowie_control_store_t *store, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out);
 
 /** Return current draft and published bundle metadata. */
 int flowie_control_store_policy_status(flowie_control_store_t *store, const char *domain_id,

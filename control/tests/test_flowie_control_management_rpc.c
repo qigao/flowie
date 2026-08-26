@@ -311,6 +311,109 @@ static void management_rpc_run_responsiveness_scenario(
 }
 
 spec("Flowie management JSON-RPC") {
+  it("round-trips structured subject rules and removes every legacy rule method") {
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    iris_security_context_t security = {0};
+    mem_pool_t arena;
+    turbo_json_doc_t *document = NULL;
+    json_value_t *result;
+    json_value_t *entries;
+    int status = 0;
+
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "security-admin";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    security.authenticated = true;
+    check_equal(mem_init(&arena, 0u), 0);
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+        "\"role_id\":\"publisher\",\"request_id\":\"create-publisher\"},\"id\":1}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.put\","
+        "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\","
+        "\"ordinal\":10,\"connection\":\"allow\",\"entries\":[{"
+        "\"effect\":\"allow\",\"access\":\"write\","
+        "\"topic\":\"root-a/telemetry/%u/event\"}],"
+        "\"request_id\":\"put-publisher-rule\"},\"id\":2}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.get\","
+        "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\"},"
+        "\"id\":3}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_equal(turbo_json_string(turbo_json_object_get(result, "subject_kind")), "role");
+    check_equal(turbo_json_string(turbo_json_object_get(result, "subject_id")), "publisher");
+    check_equal((uint64_t)turbo_json_number(turbo_json_object_get(result, "ordinal")), 10u);
+    entries = turbo_json_object_get(result, "entries");
+    check_equal(turbo_json_array_size(entries), 1u);
+    check_equal(turbo_json_string(turbo_json_object_get(turbo_json_array_get(entries, 0u),
+                                                        "access")),
+                "write");
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.list\","
+        "\"params\":{\"subject_kind\":\"role\",\"limit\":10},\"id\":4}", &status);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_equal(turbo_json_array_size(turbo_json_object_get(result, "items")), 1u);
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.delete\","
+        "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\","
+        "\"request_id\":\"delete-publisher-rule\"},\"id\":5}", &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.put\","
+        "\"params\":{\"ordinal\":1,\"rule_line\":\"role publisher allow\","
+        "\"request_id\":\"legacy\"},\"id\":6}",
+        &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.list\",\"id\":7}",
+        &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.delete\","
+        "\"params\":{\"ordinal\":10,\"request_id\":\"legacy-delete\"},\"id\":8}",
+        &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+
+    management_rpc_close(server, rpc, app, service, store, path);
+    mem_destroy(&arena);
+  }
+
   it("keeps the CoroNet owner responsive while validating policy") {
     management_rpc_run_responsiveness_scenario(
         MANAGEMENT_RPC_POLICY_VALIDATE,
@@ -342,7 +445,7 @@ spec("Flowie management JSON-RPC") {
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
     check_equal(mem_init(&arena, 0u), 0);
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
-    check_equal(rpc->method_count, 32u);
+    check_equal(rpc->method_count, 33u);
     check_equal(iris_app_lookup_rpc_context(app, "/v2/control/rpc"), server);
 
     document = management_rpc_call(

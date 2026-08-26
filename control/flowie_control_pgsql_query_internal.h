@@ -81,6 +81,15 @@ int flowie_control_pgsql_query_policy_rule_list(flowie_control_pgsql_query_t *qu
                                                 flowie_control_policy_rule_view_t *items,
                                                 size_t item_capacity, size_t *count_out,
                                                 int *has_more_out);
+int flowie_control_pgsql_query_policy_subject_rule_get(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out);
+int flowie_control_pgsql_query_policy_subject_rule_list(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out);
 int flowie_control_pgsql_query_policy_status(flowie_control_pgsql_query_t *query,
                                              const char *domain_id,
                                              flowie_control_policy_status_t *out);

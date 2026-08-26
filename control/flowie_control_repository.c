@@ -170,18 +170,6 @@ static int sqlite_role_list(void *ctx, const char *domain_id, const char *after_
                                         items, item_capacity, count_out, has_more_out);
 }
 
-static int sqlite_policy_rule_put(void *ctx,
-                                  const flowie_control_policy_rule_put_command_t *command,
-                                  flowie_control_command_result_t *result) {
-  return flowie_control_store_policy_rule_put((flowie_control_store_t *)ctx, command, result);
-}
-
-static int sqlite_policy_rule_delete(void *ctx,
-                                     const flowie_control_policy_rule_delete_command_t *command,
-                                     flowie_control_command_result_t *result) {
-  return flowie_control_store_policy_rule_delete((flowie_control_store_t *)ctx, command, result);
-}
-
 static int sqlite_policy_validate(void *ctx, const char *domain_id,
                                   flowie_control_policy_validation_t *out) {
   return flowie_control_store_policy_validate((flowie_control_store_t *)ctx, domain_id, out);
@@ -190,14 +178,6 @@ static int sqlite_policy_validate(void *ctx, const char *domain_id,
 static int sqlite_policy_publish(void *ctx, const flowie_control_policy_publish_command_t *command,
                                  flowie_control_policy_publish_result_t *result) {
   return flowie_control_store_policy_publish((flowie_control_store_t *)ctx, command, result);
-}
-
-static int sqlite_policy_rule_list(void *ctx, const char *domain_id, uint32_t after_ordinal,
-                                   int has_after, flowie_control_policy_rule_view_t *items,
-                                   size_t item_capacity, size_t *count_out, int *has_more_out) {
-  return flowie_control_store_policy_rule_list((flowie_control_store_t *)ctx, domain_id,
-                                               after_ordinal, has_after, items, item_capacity,
-                                               count_out, has_more_out);
 }
 
 static int sqlite_policy_status(void *ctx, const char *domain_id,
@@ -216,6 +196,37 @@ static void sqlite_policy_bundle_release(void *ctx,
                                          flowie_security_policy_bundle_t *bundle) {
   (void)ctx;
   flowie_control_store_policy_bundle_release(bundle);
+}
+
+static int sqlite_policy_subject_rule_put(
+    void *ctx, const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result) {
+  return flowie_control_store_policy_subject_rule_put((flowie_control_store_t *)ctx, command,
+                                                       result);
+}
+
+static int sqlite_policy_subject_rule_delete(
+    void *ctx, const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result) {
+  return flowie_control_store_policy_subject_rule_delete((flowie_control_store_t *)ctx, command,
+                                                          result);
+}
+
+static int sqlite_policy_subject_rule_get(void *ctx, const char *domain_id,
+                                          flowie_security_subject_kind_t subject_kind,
+                                          const char *subject_id,
+                                          flowie_control_policy_subject_rule_view_t *out) {
+  return flowie_control_store_policy_subject_rule_get((flowie_control_store_t *)ctx, domain_id,
+                                                       subject_kind, subject_id, out);
+}
+
+static int sqlite_policy_subject_rule_list(
+    void *ctx, const char *domain_id, flowie_security_subject_kind_t subject_kind,
+    uint32_t after_ordinal, int has_after, flowie_control_policy_subject_rule_view_t *items,
+    size_t item_capacity, size_t *count_out, int *has_more_out) {
+  return flowie_control_store_policy_subject_rule_list(
+      (flowie_control_store_t *)ctx, domain_id, subject_kind, after_ordinal, has_after, items,
+      item_capacity, count_out, has_more_out);
 }
 
 static int sqlite_audit_revision(void *ctx, uint64_t *revision_out) {
@@ -252,9 +263,15 @@ static const flowie_control_repository_role_ops_t SQLITE_ROLE_OPS = {
     sqlite_role_assignment_add, sqlite_role_assignment_remove,
     sqlite_effective_roles,     sqlite_role_list};
 static const flowie_control_repository_policy_ops_t SQLITE_POLICY_OPS = {
-    sqlite_policy_rule_put, sqlite_policy_rule_delete, sqlite_policy_validate,
-    sqlite_policy_publish,  sqlite_policy_rule_list,   sqlite_policy_status,
-    sqlite_policy_bundle_load, sqlite_policy_bundle_release};
+    .validate = sqlite_policy_validate,
+    .publish = sqlite_policy_publish,
+    .status = sqlite_policy_status,
+    .bundle_load = sqlite_policy_bundle_load,
+    .bundle_release = sqlite_policy_bundle_release,
+    .subject_rule_put = sqlite_policy_subject_rule_put,
+    .subject_rule_delete = sqlite_policy_subject_rule_delete,
+    .subject_rule_get = sqlite_policy_subject_rule_get,
+    .subject_rule_list = sqlite_policy_subject_rule_list};
 static const flowie_control_repository_audit_ops_t SQLITE_AUDIT_OPS = {
     sqlite_audit_revision, sqlite_audit_list, sqlite_audit_count};
 
@@ -279,11 +296,12 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->group->effective || !repository->group->list || !repository->role->create ||
       !repository->role->disable || !repository->role->assignment_add ||
       !repository->role->assignment_remove || !repository->role->effective ||
-      !repository->role->list || !repository->policy->rule_put ||
-      !repository->policy->rule_delete || !repository->policy->validate ||
-      !repository->policy->publish || !repository->policy->rule_list ||
-      !repository->policy->status || !repository->policy->bundle_load ||
-      !repository->policy->bundle_release || !repository->audit->revision ||
+      !repository->role->list || !repository->policy->validate ||
+      !repository->policy->publish || !repository->policy->status ||
+      !repository->policy->bundle_load ||
+      !repository->policy->bundle_release || !repository->policy->subject_rule_put ||
+      !repository->policy->subject_rule_delete || !repository->policy->subject_rule_get ||
+      !repository->policy->subject_rule_list || !repository->audit->revision ||
       !repository->audit->list || !repository->audit->count)
     return TURBO_EINVAL;
   return TURBO_OK;

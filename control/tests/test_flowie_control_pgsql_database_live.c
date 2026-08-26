@@ -256,6 +256,89 @@ spec("Flowie control PostgreSQL database live") {
     drop_test_schema(conninfo, schema_name);
   }
 
+  it("purges every v3 policy row while preserving domain state") {
+    const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
+    char schema_name[64];
+    char sql[8192];
+    flowie_control_pgsql_database_config_t config = FLOWIE_CONTROL_PGSQL_DATABASE_CONFIG_INIT;
+    flowie_control_pgsql_database_t *database = NULL;
+    PGconn *connection;
+    PGresult *result;
+    int written;
+
+    check_not_null(conninfo);
+    check_true(conninfo[0] != '\0');
+    (void)snprintf(schema_name, sizeof(schema_name), "flowie_control_v3_purge_%llu",
+                   (unsigned long long)turbo_hrtime());
+    connection = PQconnectdb(conninfo);
+    check_not_null(connection);
+    check_equal(PQstatus(connection), CONNECTION_OK);
+    written = snprintf(
+        sql, sizeof(sql),
+        "CREATE SCHEMA %s;"
+        "CREATE TABLE %s.schema_version(singleton SMALLINT PRIMARY KEY,version INTEGER NOT NULL,"
+        "fingerprint TEXT NOT NULL);"
+        "INSERT INTO %s.schema_version VALUES(1,3,"
+        "'flowie-control-acl-document-schema-v3-20260805');"
+        "CREATE TABLE %s.domain(domain_id TEXT PRIMARY KEY);"
+        "INSERT INTO %s.domain VALUES('root-a');"
+        "CREATE TABLE %s.policy_draft(domain_id TEXT NOT NULL,ordinal INTEGER NOT NULL,"
+        "rule_line TEXT NOT NULL,revision BIGINT NOT NULL,updated_at BIGINT NOT NULL);"
+        "INSERT INTO %s.policy_draft VALUES('root-a',1,'user old-device allow',1,1);"
+        "CREATE TABLE %s.acl_bundle(namespace_name TEXT PRIMARY KEY,policy_version BIGINT NOT "
+        "NULL,expires_at BIGINT NOT NULL);"
+        "INSERT INTO %s.acl_bundle VALUES('root-a',1,9999);"
+        "CREATE TABLE %s.acl_rule(namespace_name TEXT NOT NULL,ordinal INTEGER NOT NULL,"
+        "rule_line TEXT NOT NULL);"
+        "INSERT INTO %s.acl_rule VALUES('root-a',1,'user old-device allow');"
+        "CREATE TABLE %s.policy_publish_result(request_id TEXT PRIMARY KEY,policy_version BIGINT "
+        "NOT NULL);"
+        "INSERT INTO %s.policy_publish_result VALUES('old-publish',1);",
+        schema_name, schema_name, schema_name, schema_name, schema_name, schema_name, schema_name,
+        schema_name, schema_name, schema_name, schema_name, schema_name, schema_name);
+    check_true(written > 0);
+    check_true((size_t)written < sizeof(sql));
+    result = PQexec(connection, sql);
+    check_not_null(result);
+    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
+    PQclear(result);
+    PQfinish(connection);
+
+    config.conninfo = conninfo;
+    config.schema_name = schema_name;
+    config.require_tls = 0;
+    config.schema_mode = FLOWIE_CONTROL_PGSQL_SCHEMA_MIGRATE;
+    check_equal(flowie_control_pgsql_database_open(&config, &database), TURBO_OK);
+    check_equal(flowie_control_pgsql_database_schema_version(database),
+                FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION);
+    flowie_control_pgsql_database_destroy(database);
+
+    connection = PQconnectdb(conninfo);
+    check_not_null(connection);
+    check_equal(PQstatus(connection), CONNECTION_OK);
+    written = snprintf(
+        sql, sizeof(sql),
+        "SELECT (SELECT count(*) FROM %s.domain),(SELECT count(*) FROM %s.policy_draft),"
+        "(SELECT count(*) FROM %s.acl_bundle),(SELECT count(*) FROM %s.acl_rule),"
+        "(SELECT count(*) FROM %s.policy_publish_result)",
+        schema_name, schema_name, schema_name, schema_name, schema_name);
+    check_true(written > 0);
+    check_true((size_t)written < sizeof(sql));
+    result = PQexec(connection, sql);
+    check_not_null(result);
+    check_equal(PQresultStatus(result), PGRES_TUPLES_OK);
+    check_equal(PQntuples(result), 1);
+    check_equal(PQnfields(result), 5);
+    check_equal(PQgetvalue(result, 0, 0), "1");
+    check_equal(PQgetvalue(result, 0, 1), "0");
+    check_equal(PQgetvalue(result, 0, 2), "0");
+    check_equal(PQgetvalue(result, 0, 3), "0");
+    check_equal(PQgetvalue(result, 0, 4), "0");
+    PQclear(result);
+    PQfinish(connection);
+    drop_test_schema(conninfo, schema_name);
+  }
+
   it("bounds leases, rolls back abandoned transactions, and closes quiescently") {
     const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
     char schema_name[64];
@@ -548,8 +631,9 @@ spec("Flowie control PostgreSQL database live") {
 
     check_equal(flowie_control_pgsql_pool_acquire(pool, &seed), TURBO_OK);
     written = snprintf(policy_sql, sizeof(policy_sql),
-                       "INSERT INTO %s.policy_draft(domain_id,ordinal,rule_line,revision,"
-                       "updated_at) VALUES('root-a',0,'%s',2,1002)",
+                       "INSERT INTO %s.policy_draft(domain_id,subject_kind,subject_id,ordinal,"
+                       "rule_document,revision,updated_at) "
+                       "VALUES('root-a',1,'device-7',0,'%s',2,1002)",
                        schema_name, referenced_rule);
     check_true(written > 0);
     check_true((size_t)written < sizeof(policy_sql));

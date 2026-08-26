@@ -96,6 +96,14 @@ int flowie_control_pgsql_command_policy_rule_delete(
     flowie_control_pgsql_command_t *view,
     const flowie_control_policy_rule_delete_command_t *command,
     flowie_control_command_result_t *result);
+int flowie_control_pgsql_command_policy_subject_rule_put(
+    flowie_control_pgsql_command_t *view,
+    const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_pgsql_command_policy_subject_rule_delete(
+    flowie_control_pgsql_command_t *view,
+    const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result);
 int flowie_control_pgsql_command_policy_publish(
     flowie_control_pgsql_command_t *view, const flowie_control_policy_publish_command_t *command,
     flowie_control_policy_publish_result_t *result);

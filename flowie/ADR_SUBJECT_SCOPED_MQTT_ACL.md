@@ -258,10 +258,18 @@ policy version：
 
 ## 接口影响
 
+### v4 不兼容变更
+
+- 删除 `control.policy.rule.put/list/delete`，改为结构化的
+  `control.policy.subject_rule.put/get/list/delete`；
+- draft 主键从 `(domain_id, ordinal)` 改为 `(domain_id, subject_kind, subject_id)`；
+- v3→v4 升级删除所有旧 draft、published bundle、compiled rule 与 publish replay 数据，不迁移；
+- `ordinal` 仅保留为 Domain 内唯一的稳定排序字段；revision、request ID、audit 和原子发布流程保留；
+
+详见 [ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md](ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md)。
+
 ### 保持不变
 
-- Management method 名：`control.policy.rule.put/delete/validate/publish`；
-- draft `ordinal`、revision、request ID、audit 和原子发布流程；
 - `flowie_security_rule_t`、policy bundle v3 和 SecurityRealm public C ABI；
 - `/v4/acl/check` request/response 字段和 fail-closed 状态码；
 - MQTT CONNECT、SUBSCRIBE、PUBLISH 的协议级拒绝行为。

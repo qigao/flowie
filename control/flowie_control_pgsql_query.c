@@ -31,6 +31,8 @@ typedef enum flowie_control_pgsql_query_sql_e {
   FLOWIE_CONTROL_PGSQL_QUERY_ROLE_LIST,
   FLOWIE_CONTROL_PGSQL_QUERY_POLICY_DRAFT_LINES,
   FLOWIE_CONTROL_PGSQL_QUERY_POLICY_RULE_LIST,
+  FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_GET,
+  FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_LIST,
   FLOWIE_CONTROL_PGSQL_QUERY_POLICY_STATUS,
   FLOWIE_CONTROL_PGSQL_QUERY_BUNDLE_META,
   FLOWIE_CONTROL_PGSQL_QUERY_BUNDLE_RULES,
@@ -219,13 +221,28 @@ int flowie_control_pgsql_query_create(flowie_control_pgsql_pool_t *pool,
   if (rc == TURBO_OK)
     rc = flowie_control_pgsql_query_sql_set(
         query, FLOWIE_CONTROL_PGSQL_QUERY_POLICY_DRAFT_LINES,
-        "SELECT rule_line FROM %s.policy_draft WHERE domain_id=$1 ORDER BY ordinal", schema);
+        "SELECT rule_document FROM %s.policy_draft WHERE domain_id=$1 ORDER BY ordinal", schema);
   if (rc == TURBO_OK)
     rc = flowie_control_pgsql_query_sql_set(
         query, FLOWIE_CONTROL_PGSQL_QUERY_POLICY_RULE_LIST,
-        "SELECT d.ordinal::text,d.rule_line,d.revision::text,d.updated_at::text "
+        "SELECT d.ordinal::text,d.rule_document,d.revision::text,d.updated_at::text "
         "FROM %s.policy_draft d WHERE d.domain_id=$1 AND "
         "($2='0' OR d.ordinal>$3::bigint) ORDER BY d.ordinal LIMIT $4::bigint",
+        schema);
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_query_sql_set(
+        query, FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_GET,
+        "SELECT ordinal::text,subject_kind::text,subject_id,rule_document,revision::text,"
+        "updated_at::text FROM %s.policy_draft WHERE domain_id=$1 AND "
+        "subject_kind=$2::integer AND subject_id=$3",
+        schema);
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_query_sql_set(
+        query, FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_LIST,
+        "SELECT ordinal::text,subject_kind::text,subject_id,rule_document,revision::text,"
+        "updated_at::text FROM %s.policy_draft WHERE domain_id=$1 AND "
+        "($2='0' OR subject_kind=$2::integer) AND ($3='0' OR ordinal>$4::integer) "
+        "ORDER BY ordinal LIMIT $5::bigint",
         schema);
   if (rc == TURBO_OK)
     rc = flowie_control_pgsql_query_sql_set(
@@ -1310,6 +1327,140 @@ int flowie_control_pgsql_query_policy_rule_list(flowie_control_pgsql_query_t *qu
   if (result) PQclear(result);
   rc = flowie_control_pgsql_query_session_close(&session, 0, rc);
   if (rc == TURBO_OK) *count_out = count;
+  else {
+    *count_out = 0u;
+    *has_more_out = 0;
+  }
+  return rc;
+}
+
+static int flowie_control_pgsql_query_subject_rule_row(
+    PGresult *result, int row, flowie_control_policy_subject_rule_view_t *view) {
+  const char *subject = NULL;
+  const char *document = NULL;
+  size_t subject_size = 0u;
+  size_t document_size = 0u;
+  uint32_t stored_kind = 0u;
+  int rc;
+  if (!result || !view || view->size < sizeof(*view)) return TURBO_EINVAL;
+  rc = flowie_control_pgsql_result_uint32(result, row, 0, 0u,
+                                          FLOWIE_SECURITY_MAX_RULES - 1u, &view->ordinal);
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_result_uint32(result, row, 1,
+                                            FLOWIE_SECURITY_SUBJECT_PRINCIPAL,
+                                            FLOWIE_SECURITY_SUBJECT_GROUP, &stored_kind);
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_result_text(result, row, 2, &subject, &subject_size);
+  if (rc == TURBO_OK &&
+      (subject_size == 0u || subject_size > FLOWIE_SECURITY_ID_MAX ||
+       memchr(subject, '\0', subject_size)))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_result_text(result, row, 3, &document, &document_size);
+  if (rc == TURBO_OK)
+    rc = flowie_control_acl_parse(document, document_size, &view->document);
+  if (rc == TURBO_OK &&
+      ((uint32_t)view->document.subject_kind != stored_kind ||
+       strlen(view->document.subject) != subject_size ||
+       memcmp(view->document.subject, subject, subject_size) != 0))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_result_uint64(result, row, 4, 1u, INT64_MAX, &view->revision);
+  if (rc == TURBO_OK)
+    rc = flowie_control_pgsql_result_uint64(result, row, 5, 1u, INT64_MAX, &view->updated_at);
+  return rc;
+}
+
+int flowie_control_pgsql_query_policy_subject_rule_get(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out) {
+  flowie_control_pgsql_query_session_t session;
+  flowie_control_policy_subject_rule_view_t view =
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+  char kind[16];
+  const char *values[3] = {domain_id, kind, subject_id};
+  PGresult *result = NULL;
+  int written;
+  int rc;
+  if (out && out->size >= sizeof(*out)) *out = view;
+  if (!query || !flowie_control_text_valid(domain_id, FLOWIE_SECURITY_ID_MAX) ||
+      !flowie_control_text_valid(subject_id, FLOWIE_SECURITY_ID_MAX) || !out ||
+      out->size < sizeof(*out) ||
+      (subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
+       subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
+       subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP))
+    return TURBO_EINVAL;
+  written = snprintf(kind, sizeof(kind), "%d", (int)subject_kind);
+  if (written <= 0 || (size_t)written >= sizeof(kind)) return TURBO_ERANGE;
+  rc = flowie_control_pgsql_query_session_open(query, &session);
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_control_pgsql_query_exec(
+      &session, query->sql[FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_GET], 3, values,
+      &result);
+  if (rc == TURBO_OK && PQnfields(result) != 6) rc = TURBO_EPROTO;
+  if (rc == TURBO_OK && PQntuples(result) == 0) rc = TURBO_ENOENT;
+  if (rc == TURBO_OK && PQntuples(result) != 1) rc = TURBO_EPROTO;
+  if (rc == TURBO_OK) rc = flowie_control_pgsql_query_subject_rule_row(result, 0, &view);
+  if (result) PQclear(result);
+  rc = flowie_control_pgsql_query_session_close(&session, 0, rc);
+  if (rc == TURBO_OK) *out = view;
+  return rc;
+}
+
+int flowie_control_pgsql_query_policy_subject_rule_list(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out) {
+  flowie_control_pgsql_query_session_t session;
+  char kind[16];
+  char after[32];
+  char limit[32];
+  const char *values[5] = {domain_id, kind, has_after ? "1" : "0", after, limit};
+  PGresult *result = NULL;
+  size_t count = 0u;
+  int written;
+  int rc;
+  if (count_out) *count_out = 0u;
+  if (has_more_out) *has_more_out = 0;
+  if (!query || !flowie_control_text_valid(domain_id, FLOWIE_SECURITY_ID_MAX) ||
+      (subject_kind != FLOWIE_SECURITY_SUBJECT_ANY &&
+       subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
+       subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
+       subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP) ||
+      (has_after != 0 && has_after != 1) || !items || item_capacity == 0u ||
+      item_capacity > FLOWIE_CONTROL_PAGE_MAX || !count_out || !has_more_out)
+    return TURBO_EINVAL;
+  for (size_t index = 0u; index < item_capacity; ++index) {
+    if (items[index].size < sizeof(items[index])) return TURBO_EINVAL;
+    items[index] =
+        (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+  }
+  written = snprintf(kind, sizeof(kind), "%d", (int)subject_kind);
+  if (written <= 0 || (size_t)written >= sizeof(kind)) return TURBO_ERANGE;
+  written = snprintf(after, sizeof(after), "%u", after_ordinal);
+  if (written <= 0 || (size_t)written >= sizeof(after)) return TURBO_ERANGE;
+  written = snprintf(limit, sizeof(limit), "%llu", (unsigned long long)(item_capacity + 1u));
+  if (written <= 0 || (size_t)written >= sizeof(limit)) return TURBO_ERANGE;
+  rc = flowie_control_pgsql_query_session_open(query, &session);
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_control_pgsql_query_exec(
+      &session, query->sql[FLOWIE_CONTROL_PGSQL_QUERY_POLICY_SUBJECT_RULE_LIST], 5, values,
+      &result);
+  if (rc == TURBO_OK && PQnfields(result) != 6) rc = TURBO_EPROTO;
+  for (int row = 0; rc == TURBO_OK && row < PQntuples(result); ++row) {
+    if (count == item_capacity) {
+      *has_more_out = 1;
+      continue;
+    }
+    rc = flowie_control_pgsql_query_subject_rule_row(result, row, &items[count]);
+    if (rc == TURBO_OK) ++count;
+  }
+  if (result) PQclear(result);
+  rc = flowie_control_pgsql_query_session_close(&session, 0, rc);
+  if (rc == TURBO_OK)
+    *count_out = count;
   else {
     *count_out = 0u;
     *has_more_out = 0;

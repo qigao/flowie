@@ -1,4 +1,5 @@
 #include "flowie_control_credential_internal.h"
+#include "flowie_control_acl_internal.h"
 #include "flowie_control_store_internal.h"
 
 #include "tinytest.h"
@@ -272,6 +273,144 @@ static void control_concurrent_group_create(void *arg) {
 }
 
 spec("Flowie control SQLite fact store") {
+  it("purges every v3 draft and published policy while preserving domain data") {
+    static const char v3_sql[] =
+        "CREATE TABLE flowie_control_schema_version(singleton INTEGER PRIMARY KEY,version "
+        "INTEGER NOT NULL,fingerprint TEXT NOT NULL);"
+        "INSERT INTO flowie_control_schema_version VALUES(1,3,"
+        "'flowie-control-acl-document-schema-v3-20260805');"
+        "CREATE TABLE flowie_control_domain(domain_id TEXT PRIMARY KEY) WITHOUT ROWID;"
+        "INSERT INTO flowie_control_domain VALUES('root-a');"
+        "CREATE TABLE flowie_control_policy_draft(domain_id TEXT NOT NULL,ordinal INTEGER NOT "
+        "NULL,rule_line TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL,"
+        "PRIMARY KEY(domain_id,ordinal)) WITHOUT ROWID;"
+        "INSERT INTO flowie_control_policy_draft VALUES('root-a',1,'user old-device allow',1,1);"
+        "CREATE TABLE turbo_flow_acl_bundle_v3(namespace_name TEXT PRIMARY KEY,policy_version "
+        "INTEGER NOT NULL,expires_at INTEGER NOT NULL);"
+        "INSERT INTO turbo_flow_acl_bundle_v3 VALUES('root-a',7,0);"
+        "CREATE TABLE turbo_flow_acl_rule_v3(namespace_name TEXT NOT NULL,ordinal INTEGER NOT "
+        "NULL,rule_line TEXT NOT NULL,PRIMARY KEY(namespace_name,ordinal)) WITHOUT ROWID;"
+        "INSERT INTO turbo_flow_acl_rule_v3 VALUES('root-a',0,'allow principal old-device "
+        "root-a connect generic prefix secure-');"
+        "CREATE TABLE flowie_control_policy_publish_result(request_id TEXT PRIMARY KEY,"
+        "policy_version INTEGER NOT NULL) WITHOUT ROWID;"
+        "INSERT INTO flowie_control_policy_publish_result VALUES('old-publish',7);";
+    char *path = tt_make_temp_file("flowie-control-v3", ".sqlite3");
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_store_t *store = NULL;
+    sqlite3 *database = NULL;
+    sqlite3_stmt *statement = NULL;
+
+    check_not_null(path);
+    check_equal(sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL),
+                SQLITE_OK);
+    check_equal(sqlite3_exec(database, v3_sql, NULL, NULL, NULL), SQLITE_OK);
+    check_equal(sqlite3_close(database), SQLITE_OK);
+    database = NULL;
+
+    config.database_path = path;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    flowie_control_store_destroy(store);
+    check_equal(sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY, NULL), SQLITE_OK);
+    check_equal(sqlite3_prepare_v2(
+                    database,
+                    "SELECT (SELECT version FROM flowie_control_schema_version WHERE singleton=1),"
+                    "(SELECT COUNT(*) FROM flowie_control_domain WHERE domain_id='root-a'),"
+                    "(SELECT COUNT(*) FROM flowie_control_policy_draft),"
+                    "(SELECT COUNT(*) FROM turbo_flow_acl_bundle_v3),"
+                    "(SELECT COUNT(*) FROM turbo_flow_acl_rule_v3),"
+                    "(SELECT COUNT(*) FROM flowie_control_policy_publish_result)",
+                    -1, &statement, NULL),
+                SQLITE_OK);
+    check_equal(sqlite3_step(statement), SQLITE_ROW);
+    check_equal(sqlite3_column_int(statement, 0), 4);
+    check_equal(sqlite3_column_int(statement, 1), 1);
+    check_equal(sqlite3_column_int(statement, 2), 0);
+    check_equal(sqlite3_column_int(statement, 3), 0);
+    check_equal(sqlite3_column_int(statement, 4), 0);
+    check_equal(sqlite3_column_int(statement, 5), 0);
+    check_equal(sqlite3_finalize(statement), SQLITE_OK);
+    check_equal(sqlite3_close(database), SQLITE_OK);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
+  it("stores and queries a draft directly by typed subject key") {
+    static const char rule_text[] =
+        "role publisher allow {\n"
+        "  write topic root-a/telemetry/%u/event\n"
+        "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    flowie_control_acl_document_t replacement = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    flowie_control_policy_subject_rule_put_command_t put =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_subject_rule_view_t view =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+    flowie_control_policy_subject_rule_view_t page[2] = {
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT,
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT};
+    flowie_control_policy_subject_rule_delete_command_t remove =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
+    size_t count = 0u;
+    int has_more = 0;
+
+    check_equal(control_role_create(store, "root-a", "publisher", "request-role", 1u,
+                                    &result),
+                TURBO_OK);
+    check_equal(flowie_control_acl_parse(rule_text, sizeof(rule_text) - 1u, &document), TURBO_OK);
+    put.domain_id = "root-a";
+    put.ordinal = 10u;
+    put.document = &document;
+    put.actor = "policy-admin-1";
+    put.request_id = "request-subject-rule";
+    put.expected_revision = 2u;
+    put.occurred_at = 8002u;
+    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), TURBO_OK);
+    check_equal(flowie_control_store_policy_subject_rule_get(
+                    store, "root-a", FLOWIE_SECURITY_SUBJECT_ROLE, "publisher", &view),
+                TURBO_OK);
+    check_equal(view.ordinal, 10u);
+    check_equal(view.document.subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
+    check_equal(view.document.subject, "publisher");
+    check_equal(view.document.entry_count, 1u);
+    check_equal(view.document.entries[0].topic, "root-a/telemetry/%u/event");
+
+    put.ordinal = 11u;
+    put.request_id = "request-subject-rule-replace";
+    put.expected_revision = 3u;
+    put.occurred_at = 8003u;
+    replacement = document;
+    replacement.entries[0].effect = FLOWIE_SECURITY_DENY;
+    put.document = &replacement;
+    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), TURBO_OK);
+    check_equal(flowie_control_store_policy_subject_rule_list(
+                    store, "root-a", FLOWIE_SECURITY_SUBJECT_ROLE, 0u, 0, page, 2u, &count,
+                    &has_more),
+                TURBO_OK);
+    check_equal(count, 1u);
+    check_false(has_more);
+    check_equal(page[0].ordinal, 11u);
+    check_equal(page[0].document.entries[0].effect, FLOWIE_SECURITY_DENY);
+
+    remove.domain_id = "root-a";
+    remove.subject_kind = FLOWIE_SECURITY_SUBJECT_ROLE;
+    remove.subject_id = "publisher";
+    remove.actor = "policy-admin-1";
+    remove.request_id = "request-subject-rule-delete";
+    remove.expected_revision = 4u;
+    remove.occurred_at = 8004u;
+    check_equal(flowie_control_store_policy_subject_rule_delete(store, &remove, &result), TURBO_OK);
+    view = (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+    check_equal(flowie_control_store_policy_subject_rule_get(
+                    store, "root-a", FLOWIE_SECURITY_SUBJECT_ROLE, "publisher", &view),
+                TURBO_ENOENT);
+
+    control_store_close(store, path);
+  }
+
   it("creates and reads one root-scoped user with an atomic audit revision") {
     char *path = NULL;
     flowie_control_store_t *store = control_store_open(&path);
@@ -998,7 +1137,7 @@ spec("Flowie control SQLite fact store") {
     control_store_close(store, path);
   }
 
-  it("validates typed subjects and keys uniqueness by subject kind and identifier") {
+  it("validates typed subjects and replaces one rule by subject key") {
     static const char role_rule[] =
         "role shared allow {\n"
         "  read topic root-a/commands/#\n"
@@ -1050,18 +1189,18 @@ spec("Flowie control SQLite fact store") {
 
     check_equal(control_policy_rule_put(store, 40u, role_rule, "request-duplicate-role", 9u,
                                          &result),
-                TURBO_EALREADY);
+                TURBO_OK);
     check_equal(control_policy_rule_put(store, 40u, "role missing allow",
-                                         "request-missing-role", 9u, &result),
+                                         "request-missing-role", 10u, &result),
                 TURBO_ENOENT);
     check_equal(control_policy_rule_put(store, 40u, "group missing allow",
-                                         "request-missing-group", 9u, &result),
+                                         "request-missing-group", 10u, &result),
                 TURBO_ENOENT);
     check_equal(control_policy_rule_put(store, 40u, "user missing allow",
-                                         "request-missing-user", 9u, &result),
+                                         "request-missing-user", 10u, &result),
                 TURBO_ENOENT);
     check_equal(control_policy_rule_put(store, 40u, "role disabled allow",
-                                         "request-disabled-role-rule", 9u, &result),
+                                         "request-disabled-role-rule", 10u, &result),
                 TURBO_EPERM);
 
     control_store_close(store, path);
