@@ -1,10 +1,13 @@
 #include "flowie_control_management_rpc_internal.h"
 
+#include "CoroNet/turbo_coro_context.h"
 #include "flowie_control_credential_internal.h"
 #include "turbo_error.h"
 #include "turbo_parser.h"
+#include "turbo_thread.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +18,16 @@ enum {
   FLOWIE_CONTROL_RPC_CONFLICT = -32009,
   FLOWIE_CONTROL_RPC_SECRET_UNAVAILABLE = -32010,
   FLOWIE_CONTROL_RPC_DEFAULT_PAGE = 25
+};
+
+enum {
+  FLOWIE_CONTROL_RPC_POLICY_VALIDATE = 1,
+  FLOWIE_CONTROL_RPC_POLICY_PUBLISH = 2
+};
+
+enum {
+  FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_ARMED = 1,
+  FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_DONE = 2
 };
 
 static const char *const FLOWIE_CONTROL_RPC_METHODS[] = {"control.system.status",
@@ -59,9 +72,29 @@ struct flowie_control_management_rpc_server_s {
   void *clock_ctx;
   flowie_control_management_rpc_external_https_stats_fn external_https_stats;
   void *external_https_stats_ctx;
+  turbo_threadpool_t *policy_executor;
+  uint32_t policy_executor_deadline_ms;
   iris_app_t *bound_app;
   size_t registered_method_count;
 };
+
+typedef struct flowie_control_rpc_policy_job_s {
+  flowie_control_management_service_t *service;
+  coro_wait_t *wait;
+  atomic_uint references;
+  atomic_int completed;
+  atomic_int owner_state;
+  int operation;
+  int result;
+  flowie_control_management_caller_t caller;
+  flowie_control_policy_publish_command_t command;
+  flowie_control_policy_validation_t validation;
+  flowie_control_policy_publish_result_t publish_result;
+  char caller_domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char actor[FLOWIE_CONTROL_ACTOR_MAX + 1u];
+  char command_domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char request_id[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u];
+} flowie_control_rpc_policy_job_t;
 
 static void flowie_control_rpc_method(Req *request, Res *response);
 static int flowie_control_rpc_registered_method(Req *request, Res *response,
@@ -70,6 +103,151 @@ static int flowie_control_rpc_registered_method(Req *request, Res *response,
 static json_value_t *
 flowie_control_rpc_command_result(const flowie_control_command_result_t *result);
 static int flowie_control_rpc_error(rpc_response_t *response, int rc);
+
+static void flowie_control_rpc_policy_job_release(flowie_control_rpc_policy_job_t *job) {
+  if (!job || atomic_fetch_sub_explicit(&job->references, 1u, memory_order_acq_rel) != 1u) return;
+  (void)coro_wait_destroy(job->wait);
+  memset(job, 0, sizeof(*job));
+  free(job);
+}
+
+static void flowie_control_rpc_policy_job_run(void *arg) {
+  flowie_control_rpc_policy_job_t *job = (flowie_control_rpc_policy_job_t *)arg;
+  int wake_rc;
+  if (!job) return;
+
+  if (job->operation == FLOWIE_CONTROL_RPC_POLICY_VALIDATE) {
+    job->result = flowie_control_management_policy_validate(job->service, &job->caller,
+                                                            &job->validation);
+  } else if (job->operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH) {
+    job->result = flowie_control_management_policy_publish(
+        job->service, &job->caller, &job->command, &job->publish_result);
+  } else {
+    job->result = TURBO_EINVAL;
+  }
+  atomic_store_explicit(&job->completed, 1, memory_order_release);
+
+  while (atomic_load_explicit(&job->owner_state, memory_order_acquire) ==
+         FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_ARMED) {
+    wake_rc = coro_wait_interrupt(job->wait, TURBO_EINTR);
+    if (wake_rc != TURBO_EALREADY) break;
+    turbo_thread_yield();
+  }
+  flowie_control_rpc_policy_job_release(job);
+}
+
+static int flowie_control_rpc_policy_copy_text(char *destination, size_t capacity,
+                                               const char *source) {
+  size_t size;
+  if (!destination || capacity == 0u || !source) return TURBO_EINVAL;
+  size = strnlen(source, capacity);
+  if (size == 0u || size >= capacity) return TURBO_EINVAL;
+  memcpy(destination, source, size + 1u);
+  return TURBO_OK;
+}
+
+static int flowie_control_rpc_policy_execute(
+    flowie_control_management_rpc_server_t *server, int operation,
+    const flowie_control_management_caller_t *caller,
+    const flowie_control_policy_publish_command_t *command,
+    flowie_control_policy_validation_t *validation_out,
+    flowie_control_policy_publish_result_t *publish_out) {
+  flowie_control_rpc_policy_job_t *job;
+  coro_context_t *context;
+  int completed;
+  int wait_rc = TURBO_OK;
+  int rc;
+
+  if (!server || !caller || caller->size < sizeof(*caller) || !caller->domain_id ||
+      !caller->actor ||
+      (operation != FLOWIE_CONTROL_RPC_POLICY_VALIDATE &&
+       operation != FLOWIE_CONTROL_RPC_POLICY_PUBLISH) ||
+      (operation == FLOWIE_CONTROL_RPC_POLICY_VALIDATE &&
+       (!validation_out || validation_out->size < sizeof(*validation_out))) ||
+      (operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH &&
+       (!command || command->size < sizeof(*command) || !command->domain_id || !command->actor ||
+        !command->request_id || !publish_out || publish_out->size < sizeof(*publish_out))))
+    return TURBO_EINVAL;
+
+  context = coro_context_current();
+  if (!context) {
+    if (operation == FLOWIE_CONTROL_RPC_POLICY_VALIDATE)
+      return flowie_control_management_policy_validate(server->service, caller, validation_out);
+    return flowie_control_management_policy_publish(server->service, caller, command, publish_out);
+  }
+
+  job = (flowie_control_rpc_policy_job_t *)calloc(1u, sizeof(*job));
+  if (!job) return TURBO_ENOMEM;
+  job->wait = coro_wait_create(context);
+  if (!job->wait) {
+    free(job);
+    return TURBO_ENOMEM;
+  }
+  job->service = server->service;
+  job->operation = operation;
+  job->caller = *caller;
+  job->command =
+      (flowie_control_policy_publish_command_t)FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
+  job->validation = (flowie_control_policy_validation_t)FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
+  job->publish_result =
+      (flowie_control_policy_publish_result_t)FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
+  job->result = TURBO_EIO;
+  rc = flowie_control_rpc_policy_copy_text(job->caller_domain_id,
+                                           sizeof(job->caller_domain_id), caller->domain_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_policy_copy_text(job->actor, sizeof(job->actor), caller->actor);
+  if (rc == TURBO_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
+    rc = flowie_control_rpc_policy_copy_text(job->command_domain_id,
+                                             sizeof(job->command_domain_id), command->domain_id);
+  if (rc == TURBO_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
+    rc = flowie_control_rpc_policy_copy_text(job->request_id, sizeof(job->request_id),
+                                             command->request_id);
+  if (rc != TURBO_OK) {
+    (void)coro_wait_destroy(job->wait);
+    free(job);
+    return rc;
+  }
+  job->caller.domain_id = job->caller_domain_id;
+  job->caller.actor = job->actor;
+  if (operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH) {
+    job->command = *command;
+    job->command.domain_id = job->command_domain_id;
+    job->command.actor = job->actor;
+    job->command.request_id = job->request_id;
+  }
+  atomic_init(&job->references, 2u);
+  atomic_init(&job->completed, 0);
+  atomic_init(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_ARMED);
+
+  if (turbo_threadpool_try_submit(server->policy_executor, flowie_control_rpc_policy_job_run,
+                                  job) != TURBO_OK) {
+    atomic_store_explicit(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_DONE,
+                          memory_order_release);
+    flowie_control_rpc_policy_job_release(job);
+    flowie_control_rpc_policy_job_release(job);
+    return TURBO_EBUSY;
+  }
+
+  completed = atomic_load_explicit(&job->completed, memory_order_acquire);
+  if (!completed) wait_rc = coro_wait_for(job->wait, server->policy_executor_deadline_ms);
+  atomic_store_explicit(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_DONE,
+                        memory_order_release);
+  completed = atomic_load_explicit(&job->completed, memory_order_acquire);
+  if (completed) {
+    rc = job->result;
+    if (rc == TURBO_OK) {
+      if (operation == FLOWIE_CONTROL_RPC_POLICY_VALIDATE)
+        *validation_out = job->validation;
+      else
+        *publish_out = job->publish_result;
+    }
+  } else {
+    /* Accepted publish work may already commit, so retries converge through request_id replay. */
+    rc = wait_rc == TURBO_OK ? TURBO_ETIMEDOUT : wait_rc;
+  }
+  flowie_control_rpc_policy_job_release(job);
+  return rc;
+}
 
 static void flowie_control_rpc_free_json_value(json_value_t *value) {
   turbo_json_doc_t *owned = (turbo_json_doc_t *)value;
@@ -1221,7 +1399,8 @@ static int flowie_control_rpc_policy_validate(flowie_control_management_rpc_serv
   int rc = flowie_control_rpc_params(request, allowed, 1u, &params);
   if (rc == TURBO_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
   if (rc == TURBO_OK)
-    rc = flowie_control_management_policy_validate(server->service, &scoped, &validation);
+    rc = flowie_control_rpc_policy_execute(server, FLOWIE_CONTROL_RPC_POLICY_VALIDATE, &scoped,
+                                           NULL, &validation, NULL);
   turbo_free_json(&params);
   if (rc != TURBO_OK) return flowie_control_rpc_error(response, rc);
   object = turbo_json_create_object();
@@ -1263,7 +1442,8 @@ static int flowie_control_rpc_policy_publish(flowie_control_management_rpc_serve
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     command.expires_at = expires_at;
-    rc = flowie_control_management_policy_publish(server->service, caller, &command, &result);
+    rc = flowie_control_rpc_policy_execute(server, FLOWIE_CONTROL_RPC_POLICY_PUBLISH, caller,
+                                           &command, NULL, &result);
   }
   turbo_free_json(&params);
   if (rc != TURBO_OK) return flowie_control_rpc_error(response, rc);
@@ -1546,7 +1726,15 @@ int flowie_control_management_rpc_server_create(
       config->rpc_context->config.enable_introspection || !config->rpc_context->config.endpoint ||
       !config->rpc_context->config.endpoint[0] ||
       config->rpc_context->config.max_request_size == 0u ||
-      config->rpc_context->config.max_request_size > FLOWIE_CONTROL_MANAGEMENT_RPC_REQUEST_MAX)
+      config->rpc_context->config.max_request_size > FLOWIE_CONTROL_MANAGEMENT_RPC_REQUEST_MAX ||
+      config->policy_executor_workers == 0u ||
+      config->policy_executor_workers > FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_WORKERS ||
+      config->policy_executor_queue_capacity == 0u ||
+      config->policy_executor_queue_capacity >
+          FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_QUEUE_CAPACITY ||
+      config->policy_executor_deadline_ms == 0u ||
+      config->policy_executor_deadline_ms >
+          FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_DEADLINE_MS)
     return TURBO_EINVAL;
   server = (flowie_control_management_rpc_server_t *)calloc(1u, sizeof(*server));
   if (!server) return TURBO_ENOMEM;
@@ -1558,6 +1746,16 @@ int flowie_control_management_rpc_server_create(
   server->clock_ctx = config->clock_ctx;
   server->external_https_stats = config->external_https_stats;
   server->external_https_stats_ctx = config->external_https_stats_ctx;
+  server->policy_executor_deadline_ms = config->policy_executor_deadline_ms;
+  {
+    turbo_threadpool_config_t executor_config = {(int)config->policy_executor_workers,
+                                                 config->policy_executor_queue_capacity};
+    server->policy_executor = turbo_threadpool_create_with_config(&executor_config);
+    if (!server->policy_executor) {
+      free(server);
+      return TURBO_ENOMEM;
+    }
+  }
   memset(&method, 0, sizeof(method));
   method.handler = flowie_control_rpc_registered_method;
   method.description = "Flowie management method";
@@ -1604,6 +1802,8 @@ void flowie_control_management_rpc_server_destroy(flowie_control_management_rpc_
     (void)rpc_unregister_method(server->rpc_context,
                                 FLOWIE_CONTROL_RPC_METHODS[server->registered_method_count]);
   }
+  turbo_threadpool_destroy(server->policy_executor);
+  server->policy_executor = NULL;
   memset(server, 0, sizeof(*server));
   free(server);
 }

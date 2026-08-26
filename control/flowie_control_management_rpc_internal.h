@@ -11,6 +11,12 @@ extern "C" {
 #endif
 
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_REQUEST_MAX 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_WORKERS 4u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_WORKERS 64u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_QUEUE_CAPACITY 128u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_QUEUE_CAPACITY 4096u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_DEADLINE_MS 10000u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_DEADLINE_MS 60000u
 
 typedef struct flowie_control_management_rpc_server_s flowie_control_management_rpc_server_t;
 
@@ -31,6 +37,9 @@ typedef struct flowie_control_management_rpc_server_config_s {
   void *clock_ctx;
   flowie_control_management_rpc_external_https_stats_fn external_https_stats;
   void *external_https_stats_ctx;
+  uint32_t policy_executor_workers;
+  size_t policy_executor_queue_capacity;
+  uint32_t policy_executor_deadline_ms;
 } flowie_control_management_rpc_server_config_t;
 
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_SERVER_CONFIG_INIT                                           \
@@ -42,7 +51,10 @@ typedef struct flowie_control_management_rpc_server_config_s {
    NULL,                                                                                           \
    NULL,                                                                                           \
    NULL,                                                                                           \
-   NULL}
+   NULL,                                                                                           \
+   FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_WORKERS,                                  \
+   FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_QUEUE_CAPACITY,                           \
+   FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_DEADLINE_MS}
 
 /** The RPC context and management service are borrowed and must outlive the server. */
 int flowie_control_management_rpc_server_create(

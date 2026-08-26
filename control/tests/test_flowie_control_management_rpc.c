@@ -1,12 +1,31 @@
 #include "flowie_control_management_rpc_internal.h"
 
 #include "flowie_control_credential_internal.h"
+#include "CoroNet.h"
+#include "platform.h"
 #include "tinytest.h"
 #include "turbo_error.h"
 #include "turbo_parser.h"
+#include "turbo_thread.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef enum management_rpc_policy_operation_e {
+  MANAGEMENT_RPC_POLICY_VALIDATE = 1,
+  MANAGEMENT_RPC_POLICY_PUBLISH = 2
+} management_rpc_policy_operation_t;
+
+typedef struct management_rpc_policy_gate_s {
+  management_rpc_policy_operation_t operation;
+  atomic_int entered;
+  atomic_int completed;
+  atomic_int release;
+  atomic_int status_completed;
+} management_rpc_policy_gate_t;
+
+static _Atomic(management_rpc_policy_gate_t *) management_rpc_active_policy_gate;
 
 typedef struct management_rpc_fixture_s {
   flowie_control_management_caller_t caller;
@@ -15,7 +34,49 @@ typedef struct management_rpc_fixture_s {
   int external_https_enabled;
   size_t external_https_stats_calls;
   flowie_control_external_https_authenticator_stats_t external_https_stats;
+  management_rpc_policy_gate_t *policy_gate;
+  flowie_control_repository_t repository;
+  flowie_control_repository_policy_ops_t policy_ops;
 } management_rpc_fixture_t;
+
+static int management_rpc_policy_gate_wait(management_rpc_policy_operation_t operation) {
+  management_rpc_policy_gate_t *gate =
+      atomic_load_explicit(&management_rpc_active_policy_gate, memory_order_acquire);
+  if (!gate || gate->operation != operation) return TURBO_EINVAL;
+  atomic_store_explicit(&gate->entered, 1, memory_order_release);
+  while (!atomic_load_explicit(&gate->release, memory_order_acquire)) turbo_sleep_ms(1u);
+  atomic_store_explicit(&gate->completed, 1, memory_order_release);
+  return TURBO_OK;
+}
+
+static int management_rpc_policy_validate(void *ctx, const char *domain_id,
+                                          flowie_control_policy_validation_t *out) {
+  int rc;
+  (void)ctx;
+  if (!domain_id || !out || out->size < sizeof(*out)) return TURBO_EINVAL;
+  rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_VALIDATE);
+  if (rc != TURBO_OK) return rc;
+  out->store_revision = 2u;
+  out->rule_count = 3u;
+  out->deny_rule_count = 1u;
+  return TURBO_OK;
+}
+
+static int management_rpc_policy_publish(void *ctx,
+                                         const flowie_control_policy_publish_command_t *command,
+                                         flowie_control_policy_publish_result_t *result) {
+  int rc;
+  (void)ctx;
+  if (!command || command->size < sizeof(*command) || !result ||
+      result->size < sizeof(*result))
+    return TURBO_EINVAL;
+  rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_PUBLISH);
+  if (rc != TURBO_OK) return rc;
+  result->revision = 3u;
+  result->policy_version = 2u;
+  result->replayed = 0;
+  return TURBO_OK;
+}
 
 static int management_rpc_resolve(void *ctx, const Req *request,
                                   flowie_control_management_caller_t *caller_out) {
@@ -62,6 +123,14 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
   root.occurred_at = 1000u;
   check_equal(flowie_control_store_domain_create(*store_out, &root, &root_result), TURBO_OK);
   service_config.repository = flowie_control_store_repository(*store_out);
+  if (fixture->policy_gate) {
+    fixture->repository = *service_config.repository;
+    fixture->policy_ops = *fixture->repository.policy;
+    fixture->policy_ops.validate = management_rpc_policy_validate;
+    fixture->policy_ops.publish = management_rpc_policy_publish;
+    fixture->repository.policy = &fixture->policy_ops;
+    service_config.repository = &fixture->repository;
+  }
   check_equal(flowie_control_management_service_create(&service_config, service_out), TURBO_OK);
   rpc_config.endpoint = "/v2/control/rpc";
   rpc_config.enable_batch = 0;
@@ -129,7 +198,132 @@ static int management_rpc_error_code(turbo_json_doc_t *document) {
   return error ? (int)turbo_json_number(turbo_json_object_get(error, "code")) : 0;
 }
 
+typedef struct management_rpc_responsiveness_scenario_s {
+  flowie_control_management_rpc_server_t *server;
+  iris_app_t *app;
+  iris_security_context_t security;
+  management_rpc_policy_gate_t *gate;
+  const char *policy_body;
+  int policy_ok;
+  int status_ok;
+  int status_completed_before_policy;
+} management_rpc_responsiveness_scenario_t;
+
+static void management_rpc_policy_task(coro_t *co, void *arg) {
+  management_rpc_responsiveness_scenario_t *scenario =
+      (management_rpc_responsiveness_scenario_t *)arg;
+  turbo_json_doc_t *document = NULL;
+  mem_pool_t arena;
+  int status = TURBO_EIO;
+  (void)co;
+  if (mem_init(&arena, 0u) != 0) return;
+  document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
+                                 scenario->policy_body, &status);
+  scenario->policy_ok = status == TURBO_OK && management_rpc_error_code(document) == 0;
+  turbo_free_json(&document);
+  mem_destroy(&arena);
+}
+
+static void management_rpc_status_task(coro_t *co, void *arg) {
+  static const char status_body[] =
+      "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\",\"id\":3}";
+  management_rpc_responsiveness_scenario_t *scenario =
+      (management_rpc_responsiveness_scenario_t *)arg;
+  turbo_json_doc_t *document = NULL;
+  mem_pool_t arena;
+  int status = TURBO_EIO;
+  (void)co;
+  while (!atomic_load_explicit(&scenario->gate->entered, memory_order_acquire))
+    coro_sleep(coro_context_current(), 1u);
+  if (mem_init(&arena, 0u) == 0) {
+    document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
+                                   status_body, &status);
+    scenario->status_ok = status == TURBO_OK && management_rpc_error_code(document) == 0;
+    turbo_free_json(&document);
+    mem_destroy(&arena);
+  }
+  scenario->status_completed_before_policy =
+      !atomic_load_explicit(&scenario->gate->completed, memory_order_acquire);
+  atomic_store_explicit(&scenario->gate->status_completed, 1, memory_order_release);
+  atomic_store_explicit(&scenario->gate->release, 1, memory_order_release);
+}
+
+static void management_rpc_watchdog(void *arg) {
+  management_rpc_policy_gate_t *gate = (management_rpc_policy_gate_t *)arg;
+  uint64_t deadline = turbo_monotonic_ms() + 750u;
+  while (!atomic_load_explicit(&gate->status_completed, memory_order_acquire) &&
+         turbo_monotonic_ms() < deadline)
+    turbo_sleep_ms(1u);
+  atomic_store_explicit(&gate->release, 1, memory_order_release);
+}
+
+static void management_rpc_run_responsiveness_scenario(
+    management_rpc_policy_operation_t operation, const char *policy_body) {
+  char *path = NULL;
+  flowie_control_store_t *store = NULL;
+  flowie_control_management_service_t *service = NULL;
+  flowie_control_management_rpc_server_t *server = NULL;
+  rpc_context_t *rpc = NULL;
+  iris_app_t *app = NULL;
+  management_rpc_fixture_t fixture;
+  management_rpc_policy_gate_t gate;
+  management_rpc_responsiveness_scenario_t scenario;
+  coro_context_t *context;
+  turbo_thread_t watchdog = NULL;
+
+  memset(&fixture, 0, sizeof(fixture));
+  memset(&gate, 0, sizeof(gate));
+  memset(&scenario, 0, sizeof(scenario));
+  gate.operation = operation;
+  atomic_init(&gate.entered, 0);
+  atomic_init(&gate.completed, 0);
+  atomic_init(&gate.release, 0);
+  atomic_init(&gate.status_completed, 0);
+  fixture.caller = (flowie_control_management_caller_t)FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+  fixture.caller.domain_id = "root-a";
+  fixture.caller.actor = "policy-admin-1";
+  fixture.caller.permissions =
+      FLOWIE_CONTROL_MANAGEMENT_VIEWER | FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
+  fixture.now = 2000u;
+  fixture.policy_gate = &gate;
+  atomic_store_explicit(&management_rpc_active_policy_gate, &gate, memory_order_release);
+  server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+  context = coro_context_create(NULL);
+  check_not_null(context);
+  scenario.server = server;
+  scenario.app = app;
+  scenario.security.authenticated = true;
+  scenario.gate = &gate;
+  scenario.policy_body = policy_body;
+  check_equal(coro_context_spawn(context, management_rpc_policy_task, &scenario), TURBO_OK);
+  check_equal(coro_context_spawn(context, management_rpc_status_task, &scenario), TURBO_OK);
+  check_equal(turbo_thread_create(&watchdog, management_rpc_watchdog, &gate), TURBO_OK);
+  check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
+  check_equal(turbo_thread_join(&watchdog), TURBO_OK);
+  turbo_thread_destroy(&watchdog);
+
+  check_true(scenario.policy_ok);
+  check_true(scenario.status_ok);
+  check_true(scenario.status_completed_before_policy);
+  coro_context_destroy(context);
+  management_rpc_close(server, rpc, app, service, store, path);
+  atomic_store_explicit(&management_rpc_active_policy_gate, NULL, memory_order_release);
+}
+
 spec("Flowie management JSON-RPC") {
+  it("keeps the CoroNet owner responsive while validating policy") {
+    management_rpc_run_responsiveness_scenario(
+        MANAGEMENT_RPC_POLICY_VALIDATE,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.validate\",\"id\":1}");
+  }
+
+  it("keeps the CoroNet owner responsive while publishing policy") {
+    management_rpc_run_responsiveness_scenario(
+        MANAGEMENT_RPC_POLICY_PUBLISH,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.publish\",\"params\":{"
+        "\"request_id\":\"policy-publish-responsive\"},\"id\":2}");
+  }
+
   it("binds a dedicated caller-owned context and rejects unsafe RPC forms") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
