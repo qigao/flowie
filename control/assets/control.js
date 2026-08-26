@@ -186,21 +186,39 @@
   function parseAclDocument(text) {
     var normalized = (text || "").replace(/\r\n?/g, "\n");
     var match = normalized.match(
-      /^user ([A-Za-z0-9_.:@~-]+) (allow|deny)(?: \{\n([\s\S]*)\n\})?$/
+      /^(user|role|group) ([A-Za-z0-9_.:@~-]+) (allow|deny)(?: \{\n([\s\S]*)\n\})?$/
     );
     var entries = "";
     if (!match) return null;
-    if (match[3]) {
-      entries = match[3].split("\n").map(function (line) {
+    if (match[4]) {
+      entries = match[4].split("\n").map(function (line) {
         return line.slice(0, 2) === "  " ? line.slice(2) : line;
       }).join("\n");
     }
-    return {subject: match[1], connection: match[2], entries: entries};
+    return {subjectKind: match[1], subject: match[2], connection: match[3], entries: entries};
+  }
+
+  function aclSubjectSelect(builder, subjectKind) {
+    return builder.querySelector('[data-acl-subject="' + subjectKind + '"]');
+  }
+
+  function updateAclSubjectFields(builder, subjectKind) {
+    builder.querySelectorAll("[data-acl-subject-field]").forEach(function (field) {
+      var selected = field.getAttribute("data-acl-subject-field") === subjectKind;
+      var select = field.querySelector("[data-acl-subject]");
+      field.hidden = !selected;
+      select.disabled = !selected;
+      select.required = selected;
+    });
   }
 
   function setAclDocument(builder, documentValue) {
+    var subjectKind;
     if (!documentValue) return false;
-    setSelectValue(builder.querySelector("[data-acl-subject]"), documentValue.subject);
+    subjectKind = builder.querySelector("[data-acl-subject-kind]");
+    subjectKind.value = documentValue.subjectKind;
+    updateAclSubjectFields(builder, documentValue.subjectKind);
+    setSelectValue(aclSubjectSelect(builder, documentValue.subjectKind), documentValue.subject);
     builder.querySelector("[data-acl-connection]").value = documentValue.connection;
     builder.querySelector("[data-acl-entries]").value = documentValue.entries;
     return true;
@@ -210,21 +228,24 @@
     var connection = builder.querySelector("[data-acl-connection]").value;
     var entries = builder.querySelector("[data-acl-entries]");
     var ruleInput = builder.querySelector("[data-acl-rule]");
-    var subject = builder.querySelector("[data-acl-subject]").value;
+    var subjectKind = builder.querySelector("[data-acl-subject-kind]").value;
+    var subjectSelect = aclSubjectSelect(builder, subjectKind);
+    var subject = subjectSelect ? subjectSelect.value : "";
     var preview = builder.querySelector("[data-acl-preview]");
     var lines;
     var rule;
 
+    updateAclSubjectFields(builder, subjectKind);
     entries.disabled = connection === "deny";
     if (!subject) {
       ruleInput.value = "";
-      preview.textContent = "Select a user.";
+      preview.textContent = "Select a " + subjectKind + ".";
       return false;
     }
     lines = entries.value.replace(/\r\n?/g, "\n").split("\n").map(function (line) {
       return line.trim();
     }).filter(Boolean);
-    rule = "user " + subject + " " + connection;
+    rule = subjectKind + " " + subject + " " + connection;
     if (connection === "allow" && lines.length) {
       rule += " {\n" + lines.map(function (line) { return "  " + line; }).join("\n") + "\n}";
     }
@@ -398,7 +419,8 @@
     if (!command) return;
     ruleBuilder = command.querySelector("[data-acl-builder]");
     if (ruleBuilder && !updateAclDocument(ruleBuilder)) {
-      ruleBuilder.querySelector("[data-acl-subject]").reportValidity();
+      aclSubjectSelect(ruleBuilder,
+                       ruleBuilder.querySelector("[data-acl-subject-kind]").value).reportValidity();
       event.preventDefault();
       return;
     }

@@ -538,8 +538,8 @@ spec("Flowie ACL dashboard") {
     rule.domain_id = caller.domain_id;
     rule.ordinal = 10u;
     rule.rule_line =
-        "user device-1 allow {\n"
-        "  readwrite topic root-a/groups/operators/operators-east/devices/%u/events\n"
+        "role publisher allow {\n"
+        "  readwrite topic root-a/telemetry/%u/events\n"
         "}";
     rule.actor = caller.actor;
     rule.request_id = "request-rule";
@@ -577,12 +577,12 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "class=\"group-tree__node group-tree__node--depth-0\" role=\"treeitem\"");
     check_contains(html, "class=\"group-tree__node group-tree__node--depth-1\" role=\"treeitem\"");
     check_contains(html, "aria-label=\"Roles pagination\"");
-    check_contains(html, "aria-label=\"User ACL pagination\"");
+    check_contains(html, "aria-label=\"ACL pagination\"");
     check_contains(html, "aria-label=\"Audit pagination\"");
     check_contains(html, "aria-label=\"Users tools\"");
     check_contains(html, "aria-label=\"Groups tools\"");
     check_contains(html, "aria-label=\"Roles tools\"");
-    check_contains(html, "aria-label=\"User ACL tools\"");
+    check_contains(html, "aria-label=\"ACL tools\"");
     check_contains(html, "popovertarget=\"users-query\"");
     check_contains(html, "popovertarget=\"users-add\"");
     check_contains(html, "popovertarget=\"user-access-1\"");
@@ -612,12 +612,17 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "data-request-id");
     check_false(strstr(html, "Request ID") != NULL);
     check_contains(html, "data-acl-builder-host");
+    check_contains(html, "data-acl-subject-kind");
+    check_contains(html, "data-acl-subject=\"user\"");
+    check_contains(html, "data-acl-subject=\"role\"");
+    check_contains(html, "data-acl-subject=\"group\"");
     check_contains(html, "Topic permissions<textarea data-acl-entries");
     check_contains(html, "<span>Canonical document</span>");
     check_false(strstr(html, "data-acl-action") != NULL);
     check_contains(html, "<table class=\"acl-rule-table\"");
     check_contains(html, "<tr class=\"acl-rule-row\"><td class=\"acl-rule__ordinal\">10</td>");
-    check_contains(html, "<td class=\"acl-rule__subject\"><code>device-1</code></td>");
+    check_contains(html,
+                   "<td class=\"acl-rule__subject\"><small>Role</small><code>publisher</code></td>");
     check_contains(html, "<td class=\"acl-rule__decision\">Allow</td>");
     check_contains(html, "1 statements · 1 rules");
     check_contains(html, "<code>%u</code> username");
@@ -628,7 +633,7 @@ spec("Flowie ACL dashboard") {
     check_false(strstr(html, "role-edit-") != NULL);
     check_contains(html, "popovertarget=\"user-delete-1\"");
     check_contains(html, "popovertarget=\"acl-edit-1\"");
-    check_contains(html, "Edit user ACL");
+    check_contains(html, "Edit ACL");
     check_contains(html, "popovertarget=\"acl-delete-1\"");
     check_contains(html, "class=\"actions-column\">Actions");
     check_false(strstr(html, "<form") != NULL);

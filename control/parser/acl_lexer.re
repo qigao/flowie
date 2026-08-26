@@ -8,6 +8,8 @@ static int flowie_control_acl_keyword(const char *value, size_t length) {
 #define FLOWIE_ACL_KEYWORD(text, token)                                                            \
   if (length == sizeof(text) - 1u && memcmp(value, text, sizeof(text) - 1u) == 0) return token
   FLOWIE_ACL_KEYWORD("user", FLOWIE_CONTROL_ACL_TOKEN_USER);
+  FLOWIE_ACL_KEYWORD("role", FLOWIE_CONTROL_ACL_TOKEN_ROLE);
+  FLOWIE_ACL_KEYWORD("group", FLOWIE_CONTROL_ACL_TOKEN_GROUP);
   FLOWIE_ACL_KEYWORD("allow", FLOWIE_CONTROL_ACL_TOKEN_ALLOW);
   FLOWIE_ACL_KEYWORD("deny", FLOWIE_CONTROL_ACL_TOKEN_DENY);
   FLOWIE_ACL_KEYWORD("read", FLOWIE_CONTROL_ACL_TOKEN_READ);
@@ -32,6 +34,7 @@ int flowie_control_acl_lexer_next(flowie_control_acl_lexer_t *lexer,
                                   flowie_control_acl_token_t *token) {
   const char *YYCURSOR;
   const char *YYLIMIT;
+  const char *YYMARKER;
   const char *start;
   if (!lexer || !token || !lexer->cursor || !lexer->limit) return FLOWIE_CONTROL_ACL_LEX_ERROR;
   memset(token, 0, sizeof(*token));
@@ -64,8 +67,6 @@ default_lex:
       id = flowie_control_acl_keyword(token->value, token->length);
       if (id == FLOWIE_CONTROL_ACL_TOKEN_TOPIC) {
         lexer->mode = FLOWIE_CONTROL_ACL_LEX_TOPIC;
-        lexer->topic_started = 0;
-        lexer->topic_brace_depth = 0u;
       }
       return id;
     }
@@ -81,60 +82,32 @@ topic_lex:
     re2c:define:YYCTYPE = "unsigned char";
     re2c:yyfill:enable = 0;
     re2c:eof = 0;
-    segment = [A-Za-z0-9_.:@~-]+;
+    topic_static = [A-Za-z0-9_.:@~$-]+;
+    topic_atom = topic_static | "%u" | "%c" | "+" | "#";
+    topic_alternatives = "{" topic_static ("," topic_static)+ "}";
+    topic_pattern = topic_atom ("/" (topic_atom | topic_alternatives))*;
     topic_hspace = [ \t]+;
     topic_newline = "\r\n" | "\n" | "\r";
     $ {
       lexer->cursor = YYCURSOR;
       lexer->mode = FLOWIE_CONTROL_ACL_LEX_DEFAULT;
-      return lexer->topic_brace_depth == 0u ? FLOWIE_CONTROL_ACL_LEX_END
-                                            : FLOWIE_CONTROL_ACL_LEX_ERROR;
+      return FLOWIE_CONTROL_ACL_LEX_ERROR;
     }
     topic_hspace {
       lexer->column += (uint32_t)(YYCURSOR - start);
-      if (lexer->topic_started && lexer->topic_brace_depth == 0u)
-        lexer->mode = FLOWIE_CONTROL_ACL_LEX_DEFAULT;
       goto default_lex;
     }
     topic_newline {
       lexer->line++;
       lexer->column = 1u;
-      if (lexer->topic_started && lexer->topic_brace_depth == 0u)
-        lexer->mode = FLOWIE_CONTROL_ACL_LEX_DEFAULT;
       goto default_lex;
     }
-    "/" { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; lexer->topic_started = 1; return FLOWIE_CONTROL_ACL_TOKEN_SLASH; }
-    "," { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; return FLOWIE_CONTROL_ACL_TOKEN_COMMA; }
-    "{" { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; lexer->topic_brace_depth++; return FLOWIE_CONTROL_ACL_TOKEN_LBRACE; }
-    "}" {
-      if (lexer->topic_brace_depth == 0u) {
-        lexer->cursor = start;
-        lexer->mode = FLOWIE_CONTROL_ACL_LEX_DEFAULT;
-        YYCURSOR = start;
-        goto default_lex;
-      }
-      token->length = 1u;
-      lexer->cursor = YYCURSOR;
-      lexer->column++;
-      lexer->topic_brace_depth--;
-      return FLOWIE_CONTROL_ACL_TOKEN_RBRACE;
-    }
-    "%u" { token->length = 2u; lexer->cursor = YYCURSOR; lexer->column += 2u; lexer->topic_started = 1; return FLOWIE_CONTROL_ACL_TOKEN_USER_REF; }
-    "%c" { token->length = 2u; lexer->cursor = YYCURSOR; lexer->column += 2u; lexer->topic_started = 1; return FLOWIE_CONTROL_ACL_TOKEN_CLIENT_REF; }
-    "+" { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; lexer->topic_started = 1; return FLOWIE_CONTROL_ACL_TOKEN_PLUS; }
-    "#" { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; lexer->topic_started = 1; return FLOWIE_CONTROL_ACL_TOKEN_HASH; }
-    segment {
+    topic_pattern {
       token->length = (size_t)(YYCURSOR - start);
       lexer->cursor = YYCURSOR;
       lexer->column += (uint32_t)token->length;
-      lexer->topic_started = 1;
-      if (token->length == sizeof("groups") - 1u &&
-          memcmp(token->value, "groups", sizeof("groups") - 1u) == 0)
-        return FLOWIE_CONTROL_ACL_TOKEN_GROUPS;
-      if (token->length == sizeof("devices") - 1u &&
-          memcmp(token->value, "devices", sizeof("devices") - 1u) == 0)
-        return FLOWIE_CONTROL_ACL_TOKEN_DEVICES;
-      return FLOWIE_CONTROL_ACL_TOKEN_IDENT;
+      lexer->mode = FLOWIE_CONTROL_ACL_LEX_DEFAULT;
+      return FLOWIE_CONTROL_ACL_TOKEN_TOPIC_PATTERN;
     }
     * { token->length = 1u; lexer->cursor = YYCURSOR; lexer->column++; return FLOWIE_CONTROL_ACL_LEX_ERROR; }
   */

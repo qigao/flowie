@@ -984,7 +984,7 @@ spec("Flowie control SQLite fact store") {
                  TURBO_EPROTO);
     check_equal(control_policy_rule_put(
                      store, 11u,
-                     "user device-7 allow {\n  read topic root-a/operators/devices/%u/event\n}",
+                     "user device-7 allow {\n  read topic other-a/operators/devices/%u/event\n}",
                      "request-policy-bad-filter", 4u, &result),
                  TURBO_EPROTO);
     check_equal(control_policy_rule_put(
@@ -998,10 +998,87 @@ spec("Flowie control SQLite fact store") {
     control_store_close(store, path);
   }
 
+  it("validates typed subjects and keys uniqueness by subject kind and identifier") {
+    static const char role_rule[] =
+        "role shared allow {\n"
+        "  read topic root-a/commands/#\n"
+        "}";
+    static const char group_rule[] =
+        "group shared allow {\n"
+        "  write topic root-a/telemetry/%u/event\n"
+        "}";
+    static const char user_rule[] = "user shared allow";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t user =
+        control_user_create_command("request-shared-user", 1u);
+    flowie_control_role_disable_command_t disable =
+        FLOWIE_CONTROL_ROLE_DISABLE_COMMAND_INIT;
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
+
+    user.principal_id = "shared";
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(control_group_create(store, "root-a", "shared", NULL, "request-shared-group",
+                                      2u, &result),
+                TURBO_OK);
+    check_equal(control_role_create(store, "root-a", "shared", "request-shared-role", 3u,
+                                     &result),
+                TURBO_OK);
+    check_equal(control_role_create(store, "root-a", "disabled", "request-disabled-role", 4u,
+                                     &result),
+                TURBO_OK);
+    disable.domain_id = "root-a";
+    disable.role_id = "disabled";
+    disable.actor = "admin-1";
+    disable.request_id = "request-disable-role";
+    disable.expected_revision = 5u;
+    disable.occurred_at = 9800u;
+    check_equal(flowie_control_store_role_disable(store, &disable, &result), TURBO_OK);
+
+    check_equal(control_policy_rule_put(store, 10u, role_rule, "request-role-rule", 6u,
+                                         &result),
+                TURBO_OK);
+    check_equal(control_policy_rule_put(store, 20u, group_rule, "request-group-rule", 7u,
+                                         &result),
+                TURBO_OK);
+    check_equal(control_policy_rule_put(store, 30u, user_rule, "request-user-rule", 8u,
+                                         &result),
+                TURBO_OK);
+    check_equal(flowie_control_store_policy_validate(store, "root-a", &validation), TURBO_OK);
+    check_equal(validation.rule_count, 5u);
+
+    check_equal(control_policy_rule_put(store, 40u, role_rule, "request-duplicate-role", 9u,
+                                         &result),
+                TURBO_EALREADY);
+    check_equal(control_policy_rule_put(store, 40u, "role missing allow",
+                                         "request-missing-role", 9u, &result),
+                TURBO_ENOENT);
+    check_equal(control_policy_rule_put(store, 40u, "group missing allow",
+                                         "request-missing-group", 9u, &result),
+                TURBO_ENOENT);
+    check_equal(control_policy_rule_put(store, 40u, "user missing allow",
+                                         "request-missing-user", 9u, &result),
+                TURBO_ENOENT);
+    check_equal(control_policy_rule_put(store, 40u, "role disabled allow",
+                                         "request-disabled-role-rule", 9u, &result),
+                TURBO_EPERM);
+
+    control_store_close(store, path);
+  }
+
   it("prevents tombstoning subjects referenced by draft or published policy") {
     static const char principal_rule[] =
         "user device-7 allow {\n"
         "  read topic root-a/groups/operators/devices/%u/event\n"
+        "}";
+    static const char group_rule[] =
+        "group operators allow {\n"
+        "  read topic root-a/operations/#\n"
+        "}";
+    static const char role_rule[] =
+        "role reader allow {\n"
+        "  read topic root-a/reports/#\n"
         "}";
     static const char replacement_rule[] =
         "user device-8 allow {\n"
@@ -1033,54 +1110,75 @@ spec("Flowie control SQLite fact store") {
     check_equal(control_policy_rule_put(store, 10u, principal_rule, "request-principal-rule", 6u,
                                          &result),
                  TURBO_OK);
+    check_equal(control_policy_rule_put(store, 20u, group_rule, "request-group-rule", 7u,
+                                         &result),
+                TURBO_OK);
+    check_equal(control_policy_rule_put(store, 30u, role_rule, "request-role-rule", 8u,
+                                         &result),
+                TURBO_OK);
 
     user_disable.domain_id = "root-a";
     user_disable.principal_id = "device-7";
     user_disable.actor = "admin-1";
     user_disable.request_id = "request-disable-user-referenced";
-    user_disable.expected_revision = 7u;
+    user_disable.expected_revision = 9u;
     user_disable.occurred_at = 10000u;
     role_disable.domain_id = "root-a";
     role_disable.role_id = "reader";
     role_disable.actor = "admin-1";
     role_disable.request_id = "request-disable-role-referenced";
-    role_disable.expected_revision = 7u;
+    role_disable.expected_revision = 9u;
     role_disable.occurred_at = 10001u;
     check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_EBUSY);
     check_equal(control_group_delete(store, "root-a", "operators",
-                                      "request-delete-group-referenced", 7u, &result),
+                                      "request-delete-group-referenced", 9u, &result),
                  TURBO_EBUSY);
-    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_EBUSY);
 
-    check_equal(control_policy_publish(store, "request-publish-subject-rules", 8u, 20000u,
+    check_equal(control_policy_publish(store, "request-publish-subject-rules", 9u, 20000u,
                                         &published),
                  TURBO_OK);
-    check_equal(control_policy_rule_delete(store, 10u, "request-delete-principal-rule", 9u,
+    check_equal(control_policy_rule_delete(store, 10u, "request-delete-principal-rule", 10u,
                                             &result),
                  TURBO_OK);
-    user_disable.expected_revision = 10u;
+    check_equal(control_policy_rule_delete(store, 20u, "request-delete-group-rule", 11u,
+                                            &result),
+                TURBO_OK);
+    check_equal(control_policy_rule_delete(store, 30u, "request-delete-role-rule", 12u,
+                                            &result),
+                TURBO_OK);
+    user_disable.expected_revision = 13u;
     check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_EBUSY);
     check_equal(control_group_delete(store, "root-a", "operators",
-                                      "request-delete-group-published", 10u, &result),
+                                      "request-delete-group-published", 13u, &result),
                  TURBO_EBUSY);
+    role_disable.expected_revision = 13u;
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_EBUSY);
 
     check_equal(control_policy_rule_put(store, 40u, replacement_rule, "request-replacement-rule",
-                                         10u, &result),
+                                         13u, &result),
                  TURBO_OK);
-    check_equal(control_policy_publish(store, "request-publish-replacement", 11u, 21000u,
+    check_equal(control_policy_publish(store, "request-publish-replacement", 14u, 21000u,
                                         &published),
                  TURBO_OK);
-    check_equal(control_group_delete(store, "root-a", "operators", "request-delete-group", 12u,
+    check_equal(control_group_delete(store, "root-a", "operators", "request-delete-group", 15u,
                                       &result),
                  TURBO_OK);
+    role_disable.request_id = "request-disable-role";
+    role_disable.expected_revision = 16u;
+    role_disable.occurred_at = 10002u;
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_OK);
     user_disable.request_id = "request-disable-user";
-    user_disable.expected_revision = 13u;
+    user_disable.expected_revision = 17u;
     user_disable.occurred_at = 10003u;
     check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_OK);
+    check_equal(control_group_delete(store, "root-a", "public",
+                                      "request-delete-resource-segment-group", 18u, &result),
+                TURBO_OK);
     check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
-    check_equal(revision, 14u);
+    check_equal(revision, 19u);
     check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
-    check_equal(audit_count, 14u);
+    check_equal(audit_count, 19u);
 
     control_store_close(store, path);
   }

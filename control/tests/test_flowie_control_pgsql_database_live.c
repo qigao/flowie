@@ -1618,6 +1618,128 @@ spec("Flowie control PostgreSQL database live") {
     drop_test_schema(conninfo, schema_name);
   }
 
+  it("publishes role group and user ACL subjects with typed uniqueness") {
+    static const char role_rule[] =
+        "role shared allow {\n"
+        "  read topic root-a/commands/#\n"
+        "}";
+    static const char group_rule[] =
+        "group shared allow {\n"
+        "  write topic root-a/telemetry/%u/event\n"
+        "}";
+    static const char user_rule[] = "user shared allow";
+    const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
+    char schema_name[64];
+    flowie_control_pgsql_pool_config_t config = FLOWIE_CONTROL_PGSQL_POOL_CONFIG_INIT;
+    flowie_control_pgsql_pool_t *pool = NULL;
+    flowie_control_pgsql_command_t *commands = NULL;
+    flowie_control_pgsql_query_t *query = NULL;
+    flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
+    flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
+    flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
+    flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
+    flowie_control_policy_rule_put_command_t put = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
+    flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
+    flowie_security_policy_bundle_t bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
+
+    check_not_null(conninfo);
+    check_true(conninfo[0] != '\0');
+    (void)snprintf(schema_name, sizeof(schema_name), "flowie_control_typed_acl_%llu",
+                   (unsigned long long)turbo_hrtime());
+    config.database.conninfo = conninfo;
+    config.database.schema_name = schema_name;
+    config.database.require_tls = 0;
+    config.database.schema_mode = FLOWIE_CONTROL_PGSQL_SCHEMA_MIGRATE;
+    config.capacity = 2u;
+    check_equal(flowie_control_pgsql_pool_create(&config, &pool), TURBO_OK);
+    check_equal(flowie_control_pgsql_command_create(pool, &commands), TURBO_OK);
+    check_equal(flowie_control_pgsql_query_create(pool, &query), TURBO_OK);
+
+    root.domain_id = "root-a";
+    root.actor = "admin-1";
+    root.request_id = "request-root";
+    root.occurred_at = 1000u;
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
+    user.domain_id = "root-a";
+    user.principal_id = "shared";
+    user.principal_type = "device";
+    user.actor = "admin-1";
+    user.request_id = "request-user";
+    user.expected_revision = 1u;
+    user.occurred_at = 1001u;
+    check_equal(flowie_control_pgsql_command_user_create(commands, &user, &result), TURBO_OK);
+    group.domain_id = "root-a";
+    group.group_id = "shared";
+    group.actor = "admin-1";
+    group.request_id = "request-group";
+    group.expected_revision = 2u;
+    group.occurred_at = 1002u;
+    check_equal(flowie_control_pgsql_command_group_create(commands, &group, &result), TURBO_OK);
+    role.domain_id = "root-a";
+    role.role_id = "shared";
+    role.actor = "admin-1";
+    role.request_id = "request-role";
+    role.expected_revision = 3u;
+    role.occurred_at = 1003u;
+    check_equal(flowie_control_pgsql_command_role_create(commands, &role, &result), TURBO_OK);
+
+    put.domain_id = "root-a";
+    put.actor = "admin-1";
+    put.ordinal = 10u;
+    put.rule_line = role_rule;
+    put.request_id = "request-role-rule";
+    put.expected_revision = 4u;
+    put.occurred_at = 1004u;
+    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    put.ordinal = 20u;
+    put.rule_line = group_rule;
+    put.request_id = "request-group-rule";
+    put.expected_revision = 5u;
+    put.occurred_at = 1005u;
+    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    put.ordinal = 30u;
+    put.rule_line = user_rule;
+    put.request_id = "request-user-rule";
+    put.expected_revision = 6u;
+    put.occurred_at = 1006u;
+    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    put.ordinal = 40u;
+    put.rule_line = role_rule;
+    put.request_id = "request-duplicate-role";
+    put.expected_revision = 7u;
+    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result),
+                TURBO_EALREADY);
+    check_equal(flowie_control_pgsql_query_policy_validate(query, "root-a", &validation),
+                TURBO_OK);
+    check_equal(validation.rule_count, 5u);
+
+    publish.domain_id = "root-a";
+    publish.actor = "admin-1";
+    publish.request_id = "request-publish";
+    publish.expected_revision = 7u;
+    publish.occurred_at = 2000u;
+    publish.expires_at = 20000u;
+    check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
+                TURBO_OK);
+    check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a",
+                                                               published.policy_version, &bundle),
+                TURBO_OK);
+    check_equal(bundle.rule_count, 5u);
+    check_equal(bundle.rules[0].subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
+    check_equal(bundle.rules[2].subject_kind, FLOWIE_SECURITY_SUBJECT_GROUP);
+    check_equal(bundle.rules[4].subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
+
+    flowie_control_pgsql_query_policy_bundle_release(&bundle);
+    flowie_control_pgsql_query_destroy(query);
+    flowie_control_pgsql_command_destroy(commands);
+    check_equal(flowie_control_pgsql_pool_close(pool, 100), TURBO_OK);
+    check_equal(flowie_control_pgsql_pool_destroy(pool), TURBO_OK);
+    drop_test_schema(conninfo, schema_name);
+  }
+
   it("loads a PicImpact-sized published ACL bundle") {
     const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
     char schema_name[64];

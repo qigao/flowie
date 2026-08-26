@@ -82,6 +82,20 @@ flowie_control_dashboard_section_title(flowie_control_dashboard_section_t sectio
   }
 }
 
+static const char *
+flowie_control_dashboard_subject_kind_label(flowie_security_subject_kind_t subject_kind) {
+  switch (subject_kind) {
+  case FLOWIE_SECURITY_SUBJECT_PRINCIPAL:
+    return "User";
+  case FLOWIE_SECURITY_SUBJECT_ROLE:
+    return "Role";
+  case FLOWIE_SECURITY_SUBJECT_GROUP:
+    return "Group";
+  default:
+    return NULL;
+  }
+}
+
 struct flowie_control_dashboard_view_s {
   MUSTACHE_TEMPLATE *shell_template;
   MUSTACHE_TEMPLATE *content_template;
@@ -720,6 +734,7 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
   if (rc == TURBO_ENOENT) rc = TURBO_OK;
   for (size_t index = 0u; rc == TURBO_OK && index < count; ++index) {
     flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    const char *subject_kind_label = NULL;
     size_t expanded_topic_count = 0u;
     int uses_username = 0;
     int uses_client_id = 0;
@@ -730,6 +745,10 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
     }
     rc = flowie_control_acl_parse(rules[index].rule_line, strlen(rules[index].rule_line),
                                   &document);
+    if (rc == TURBO_OK) {
+      subject_kind_label = flowie_control_dashboard_subject_kind_label(document.subject_kind);
+      if (!subject_kind_label) rc = TURBO_EPROTO;
+    }
     for (size_t entry = 0u; rc == TURBO_OK && entry < document.entry_count; ++entry) {
       if (document.entries[entry].alternative_count == 0u ||
           expanded_topic_count > SIZE_MAX - document.entries[entry].alternative_count) {
@@ -751,6 +770,8 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
           document.connection_effect == FLOWIE_SECURITY_ALLOW ? "Allow" : "Deny");
     if (rc == TURBO_OK)
       rc = flowie_control_dashboard_json_string(item, "subject_label", document.subject);
+    if (rc == TURBO_OK)
+      rc = flowie_control_dashboard_json_string(item, "subject_kind_label", subject_kind_label);
     if (rc == TURBO_OK)
       rc = flowie_control_dashboard_json_u64(item, "entry_count", document.entry_count);
     if (rc == TURBO_OK)

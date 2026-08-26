@@ -26,20 +26,7 @@ typedef struct flowie_control_acl_token_s {
   uint32_t column;
 } flowie_control_acl_token_t;
 
-typedef struct flowie_control_acl_token_list_s {
-  flowie_control_acl_token_t items[FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES];
-  size_t count;
-} flowie_control_acl_token_list_t;
-
-typedef struct flowie_control_acl_group_path_s {
-  flowie_control_acl_token_t items[FLOWIE_SECURITY_MAX_GROUPS];
-  size_t count;
-} flowie_control_acl_group_path_t;
-
 typedef struct flowie_control_acl_topic_parse_s {
-  flowie_control_acl_token_t domain;
-  flowie_control_acl_group_path_t groups;
-  flowie_control_acl_token_t device;
   flowie_control_acl_token_t complete;
   size_t alternative_count;
   int uses_username;
@@ -50,11 +37,6 @@ typedef struct flowie_control_acl_entry_s {
   flowie_security_effect_t effect;
   uint32_t action_mask;
   char topic[FLOWIE_SECURITY_PATTERN_MAX + 1u];
-  uint16_t group_offsets[FLOWIE_SECURITY_MAX_GROUPS];
-  uint16_t group_lengths[FLOWIE_SECURITY_MAX_GROUPS];
-  uint16_t device_offset;
-  uint16_t device_length;
-  uint8_t group_count;
   uint8_t alternative_count;
   int uses_username;
   int uses_client_id;
@@ -62,6 +44,7 @@ typedef struct flowie_control_acl_entry_s {
 
 typedef struct flowie_control_acl_document_s {
   size_t size;
+  flowie_security_subject_kind_t subject_kind;
   char subject[FLOWIE_SECURITY_ID_MAX + 1u];
   flowie_security_effect_t connection_effect;
   flowie_control_acl_entry_t entries[FLOWIE_CONTROL_ACL_MAX_ENTRIES];
@@ -69,7 +52,8 @@ typedef struct flowie_control_acl_document_s {
 } flowie_control_acl_document_t;
 
 #define FLOWIE_CONTROL_ACL_DOCUMENT_INIT                                                           \
-  {sizeof(flowie_control_acl_document_t), "", FLOWIE_SECURITY_DENY, {{0}}, 0u}
+  {sizeof(flowie_control_acl_document_t), FLOWIE_SECURITY_SUBJECT_ANY, "",                       \
+   FLOWIE_SECURITY_DENY, {{0}}, 0u}
 
 typedef enum flowie_control_acl_lexer_mode_e {
   FLOWIE_CONTROL_ACL_LEX_DEFAULT = 0,
@@ -82,8 +66,6 @@ typedef struct flowie_control_acl_lexer_s {
   uint32_t line;
   uint32_t column;
   flowie_control_acl_lexer_mode_t mode;
-  uint32_t topic_brace_depth;
-  int topic_started;
 } flowie_control_acl_lexer_t;
 
 typedef struct flowie_control_acl_parse_ctx_s {
@@ -98,36 +80,12 @@ int flowie_control_acl_lexer_next(flowie_control_acl_lexer_t *lexer,
                                   flowie_control_acl_token_t *token);
 void flowie_control_acl_parse_fail(flowie_control_acl_parse_ctx_t *ctx);
 void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
+                                     flowie_security_subject_kind_t subject_kind,
                                      flowie_control_acl_token_t subject,
                                      flowie_security_effect_t connection_effect);
-flowie_control_acl_group_path_t
-flowie_control_acl_group_path_start(flowie_control_acl_parse_ctx_t *ctx,
-                                    flowie_control_acl_token_t group);
-flowie_control_acl_group_path_t
-flowie_control_acl_group_path_append(flowie_control_acl_parse_ctx_t *ctx,
-                                     flowie_control_acl_group_path_t path,
-                                     flowie_control_acl_token_t group);
-flowie_control_acl_token_list_t
-flowie_control_acl_token_list_start(flowie_control_acl_parse_ctx_t *ctx,
-                                    flowie_control_acl_token_t item);
-flowie_control_acl_token_list_t
-flowie_control_acl_token_list_append(flowie_control_acl_parse_ctx_t *ctx,
-                                     flowie_control_acl_token_list_t list,
-                                     flowie_control_acl_token_t item);
 flowie_control_acl_topic_parse_t
-flowie_control_acl_topic_build(flowie_control_acl_parse_ctx_t *ctx,
-                               flowie_control_acl_token_t domain,
-                               flowie_control_acl_group_path_t groups,
-                               flowie_control_acl_token_t device,
-                               flowie_control_acl_token_t leaf);
-flowie_control_acl_topic_parse_t
-flowie_control_acl_topic_build_alternatives(flowie_control_acl_parse_ctx_t *ctx,
-                                            flowie_control_acl_token_t domain,
-                                            flowie_control_acl_group_path_t groups,
-                                            flowie_control_acl_token_t device,
-                                            flowie_control_acl_token_t open,
-                                            flowie_control_acl_token_list_t alternatives,
-                                            flowie_control_acl_token_t close);
+flowie_control_acl_topic_parse(flowie_control_acl_parse_ctx_t *ctx,
+                               flowie_control_acl_token_t pattern);
 void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
                                   flowie_security_effect_t effect, uint32_t action_mask,
                                   flowie_control_acl_topic_parse_t topic);

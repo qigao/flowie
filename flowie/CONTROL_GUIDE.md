@@ -352,12 +352,13 @@ credential 仍不会建立控制面到 Broker 的即时 push 通道，最坏传�
 
 ## ACL 文法与发布
 
-当前 ACL 以“每个用户一份文档”的形式维护。顶层 `allow`/`deny` 控制 MQTT CONNECT，文档中的
-`read`、`write`、`readwrite` 分别控制 SUBSCRIBE、PUBLISH 或两者；topic 使用固定的
-`<domain>/groups/<group-path>/devices/<device>/<leaf>` 树，并支持 `%u` username、`%c` client ID、
-MQTT `+`/`#` wildcard 和末尾 leaf alternatives。
+当前 ACL 按 `role`、`group` 或 `user` 主体维护。用户的有效 Role/Group 规则与自身 User 规则共同
+求值，任一匹配 deny 优先，否则任一匹配 allow 生效，未匹配时默认拒绝。顶层 `allow`/`deny` 控制
+MQTT CONNECT；文档中的 `read`、`write`、`readwrite` 分别控制 SUBSCRIBE、PUBLISH 或两者。topic
+使用 `<domain>/<bounded MQTT filter>`，支持完整 segment 的 `%u` username、`%c` client ID、MQTT
+`+`/终端 `#` wildcard，以及终端 alternatives；`groups`、`devices` 不再是固定结构关键字。
 
-完整 grammar、canonical 格式、group 多层树约束、容量限制，以及 Control UI/Management RPC 的
+完整 grammar、canonical 格式、主体约束、容量限制，以及 Control UI/Management RPC 的
 draft、validate、publish 流程见 [ACL_GRAMMAR.md](ACL_GRAMMAR.md)。旧的 pipe-delimited internal rule
 不是 Control ACL 输入格式。
 

@@ -410,23 +410,25 @@ Authorization Roles grant Management RPC permissions; other roles remain applica
 | `control.policy.validate` | `viewer` | `domain_id?` | `{rule_count, deny_rule_count}` without modifying state. |
 | `control.policy.publish` | `policy_admin` | `domain_id?`, `request_id`, `expires_at?` | `{policy_version, replayed}`. Publishes an immutable generation atomically. |
 
-`ordinal` is `0..4095`. Despite its historical name, `rule_line` now contains one complete canonical
-user ACL document, not one pipe-delimited internal rule. The Management JSON-RPC boundary accepts at
+`ordinal` is `0..4095`. Despite its historical name, `rule_line` contains one complete canonical
+subject ACL document, not one pipe-delimited internal rule. The Management JSON-RPC boundary accepts at
 most 2047 bytes. For example:
 
 ```text
-user device-7 allow {
-  write topic root-a/groups/operators/devices/%u/{event,heartbeat}
-  read topic root-a/groups/operators/devices/%c/command
-  deny readwrite topic root-a/groups/operators/devices/%u/private
+role publisher allow {
+  write topic root-a/telemetry/%u/{event,heartbeat}
+  read topic root-a/commands/%c/+
+  deny readwrite topic root-a/telemetry/%u/private
 }
 ```
 
-Each enabled user may have only one draft ACL document in a Domain. The document's embedded Domain
-must match the selected RPC Domain, and all named groups must form an existing enabled parent chain.
-`read` authorizes SUBSCRIBE, `write` authorizes PUBLISH, `%u` matches the MQTT username, and `%c`
-matches the MQTT client ID. See [ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, canonical
-format, topic tree, limits, deny precedence, and UI/RPC publishing workflow.
+The subject kind is `role`, `group`, or `user`; the referenced enabled subject must exist in the
+selected Domain. Each `(subject kind, subject ID)` may have only one draft document, while the same ID
+may be reused by different kinds. The embedded Domain must match the selected RPC Domain. Topic paths
+are bounded MQTT filters rather than Control Group references. `read` authorizes SUBSCRIBE, `write`
+authorizes PUBLISH, `%u` matches the MQTT username, and `%c` matches the MQTT client ID. See
+[ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, inheritance/evaluation semantics, limits,
+deny precedence, and UI/RPC publishing workflow.
 
 ### Audit
 

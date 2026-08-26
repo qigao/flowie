@@ -441,6 +441,7 @@ input, select, textarea {
 .acl-rule__decision,
 .acl-rule__subject,
 .acl-rule__subject code { white-space: nowrap; }
+.acl-rule__subject small { display: block; }
 .acl-builder { display: grid; gap: 14px; }
 .acl-builder__grid {
   display: grid;
