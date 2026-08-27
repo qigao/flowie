@@ -2,6 +2,12 @@ add_subdirectory(protocol)
 add_subdirectory(client)
 
 set(TARGET_NAME flowie)
+
+add_library(flowie_orm_flow STATIC src/flowie_orm_flow.c)
+set_target_properties(flowie_orm_flow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+cmake_config_target(flowie_orm_flow NO_INSTALL FOLDER "flowie/internal")
+target_include_directories(flowie_orm_flow PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+target_link_libraries(flowie_orm_flow PUBLIC TurboDB::ORM PRIVATE TurboUtils::CFlow TurboUtils::Core)
 set(FLOWIE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie.h)
@@ -53,7 +59,7 @@ target_link_libraries(
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
 endif()
-target_link_libraries(${TARGET_NAME} PRIVATE Flowie::Client Flowie::Transport TurboDB::ORM)
+target_link_libraries(${TARGET_NAME} PRIVATE Flowie::Client Flowie::Transport flowie_orm_flow)
 
 install(FILES ${FLOWIE_HEADERS}
               ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_message.h

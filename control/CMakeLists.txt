@@ -45,7 +45,7 @@ target_include_directories(flowie_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
                                               PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(flowie_control_core
                       PUBLIC Flowie::App
-                      PRIVATE Flowie::Protocol SQLite::SQLite3 TurboDB::ORM
+                      PRIVATE Flowie::Protocol SQLite::SQLite3 flowie_orm_flow
                               TurboUtils::Core TurboUtils::STL monocypher)
 
 if(FLOWIE_CONTROL_PGSQL)

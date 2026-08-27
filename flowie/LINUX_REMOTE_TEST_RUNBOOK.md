@@ -749,7 +749,7 @@ ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
 
 if [[ "${FLOWIE_RUN_CONTROL_PGSQL_LIVE:-0}" == "1" ]]; then
   ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
-    -R '^test_flowie_control_pgsql_database(_live)?$' \
+    -R '^(test_flowie_protocol_repository_pgsql_live|test_flowie_control_pgsql_database(_live)?)$' \
     --output-junit "$ARTIFACT_ROOT/control-postgresql.xml"
 fi
 

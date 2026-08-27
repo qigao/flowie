@@ -3,6 +3,9 @@
 #include "tinytest.h"
 #include "turbo_error.h"
 
+#include <sqlite3.h>
+
+#include <stdint.h>
 #include <string.h>
 
 static flowie_mqtt_span_t repository_span(const void *data, size_t size) {
@@ -58,6 +61,13 @@ static int visit_retained(void *context, const flowie_protocol_retained_row_t *r
   check_equal(row->revision, 1u);
   check_equal(row->payload.size, sizeof(expected_payload));
   check_equal(memcmp(row->payload.data, expected_payload, sizeof(expected_payload)), 0);
+  return TURBO_OK;
+}
+
+static int count_retained(void *context, const flowie_protocol_retained_row_t *row) {
+  repository_visit_t *visit = (repository_visit_t *)context;
+  (void)row;
+  ++visit->retained;
   return TURBO_OK;
 }
 
@@ -138,6 +148,61 @@ spec("flowie typed protocol repository") {
     check_equal(flowie_protocol_repository_session_delete(repository, session.client_id, 1u),
                  TURBO_OK);
     flowie_protocol_repository_close(repository);
+  }
+
+  it("reports retained rows beyond the configured limit as capacity exhaustion") {
+    static flowie_protocol_repository_option_t options[] = {{"filename", NULL}};
+    static const char first_row_sql[] =
+        "INSERT INTO flowie_test_retained VALUES('topic-1',1,1,0,5,1,X'',X'01')";
+    static const char second_row_sql[] =
+        "INSERT INTO flowie_test_retained VALUES('topic-2',1,1,0,5,1,X'',X'02')";
+    char *path = tt_make_temp_file("flowie-protocol-limit", ".sqlite3");
+    flowie_protocol_repository_config_t config = repository_config(1);
+    flowie_protocol_repository_t *repository = NULL;
+    repository_visit_t visit = {0u, 0u};
+    sqlite3 *database = NULL;
+
+    check_not_null(path);
+    options[0].value = path;
+    config.options = options;
+    config.limits.max_sessions = 1u;
+    config.limits.max_retained_messages = 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_OK);
+    check_equal(sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE, NULL), SQLITE_OK);
+    check_equal(sqlite3_exec(database, first_row_sql, NULL, NULL, NULL), SQLITE_OK);
+    check_equal(flowie_protocol_repository_retained_visit(repository, count_retained, &visit),
+                TURBO_OK);
+    check_equal(visit.retained, 1u);
+    check_equal(sqlite3_exec(database, second_row_sql, NULL, NULL, NULL), SQLITE_OK);
+    visit.retained = 0u;
+    check_equal(flowie_protocol_repository_retained_visit(repository, count_retained, &visit),
+                TURBO_ENOSPC);
+    check_equal(visit.retained, 1u);
+
+    check_equal(sqlite3_close(database), SQLITE_OK);
+    flowie_protocol_repository_close(repository);
+    check_equal(tt_remove_file(path), 0);
+  }
+
+  it("rejects unrepresentable result row budgets") {
+    flowie_protocol_repository_config_t config = repository_config(1);
+    flowie_protocol_repository_t *repository = NULL;
+
+    config.limits.max_sessions = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_retained_messages = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_subscriptions_per_session = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_inflight_per_session = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
   }
 
 }
