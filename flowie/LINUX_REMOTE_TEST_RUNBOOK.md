@@ -85,6 +85,7 @@ tar.exe -a -cf $bundle `
     --exclude='turbonet/turbonet/vcpkg_installed' `
     --exclude='turbonet/turbodb/build' `
     --exclude='turbonet/turbodb/vcpkg_installed' `
+    --exclude='TurboHTTP/.tmp' `
     --exclude='TurboHTTP/build' `
     --exclude='TurboHTTP/vcpkg_installed' `
     --exclude='turbonet/flowmq/build' `
