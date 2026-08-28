@@ -47,7 +47,7 @@ spec("Flowie Control TurboDB live contract") {
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     flowie_security_policy_bundle_t bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
     uint64_t revision = 0u;
-    uint64_t occurred_at = (uint64_t)time(NULL);
+    uint64_t occurred_at = UINT64_C(4102440000);
 
     if (!conninfo || !conninfo[0]) {
       check_true(0 && "FLOWIE_TURBODB_TEST_CONNINFO is required");

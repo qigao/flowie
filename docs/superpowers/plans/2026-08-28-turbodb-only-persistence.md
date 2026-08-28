@@ -131,7 +131,9 @@
 - [x] Add a TurboDB-only PostgreSQL live repository contract; no backend client API appears in the
   Flowie test.
 - [x] Run the smallest Windows preset targets, then adjacent Control/Flowie tests.
-- [ ] Run the EU TurboDB Control contract and container gate.
+- [x] Run the EU TurboDB Control contract and run-scoped PostgreSQL container gate.
+  - 2026-08-29: Flowie `c7936f4` plus the schema-v6 BIGINT patch ran both PostgreSQL live tests
+    against `postgres:17.6-alpine3.22`; 2/2 passed and the runner left zero test containers.
 - [x] Verify no Flowie source or build target directly references SQLite/libpq and no Flowie build
   enables LSQUIC.
 - [x] Record exact commands, test counts, and residual risks.
