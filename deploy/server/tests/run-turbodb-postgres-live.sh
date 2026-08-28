@@ -12,6 +12,7 @@ ARTIFACT_ROOT=
 CONTAINER_NAME=
 CONTAINER_STARTED=0
 PASSWORD_FILE=
+CLEANUP_ATTEMPTED=0
 
 usage() {
   cat <<'EOF'
@@ -38,20 +39,48 @@ is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
-cleanup() {
-  local status=$?
-  trap - EXIT
+cleanup_resources() {
+  local cleanup_status=0
+
+  CLEANUP_ATTEMPTED=1
   if ((CONTAINER_STARTED)); then
-    docker logs "$CONTAINER_NAME" > "$ARTIFACT_ROOT/postgres.log" 2>&1 || true
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    if ! docker logs "$CONTAINER_NAME" > "$ARTIFACT_ROOT/postgres.log" 2>&1; then
+      printf 'ERROR: failed to collect PostgreSQL logs: %s\n' "$CONTAINER_NAME" >&2
+      cleanup_status=1
+    fi
+    if docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1; then
+      CONTAINER_STARTED=0
+    else
+      printf 'ERROR: failed to remove PostgreSQL container: %s\n' "$CONTAINER_NAME" >&2
+      cleanup_status=1
+    fi
   fi
   if [[ -n "$PASSWORD_FILE" ]]; then
-    rm -f -- "$PASSWORD_FILE"
+    if rm -f -- "$PASSWORD_FILE"; then
+      PASSWORD_FILE=
+    else
+      printf 'ERROR: failed to remove PostgreSQL password file\n' >&2
+      cleanup_status=1
+    fi
   fi
-  exit "$status"
+  return "$cleanup_status"
 }
 
-trap cleanup EXIT
+cleanup_on_exit() {
+  local status=$?
+  local cleanup_status=0
+
+  trap - EXIT
+  if ((!CLEANUP_ATTEMPTED)); then
+    cleanup_resources || cleanup_status=$?
+  fi
+  if ((status != 0)); then
+    exit "$status"
+  fi
+  exit "$cleanup_status"
+}
+
+trap cleanup_on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -114,7 +143,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24)
 printf '%s\n' "$POSTGRES_PASSWORD" > "$PASSWORD_FILE"
 
 CONTAINER_NAME="flowie-turbodb-postgres-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-docker run --detach --rm \
+docker run --detach \
   --name "$CONTAINER_NAME" \
   --publish 127.0.0.1::5432 \
   --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=256m \
@@ -172,4 +201,6 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error \
   -R '^(test_flowie_protocol_repository_turbodb_live|test_flowie_control_turbodb_live)$' \
   --output-junit "$ARTIFACT_ROOT/turbodb-postgres-live.xml"
 
+cleanup_resources || fail 'PostgreSQL test resources could not be cleaned up'
+trap - EXIT
 printf 'TurboDB PostgreSQL live gate: PASS artifacts=%s\n' "$ARTIFACT_ROOT"

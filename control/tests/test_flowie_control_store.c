@@ -357,6 +357,35 @@ spec("Flowie control TurboDB fact store") {
     free(path);
   }
 
+  it("rejects the immediately previous v5 schema without migrating it") {
+    static const char old_schema[] =
+        "CREATE TABLE flowie_control_schema_version("
+        "singleton INTEGER PRIMARY KEY,version INTEGER NOT NULL,"
+        "fingerprint TEXT NOT NULL);"
+        "INSERT INTO flowie_control_schema_version(singleton,version,fingerprint) "
+        "VALUES(1,5,'flowie-control-subject-policy-schema-v5-20260828');";
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_database_t *database = NULL;
+    flowie_control_store_t *store = NULL;
+    char *path = tt_make_temp_file("flowie-control-v5", ".sqlite3");
+
+    check_not_null(path);
+    check_equal(flowie_control_test_database_open(path, &database), FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_exec(database, old_schema, NULL, NULL, NULL),
+                FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
+    database = NULL;
+
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_null(store);
+
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
   it("rejects legacy control tables without a schema fingerprint") {
     static const char old_schema[] =
         "CREATE TABLE flowie_control_meta("

@@ -738,8 +738,10 @@ cmake --build "$FLOWIE_RELEASE_BUILD" --parallel "$(nproc)" \
 
 ## 8. 分层运行 cases
 
-以下顺序先验证 shell 合约与 run-scoped PostgreSQL live gate，再运行其余 persistence、Flowie release label、
-非重复全量 CTest 和 release evidence。任何一步失败即停止，不继续用后续结果掩盖失败。PostgreSQL runner
+以下顺序先验证 shell 合约与 run-scoped PostgreSQL live gate，再运行 persistence、fixed-interop、
+Flowie release label、排除两个已完成 live 用例后的全量 CTest 和 release evidence。persistence 与
+fixed-interop 用例会在各自阶段及后续 label/全量阶段重复运行，以分别生成专项 JUnit 证据；这属于有意的
+分层复验。任何一步失败即停止，不继续用后续结果掩盖失败。PostgreSQL runner
 使用随机密码、loopback 随机端口和 tmpfs 数据目录；退出时保留容器日志并删除容器，不接触已有数据库。
 
 ```bash
