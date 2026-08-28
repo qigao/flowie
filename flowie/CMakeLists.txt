@@ -54,7 +54,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Flowie::Protocol TurboNet::CoroNet TurboUtils::Core
+  PUBLIC Flowie::Protocol TurboDB::ORM TurboNet::CoroNet TurboUtils::Core
   PRIVATE TurboUtils::STL roaring::roaring xxHash::xxhash)
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)

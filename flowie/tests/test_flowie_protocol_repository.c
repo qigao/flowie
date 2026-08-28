@@ -13,11 +13,16 @@ static flowie_mqtt_span_t repository_span(const void *data, size_t size) {
 }
 
 static flowie_protocol_repository_config_t repository_config(int create_schema) {
-  static const flowie_protocol_repository_option_t options[] = {{"filename", ":memory:"}};
+  static orm_config_t database;
+  static orm_option_t option;
   flowie_protocol_repository_config_t config = FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT;
-  config.driver = "sqlite";
-  config.options = options;
-  config.option_count = 1u;
+  orm_config(&database);
+  option.keyword = orm_view("filename");
+  option.value = orm_view(":memory:");
+  database.driver = orm_view("sqlite");
+  database.options = &option;
+  database.option_count = 1u;
+  config.database = &database;
   config.namespace_name = "flowie_test";
   config.create_schema = create_schema;
   config.limits.max_sessions = 8u;
@@ -94,6 +99,24 @@ static int repository_execute_sqlite(const char *path, const char *sql) {
 }
 
 spec("flowie typed protocol repository") {
+  it("rejects mismatched TurboDB configuration ABIs") {
+    flowie_protocol_repository_config_t config = repository_config(1);
+    orm_config_t database = *config.database;
+    flowie_protocol_repository_t *repository = NULL;
+    config.database = &database;
+
+    database.struct_size = sizeof(database) - 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    database.struct_size = sizeof(database) + 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    database.struct_size = sizeof(database);
+    ++database.abi_version;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+  }
+
   it("rejects a database without the current typed schema") {
     flowie_protocol_repository_config_t config = repository_config(0);
     flowie_protocol_repository_t *repository = NULL;
@@ -173,7 +196,8 @@ spec("flowie typed protocol repository") {
   }
 
   it("reports retained rows beyond the configured limit as capacity exhaustion") {
-    static flowie_protocol_repository_option_t options[] = {{"filename", NULL}};
+    orm_config_t database;
+    orm_option_t option;
     static const char first_row_sql[] =
         "INSERT INTO flowie_test_retained VALUES('topic-1',1,1,0,5,1,X'',X'01')";
     static const char second_row_sql[] =
@@ -184,8 +208,11 @@ spec("flowie typed protocol repository") {
     repository_visit_t visit = {0u, 0u};
 
     check_not_null(path);
-    options[0].value = path;
-    config.options = options;
+    database = *config.database;
+    option.keyword = orm_view("filename");
+    option.value = orm_view(path);
+    database.options = &option;
+    config.database = &database;
     config.limits.max_sessions = 1u;
     config.limits.max_retained_messages = 1u;
     check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_OK);

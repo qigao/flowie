@@ -21,23 +21,13 @@ listener:
     max_headers_count: 64
 
 storage:
-  # Exactly one control store is active. Omit control_store for backward-compatible SQLite.
-  control_store: sqlite
-  sqlite:
-    path: data/flowie-control.sqlite3
-    busy_timeout_ms: 1000
-  # To use PostgreSQL, set control_store: postgresql, remove the sqlite block, and enable:
-  # postgresql:
-  #   # Never put password/passfile/service in conninfo. verify-full is mandatory.
-  #   conninfo: host=control-db.internal dbname=flowie user=flowie_control sslmode=verify-full sslrootcert=certs/control-db-ca.pem
-  #   password_ref: env://FLOWIE_CONTROL_PG_PASSWORD
-  #   schema_name: flowie_control
-  #   connect_timeout_seconds: 5
-  #   statement_timeout_ms: 5000
-  #   lock_timeout_ms: 5000
-  #   pool_capacity: 4
-  #   acquire_timeout_ms: 5000
-  #   schema_mode: validate
+  # Flowie has one database boundary. Driver-specific options are passed to TurboDB unchanged.
+  turbodb:
+    driver: sqlite
+    options:
+      filename: data/flowie-control.sqlite3
+      open_mode: read_write_create
+      busy_timeout_ms: "1000"
 
 # An empty control store is initialized with system/admin and the public initial password
 # Flowie@ChangeMe!. First login is restricted to changing that password. Existing stores are never

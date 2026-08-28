@@ -654,7 +654,7 @@ endpoint registration before the listener starts.
 control store is the single fact source for root-scoped users, credentials, hierarchical groups,
 roles, subject-keyed ACL draft rules and audit records. Draft rules are canonical subject-scoped
 documents. A publish command runs under one
-`BEGIN IMMEDIATE` transaction, revalidates the complete draft and every referenced principal,
+TurboDB transaction, revalidates the complete draft and every referenced principal,
 group, role and MQTT adapter filter, then atomically replaces the provider-compatible
 `flowie_control_published_bundle`/`flowie_control_published_rule` generation. Store revision and policy version
 advance independently. Failed or stale publishes leave the previous provider snapshot unchanged.

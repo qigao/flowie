@@ -33,7 +33,7 @@ Repository 本地 Auth 或第三方 HTTPS Auth。第三方 credential、OIDC、L
 - [动态 ACL Bundle 设计](ADR_DYNAMIC_ACL_BUNDLE.md)：版本化 ACL Bundle 格式、发布机制与同步
 - [控制面启动参数决策](ADR_CONTROL_STARTUP_OPTIONS.md)：`flowie-control` CLI / Environment / DotEnv 优先顺序与配置隔离
 - [控制面凭据管理与哈希](ADR_CONTROL_CREDENTIALS.md)：Argon2id 散列算法、参数与凭据存储规范
-- [控制面存储 Provider 抽象](ADR_CONTROL_STORE_PROVIDER.md)：SQLite 与 PostgreSQL 存储层接口与迁移控制
+- [控制面类型化规则存储](ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md)：TurboDB 唯一持久化边界与 Role/Group/User 规则 RPC
 - [协议数据与业务数据存储分层](ADR_PROTOCOL_BUSINESS_STORAGE.md)：ProtocolStore / TurboDB ORM 边界与迁移
 
 ### 3. 测试与运维手册 (Test & Ops Runbooks)

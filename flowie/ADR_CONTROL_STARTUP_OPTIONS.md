@@ -38,5 +38,5 @@ store。指定的 DotEnv 文件无法读取时立即失败，不回退到默认 
 ## 影响与回滚
 
 `flowie_control_core` 不依赖 CMD/DotEnv；新依赖被隔离在不安装的 `flowie_control_startup` target。
-`flowie-control` 只在 SQLite control、Iris HTTP server 与 RPC 均启用时构建和安装。回滚时可停止并移除该
+`flowie-control` 只在 TurboDB ORM、Iris HTTP server 与 RPC 均可用时构建和安装。回滚时可停止并移除该
 可执行文件，不影响 MQTT 数据面；配置 version 1 不提供隐式旧格式 fallback。

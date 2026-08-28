@@ -2,8 +2,8 @@
 #include "flowie_control_credential_internal.h"
 #include "flowie_control_database_internal.h"
 #include "flowie_control_store_internal.h"
+#include "flowie_control_test_turbodb.h"
 
-#include "flowie_security_turbodb.h"
 #include "tinytest.h"
 #include "turbo_error.h"
 #include "turbo_thread.h"
@@ -27,11 +27,13 @@ static int control_domain_create(flowie_control_store_t *store, const char *doma
 
 static flowie_control_store_t *control_store_open(char **path_out) {
   flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   flowie_control_store_t *store = NULL;
   *path_out = tt_make_temp_file("flowie-control", ".sqlite3");
   check_not_null(*path_out);
-  config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  config.database = &test_database.config;
   check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
   check_not_null(store);
   check_equal(control_domain_create(store, "root-a", "request-root-a", 0u, &result), TURBO_OK);
@@ -54,7 +56,7 @@ static int control_store_mark_group_disabled(const char *path, const char *domai
   int status;
   int rc = -1;
   if (!path || !domain_id || !group_id ||
-      flowie_control_database_open_sqlite(path, 1000, &database) != FLOWIE_CONTROL_DB_OK)
+      flowie_control_test_database_open(path, &database) != FLOWIE_CONTROL_DB_OK)
     goto done;
   if (flowie_control_database_prepare(database, sql, -1, &statement, NULL) !=
           FLOWIE_CONTROL_DB_OK ||
@@ -281,6 +283,50 @@ static void control_concurrent_group_create(void *arg) {
 }
 
 spec("Flowie control TurboDB fact store") {
+  it("rejects mismatched TurboDB configuration ABIs") {
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_store_t *store = NULL;
+
+    check_equal(flowie_control_test_turbodb_init(&test_database, ":memory:"), 0);
+    config.database = &test_database.config;
+    test_database.config.struct_size = sizeof(test_database.config) - 1u;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_null(store);
+    test_database.config.struct_size = sizeof(test_database.config) + 1u;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_null(store);
+    test_database.config.struct_size = sizeof(test_database.config);
+    ++test_database.config.abi_version;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_null(store);
+  }
+
+  it("enforces foreign keys on every TurboDB connection") {
+    static const char orphan[] =
+        "INSERT INTO flowie_control_user(domain_id,principal_id,principal_type,enabled,revision,"
+        "created_at,updated_at) VALUES('missing','device-1','device',1,1,1,1)";
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_database_t *database = NULL;
+    flowie_control_store_t *store = NULL;
+    char *path = tt_make_temp_file("flowie-control-foreign-key", ".sqlite3");
+
+    check_not_null(path);
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    flowie_control_store_destroy(store);
+    store = NULL;
+
+    check_equal(flowie_control_test_database_open(path, &database), FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_exec(database, orphan, NULL, NULL, NULL),
+                FLOWIE_CONTROL_DB_CONSTRAINT);
+    check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
   it("rejects the removed v4 policy schema without migrating it") {
     static const char old_schema[] =
         "CREATE TABLE flowie_control_schema_version("
@@ -290,18 +336,47 @@ spec("Flowie control TurboDB fact store") {
         "VALUES(1,4,'flowie-control-subject-policy-schema-v4-20260827');"
         "CREATE TABLE turbo_flow_acl_bundle_v3(namespace_name TEXT PRIMARY KEY);";
     flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
     flowie_control_database_t *database = NULL;
     flowie_control_store_t *store = NULL;
     char *path = tt_make_temp_file("flowie-control-v4", ".sqlite3");
 
     check_not_null(path);
-    check_equal(flowie_control_database_open_sqlite(path, 1000, &database), FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_test_database_open(path, &database), FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_database_exec(database, old_schema, NULL, NULL, NULL),
                 FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
     database = NULL;
 
-    config.database_path = path;
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_null(store);
+
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
+  it("rejects legacy control tables without a schema fingerprint") {
+    static const char old_schema[] =
+        "CREATE TABLE flowie_control_meta("
+        "singleton INTEGER PRIMARY KEY,revision INTEGER NOT NULL);"
+        "INSERT INTO flowie_control_meta(singleton,revision) VALUES(1,7);";
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_database_t *database = NULL;
+    flowie_control_store_t *store = NULL;
+    char *path = tt_make_temp_file("flowie-control-unversioned", ".sqlite3");
+
+    check_not_null(path);
+    check_equal(flowie_control_test_database_open(path, &database), FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_exec(database, old_schema, NULL, NULL, NULL),
+                FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
+    database = NULL;
+
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
     check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
     check_null(store);
 
@@ -1286,7 +1361,7 @@ spec("Flowie control TurboDB fact store") {
     control_store_close(store, path);
   }
 
-  it("publishes an atomic versioned bundle through the Flowie TurboDB provider") {
+  it("publishes an atomic versioned bundle through the single repository") {
     static const char first_rule[] =
         "user device-7 allow {\n"
         "  deny read topic root-a/groups/operators/devices/%u/private\n"
@@ -1299,10 +1374,6 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_command_result_t put = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
     flowie_control_policy_status_t status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
-    flowie_security_turbodb_config_t provider_config = FLOWIE_SECURITY_TURBODB_CONFIG_INIT;
-    flowie_security_turbodb_provider_t *provider = NULL;
-    const flowie_security_policy_provider_t *interface = NULL;
-    flowie_security_policy_bundle_t bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
     flowie_security_policy_bundle_t repository_bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
     flowie_control_user_create_command_t first_user =
         control_user_create_command("request-user-7", 1u);
@@ -1345,19 +1416,6 @@ spec("Flowie control TurboDB fact store") {
     check_equal(flowie_control_store_policy_bundle_load(store, "root-a", 2u, &repository_bundle),
                 TURBO_ENOENT);
 
-    provider_config.database_path = path;
-    provider_config.namespace_name = "root-a";
-    check_equal(flowie_security_turbodb_provider_create(&provider_config, &provider), TURBO_OK);
-    interface = flowie_security_turbodb_provider_interface(provider);
-    check_not_null(interface);
-    check_equal(interface->load(interface->ctx, 1u, &bundle), TURBO_OK);
-    check_equal(bundle.policy_version, 1u);
-    check_equal(bundle.expires_at, 20000u);
-    check_equal(bundle.rule_count, 4u);
-    check_equal(bundle.rules[1].pattern, "root-a/groups/operators/devices/%u/private");
-    check_equal(bundle.rules[3].pattern, "root-a/groups/operators/devices/%c/event");
-    interface->release(interface->ctx, &bundle);
-
     published = (flowie_control_policy_publish_result_t)FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
     check_equal(control_policy_publish(store, "request-policy-publish", 0u, 20000u, &published),
                 TURBO_OK);
@@ -1374,11 +1432,6 @@ spec("Flowie control TurboDB fact store") {
     check_equal(status.draft_rule_count, 2u);
     check_equal(status.published_rule_count, 4u);
 
-    bundle = (flowie_security_policy_bundle_t)FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
-    check_equal(interface->load(interface->ctx, 1u, &bundle), TURBO_OK);
-    check_equal(bundle.rule_count, 4u);
-    interface->release(interface->ctx, &bundle);
-    flowie_security_turbodb_provider_destroy(provider);
     control_store_close(store, path);
   }
 }

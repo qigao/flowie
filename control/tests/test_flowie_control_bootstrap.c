@@ -1,6 +1,7 @@
 #include "flowie_control_bootstrap_internal.h"
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_store_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -14,12 +15,14 @@
 
 static int bootstrap_open(char **path_out, flowie_control_store_t **store_out) {
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   if (path_out) *path_out = NULL;
   if (store_out) *store_out = NULL;
   if (!path_out || !store_out) return TURBO_EINVAL;
   *path_out = tt_make_temp_file("flowie-control-bootstrap", ".sqlite3");
   if (!*path_out) return TURBO_ENOMEM;
-  store_config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  store_config.database = &test_database.config;
   return flowie_control_store_open(&store_config, store_out);
 }
 
@@ -64,23 +67,21 @@ spec("Flowie controller bootstrap") {
     repository = flowie_control_store_repository(store);
     check_not_null(repository);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 1000u),
-                 TURBO_OK);
+                                               strlen(BOOTSTRAP_PASSWORD), 1000u),
+                TURBO_OK);
     check_equal(repository->user->get(repository->ctx, "system", "admin", &user), TURBO_OK);
     check_true(user.enabled);
     check_equal(user.principal_type, "human");
     check_equal(repository->auth->credential_verify(repository->ctx, "system", "admin",
-                                                     BOOTSTRAP_PASSWORD, strlen(BOOTSTRAP_PASSWORD),
-                                                     &credential),
-                 TURBO_OK);
-    check_equal(repository->role->effective(repository->ctx, "system", "admin", &roles),
-                 TURBO_OK);
+                                                    BOOTSTRAP_PASSWORD, strlen(BOOTSTRAP_PASSWORD),
+                                                    &credential),
+                TURBO_OK);
+    check_equal(repository->role->effective(repository->ctx, "system", "admin", &roles), TURBO_OK);
     check_equal(roles.role_count, 2u);
     for (uint32_t index = 0u; index < roles.role_count; ++index) {
       if (strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN) == 0)
         has_system_admin = 1;
-      if (strcmp(roles.roles[index],
-                 FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED) == 0)
+      if (strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED) == 0)
         has_password_change_required = 1;
     }
     check_true(has_system_admin);
@@ -90,8 +91,8 @@ spec("Flowie controller bootstrap") {
     service_config.repository = repository;
     check_equal(flowie_control_management_service_create(&service_config, &service), TURBO_OK);
     check_equal(flowie_control_management_identity_resolve_principal(repository, "system", "admin",
-                                                                      &caller),
-                 TURBO_OK);
+                                                                     &caller),
+                TURBO_OK);
     check_equal(caller.permissions, FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE);
     change.new_password = CHANGED_PASSWORD;
     change.new_password_size = strlen(CHANGED_PASSWORD);
@@ -99,36 +100,35 @@ spec("Flowie controller bootstrap") {
     change.expected_revision = 7u;
     change.occurred_at = 2000u;
     check_equal(flowie_control_management_password_change(service, &caller, &change, &changed),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(changed.revision, 9u);
     check_equal(repository->auth->credential_verify(repository->ctx, "system", "admin",
-                                                     BOOTSTRAP_PASSWORD,
-                                                     strlen(BOOTSTRAP_PASSWORD), &credential),
-                 TURBO_EPERM);
+                                                    BOOTSTRAP_PASSWORD, strlen(BOOTSTRAP_PASSWORD),
+                                                    &credential),
+                TURBO_EPERM);
     check_equal(repository->auth->credential_verify(repository->ctx, "system", "admin",
-                                                     CHANGED_PASSWORD, strlen(CHANGED_PASSWORD),
-                                                     &credential),
-                 TURBO_OK);
+                                                    CHANGED_PASSWORD, strlen(CHANGED_PASSWORD),
+                                                    &credential),
+                TURBO_OK);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 3000u),
-                 TURBO_OK);
+                                               strlen(BOOTSTRAP_PASSWORD), 3000u),
+                TURBO_OK);
     check_equal(repository->auth->credential_verify(repository->ctx, "system", "admin",
-                                                     BOOTSTRAP_PASSWORD,
-                                                     strlen(BOOTSTRAP_PASSWORD), &credential),
-                 TURBO_EPERM);
+                                                    BOOTSTRAP_PASSWORD, strlen(BOOTSTRAP_PASSWORD),
+                                                    &credential),
+                TURBO_EPERM);
     check_equal(repository->auth->credential_verify(repository->ctx, "system", "admin",
-                                                     CHANGED_PASSWORD, strlen(CHANGED_PASSWORD),
-                                                     &credential),
-                 TURBO_OK);
+                                                    CHANGED_PASSWORD, strlen(CHANGED_PASSWORD),
+                                                    &credential),
+                TURBO_OK);
     roles = (flowie_control_effective_roles_view_t)FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
-    check_equal(repository->role->effective(repository->ctx, "system", "admin", &roles),
-                 TURBO_OK);
+    check_equal(repository->role->effective(repository->ctx, "system", "admin", &roles), TURBO_OK);
     check_equal(roles.role_count, 1u);
     check_equal(roles.roles[0], FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN);
     caller = (flowie_control_management_caller_t)FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     check_equal(flowie_control_management_identity_resolve_principal(repository, "system", "admin",
-                                                                      &caller),
-                 TURBO_OK);
+                                                                     &caller),
+                TURBO_OK);
     check_equal(caller.permissions, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN);
     flowie_control_management_service_destroy(service);
     bootstrap_close(path, store);
@@ -144,11 +144,11 @@ spec("Flowie controller bootstrap") {
     check_equal(bootstrap_open(&path, &store), TURBO_OK);
     repository = flowie_control_store_repository(store);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 1000u),
-                 TURBO_OK);
+                                               strlen(BOOTSTRAP_PASSWORD), 1000u),
+                TURBO_OK);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 2000u),
-                 TURBO_OK);
+                                               strlen(BOOTSTRAP_PASSWORD), 2000u),
+                TURBO_OK);
     check_equal(repository->audit->count(repository->ctx, &audit_count), TURBO_OK);
     check_equal(audit_count, 7u);
     bootstrap_close(path, store);
@@ -163,11 +163,11 @@ spec("Flowie controller bootstrap") {
     check_equal(bootstrap_open(&path, &store), TURBO_OK);
     repository = flowie_control_store_repository(store);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 1000u),
-                 TURBO_OK);
+                                               strlen(BOOTSTRAP_PASSWORD), 1000u),
+                TURBO_OK);
     check_equal(flowie_control_bootstrap_apply(repository, &config, "different-password-strong",
-                                                strlen("different-password-strong"), 2000u),
-                 TURBO_OK);
+                                               strlen("different-password-strong"), 2000u),
+                TURBO_OK);
     bootstrap_close(path, store);
   }
 
@@ -190,12 +190,12 @@ spec("Flowie controller bootstrap") {
     root.occurred_at = 500u;
     check_equal(repository->user->domain_create(repository->ctx, &root, &result), TURBO_OK);
     check_equal(flowie_control_bootstrap_apply(repository, &config, BOOTSTRAP_PASSWORD,
-                                                strlen(BOOTSTRAP_PASSWORD), 1000u),
-                 TURBO_EBUSY);
+                                               strlen(BOOTSTRAP_PASSWORD), 1000u),
+                TURBO_EBUSY);
     check_equal(repository->auth->current_revision(repository->ctx, &revision), TURBO_OK);
     check_equal(revision, 1u);
     check_equal(repository->user->domain_get(repository->ctx, config.domain_id, &domain),
-                 TURBO_ENOENT);
+                TURBO_ENOENT);
     bootstrap_close(path, store);
   }
 }

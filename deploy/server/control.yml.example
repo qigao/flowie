@@ -22,10 +22,12 @@ listener:
     max_headers_count: 64
 
 storage:
-  control_store: sqlite
-  sqlite:
-    path: /var/lib/flowie/control/flowie-control.sqlite3
-    busy_timeout_ms: 1000
+  turbodb:
+    driver: sqlite
+    options:
+      filename: /var/lib/flowie/control/flowie-control.sqlite3
+      open_mode: read_write_create
+      busy_timeout_ms: "1000"
 
 management:
   rpc_path: /v2/control/rpc

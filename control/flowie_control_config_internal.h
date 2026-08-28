@@ -44,20 +44,22 @@ extern "C" {
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_MAX_RESPONSE_SIZE 65536u
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT 64u
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_MAX_IN_FLIGHT 1024u
-#define FLOWIE_CONTROL_CONFIG_PGSQL_CONNINFO_MAX 4096u
-#define FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_NAME_MAX 63u
-#define FLOWIE_CONTROL_CONFIG_PGSQL_POOL_CAPACITY_MAX 64u
+#define FLOWIE_CONTROL_CONFIG_TURBODB_DRIVER_MAX 63u
+#define FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX 16u
+#define FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_KEY_MAX 63u
+#define FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_VALUE_MAX 4095u
 #define FLOWIE_CONTROL_CONFIG_BOOTSTRAP_PASSWORD_MIN 16u
 
-typedef enum flowie_control_config_store_provider_e {
-  FLOWIE_CONTROL_CONFIG_STORE_SQLITE = 0,
-  FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL = 1
-} flowie_control_config_store_provider_t;
+typedef struct flowie_control_config_turbodb_option_s {
+  char keyword[FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_KEY_MAX + 1u];
+  char value[FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_VALUE_MAX + 1u];
+} flowie_control_config_turbodb_option_t;
 
-typedef enum flowie_control_config_pgsql_schema_mode_e {
-  FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_VALIDATE = 0,
-  FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_MIGRATE = 1
-} flowie_control_config_pgsql_schema_mode_t;
+typedef struct flowie_control_config_turbodb_s {
+  char driver[FLOWIE_CONTROL_CONFIG_TURBODB_DRIVER_MAX + 1u];
+  flowie_control_config_turbodb_option_t options[FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX];
+  size_t option_count;
+} flowie_control_config_turbodb_t;
 
 typedef struct flowie_control_config_error_s {
   size_t size;
@@ -145,18 +147,6 @@ typedef struct flowie_control_config_auth_s {
   flowie_control_config_external_https_t external_https;
 } flowie_control_config_auth_t;
 
-typedef struct flowie_control_config_pgsql_s {
-  char conninfo[FLOWIE_CONTROL_CONFIG_PGSQL_CONNINFO_MAX + 1u];
-  char password_ref[FLOWIE_CONTROL_CONFIG_SECRET_REF_MAX + 1u];
-  char schema_name[FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_NAME_MAX + 1u];
-  int connect_timeout_seconds;
-  int statement_timeout_ms;
-  int lock_timeout_ms;
-  size_t pool_capacity;
-  int acquire_timeout_ms;
-  flowie_control_config_pgsql_schema_mode_t schema_mode;
-} flowie_control_config_pgsql_t;
-
 typedef struct flowie_control_config_bootstrap_s {
   char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
   char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
@@ -167,10 +157,7 @@ typedef struct flowie_control_config_s {
   size_t size;
   uint32_t version;
   flowie_control_config_listener_t listener;
-  flowie_control_config_store_provider_t store_provider;
-  char sqlite_path[TURBO_FS_MAX_PATH];
-  int sqlite_busy_timeout_ms;
-  flowie_control_config_pgsql_t postgresql;
+  flowie_control_config_turbodb_t turbodb;
   flowie_control_config_bootstrap_t bootstrap;
   flowie_control_config_management_t management;
   int dashboard_enabled;
@@ -179,35 +166,38 @@ typedef struct flowie_control_config_s {
 
 #define FLOWIE_CONTROL_CONFIG_INIT                                                                 \
   {                                                                                                \
-    sizeof(flowie_control_config_t), FLOWIE_CONTROL_CONFIG_VERSION,                                \
-        {{0},                                                                                      \
-         8443u,                                                                                    \
-         FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE,                              \
-         {{0}, {0}, {0}, {0}, 0},                                                                  \
-         {128u, 4096u, 2048u, 128u, 4096u, 32u, 2048u, 65536u, 64}},                               \
-        FLOWIE_CONTROL_CONFIG_STORE_SQLITE, {0}, 1000,                                             \
-        {{0}, {0},  "flowie_control",                                                              \
-         5,   5000, 5000,                                                                          \
-         4u,  5000, FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_VALIDATE},                                  \
-        {FLOWIE_CONTROL_SYSTEM_DOMAIN, FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME, "human"}, \
-        {{0}, 65536u, FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_CAPACITY,                              \
-         FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_MAX_PER_PRINCIPAL,                                 \
-         FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_TTL_SECONDS, 0,                                    \
-         FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,                               \
-         FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,                         \
-         FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},                           \
-        1, {                                                                                        \
-      0, {0}, {0}, 300u, 4096u, 60u,                                                               \
-          {0, FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,                           \
-           FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,                       \
-           FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},                         \
-          {                                                                                        \
-        0, {0}, {0}, {0}, {0}, FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_TIMEOUT_MS,            \
-            FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_RESPONSE_SIZE,                            \
-            FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT, {                          \
-          {0}, {0}, {0}, {0}                                                                       \
-        }                                                                                          \
-      }                                                                                            \
+    .size = sizeof(flowie_control_config_t), .version = FLOWIE_CONTROL_CONFIG_VERSION,             \
+    .listener = {.port = 8443u,                                                                    \
+                 .coroutine_stack_size =                                                           \
+                     FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE,                  \
+                 .limits = {128u, 4096u, 2048u, 128u, 4096u, 32u, 2048u, 65536u, 64}},             \
+    .bootstrap = {FLOWIE_CONTROL_SYSTEM_DOMAIN, FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME,      \
+                  "human"},                                                                        \
+    .management = {.rpc_max_request_size = 65536u,                                                 \
+                   .session_capacity = FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_CAPACITY,             \
+                   .session_max_sessions_per_principal =                                           \
+                       FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_MAX_PER_PRINCIPAL,                    \
+                   .session_ttl_seconds = FLOWIE_CONTROL_CONFIG_SESSION_DEFAULT_TTL_SECONDS,       \
+                   .login_executor_workers =                                                       \
+                       FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,                  \
+                   .login_executor_queue_capacity =                                                \
+                       FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,           \
+                   .login_executor_deadline_ms =                                                   \
+                       FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},             \
+    .dashboard_enabled = 1, .auth = {                                                              \
+      .principal_ttl_seconds = 300u,                                                               \
+      .credential_cache_capacity = 4096u,                                                          \
+      .credential_cache_ttl_seconds = 60u,                                                         \
+      .local_executor = {.workers = FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,     \
+                         .queue_capacity =                                                         \
+                             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,     \
+                         .deadline_ms =                                                            \
+                             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},       \
+      .external_https = {.timeout_ms = FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_TIMEOUT_MS,    \
+                         .max_response_size =                                                      \
+                             FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_RESPONSE_SIZE,           \
+                         .max_in_flight =                                                          \
+                             FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT}           \
     }                                                                                              \
   }
 
@@ -216,6 +206,8 @@ int flowie_control_config_parse_yaml(const char *yaml, size_t yaml_size,
                                      flowie_control_config_error_t *error);
 int flowie_control_config_load(const char *path, flowie_control_config_t *out,
                                flowie_control_config_error_t *error);
+int flowie_control_config_secret_ref_valid(const char *value);
+int flowie_control_config_turbodb_secret_option(const char *keyword);
 
 #ifdef __cplusplus
 }

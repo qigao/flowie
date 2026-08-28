@@ -3,6 +3,7 @@
 
 #include "flowie_control_acl_internal.h"
 #include "flowie_security.h"
+#include "orm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -32,11 +33,10 @@ typedef struct flowie_control_repository_s flowie_control_repository_t;
 
 typedef struct flowie_control_store_config_s {
   size_t size;
-  const char *database_path;
-  int busy_timeout_ms;
+  const orm_config_t *database;
 } flowie_control_store_config_t;
 
-#define FLOWIE_CONTROL_STORE_CONFIG_INIT {sizeof(flowie_control_store_config_t), NULL, 1000}
+#define FLOWIE_CONTROL_STORE_CONFIG_INIT {sizeof(flowie_control_store_config_t), NULL}
 
 typedef struct flowie_control_user_create_command_s {
   size_t size;

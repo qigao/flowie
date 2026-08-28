@@ -31,10 +31,7 @@ int flowie_control_runtime_stop(flowie_control_runtime_t *runtime);
 int flowie_control_runtime_run(flowie_control_runtime_t *runtime);
 
 /**
- * Stop request handling and destroy the selected repository.
- *
- * PostgreSQL returns a close error without freeing the runtime so the caller can retry after
- * outstanding leases are returned.
+ * Stop request handling and destroy the TurboDB-backed repository.
  */
 int flowie_control_runtime_destroy(flowie_control_runtime_t *runtime);
 

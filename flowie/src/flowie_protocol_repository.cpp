@@ -14,7 +14,6 @@ struct flowie_protocol_repository_s {
   orm_connection_t *connection;
   flowie_protocol_repository_limits_t limits;
   char prefix[64];
-  bool postgres;
 };
 
 static orm_string_view_t repo_view(const char *value) { return orm_view(value); }
@@ -43,16 +42,12 @@ static orm_value_t repo_text(const char *value) {
 static orm_value_t repo_span(flowie_mqtt_span_t value, bool blob) {
   orm_value_t out{};
   out.kind = blob ? ORM_VALUE_BLOB : ORM_VALUE_TEXT;
-  if (blob)
-    out.data.blob_value = {value.data, value.size};
-  else
-    out.data.text_value = {(const char *)value.data, value.size};
+  if (blob) out.data.blob_value = {value.data, value.size};
+  else out.data.text_value = {(const char *)value.data, value.size};
   return out;
 }
 
-static int repo_status(orm_status_t status) {
-  return flowie_orm_status_to_turbo(status);
-}
+static int repo_status(orm_status_t status) { return flowie_orm_status_to_turbo(status); }
 
 static int repo_table(const flowie_protocol_repository_t *repository, const char *name, char *out,
                       size_t capacity) {
@@ -77,8 +72,7 @@ struct repo_schema_version_context {
   int64_t version;
 };
 
-static int repo_schema_version_visit(void *ctx, const flowie_orm_row_t *row,
-                                     size_t row_index) {
+static int repo_schema_version_visit(void *ctx, const flowie_orm_row_t *row, size_t row_index) {
   auto *version = static_cast<repo_schema_version_context *>(ctx);
   if (!version || row_index != 0u) return TURBO_EPROTO;
   version->version = flowie_orm_row_int64(row, 0u);
@@ -86,42 +80,44 @@ static int repo_schema_version_visit(void *ctx, const flowie_orm_row_t *row,
 }
 
 static int repo_create_schema(flowie_protocol_repository_t *repository) {
-  const char *blob = repository->postgres ? "bytea" : "blob";
+  const char *blob = "bytea";
   char sql[2048];
   char name[128];
   int rc;
 
-#define REPO_SCHEMA(table, body)                                                               \
-  do {                                                                                         \
-    rc = repo_table(repository, table, name, sizeof(name));                                    \
-    if (rc != TURBO_OK) return rc;                                                             \
-    auto format_schema = &std::snprintf;                                                       \
-    int written = format_schema(sql, sizeof(sql), "create table if not exists %s(" body ")", \
-                                name, blob, blob, blob, blob);                                  \
-    if (written <= 0 || (size_t)written >= sizeof(sql)) return TURBO_ERANGE;                   \
-    rc = repo_execute_raw(repository, sql);                                                    \
-    if (rc != TURBO_OK) return rc;                                                             \
+#define REPO_SCHEMA(table, body)                                                                   \
+  do {                                                                                             \
+    rc = repo_table(repository, table, name, sizeof(name));                                        \
+    if (rc != TURBO_OK) return rc;                                                                 \
+    auto format_schema = &std::snprintf;                                                           \
+    int written = format_schema(sql, sizeof(sql), "create table if not exists %s(" body ")", name, \
+                                blob, blob, blob, blob);                                           \
+    if (written <= 0 || (size_t)written >= sizeof(sql)) return TURBO_ERANGE;                       \
+    rc = repo_execute_raw(repository, sql);                                                        \
+    if (rc != TURBO_OK) return rc;                                                                 \
   } while (0)
 
   REPO_SCHEMA("meta", "schema_version integer not null");
-  REPO_SCHEMA("sessions",
-              "client_id text primary key, revision bigint not null, session_id bigint not null, "
-              "session_generation bigint not null, mqtt_version integer not null, keep_alive "
-              "integer not null, expiry_interval bigint not null, next_packet_id integer not null, "
-              "expires_at bigint not null, will_at bigint not null, has_principal integer not null, "
-              "principal_id text not null, principal_type text not null, domain_id text not null, "
-              "auth_method text not null, principal_scope integer not null, principal_expires_at "
-              "bigint not null, policy_version bigint not null");
+  REPO_SCHEMA(
+      "sessions",
+      "client_id text primary key, revision bigint not null, session_id bigint not null, "
+      "session_generation bigint not null, mqtt_version integer not null, keep_alive "
+      "integer not null, expiry_interval bigint not null, next_packet_id integer not null, "
+      "expires_at bigint not null, will_at bigint not null, has_principal integer not null, "
+      "principal_id text not null, principal_type text not null, domain_id text not null, "
+      "auth_method text not null, principal_scope integer not null, principal_expires_at "
+      "bigint not null, policy_version bigint not null");
   REPO_SCHEMA("principal_roles",
               "client_id text not null, position integer not null, role text not null, primary key "
               "(client_id, position)");
   REPO_SCHEMA("principal_groups",
               "client_id text not null, position integer not null, group_id text not null, primary "
               "key (client_id, position)");
-  REPO_SCHEMA("subscriptions",
-              "client_id text not null, filter text not null, qos integer not null, no_local integer "
-              "not null, retain_as_published integer not null, retain_handling integer not null, "
-              "subscription_identifier bigint not null, primary key (client_id, filter)");
+  REPO_SCHEMA(
+      "subscriptions",
+      "client_id text not null, filter text not null, qos integer not null, no_local integer "
+      "not null, retain_as_published integer not null, retain_handling integer not null, "
+      "subscription_identifier bigint not null, primary key (client_id, filter)");
   REPO_SCHEMA("inflight",
               "client_id text not null, packet_id integer not null, qos integer not null, primary "
               "key (client_id, packet_id)");
@@ -129,20 +125,23 @@ static int repo_create_schema(flowie_protocol_repository_t *repository) {
               "client_id text not null, packet_id integer not null, qos integer not null, state "
               "integer not null, expires_at bigint not null, packet %s not null, primary key "
               "(client_id, packet_id)");
-  REPO_SCHEMA("wills",
-              "client_id text primary key, pending integer not null, qos integer not null, retain "
-              "integer not null, delay_interval bigint not null, topic text not null, properties %s "
-              "not null, payload %s not null");
-  REPO_SCHEMA("retained",
-              "topic text primary key, revision bigint not null, publisher_session_id bigint not null, "
-              "expires_at bigint not null, mqtt_version integer not null, qos integer not null, "
-              "properties %s not null, payload %s "
-              "not null");
+  REPO_SCHEMA(
+      "wills",
+      "client_id text primary key, pending integer not null, qos integer not null, retain "
+      "integer not null, delay_interval bigint not null, topic text not null, properties %s "
+      "not null, payload %s not null");
+  REPO_SCHEMA(
+      "retained",
+      "topic text primary key, revision bigint not null, publisher_session_id bigint not null, "
+      "expires_at bigint not null, mqtt_version integer not null, qos integer not null, "
+      "properties %s not null, payload %s "
+      "not null");
 #undef REPO_SCHEMA
 
   if (repo_table(repository, "meta", name, sizeof(name)) != TURBO_OK) return TURBO_ERANGE;
-  std::snprintf(sql, sizeof(sql), "insert into %s(schema_version) select %u where not exists "
-                                  "(select 1 from %s)",
+  std::snprintf(sql, sizeof(sql),
+                "insert into %s(schema_version) select %u where not exists "
+                "(select 1 from %s)",
                 name, FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION, name);
   return repo_execute_raw(repository, sql);
 }
@@ -165,34 +164,29 @@ static int repo_validate_schema(flowie_protocol_repository_t *repository) {
   orm_status_t status = orm_raw(repository->connection, repo_view(sql), &query, &error);
   rc = repo_status(status);
   if (rc == TURBO_OK)
-    rc = flowie_orm_query_visit(query, nullptr, columns, 1u, 2u, 0u,
-                                repo_schema_version_visit, &version, &rows);
+    rc = flowie_orm_query_visit(query, nullptr, columns, 1u, 2u, 0u, repo_schema_version_visit,
+                                &version, &rows);
   orm_query_destroy(query);
   if (rc != TURBO_OK) return rc;
-  return rows == 1u && version.version == FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION
-             ? TURBO_OK
-             : TURBO_EPROTO;
+  return rows == 1u && version.version == FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION ? TURBO_OK
+                                                                                    : TURBO_EPROTO;
 }
 
 static bool repo_limits_valid(const flowie_protocol_repository_limits_t *limits) {
   return limits && limits->max_sessions != 0u && limits->max_subscriptions_per_session != 0u &&
          limits->max_inflight_per_session != 0u && limits->max_retained_messages != 0u &&
-         limits->max_sessions != SIZE_MAX &&
-         limits->max_subscriptions_per_session != SIZE_MAX &&
+         limits->max_sessions != SIZE_MAX && limits->max_subscriptions_per_session != SIZE_MAX &&
          limits->max_inflight_per_session != SIZE_MAX &&
-         limits->max_retained_messages != SIZE_MAX &&
-         limits->max_client_id_size != 0u && limits->max_topic_size != 0u &&
-         limits->max_packet_size != 0u;
+         limits->max_retained_messages != SIZE_MAX && limits->max_client_id_size != 0u &&
+         limits->max_topic_size != 0u && limits->max_packet_size != 0u;
 }
 
 static size_t repo_max_result_rows(const flowie_protocol_repository_limits_t *limits) {
   size_t maximum = limits->max_sessions;
   if (maximum < limits->max_subscriptions_per_session)
     maximum = limits->max_subscriptions_per_session;
-  if (maximum < limits->max_inflight_per_session)
-    maximum = limits->max_inflight_per_session;
-  if (maximum < limits->max_retained_messages)
-    maximum = limits->max_retained_messages;
+  if (maximum < limits->max_inflight_per_session) maximum = limits->max_inflight_per_session;
+  if (maximum < limits->max_retained_messages) maximum = limits->max_retained_messages;
   if (maximum < FLOWIE_SECURITY_MAX_ROLES) maximum = FLOWIE_SECURITY_MAX_ROLES;
   if (maximum < FLOWIE_SECURITY_MAX_GROUPS) maximum = FLOWIE_SECURITY_MAX_GROUPS;
   return maximum + 1u;
@@ -207,50 +201,32 @@ static bool repo_cstr_valid(const char *value, size_t capacity, bool required) {
 int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *config,
                                     flowie_protocol_repository_t **out) {
   flowie_protocol_repository_t *repository = nullptr;
-  orm_option_t *options = nullptr;
   orm_config_t orm_settings;
   orm_error_t error;
   orm_status_t status;
   int rc = TURBO_EINVAL;
   if (out) *out = nullptr;
-  if (!config || config->size < sizeof(*config) || !out || !config->driver ||
-      !config->driver[0] || !repo_limits_valid(&config->limits) ||
-      (config->option_count != 0u && !config->options) || config->option_count > UINT32_MAX)
+  if (!config || config->size < sizeof(*config) || !out || !config->database ||
+      config->database->struct_size != sizeof(*config->database) ||
+      config->database->abi_version != ORM_C_ABI_VERSION ||
+      !repo_limits_valid(&config->limits))
     return TURBO_EINVAL;
   repository = (flowie_protocol_repository_t *)std::calloc(1u, sizeof(*repository));
   if (!repository) return TURBO_ENOMEM;
   repository->limits = config->limits;
-  repository->postgres = std::strcmp(config->driver, "postgresql") == 0 ||
-                         std::strcmp(config->driver, "postgres") == 0;
-  const char *prefix = config->namespace_name && config->namespace_name[0]
-                           ? config->namespace_name
-                           : "flowie_protocol";
+  const char *prefix = config->namespace_name && config->namespace_name[0] ? config->namespace_name
+                                                                           : "flowie_protocol";
   size_t prefix_size = std::strlen(prefix);
   if (prefix_size > sizeof(repository->prefix) - 2u) goto done;
   for (size_t i = 0u; i < prefix_size; ++i) {
     char c = prefix[i];
-    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-          (i != 0u && c >= '0' && c <= '9') || c == '_'))
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i != 0u && c >= '0' && c <= '9') ||
+          c == '_'))
       goto done;
   }
   std::memcpy(repository->prefix, prefix, prefix_size);
   repository->prefix[prefix_size] = '_';
-  if (config->option_count != 0u) {
-    options = (orm_option_t *)std::calloc(config->option_count, sizeof(*options));
-    if (!options) {
-      rc = TURBO_ENOMEM;
-      goto done;
-    }
-    for (size_t i = 0u; i < config->option_count; ++i) {
-      if (!config->options[i].name || !config->options[i].value) goto done;
-      options[i].keyword = repo_view(config->options[i].name);
-      options[i].value = repo_view(config->options[i].value);
-    }
-  }
-  orm_config(&orm_settings);
-  orm_settings.driver = repo_view(config->driver);
-  orm_settings.options = options;
-  orm_settings.option_count = (uint32_t)config->option_count;
+  orm_settings = *config->database;
   orm_settings.max_result_rows = repo_max_result_rows(&config->limits);
   orm_settings.max_parameter_bytes = config->limits.max_packet_size;
   orm_error_init(&error);
@@ -269,7 +245,6 @@ int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *c
   repository = nullptr;
   rc = TURBO_OK;
 done:
-  std::free(options);
   flowie_protocol_repository_close(repository);
   return rc;
 }
@@ -295,12 +270,11 @@ static int repo_query_set(orm_query_t *query, const char *column, orm_value_t va
 static int repo_query_where(orm_query_t *query, const char *column, orm_value_t value) {
   orm_error_t error;
   orm_error_init(&error);
-  return repo_status(
-      orm_query_where(query, repo_view(column), ORM_COMPARE_EQUAL, value, &error));
+  return repo_status(orm_query_where(query, repo_view(column), ORM_COMPARE_EQUAL, value, &error));
 }
 
-static int repo_query_new(flowie_protocol_repository_t *repository, const char *table,
-                          int kind, orm_query_t **out) {
+static int repo_query_new(flowie_protocol_repository_t *repository, const char *table, int kind,
+                          orm_query_t **out) {
   char name[128];
   orm_error_t error;
   orm_status_t status;
@@ -341,8 +315,7 @@ static int repo_uint64_visit(void *ctx, const flowie_orm_row_t *row, size_t row_
 
 static int repo_existing_revision(flowie_protocol_repository_t *repository, const char *table,
                                   const char *key_column, orm_value_t key,
-                                  orm_transaction_t *transaction, bool *found,
-                                  uint64_t *revision) {
+                                  orm_transaction_t *transaction, bool *found, uint64_t *revision) {
   orm_query_t *query = nullptr;
   orm_error_t error;
   repo_uint64_context stored{};
@@ -355,12 +328,11 @@ static int repo_existing_revision(flowie_protocol_repository_t *repository, cons
   *revision = 0u;
   rc = repo_query_new(repository, table, 0, &query);
   orm_error_init(&error);
-  if (rc == TURBO_OK)
-    rc = repo_status(orm_query_add_column(query, repo_view("revision"), &error));
+  if (rc == TURBO_OK) rc = repo_status(orm_query_add_column(query, repo_view("revision"), &error));
   if (rc == TURBO_OK) rc = repo_query_where(query, key_column, key);
   if (rc == TURBO_OK)
-    rc = flowie_orm_query_visit(query, transaction, columns, 1u, 2u, 0u,
-                                repo_uint64_visit, &stored, &rows);
+    rc = flowie_orm_query_visit(query, transaction, columns, 1u, 2u, 0u, repo_uint64_visit, &stored,
+                                &rows);
   orm_query_destroy(query);
   if (rc == TURBO_OK && rows == 1u) {
     *revision = stored.value;
@@ -394,8 +366,8 @@ static int repo_count_rows(flowie_protocol_repository_t *repository, const char 
   orm_status_t status = orm_raw(repository->connection, repo_view(sql), &query, &error);
   rc = repo_status(status);
   if (rc == TURBO_OK)
-    rc = flowie_orm_query_visit(query, transaction, columns, 1u, 2u, 0u,
-                                repo_uint64_visit, &rows_count, &rows);
+    rc = flowie_orm_query_visit(query, transaction, columns, 1u, 2u, 0u, repo_uint64_visit,
+                                &rows_count, &rows);
   orm_query_destroy(query);
   if (rc == TURBO_OK && rows != 1u) rc = TURBO_EPROTO;
   if (rc == TURBO_OK) *count = rows_count.value;
@@ -408,9 +380,9 @@ static int repo_insert_session(flowie_protocol_repository_t *repository,
   orm_query_t *query = nullptr;
   const flowie_security_principal_t *p = &row->principal;
   int rc = repo_query_new(repository, "sessions", 1, &query);
-#define REPO_SET(column, value)                                                                \
-  do {                                                                                         \
-    if (rc == TURBO_OK) rc = repo_query_set(query, column, value);                            \
+#define REPO_SET(column, value)                                                                    \
+  do {                                                                                             \
+    if (rc == TURBO_OK) rc = repo_query_set(query, column, value);                                 \
   } while (0)
   REPO_SET("client_id", repo_span(row->client_id, false));
   REPO_SET("revision", repo_u64(row->revision));
@@ -457,8 +429,8 @@ static int repo_insert_child(flowie_protocol_repository_t *repository,
 static int repo_replace_session_children(flowie_protocol_repository_t *repository,
                                          orm_transaction_t *transaction,
                                          const flowie_protocol_session_row_t *row) {
-  static const char *const child_tables[] = {"principal_roles", "principal_groups",
-                                             "subscriptions", "inflight", "deliveries", "wills"};
+  static const char *const child_tables[] = {"principal_roles", "principal_groups", "subscriptions",
+                                             "inflight",        "deliveries",       "wills"};
   int rc = TURBO_OK;
   for (const char *table : child_tables) {
     rc = repo_delete_by_client(repository, transaction, table, row->client_id);
@@ -482,22 +454,22 @@ static int repo_replace_session_children(flowie_protocol_repository_t *repositor
   }
   for (size_t i = 0u; i < row->subscription_count; ++i) {
     const auto &entry = row->subscriptions[i];
-    const char *columns[] = {"filter", "qos", "no_local", "retain_as_published",
+    const char *columns[] = {"filter",          "qos",
+                             "no_local",        "retain_as_published",
                              "retain_handling", "subscription_identifier"};
-    orm_value_t values[] = {repo_span(entry.filter, false), repo_i64(entry.qos),
-                            repo_i64(entry.no_local), repo_i64(entry.retain_as_published),
-                            repo_i64(entry.retain_handling),
-                            repo_u64(entry.subscription_identifier)};
+    orm_value_t values[] = {
+        repo_span(entry.filter, false),  repo_i64(entry.qos),
+        repo_i64(entry.no_local),        repo_i64(entry.retain_as_published),
+        repo_i64(entry.retain_handling), repo_u64(entry.subscription_identifier)};
     rc = repo_insert_child(repository, transaction, "subscriptions", row->client_id, columns,
                            values, 6u);
     if (rc != TURBO_OK) return rc;
   }
   for (size_t i = 0u; i < row->inflight_count; ++i) {
     const char *columns[] = {"packet_id", "qos"};
-    orm_value_t values[] = {repo_i64(row->inflight[i].packet_id),
-                            repo_i64(row->inflight[i].qos)};
-    rc = repo_insert_child(repository, transaction, "inflight", row->client_id, columns, values,
-                           2u);
+    orm_value_t values[] = {repo_i64(row->inflight[i].packet_id), repo_i64(row->inflight[i].qos)};
+    rc =
+        repo_insert_child(repository, transaction, "inflight", row->client_id, columns, values, 2u);
     if (rc != TURBO_OK) return rc;
   }
   for (size_t i = 0u; i < row->delivery_count; ++i) {
@@ -510,12 +482,13 @@ static int repo_replace_session_children(flowie_protocol_repository_t *repositor
     if (rc != TURBO_OK) return rc;
   }
   if (row->will.present) {
-    const char *columns[] = {"pending", "qos", "retain", "delay_interval", "topic",
-                             "properties", "payload"};
-    orm_value_t values[] = {repo_i64(row->will.pending), repo_i64(row->will.qos),
-                            repo_i64(row->will.retain), repo_u64(row->will.delay_interval),
-                            repo_span(row->will.topic, false),
-                            repo_span(row->will.properties, true), repo_span(row->will.payload, true)};
+    const char *columns[] = {"pending", "qos",        "retain", "delay_interval",
+                             "topic",   "properties", "payload"};
+    orm_value_t values[] = {
+        repo_i64(row->will.pending),       repo_i64(row->will.qos),
+        repo_i64(row->will.retain),        repo_u64(row->will.delay_interval),
+        repo_span(row->will.topic, false), repo_span(row->will.properties, true),
+        repo_span(row->will.payload, true)};
     rc = repo_insert_child(repository, transaction, "wills", row->client_id, columns, values, 7u);
   }
   return rc;
@@ -541,11 +514,12 @@ int flowie_protocol_repository_session_save(flowie_protocol_repository_t *reposi
       row->has_principal > 1 ||
       (row->has_principal &&
        (row->principal.role_count > FLOWIE_SECURITY_MAX_ROLES ||
-       row->principal.group_count > FLOWIE_SECURITY_MAX_GROUPS ||
+        row->principal.group_count > FLOWIE_SECURITY_MAX_GROUPS ||
         row->principal.scope < FLOWIE_SECURITY_SCOPE_SELF ||
         row->principal.scope > FLOWIE_SECURITY_SCOPE_SYSTEM ||
         !repo_cstr_valid(row->principal.principal_id, sizeof(row->principal.principal_id), true) ||
-        !repo_cstr_valid(row->principal.principal_type, sizeof(row->principal.principal_type), true) ||
+        !repo_cstr_valid(row->principal.principal_type, sizeof(row->principal.principal_type),
+                         true) ||
         !repo_cstr_valid(row->principal.domain_id, sizeof(row->principal.domain_id), false) ||
         !repo_cstr_valid(row->principal.auth_method, sizeof(row->principal.auth_method), true))))
     return TURBO_EINVAL;
@@ -594,17 +568,15 @@ int flowie_protocol_repository_session_save(flowie_protocol_repository_t *reposi
     rc = repo_delete_by_client(repository, transaction, "sessions", row->client_id);
   if (rc == TURBO_OK) rc = repo_insert_session(repository, transaction, row);
   if (rc == TURBO_OK) rc = repo_replace_session_children(repository, transaction, row);
-  if (rc == TURBO_OK)
-    rc = repo_status(orm_transaction_commit(transaction, &error));
-  else
-    (void)orm_transaction_rollback(transaction, &error);
+  if (rc == TURBO_OK) rc = repo_status(orm_transaction_commit(transaction, &error));
+  else (void)orm_transaction_rollback(transaction, &error);
   orm_transaction_destroy(transaction);
   return rc;
 }
 
 int flowie_protocol_repository_session_delete(flowie_protocol_repository_t *repository,
-                                               flowie_mqtt_span_t client_id,
-                                               uint64_t expected_revision) {
+                                              flowie_mqtt_span_t client_id,
+                                              uint64_t expected_revision) {
   static const char *const tables[] = {"principal_roles", "principal_groups", "subscriptions",
                                        "inflight",        "deliveries",       "wills",
                                        "sessions"};
@@ -625,10 +597,8 @@ int flowie_protocol_repository_session_delete(flowie_protocol_repository_t *repo
   for (const char *table : tables) {
     if (rc == TURBO_OK) rc = repo_delete_by_client(repository, transaction, table, client_id);
   }
-  if (rc == TURBO_OK)
-    rc = repo_status(orm_transaction_commit(transaction, &error));
-  else
-    (void)orm_transaction_rollback(transaction, &error);
+  if (rc == TURBO_OK) rc = repo_status(orm_transaction_commit(transaction, &error));
+  else (void)orm_transaction_rollback(transaction, &error);
   orm_transaction_destroy(transaction);
   return rc;
 }
@@ -670,14 +640,13 @@ int flowie_protocol_repository_retained_save(flowie_protocol_repository_t *repos
     rc = repo_query_new(repository, "retained", 3, &query);
     if (rc == TURBO_OK) rc = repo_query_where(query, "topic", repo_span(row->topic, false));
     if (rc == TURBO_OK) rc = repo_query_finish(query, transaction);
-    else
-      orm_query_destroy(query);
+    else orm_query_destroy(query);
     query = nullptr;
   }
   if (rc == TURBO_OK) rc = repo_query_new(repository, "retained", 1, &query);
-#define RETAINED_SET(column, value)                                                            \
-  do {                                                                                         \
-    if (rc == TURBO_OK) rc = repo_query_set(query, column, value);                            \
+#define RETAINED_SET(column, value)                                                                \
+  do {                                                                                             \
+    if (rc == TURBO_OK) rc = repo_query_set(query, column, value);                                 \
   } while (0)
   RETAINED_SET("topic", repo_span(row->topic, false));
   RETAINED_SET("revision", repo_u64(row->revision));
@@ -689,12 +658,9 @@ int flowie_protocol_repository_retained_save(flowie_protocol_repository_t *repos
   RETAINED_SET("payload", repo_span(row->payload, true));
 #undef RETAINED_SET
   if (rc == TURBO_OK) rc = repo_query_finish(query, transaction);
-  else
-    orm_query_destroy(query);
-  if (rc == TURBO_OK)
-    rc = repo_status(orm_transaction_commit(transaction, &error));
-  else
-    (void)orm_transaction_rollback(transaction, &error);
+  else orm_query_destroy(query);
+  if (rc == TURBO_OK) rc = repo_status(orm_transaction_commit(transaction, &error));
+  else (void)orm_transaction_rollback(transaction, &error);
   orm_transaction_destroy(transaction);
   return rc;
 }
@@ -720,12 +686,9 @@ int flowie_protocol_repository_retained_delete(flowie_protocol_repository_t *rep
   if (rc == TURBO_OK) rc = repo_query_new(repository, "retained", 3, &query);
   if (rc == TURBO_OK) rc = repo_query_where(query, "topic", repo_span(topic, false));
   if (rc == TURBO_OK) rc = repo_query_finish(query, transaction);
-  else
-    orm_query_destroy(query);
-  if (rc == TURBO_OK)
-    rc = repo_status(orm_transaction_commit(transaction, &error));
-  else
-    (void)orm_transaction_rollback(transaction, &error);
+  else orm_query_destroy(query);
+  if (rc == TURBO_OK) rc = repo_status(orm_transaction_commit(transaction, &error));
+  else (void)orm_transaction_rollback(transaction, &error);
   orm_transaction_destroy(transaction);
   return rc;
 }
@@ -742,8 +705,7 @@ static int repo_select_visit(flowie_protocol_repository_t *repository, const cha
                              const flowie_orm_column_t *columns, size_t column_count,
                              const char *key_column, const orm_value_t *key,
                              const char *order_column, size_t max_rows,
-                             flowie_orm_row_visit_fn visit, void *visit_ctx,
-                             size_t *row_count) {
+                             flowie_orm_row_visit_fn visit, void *visit_ctx, size_t *row_count) {
   orm_query_t *query = nullptr;
   orm_error_t error;
   int rc = repo_query_new(repository, table, 0, &query);
@@ -771,8 +733,7 @@ struct repo_retained_visit_context {
   void *visit_ctx;
 };
 
-static int repo_retained_visit_row(void *ctx, const flowie_orm_row_t *source,
-                                   size_t row_index) {
+static int repo_retained_visit_row(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
   auto *state = static_cast<repo_retained_visit_context *>(ctx);
   flowie_protocol_retained_row_t row = FLOWIE_PROTOCOL_RETAINED_ROW_INIT;
   const int64_t mqtt_version = flowie_orm_row_int64(source, 4u);
@@ -787,10 +748,9 @@ static int repo_retained_visit_row(void *ctx, const flowie_orm_row_t *source,
   row.payload = repo_buffer_span(flowie_orm_row_buffer(source, 7u));
   row.expected_revision = row.revision;
   if (qos < 0 || qos > 2 ||
-      !flowie_mqtt_version_is_supported((flowie_mqtt_version_t)mqtt_version) ||
-      !row.topic.data || row.topic.size == 0u ||
-      row.topic.size > state->repository->limits.max_topic_size || row.revision == 0u ||
-      row.properties.size > state->repository->limits.max_packet_size ||
+      !flowie_mqtt_version_is_supported((flowie_mqtt_version_t)mqtt_version) || !row.topic.data ||
+      row.topic.size == 0u || row.topic.size > state->repository->limits.max_topic_size ||
+      row.revision == 0u || row.properties.size > state->repository->limits.max_packet_size ||
       row.payload.size > state->repository->limits.max_packet_size)
     return TURBO_EPROTO;
   row.mqtt_version = (flowie_mqtt_version_t)mqtt_version;
@@ -813,9 +773,8 @@ int flowie_protocol_repository_retained_visit(flowie_protocol_repository_t *repo
   };
   repo_retained_visit_context ctx{repository, visit, visit_ctx};
   if (!repository || !visit) return TURBO_EINVAL;
-  return repo_select_visit(repository, "retained", columns,
-                           sizeof(columns) / sizeof(columns[0]), nullptr, nullptr, nullptr,
-                           repository->limits.max_retained_messages,
+  return repo_select_visit(repository, "retained", columns, sizeof(columns) / sizeof(columns[0]),
+                           nullptr, nullptr, nullptr, repository->limits.max_retained_messages,
                            repo_retained_visit_row, &ctx, nullptr);
 }
 
@@ -871,11 +830,16 @@ struct repo_session_collect_context {
 
 static int repo_vec_status(stl_status status) {
   switch (status) {
-  case STL_OK: return TURBO_OK;
-  case STL_OUT_OF_MEMORY: return TURBO_ENOMEM;
-  case STL_CAPACITY_EXCEEDED: return TURBO_ENOSPC;
-  case STL_INVALID_ARGUMENT: return TURBO_EINVAL;
-  default: return TURBO_EIO;
+  case STL_OK:
+    return TURBO_OK;
+  case STL_OUT_OF_MEMORY:
+    return TURBO_ENOMEM;
+  case STL_CAPACITY_EXCEEDED:
+    return TURBO_ENOSPC;
+  case STL_INVALID_ARGUMENT:
+    return TURBO_EINVAL;
+  default:
+    return TURBO_EIO;
   }
 }
 
@@ -883,8 +847,7 @@ static int repo_session_collect(void *ctx, const flowie_orm_row_t *row, size_t r
   auto *state = static_cast<repo_session_collect_context *>(ctx);
   repo_session_record record{};
   int rc;
-  if (!state || !state->records || row_index != vec_size(state->records))
-    return TURBO_EINVAL;
+  if (!state || !state->records || row_index != vec_size(state->records)) return TURBO_EINVAL;
   rc = repo_dup_buffer(flowie_orm_row_buffer(row, 0u), &record.client_id);
   record.revision = flowie_orm_row_uint64(row, 1u);
   record.session_id = flowie_orm_row_uint64(row, 2u);
@@ -896,23 +859,17 @@ static int repo_session_collect(void *ctx, const flowie_orm_row_t *row, size_t r
   record.expires_at = flowie_orm_row_uint64(row, 8u);
   record.will_at = flowie_orm_row_uint64(row, 9u);
   record.has_principal = flowie_orm_row_int64(row, 10u);
-  if (rc == TURBO_OK)
-    rc = repo_dup_buffer(flowie_orm_row_buffer(row, 11u), &record.principal_id);
-  if (rc == TURBO_OK)
-    rc = repo_dup_buffer(flowie_orm_row_buffer(row, 12u), &record.principal_type);
-  if (rc == TURBO_OK)
-    rc = repo_dup_buffer(flowie_orm_row_buffer(row, 13u), &record.domain_id);
-  if (rc == TURBO_OK)
-    rc = repo_dup_buffer(flowie_orm_row_buffer(row, 14u), &record.auth_method);
+  if (rc == TURBO_OK) rc = repo_dup_buffer(flowie_orm_row_buffer(row, 11u), &record.principal_id);
+  if (rc == TURBO_OK) rc = repo_dup_buffer(flowie_orm_row_buffer(row, 12u), &record.principal_type);
+  if (rc == TURBO_OK) rc = repo_dup_buffer(flowie_orm_row_buffer(row, 13u), &record.domain_id);
+  if (rc == TURBO_OK) rc = repo_dup_buffer(flowie_orm_row_buffer(row, 14u), &record.auth_method);
   record.principal_scope = flowie_orm_row_int64(row, 15u);
   record.principal_expires_at = flowie_orm_row_uint64(row, 16u);
   record.policy_version = flowie_orm_row_uint64(row, 17u);
   if (rc == TURBO_OK) rc = repo_vec_status(vec_push(state->records, &record));
   /* The byte vector becomes the sole owner of the copied tstr handles. */
-  if (rc == TURBO_OK)
-    std::memset(&record, 0, sizeof(record));
-  else
-    repo_session_record_destroy(&record);
+  if (rc == TURBO_OK) std::memset(&record, 0, sizeof(record));
+  else repo_session_record_destroy(&record);
   return rc;
 }
 
@@ -921,18 +878,14 @@ struct repo_principal_child_context {
   bool roles;
 };
 
-static int repo_principal_child_visit(void *ctx, const flowie_orm_row_t *row,
-                                      size_t row_index) {
+static int repo_principal_child_visit(void *ctx, const flowie_orm_row_t *row, size_t row_index) {
   auto *state = static_cast<repo_principal_child_context *>(ctx);
   const int64_t position = flowie_orm_row_int64(row, 0u);
-  if (!state || !state->principal || position != (int64_t)row_index)
-    return TURBO_EPROTO;
+  if (!state || !state->principal || position != (int64_t)row_index) return TURBO_EPROTO;
   return state->roles
-             ? repo_copy_text(flowie_orm_row_buffer(row, 1u),
-                              state->principal->roles[row_index],
+             ? repo_copy_text(flowie_orm_row_buffer(row, 1u), state->principal->roles[row_index],
                               sizeof(state->principal->roles[row_index]), true)
-             : repo_copy_text(flowie_orm_row_buffer(row, 1u),
-                              state->principal->groups[row_index],
+             : repo_copy_text(flowie_orm_row_buffer(row, 1u), state->principal->groups[row_index],
                               sizeof(state->principal->groups[row_index]), true);
 }
 
@@ -946,10 +899,10 @@ struct repo_session_children {
   tstr will_payload;
 };
 
-static int repo_subscription_visit(void *ctx, const flowie_orm_row_t *source,
-                                   size_t row_index) {
+static int repo_subscription_visit(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
   auto *state = static_cast<repo_session_children *>(ctx);
-  auto *row = &const_cast<flowie_protocol_subscription_row_t *>(state->row->subscriptions)[row_index];
+  auto *row =
+      &const_cast<flowie_protocol_subscription_row_t *>(state->row->subscriptions)[row_index];
   const int64_t qos = flowie_orm_row_int64(source, 1u);
   const int64_t no_local = flowie_orm_row_int64(source, 2u);
   const int64_t rap = flowie_orm_row_int64(source, 3u);
@@ -973,21 +926,18 @@ static int repo_subscription_visit(void *ctx, const flowie_orm_row_t *source,
   return TURBO_OK;
 }
 
-static int repo_inflight_visit(void *ctx, const flowie_orm_row_t *source,
-                               size_t row_index) {
+static int repo_inflight_visit(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
   auto *state = static_cast<repo_session_children *>(ctx);
   auto *row = &const_cast<flowie_protocol_inflight_row_t *>(state->row->inflight)[row_index];
   const int64_t packet_id = flowie_orm_row_int64(source, 0u);
   const int64_t qos = flowie_orm_row_int64(source, 1u);
-  if (packet_id <= 0 || packet_id > UINT16_MAX || qos < 0 || qos > 2)
-    return TURBO_EPROTO;
+  if (packet_id <= 0 || packet_id > UINT16_MAX || qos < 0 || qos > 2) return TURBO_EPROTO;
   row->packet_id = (uint16_t)packet_id;
   row->qos = (uint8_t)qos;
   return TURBO_OK;
 }
 
-static int repo_delivery_visit(void *ctx, const flowie_orm_row_t *source,
-                               size_t row_index) {
+static int repo_delivery_visit(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
   auto *state = static_cast<repo_session_children *>(ctx);
   auto *row = &const_cast<flowie_protocol_delivery_row_t *>(state->row->deliveries)[row_index];
   const int64_t packet_id = flowie_orm_row_int64(source, 0u);
@@ -1022,8 +972,7 @@ static int repo_will_visit(void *ctx, const flowie_orm_row_t *source, size_t row
   rc = repo_dup_buffer(flowie_orm_row_buffer(source, 4u), &state->will_topic);
   if (rc == TURBO_OK)
     rc = repo_dup_buffer(flowie_orm_row_buffer(source, 5u), &state->will_properties);
-  if (rc == TURBO_OK)
-    rc = repo_dup_buffer(flowie_orm_row_buffer(source, 6u), &state->will_payload);
+  if (rc == TURBO_OK) rc = repo_dup_buffer(flowie_orm_row_buffer(source, 6u), &state->will_payload);
   if (rc != TURBO_OK) return rc;
   state->row->will.present = 1;
   state->row->will.pending = (int)pending;
@@ -1059,26 +1008,28 @@ static void repo_session_children_cleanup(repo_session_children *children) {
 static int repo_session_load_children(flowie_protocol_repository_t *repository,
                                       flowie_protocol_session_row_t *row,
                                       repo_session_children *children) {
-  static const flowie_orm_column_t role_columns[] = {
-      {"position", FLOWIE_ORM_COLUMN_INT64}, {"role", FLOWIE_ORM_COLUMN_TEXT}};
-  static const flowie_orm_column_t group_columns[] = {
-      {"position", FLOWIE_ORM_COLUMN_INT64}, {"group_id", FLOWIE_ORM_COLUMN_TEXT}};
+  static const flowie_orm_column_t role_columns[] = {{"position", FLOWIE_ORM_COLUMN_INT64},
+                                                     {"role", FLOWIE_ORM_COLUMN_TEXT}};
+  static const flowie_orm_column_t group_columns[] = {{"position", FLOWIE_ORM_COLUMN_INT64},
+                                                      {"group_id", FLOWIE_ORM_COLUMN_TEXT}};
   static const flowie_orm_column_t subscription_columns[] = {
-      {"filter", FLOWIE_ORM_COLUMN_TEXT}, {"qos", FLOWIE_ORM_COLUMN_INT64},
+      {"filter", FLOWIE_ORM_COLUMN_TEXT},
+      {"qos", FLOWIE_ORM_COLUMN_INT64},
       {"no_local", FLOWIE_ORM_COLUMN_INT64},
       {"retain_as_published", FLOWIE_ORM_COLUMN_INT64},
       {"retain_handling", FLOWIE_ORM_COLUMN_INT64},
       {"subscription_identifier", FLOWIE_ORM_COLUMN_UINT64}};
-  static const flowie_orm_column_t inflight_columns[] = {
-      {"packet_id", FLOWIE_ORM_COLUMN_INT64}, {"qos", FLOWIE_ORM_COLUMN_INT64}};
-  static const flowie_orm_column_t delivery_columns[] = {
-      {"packet_id", FLOWIE_ORM_COLUMN_INT64}, {"qos", FLOWIE_ORM_COLUMN_INT64},
-      {"state", FLOWIE_ORM_COLUMN_INT64}, {"expires_at", FLOWIE_ORM_COLUMN_UINT64},
-      {"packet", FLOWIE_ORM_COLUMN_BLOB}};
+  static const flowie_orm_column_t inflight_columns[] = {{"packet_id", FLOWIE_ORM_COLUMN_INT64},
+                                                         {"qos", FLOWIE_ORM_COLUMN_INT64}};
+  static const flowie_orm_column_t delivery_columns[] = {{"packet_id", FLOWIE_ORM_COLUMN_INT64},
+                                                         {"qos", FLOWIE_ORM_COLUMN_INT64},
+                                                         {"state", FLOWIE_ORM_COLUMN_INT64},
+                                                         {"expires_at", FLOWIE_ORM_COLUMN_UINT64},
+                                                         {"packet", FLOWIE_ORM_COLUMN_BLOB}};
   static const flowie_orm_column_t will_columns[] = {
       {"pending", FLOWIE_ORM_COLUMN_INT64}, {"qos", FLOWIE_ORM_COLUMN_INT64},
-      {"retain", FLOWIE_ORM_COLUMN_INT64}, {"delay_interval", FLOWIE_ORM_COLUMN_UINT64},
-      {"topic", FLOWIE_ORM_COLUMN_TEXT}, {"properties", FLOWIE_ORM_COLUMN_BLOB},
+      {"retain", FLOWIE_ORM_COLUMN_INT64},  {"delay_interval", FLOWIE_ORM_COLUMN_UINT64},
+      {"topic", FLOWIE_ORM_COLUMN_TEXT},    {"properties", FLOWIE_ORM_COLUMN_BLOB},
       {"payload", FLOWIE_ORM_COLUMN_BLOB}};
   const orm_value_t key = repo_span(row->client_id, false);
   repo_principal_child_context roles{&row->principal, true};
@@ -1090,32 +1041,32 @@ static int repo_session_load_children(flowie_protocol_repository_t *repository,
   children->repository = repository;
   row->subscriptions = (flowie_protocol_subscription_row_t *)std::calloc(
       repository->limits.max_subscriptions_per_session, sizeof(*row->subscriptions));
-  children->subscription_filters = (tstr *)std::calloc(
-      repository->limits.max_subscriptions_per_session, sizeof(tstr));
+  children->subscription_filters =
+      (tstr *)std::calloc(repository->limits.max_subscriptions_per_session, sizeof(tstr));
   row->inflight = (flowie_protocol_inflight_row_t *)std::calloc(
       repository->limits.max_inflight_per_session, sizeof(*row->inflight));
   row->deliveries = (flowie_protocol_delivery_row_t *)std::calloc(
       repository->limits.max_inflight_per_session, sizeof(*row->deliveries));
-  children->delivery_packets = (tstr *)std::calloc(
-      repository->limits.max_inflight_per_session, sizeof(tstr));
+  children->delivery_packets =
+      (tstr *)std::calloc(repository->limits.max_inflight_per_session, sizeof(tstr));
   if (!row->subscriptions || !children->subscription_filters || !row->inflight ||
       !row->deliveries || !children->delivery_packets)
     return TURBO_ENOMEM;
   rc = repo_select_visit(repository, "principal_roles", role_columns, 2u, "client_id", &key,
-                         "position", FLOWIE_SECURITY_MAX_ROLES,
-                         repo_principal_child_visit, &roles, &role_count);
+                         "position", FLOWIE_SECURITY_MAX_ROLES, repo_principal_child_visit, &roles,
+                         &role_count);
   if (rc == TURBO_OK)
     rc = repo_select_visit(repository, "principal_groups", group_columns, 2u, "client_id", &key,
-                           "position", FLOWIE_SECURITY_MAX_GROUPS,
-                           repo_principal_child_visit, &groups, &group_count);
+                           "position", FLOWIE_SECURITY_MAX_GROUPS, repo_principal_child_visit,
+                           &groups, &group_count);
   if (rc == TURBO_OK)
-    rc = repo_select_visit(repository, "subscriptions", subscription_columns, 6u, "client_id",
-                           &key, nullptr, repository->limits.max_subscriptions_per_session,
+    rc = repo_select_visit(repository, "subscriptions", subscription_columns, 6u, "client_id", &key,
+                           nullptr, repository->limits.max_subscriptions_per_session,
                            repo_subscription_visit, children, &row->subscription_count);
   if (rc == TURBO_OK)
-    rc = repo_select_visit(repository, "inflight", inflight_columns, 2u, "client_id", &key,
-                           nullptr, repository->limits.max_inflight_per_session,
-                           repo_inflight_visit, children, &row->inflight_count);
+    rc = repo_select_visit(repository, "inflight", inflight_columns, 2u, "client_id", &key, nullptr,
+                           repository->limits.max_inflight_per_session, repo_inflight_visit,
+                           children, &row->inflight_count);
   if (rc == TURBO_OK)
     rc = repo_select_visit(repository, "deliveries", delivery_columns, 5u, "client_id", &key,
                            nullptr, repository->limits.max_inflight_per_session,
@@ -1124,8 +1075,8 @@ static int repo_session_load_children(flowie_protocol_repository_t *repository,
       row->inflight_count > repository->limits.max_inflight_per_session - row->delivery_count)
     rc = TURBO_EPROTO;
   if (rc == TURBO_OK)
-    rc = repo_select_visit(repository, "wills", will_columns, 7u, "client_id", &key, nullptr,
-                           2u, repo_will_visit, children, &will_count);
+    rc = repo_select_visit(repository, "wills", will_columns, 7u, "client_id", &key, nullptr, 2u,
+                           repo_will_visit, children, &will_count);
   if (rc == TURBO_OK && will_count > 1u) rc = TURBO_EPROTO;
   if (rc == TURBO_OK && row->has_principal) {
     row->principal.role_count = (uint32_t)role_count;
@@ -1170,9 +1121,8 @@ static int repo_session_from_record(flowie_protocol_repository_t *repository,
   if (rc == TURBO_OK)
     rc = repo_copy_text(record->auth_method, row->principal.auth_method,
                         sizeof(row->principal.auth_method), true);
-  if (rc == TURBO_OK &&
-      (record->principal_scope < FLOWIE_SECURITY_SCOPE_SELF ||
-       record->principal_scope > FLOWIE_SECURITY_SCOPE_SYSTEM))
+  if (rc == TURBO_OK && (record->principal_scope < FLOWIE_SECURITY_SCOPE_SELF ||
+                         record->principal_scope > FLOWIE_SECURITY_SCOPE_SYSTEM))
     rc = TURBO_EPROTO;
   if (rc == TURBO_OK) {
     row->principal.scope = (flowie_security_scope_t)record->principal_scope;
@@ -1215,9 +1165,9 @@ int flowie_protocol_repository_session_visit(flowie_protocol_repository_t *repos
                                       repository->limits.max_sessions));
   if (rc != TURBO_OK) return rc;
   collect.records = &records;
-  rc = repo_select_visit(repository, "sessions", columns,
-                         sizeof(columns) / sizeof(columns[0]), nullptr, nullptr, nullptr,
-                         repository->limits.max_sessions, repo_session_collect, &collect, &rows);
+  rc = repo_select_visit(repository, "sessions", columns, sizeof(columns) / sizeof(columns[0]),
+                         nullptr, nullptr, nullptr, repository->limits.max_sessions,
+                         repo_session_collect, &collect, &rows);
   for (size_t i = 0u; rc == TURBO_OK && i < rows; ++i) {
     flowie_protocol_session_row_t row = FLOWIE_PROTOCOL_SESSION_ROW_INIT;
     repo_session_children children{};

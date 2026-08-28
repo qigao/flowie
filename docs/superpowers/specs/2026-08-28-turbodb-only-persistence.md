@@ -15,14 +15,15 @@ diagnostic, and shutdown operation used by Flowie.
 
 - Control services continue to depend only on `flowie_control_repository_t`.
 - Flowie persistence adapters depend only on the public TurboDB ORM C ABI.
-- Backend names and backend connection options remain configuration data passed to TurboDB;
-  they do not authorize Flowie to include or link a backend client library.
+- Flowie has one storage configuration block, `storage.turbodb`. It contains the TurboDB driver
+  and bounded key/value options passed unchanged to `orm_connect`; Flowie has no SQLite or
+  PostgreSQL configuration structs, providers, build switches, pools, commands, or queries.
 - Domain, role, group, user, credential, ACL, publish, revision, and audit semantics remain
   unchanged. Management RPC request and response contracts remain unchanged.
 - There is one selected fact source. Connection or validation failure is fatal; there is no
   backend fallback and no dual write.
-- Existing schemas are validated in place. This change does not delete user, credential, audit,
-  or published-policy data.
+- The old `storage.control_store`, `storage.sqlite`, and `storage.postgresql` formats are rejected.
+  No compatibility parser, provider fallback, dual write, or data migration is retained.
 
 ## Architecture
 
@@ -47,10 +48,17 @@ not known to a generic caller at compile time. The result owns copied cells unti
 bounded by `orm_config_t`; overflow or capacity exhaustion fails before exposing a partial result.
 The API is synchronous and single-owner. It does not share mutable result storage across threads.
 
-Flowie then replaces its SQLite and libpq providers with one TurboDB adapter. SQL dialect and
-schema lifecycle remain adapter concerns where the current ORM query builder cannot express a
-recursive query or migration DDL, but execution is always performed by TurboDB. Backend client
-types, status constants, and handles never cross the TurboDB package boundary.
+Flowie then removes its PostgreSQL provider and its SQLite-shaped public store configuration.
+The single Control repository receives an `orm_config_t`, owns one TurboDB connection, and
+performs all commands, transactions, result access, and error handling through TurboDB. SQL used
+for schema and operations is submitted only through TurboDB's public ABI; backend client types,
+status constants, handles, and build targets never cross the TurboDB package boundary.
+
+Portable raw statements use one-based `?N` parameters. TurboDB preserves them for SQLite and
+normalizes them to `$N` for PostgreSQL without rewriting quoted strings, identifiers, comments, or
+dollar-quoted bodies. TurboDB also owns backend error classification and per-connection invariants:
+constraint violations have one structured status and every SQLite connection enables foreign-key
+enforcement before use.
 
 ## LSQUIC Policy
 
@@ -61,8 +69,9 @@ that cannot enforce this setting fails rather than silently accepting TurboNet d
 ## Compatibility and Risk
 
 - Public management RPC is unchanged.
-- Existing Control configuration remains accepted and is normalized into TurboDB driver/options
-  at the composition boundary. No literal database password becomes accepted.
+- Control configuration is intentionally incompatible: only `storage.turbodb` is accepted.
+  Secrets remain references and must be resolved before constructing a TurboDB option; literal
+  database passwords are not accepted by a Flowie-specific field.
 - Removing direct client-library targets changes the internal build graph. A TurboDB package
   without the configured driver must fail during provider creation.
 - The highest risk is transaction/result parity. Shared repository contracts must run against
@@ -72,7 +81,8 @@ that cannot enforce this setting fails rather than silently accepting TurboNet d
 
 - TurboDB result ABI tests cover text, blob, integer, boolean, null, command counts, capacity
   limits, overflow rejection, transaction ownership, and destruction after every failure point.
-- Flowie repository contracts run through the TurboDB adapter.
+- Flowie repository contracts run through the TurboDB adapter; the optional live contract repeats
+  the protocol repository test against PostgreSQL without linking or calling libpq from Flowie.
 - Flowie config/runtime tests prove selection, validation, no fallback, and unchanged RPC
   behavior.
 - The Flowie build graph contains no direct SQLite/PostgreSQL package or target.

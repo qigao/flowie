@@ -4,15 +4,6 @@ set(CMAKE_COLOR_DIAGNOSTICS ON)
 option(FLOWIE_BUILD_TESTS "Build and register Flowie tests" ON)
 option(FLOWIE_BUILD_CONTROL "Build the restored Flowie control plane" ON)
 option(FLOWIE_BUILD_CLUSTER "Build the TurboRaft-backed Flowie cluster runtime" ON)
-option(FLOWIE_CONTROL_PGSQL "Build the PostgreSQL-backed Flowie control repository" OFF)
-option(TURBO_FLOW_PGSQL_LIVE_TESTS
-       "Run Flowie control tests against TURBO_FLOW_PGSQL_TEST_CONNINFO" OFF)
-
-if(TURBO_FLOW_PGSQL_LIVE_TESTS AND NOT FLOWIE_CONTROL_PGSQL)
-  message(FATAL_ERROR
-          "TURBO_FLOW_PGSQL_LIVE_TESTS requires FLOWIE_CONTROL_PGSQL=ON")
-endif()
-
 option(ENABLE_SANITIZER_ADDRESS "Enable AddressSanitizer" OFF)
 option(ENABLE_SANITIZER_UNDEFINED "Enable UndefinedBehaviorSanitizer" OFF)
 option(ENABLE_SANITIZER_LEAK "Enable LeakSanitizer" OFF)
@@ -21,6 +12,8 @@ option(ENABLE_SANITIZER_MEMORY "Enable MemorySanitizer (Clang only)" OFF)
 
 option(FLOWIE_MQTT_PUBLIC_LIVE_TESTS
        "Enable optional Flowie MQTT client external-connectivity smoke tests" OFF)
+option(FLOWIE_TURBODB_LIVE_TESTS
+       "Enable TurboDB cross-driver live persistence contract tests" OFF)
 option(FLOWIE_MQTT_FIXED_INTEROP_TESTS
        "Run Flowie and Mosquitto interoperability against one fixed broker" OFF)
 option(FLOWIE_MQTT_FUZZ_TARGETS "Build Flowie MQTT libFuzzer targets" OFF)

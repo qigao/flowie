@@ -1,5 +1,6 @@
 #include "flowie_control_dashboard_internal.h"
 #include "flowie_control_http_request_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "CoroNet.h"
 #include "tinytest.h"
@@ -115,6 +116,7 @@ dashboard_open_with_options(char **path_out, flowie_control_store_t **store_out,
                             flowie_control_management_caller_t *caller,
                             const dashboard_open_options_t *options) {
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
   flowie_control_command_result_t root_result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   flowie_control_management_service_config_t service_config =
@@ -124,7 +126,8 @@ dashboard_open_with_options(char **path_out, flowie_control_store_t **store_out,
 
   *path_out = tt_make_temp_file("flowie-dashboard", ".sqlite3");
   check_not_null(*path_out);
-  store_config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  store_config.database = &test_database.config;
   check_equal(flowie_control_store_open(&store_config, store_out), TURBO_OK);
   root.domain_id = "root-a";
   root.actor = "bootstrap";
@@ -205,7 +208,7 @@ spec("Flowie ACL dashboard") {
       tasks[index].fixture = &fixture;
       tasks[index].result = TURBO_EALREADY;
       check_equal(coro_context_spawn(context, dashboard_executor_task_run, &tasks[index]),
-                   TURBO_OK);
+                  TURBO_OK);
     }
     check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
     for (size_t index = 0u; index < TASK_COUNT; ++index) {
@@ -265,7 +268,7 @@ spec("Flowie ACL dashboard") {
   }
 
   it("parses only canonical independent keyset cursors") {
-    request_item_t items[6] = {{"domain_id", "root-a"}, {"users_after", "device%3C1%3E"},
+    request_item_t items[6] = {{"domain_id", "root-a"},     {"users_after", "device%3C1%3E"},
                                {"groups_after", "group-1"}, {"roles_after", "role-1"},
                                {"policy_after", "0"},       {"audit_after", "42"}};
     Req request;
@@ -522,14 +525,14 @@ spec("Flowie ACL dashboard") {
     group.expected_revision = 3u;
     group.occurred_at = 2002u;
     check_equal(flowie_control_management_group_create(service, &caller, &group, &result),
-                 TURBO_OK);
+                TURBO_OK);
     group.group_id = "operators-east";
     group.parent_group_id = "operators";
     group.request_id = "request-group-child";
     group.expected_revision = 4u;
     group.occurred_at = 2003u;
     check_equal(flowie_control_management_group_create(service, &caller, &group, &result),
-                 TURBO_OK);
+                TURBO_OK);
     role.domain_id = caller.domain_id;
     role.role_id = "publisher";
     role.actor = caller.actor;
@@ -554,7 +557,7 @@ spec("Flowie ACL dashboard") {
     rule.expected_revision = 6u;
     rule.occurred_at = 2005u;
     check_equal(flowie_control_management_policy_subject_rule_put(service, &caller, &rule, &result),
-                 TURBO_OK);
+                TURBO_OK);
 
     check_equal(
         flowie_control_dashboard_render(dashboard, &caller, DASHBOARD_CSRF, &html, &html_size),
@@ -629,8 +632,8 @@ spec("Flowie ACL dashboard") {
     check_false(strstr(html, "data-acl-action") != NULL);
     check_contains(html, "<table class=\"acl-rule-table\"");
     check_contains(html, "<tr class=\"acl-rule-row\"><td class=\"acl-rule__ordinal\">10</td>");
-    check_contains(html,
-                   "<td class=\"acl-rule__subject\"><small>Role</small><code>publisher</code></td>");
+    check_contains(
+        html, "<td class=\"acl-rule__subject\"><small>Role</small><code>publisher</code></td>");
     check_contains(html, "<td class=\"acl-rule__decision\">Allow</td>");
     check_contains(html, "1 statements · 1 rules");
     check_contains(html, "<code>%u</code> username");
@@ -655,7 +658,7 @@ spec("Flowie ACL dashboard") {
     {
       const flowie_control_dashboard_page_t page = FLOWIE_CONTROL_DASHBOARD_PAGE_INIT;
       check_equal(flowie_control_dashboard_render_shell(dashboard, &page, &html, &html_size),
-                   TURBO_OK);
+                  TURBO_OK);
     }
     check_contains(html, "src=\"/v2/control/assets/htmx-2.0.9.min.js\"");
     check_contains(html, "src=\"/v2/control/assets/control.js\"");
@@ -670,7 +673,7 @@ spec("Flowie ACL dashboard") {
     html = NULL;
     html_size = 0u;
     check_equal(flowie_control_dashboard_render_login(dashboard, 0, 0, &html, &html_size),
-                 TURBO_OK);
+                TURBO_OK);
     check_contains(html, "aria-current=\"page\">System administrator");
     check_contains(html, "name=\"domain\" value=\"system\"");
     check_false(strstr(html, "placeholder=\"root-a\"") != NULL);
@@ -679,7 +682,7 @@ spec("Flowie ACL dashboard") {
     html = NULL;
     html_size = 0u;
     check_equal(flowie_control_dashboard_render_login(dashboard, 1, 1, &html, &html_size),
-                 TURBO_OK);
+                TURBO_OK);
     check_contains(html, "aria-current=\"page\">Domain");
     check_contains(html, "name=\"domain\" required");
     check_contains(html, "role=\"alert\"");
@@ -702,14 +705,13 @@ spec("Flowie ACL dashboard") {
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ROLES_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACLS_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_AUDIT_PATH), dashboard);
-    check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH),
-                 dashboard);
+    check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACTION_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CSS_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_JS_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_HTMX_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_PASSWORD_PATH),
-                 dashboard);
+                dashboard);
     flowie_control_dashboard_unbind(dashboard);
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_USERS_PATH));
@@ -760,8 +762,8 @@ spec("Flowie ACL dashboard") {
 
       page.section = sections[index];
       check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                        &html, &html_size),
-                   TURBO_OK);
+                                                       &html, &html_size),
+                  TURBO_OK);
       (void)snprintf(expected_section, sizeof(expected_section), "<section id=\"%s\"", ids[index]);
       (void)snprintf(expected_query, sizeof(expected_query), "section=%s", names[index]);
       check_contains(html, expected_section);
@@ -786,7 +788,7 @@ spec("Flowie ACL dashboard") {
       size_t html_size = 0u;
       page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
       check_equal(flowie_control_dashboard_render_shell(dashboard, &page, &html, &html_size),
-                   TURBO_OK);
+                  TURBO_OK);
       check_contains(html, "<title>Users | Flowie Control</title>");
       check_contains(html, "hx-get=\"/v2/control/dashboard/content?section=users\"");
       flowie_control_dashboard_html_free(html);
@@ -810,8 +812,8 @@ spec("Flowie ACL dashboard") {
     dashboard = dashboard_open(&path, &store, &service, &caller);
     page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT;
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_EPERM);
+                                                     &html, &html_size),
+                TURBO_EPERM);
     check_null(html);
     dashboard_close(dashboard, service, store, path);
   }
@@ -846,23 +848,23 @@ spec("Flowie ACL dashboard") {
       command.expected_revision = index + 1u;
       command.occurred_at = 2000u + index;
       check_equal(flowie_control_management_user_create(service, &caller, &command, &result),
-                   TURBO_OK);
+                  TURBO_OK);
     }
 
     (void)snprintf(page.groups_after, sizeof(page.groups_after), "%s", "root-a");
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_OK);
+                                                     &html, &html_size),
+                TURBO_OK);
     check_contains(html, "device-000");
     check_false(strstr(html, "<tr><td>device-025</td>") != NULL);
     check_contains(html, "25 shown");
     check_contains(html, "hx-get=\"/v2/control/dashboard/"
-                             "content?users_after=device-024&amp;groups_after=root-a\"");
+                         "content?users_after=device-024&amp;groups_after=root-a\"");
     check_contains(html, "hx-select=\"#users\"");
     check_contains(html, "hx-target=\"#users\"");
     check_contains(html, "hx-swap=\"outerHTML\">Next page");
     check_contains(html, "hx-get=\"/v2/control/dashboard/content?groups_after=root-a\" "
-                             "hx-include=\"closest .query-panel\" hx-select=\"#users\"");
+                         "hx-include=\"closest .query-panel\" hx-select=\"#users\"");
     check_contains(html, "hx-post=\"/v2/control/dashboard/action?groups_after=root-a\"");
     flowie_control_dashboard_html_free(html);
 
@@ -870,8 +872,8 @@ spec("Flowie ACL dashboard") {
     html = NULL;
     html_size = 0u;
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_OK);
+                                                     &html, &html_size),
+                TURBO_OK);
     check_contains(html, "device-025");
     check_false(strstr(html, "<tr><td>device-000</td>") != NULL);
     check_contains(html, "1 shown");
@@ -892,8 +894,7 @@ spec("Flowie ACL dashboard") {
     flowie_control_management_service_t *service = NULL;
     flowie_control_dashboard_t *dashboard = NULL;
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
-    flowie_control_domain_create_command_t system_root =
-        FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
+    flowie_control_domain_create_command_t system_root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
 
     caller.domain_id = "root-a";
@@ -943,16 +944,16 @@ spec("Flowie ACL dashboard") {
                    "csrf=%s&operation=domain.create&domain_id=root-b&request_id=request-root-b",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
 
     {
       flowie_control_dashboard_page_t page = FLOWIE_CONTROL_DASHBOARD_PAGE_INIT;
       memcpy(page.domain_id, "root-a", sizeof("root-a"));
       page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
       check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                        &html, &html_size),
-                   TURBO_OK);
+                                                       &html, &html_size),
+                  TURBO_OK);
       check_contains(html, "Domain");
       check_contains(html, "value=\"root-a\"");
       check_contains(html, "href=\"/v2/control/dashboard/groups?domain_id=root-a\"");
@@ -989,20 +990,20 @@ spec("Flowie ACL dashboard") {
                    "request_id=request-human",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.create&principal_id=service-api&principal_type=service&"
                    "request_id=request-service",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
 
     page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_OK);
+                                                     &html, &html_size),
+                TURBO_OK);
     check_contains(html, "popovertarget=\"human-password-1\"");
     check_contains(html, "id=\"human-password-1\"");
     check_contains(html, "operation\" value=\"password.set");
@@ -1022,8 +1023,8 @@ spec("Flowie ACL dashboard") {
                    "new_password=%s&confirm_password=does-not-match&request_id=request-password",
                    DASHBOARD_CSRF, initial_password);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EINVAL);
+                                                      strlen(body)),
+                TURBO_EINVAL);
     check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
     check_equal(revision, 3u);
 
@@ -1032,8 +1033,8 @@ spec("Flowie ACL dashboard") {
                    "new_password=%s&confirm_password=%s&request_id=request-password-mode",
                    DASHBOARD_CSRF, initial_password, initial_password);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPROTO);
+                                                      strlen(body)),
+                TURBO_EPROTO);
     check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
     check_equal(revision, 3u);
 
@@ -1042,32 +1043,30 @@ spec("Flowie ACL dashboard") {
                    "new_password=%s&confirm_password=%s&request_id=request-password-create",
                    DASHBOARD_CSRF, initial_password, initial_password);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
-    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a",
-                                                        initial_password,
-                                                        sizeof(initial_password) - 1u, &verified),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a", initial_password,
+                                                       sizeof(initial_password) - 1u, &verified),
+                TURBO_OK);
 
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=password.set&principal_id=admin-a&mode=replace&"
                    "new_password=%s&confirm_password=%s&request_id=request-password-replace",
                    DASHBOARD_CSRF, replacement_password, replacement_password);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(
-                    store, "root-a", "admin-a", replacement_password,
-                    sizeof(replacement_password) - 1u, &verified),
+                                                      strlen(body)),
                 TURBO_OK);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a",
-                                                        initial_password,
-                                                        sizeof(initial_password) - 1u, &verified),
-                 TURBO_EPERM);
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(
+        flowie_control_store_credential_verify(store, "root-a", "admin-a", replacement_password,
+                                               sizeof(replacement_password) - 1u, &verified),
+        TURBO_OK);
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "admin-a", initial_password,
+                                                       sizeof(initial_password) - 1u, &verified),
+                TURBO_EPERM);
 
     dashboard_close(dashboard, service, store, path);
   }
@@ -1090,35 +1089,35 @@ spec("Flowie ACL dashboard") {
                    "request_id=request-user",
                    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPERM);
+                                                      strlen(body)),
+                TURBO_EPERM);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.create&principal_id=device-1&principal_type=device&"
                    "request_id=request-user&domain=root-b",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPROTO);
+                                                      strlen(body)),
+                TURBO_EPROTO);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.create&principal_id=device-1&principal_type=device&"
                    "request_id=request-user&expected_revision=1",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPROTO);
+                                                      strlen(body)),
+                TURBO_EPROTO);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.create&principal_id=device-1&principal_type=device&"
                    "request_id=request-user",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPERM);
+                                                      strlen(body)),
+                TURBO_EPERM);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=domain.create&domain_id=root-b&request_id=request-root-b",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_EPERM);
+                                                      strlen(body)),
+                TURBO_EPERM);
     check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
     check_equal(revision, 1u);
 
@@ -1143,8 +1142,8 @@ spec("Flowie ACL dashboard") {
                    "request_id=request-user",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     check_equal(flowie_control_management_user_get(service, &caller, "device-1", &user), TURBO_OK);
     check_equal(user.principal_id, "device-1");
     check_equal(user.revision, 2u);
@@ -1164,8 +1163,7 @@ spec("Flowie ACL dashboard") {
     flowie_control_dashboard_t *dashboard = NULL;
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_dashboard_page_t page = FLOWIE_CONTROL_DASHBOARD_PAGE_INIT;
-    flowie_control_dashboard_action_result_t action =
-        FLOWIE_CONTROL_DASHBOARD_ACTION_RESULT_INIT;
+    flowie_control_dashboard_action_result_t action = FLOWIE_CONTROL_DASHBOARD_ACTION_RESULT_INIT;
     flowie_control_credential_verify_result_t verified =
         FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
 
@@ -1178,20 +1176,20 @@ spec("Flowie ACL dashboard") {
                    "request_id=request-device",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.create&principal_id=service-api&principal_type=service&"
                    "request_id=request-service",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
 
     page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_OK);
+                                                     &html, &html_size),
+                TURBO_OK);
     check_contains(html, "popovertarget=\"service-token-2\"");
     check_contains(html, "operation\" value=\"credential.issue");
     check_contains(html, "operation\" value=\"credential.revoke");
@@ -1203,20 +1201,20 @@ spec("Flowie ACL dashboard") {
                    "csrf=%s&operation=credential.issue&principal_id=service-api&"
                    "request_id=request-token-1",
                    DASHBOARD_CSRF);
-    check_equal(flowie_control_dashboard_process_form_result(
-                     dashboard, &caller, DASHBOARD_CSRF, body, strlen(body), &action),
-                 TURBO_OK);
+    check_equal(flowie_control_dashboard_process_form_result(dashboard, &caller, DASHBOARD_CSRF,
+                                                             body, strlen(body), &action),
+                TURBO_OK);
     check_equal(action.kind, FLOWIE_CONTROL_DASHBOARD_ACTION_CREDENTIAL_ISSUED);
     check_equal(action.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_equal(action.domain_id, "root-a");
     check_equal(action.principal_id, "service-api");
     memcpy(old_token, action.token, action.token_size + 1u);
-    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api",
-                                                        action.token, action.token_size, &verified),
-                 TURBO_OK);
-    check_equal(flowie_control_dashboard_render_page_result(
-                     dashboard, &caller, DASHBOARD_CSRF, &page, &action, &html, &html_size),
-                 TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api", action.token,
+                                                       action.token_size, &verified),
+                TURBO_OK);
+    check_equal(flowie_control_dashboard_render_page_result(dashboard, &caller, DASHBOARD_CSRF,
+                                                            &page, &action, &html, &html_size),
+                TURBO_OK);
     check_contains(html, "data-credential-secret");
     check_contains(html, "service-api");
     check_contains(html, action.token);
@@ -1228,46 +1226,45 @@ spec("Flowie ACL dashboard") {
     check_equal(action.token, zeros, sizeof(action.token));
 
     check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
-                                                      &html, &html_size),
-                 TURBO_OK);
+                                                     &html, &html_size),
+                TURBO_OK);
     check_false(strstr(html, old_token) != NULL);
     check_false(strstr(html, "data-credential-secret") != NULL);
     flowie_control_dashboard_html_free(html);
     html = NULL;
 
-    action = (flowie_control_dashboard_action_result_t)
-        FLOWIE_CONTROL_DASHBOARD_ACTION_RESULT_INIT;
+    action = (flowie_control_dashboard_action_result_t)FLOWIE_CONTROL_DASHBOARD_ACTION_RESULT_INIT;
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=credential.issue&principal_id=service-api&"
                    "request_id=request-token-2",
                    DASHBOARD_CSRF);
-    check_equal(flowie_control_dashboard_process_form_result(
-                     dashboard, &caller, DASHBOARD_CSRF, body, strlen(body), &action),
-                 TURBO_OK);
+    check_equal(flowie_control_dashboard_process_form_result(dashboard, &caller, DASHBOARD_CSRF,
+                                                             body, strlen(body), &action),
+                TURBO_OK);
     check_not_equal(action.token, old_token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
     check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api", old_token,
-                                                        strlen(old_token), &verified),
-                 TURBO_EPERM);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api",
-                                                        action.token, action.token_size, &verified),
-                 TURBO_OK);
+                                                       strlen(old_token), &verified),
+                TURBO_EPERM);
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api", action.token,
+                                                       action.token_size, &verified),
+                TURBO_OK);
 
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=credential.revoke&principal_id=service-api&"
                    "request_id=request-token-revoke",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api",
-                                                        action.token, action.token_size, &verified),
-                 TURBO_EPERM);
+                                                      strlen(body)),
+                TURBO_OK);
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "service-api", action.token,
+                                                       action.token_size, &verified),
+                TURBO_EPERM);
 
     flowie_control_dashboard_action_result_clear(&action);
     dashboard_close(dashboard, service, store, path);
@@ -1281,8 +1278,7 @@ spec("Flowie ACL dashboard") {
     flowie_control_dashboard_t *dashboard = NULL;
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
-    flowie_control_policy_subject_rule_view_t rule =
-        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+    flowie_control_policy_subject_rule_view_t rule = FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
     uint64_t revision = 0u;
     size_t count = 0u;
     int has_more = 0;
@@ -1297,95 +1293,95 @@ spec("Flowie ACL dashboard") {
                    "request_id=request-user-create",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=group.create&group_id=operators&parent_group_id=root-a&"
                    "request_id=request-group-create",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=group.member.add&principal_id=device-1&group_id=operators&"
                    "request_id=request-member-add",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=group.member.remove&principal_id=device-1&group_id=operators&"
                    "request_id=request-member-remove",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=group.delete&group_id=operators&"
                    "request_id=request-group-delete",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=role.create&role_id=publisher&"
                    "request_id=request-role-create",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=role.assign&principal_id=device-1&role_id=publisher&"
                    "request_id=request-role-assign",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=role.remove&principal_id=device-1&role_id=publisher&"
                    "request_id=request-role-remove",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=role.disable&role_id=publisher&"
                    "request_id=request-role-disable",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
-                    "csrf=%s&operation=policy.subject_rule.put&ordinal=10&"
-                    "rule_document=user%%20device-1%%20allow&"
-                    "request_id=request-rule-put",
-                    DASHBOARD_CSRF);
+                   "csrf=%s&operation=policy.subject_rule.put&ordinal=10&"
+                   "rule_document=user%%20device-1%%20allow&"
+                   "request_id=request-rule-put",
+                   DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=policy.subject_rule.delete&subject_kind=user&"
                    "subject_id=device-1&"
                    "request_id=request-rule-delete",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
     (void)snprintf(body, sizeof(body),
                    "csrf=%s&operation=user.disable&principal_id=device-1&"
                    "request_id=request-user-disable",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
-                                                       strlen(body)),
-                 TURBO_OK);
+                                                      strlen(body)),
+                TURBO_OK);
 
     check_equal(flowie_control_management_user_get(service, &caller, "device-1", &user), TURBO_OK);
     check_false(user.enabled);
     check_equal(user.revision, 13u);
-    check_equal(flowie_control_management_policy_subject_rule_list(
-                    service, &caller, FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, &rule, 1u, &count,
-                    &has_more),
-                 TURBO_OK);
+    check_equal(flowie_control_management_policy_subject_rule_list(service, &caller,
+                                                                   FLOWIE_SECURITY_SUBJECT_ANY, 0u,
+                                                                   0, &rule, 1u, &count, &has_more),
+                TURBO_OK);
     check_equal(count, 0u);
     check_false(has_more);
     check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);

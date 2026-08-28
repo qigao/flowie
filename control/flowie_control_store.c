@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { FLOWIE_CONTROL_OPERATION_MAX = 31, FLOWIE_CONTROL_BUSY_TIMEOUT_MAX_MS = 30000 };
+enum { FLOWIE_CONTROL_OPERATION_MAX = 31 };
 
 #define FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION 5
 #define FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT "flowie-control-subject-policy-schema-v5-20260828"
@@ -53,7 +53,7 @@ static const char FLOWIE_CONTROL_POLICY_SCHEMA[] =
     "rule_document TEXT NOT NULL CHECK(length(rule_document)>0 AND length(rule_document)<=16383),"
     "revision INTEGER NOT NULL CHECK(revision>0),updated_at INTEGER NOT NULL CHECK(updated_at>0),"
     "PRIMARY KEY(domain_id,subject_kind,subject_id),UNIQUE(domain_id,ordinal),"
-    "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id)) WITHOUT ROWID;"
+    "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));"
     "CREATE TABLE IF NOT EXISTS flowie_control_published_bundle("
     "namespace_name TEXT PRIMARY KEY,policy_version INTEGER NOT NULL CHECK(policy_version>0),"
     "expires_at INTEGER NOT NULL CHECK(expires_at>=0));"
@@ -62,34 +62,36 @@ static const char FLOWIE_CONTROL_POLICY_SCHEMA[] =
     "rule_line TEXT NOT NULL CHECK(length(rule_line)>0),"
     "PRIMARY KEY(namespace_name,ordinal),"
     "FOREIGN KEY(namespace_name) REFERENCES flowie_control_published_bundle(namespace_name)"
-    " ON DELETE CASCADE) WITHOUT ROWID;"
+    " ON DELETE CASCADE);"
     "CREATE TABLE IF NOT EXISTS flowie_control_policy_publish_result("
     "request_id TEXT PRIMARY KEY,policy_version INTEGER NOT NULL CHECK(policy_version>0),"
-    "FOREIGN KEY(request_id) REFERENCES flowie_control_audit(request_id)) WITHOUT ROWID;";
+    "FOREIGN KEY(request_id) REFERENCES flowie_control_audit(request_id));";
 static const char
     FLOWIE_CONTROL_SCHEMA
         [] =
-            "PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;"
             "CREATE TABLE IF NOT EXISTS flowie_control_schema_version("
             "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
             "version INTEGER NOT NULL CHECK(version>0),fingerprint TEXT NOT NULL);"
-            "INSERT OR IGNORE INTO flowie_control_schema_version(singleton,version,fingerprint) "
-            "VALUES(1," FLOWIE_CONTROL_STRINGIFY(
+            "INSERT INTO flowie_control_schema_version(singleton,version,fingerprint) "
+            "SELECT 1," FLOWIE_CONTROL_STRINGIFY(
                 FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION) ","
                                                        "'" FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT
-                                                       "');"
+                                                       "' WHERE NOT EXISTS(SELECT 1 FROM "
+                                                       "flowie_control_schema_version WHERE "
+                                                       "singleton=1);"
                                                        "CREATE TABLE IF NOT EXISTS "
                                                        "flowie_control_meta("
                                                        "singleton INTEGER PRIMARY KEY "
                                                        "CHECK(singleton=1),"
                                                        "revision INTEGER NOT NULL "
                                                        "CHECK(revision>=0));"
-                                                       "INSERT OR IGNORE INTO "
+                                                       "INSERT INTO "
                                                        "flowie_control_meta(singleton,revision) "
-                                                       "VALUES(1,0);"
+                                                       "SELECT 1,0 WHERE NOT EXISTS(SELECT 1 FROM "
+                                                       "flowie_control_meta WHERE singleton=1);"
                                                        "CREATE TABLE IF NOT EXISTS "
                                                        "flowie_control_domain("
-                                                       "domain_id TEXT PRIMARY KEY) WITHOUT ROWID;"
+                                                       "domain_id TEXT PRIMARY KEY);"
                                                        "CREATE TABLE IF NOT EXISTS "
                                                        "flowie_control_user("
                                                        "domain_id TEXT NOT NULL,principal_id TEXT "
@@ -104,8 +106,7 @@ static const char
                                                        "CHECK(updated_at>0),"
                                                        "PRIMARY KEY(domain_id,principal_id),"
                                                        "FOREIGN KEY(domain_id) REFERENCES "
-                                                       "flowie_control_domain(domain_id)) WITHOUT "
-                                                       "ROWID;"
+                                                       "flowie_control_domain(domain_id));"
                                                        "CREATE TABLE IF NOT EXISTS "
                                                        "flowie_control_credential("
                                                        "domain_id TEXT NOT NULL,principal_id TEXT "
@@ -118,10 +119,10 @@ static const char
                                                                                                    "CHECK(memory_blocks>0),"
                                                                                                    "passes INTEGER NOT NULL CHECK(passes>0),"
                                                                                                    "lanes INTEGER NOT NULL CHECK(lanes>0),"
-                                                                                                   "salt BLOB NOT NULL "
+                                                                                                   "salt BYTEA NOT NULL "
                                                                                                    "CHECK(length(salt)"
                                                                                                    "=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE) "),"
-                                                                                                                                                                     "verifier BLOB NOT NULL CHECK(length(verifier)=" FLOWIE_CONTROL_STRINGIFY(
+                                                                                                                                                                     "verifier BYTEA NOT NULL CHECK(length(verifier)=" FLOWIE_CONTROL_STRINGIFY(
                                                                                                                                                                          FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE) "),"
                                                                                                                                                                                                                   "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
                                                                                                                                                                                                                   "revision INTEGER NOT NULL CHECK(revision>0),"
@@ -129,7 +130,7 @@ static const char
                                                                                                                                                                                                                   "updated_at INTEGER NOT NULL CHECK(updated_at>0),"
                                                                                                                                                                                                                   "PRIMARY KEY(domain_id,principal_id),"
                                                                                                                                                                                                                   "FOREIGN KEY(domain_id,principal_id) REFERENCES "
-                                                                                                                                                                                                                  "flowie_control_user(domain_id,principal_id)) WITHOUT ROWID;"
+                                                                                                                                                                                                                  "flowie_control_user(domain_id,principal_id));"
                                                                                                                                                                                                                   "CREATE TABLE IF NOT EXISTS flowie_control_group("
                                                                                                                                                                                                                   "domain_id TEXT NOT NULL,group_id TEXT NOT NULL,parent_group_id TEXT,"
                                                                                                                                                                                                                   "depth INTEGER NOT NULL CHECK(depth>=0 AND depth<=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_GROUP_MAX_DEPTH) "),"
@@ -143,7 +144,7 @@ static const char
                                                                                                                                                                                                                                                                                                                                "flowie_control_group(domain_id,group_id),"
                                                                                                                                                                                                                                                                                                                                "CHECK(group_id<>domain_id),"
                                                                                                                                                                                                                                                                                                                                "CHECK((parent_group_id IS NULL AND depth=0) OR "
-                                                                                                                                                                                                                                                                                                                               "(parent_group_id IS NOT NULL AND depth>0))) WITHOUT ROWID;"
+                                                                                                                                                                                                                                                                                                                               "(parent_group_id IS NOT NULL AND depth>0)));"
                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_role("
                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,role_id TEXT NOT NULL,"
                                                                                                                                                                                                                                                                                                                                "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
@@ -151,7 +152,7 @@ static const char
                                                                                                                                                                                                                                                                                                                                "created_at INTEGER NOT NULL CHECK(created_at>0),"
                                                                                                                                                                                                                                                                                                                                "updated_at INTEGER NOT NULL CHECK(updated_at>0),"
                                                                                                                                                                                                                                                                                                                                "PRIMARY KEY(domain_id,role_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id)) WITHOUT ROWID;"
+                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));"
                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_membership("
                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,principal_id TEXT NOT "
                                                                                                                                                                                                                                                                                                                                "NULL,group_id TEXT NOT NULL,"
@@ -161,7 +162,7 @@ static const char
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,principal_id) REFERENCES "
                                                                                                                                                                                                                                                                                                                                "flowie_control_user(domain_id,principal_id),"
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,group_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_group(domain_id,group_id)) WITHOUT ROWID;"
+                                                                                                                                                                                                                                                                                                                               "flowie_control_group(domain_id,group_id));"
                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_user_role("
                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
                                                                                                                                                                                                                                                                                                                                "role_id TEXT NOT NULL,revision INTEGER NOT NULL "
@@ -171,7 +172,7 @@ static const char
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,principal_id) REFERENCES "
                                                                                                                                                                                                                                                                                                                                "flowie_control_user(domain_id,principal_id),"
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,role_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_role(domain_id,role_id)) WITHOUT ROWID;"
+                                                                                                                                                                                                                                                                                                                               "flowie_control_role(domain_id,role_id));"
                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_audit("
                                                                                                                                                                                                                                                                                                                                "request_id TEXT PRIMARY KEY,actor TEXT NOT NULL,operation "
                                                                                                                                                                                                                                                                                                                                "TEXT NOT NULL,"
@@ -182,8 +183,11 @@ static const char
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));";
 
 struct flowie_control_store_s {
-  tstr database_path;
-  int busy_timeout_ms;
+  orm_config_t database_config;
+  orm_option_t *database_options;
+  tstr database_driver;
+  tstr *database_option_keywords;
+  tstr *database_option_values;
   flowie_control_repository_t repository;
 };
 
@@ -212,32 +216,56 @@ static int flowie_control_database_status(int status) {
   return TURBO_EIO;
 }
 
-static int flowie_control_schema_preflight(flowie_control_database_t *database) {
-  static const char sql[] =
-      "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' "
-      "AND name='flowie_control_schema_version'),"
-      "EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' "
-      "AND name GLOB 'flowie_control_*' AND name<>'flowie_control_schema_version')";
+static int flowie_control_column_text_equal(const flowie_control_statement_t *statement,
+                                            int column, const char *expected) {
+  const unsigned char *actual;
+  size_t expected_size;
+  int actual_size;
+  if (!statement || !expected) return 0;
+  expected_size = strlen(expected);
+  actual_size = flowie_control_database_column_bytes(statement, column);
+  if (actual_size < 0 || (size_t)actual_size != expected_size ||
+      flowie_control_database_column_type(statement, column) != FLOWIE_CONTROL_DB_TEXT)
+    return 0;
+  if (expected_size == 0u) return 1;
+  actual = flowie_control_database_column_text(statement, column);
+  return actual && memcmp(actual, expected, expected_size) == 0;
+}
+
+static int flowie_control_schema_probe(flowie_control_database_t *database, const char *sql) {
   flowie_control_statement_t *statement = NULL;
   int status;
-  int rc;
-  if (!database) return TURBO_EINVAL;
+  if (!database || !sql) return 0;
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
-  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
-  status = flowie_control_database_step(statement);
-  if (status != FLOWIE_CONTROL_DB_ROW ||
-      flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
-      flowie_control_database_column_type(statement, 1) != FLOWIE_CONTROL_DB_INTEGER) {
-    rc = status == FLOWIE_CONTROL_DB_ROW ? TURBO_EPROTO : flowie_control_database_status(status);
-    goto done;
-  }
-  rc = !flowie_control_database_column_int(statement, 0) &&
-               flowie_control_database_column_int(statement, 1)
-           ? TURBO_EPROTO
-           : TURBO_OK;
-done:
+  if (status == FLOWIE_CONTROL_DB_OK) status = flowie_control_database_step(statement);
   (void)flowie_control_database_finalize(statement);
-  return rc;
+  return status == FLOWIE_CONTROL_DB_ROW || status == FLOWIE_CONTROL_DB_DONE;
+}
+
+static int flowie_control_schema_preflight(flowie_control_database_t *database) {
+  static const char version_probe[] =
+      "SELECT singleton FROM flowie_control_schema_version WHERE 1=0";
+  static const char *const legacy_probes[] = {
+      "SELECT singleton FROM flowie_control_meta WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_domain WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_user WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_credential WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_group WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_membership WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_role WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_user_role WHERE 1=0",
+      "SELECT request_id FROM flowie_control_audit WHERE 1=0",
+      "SELECT domain_id FROM flowie_control_policy_draft WHERE 1=0",
+      "SELECT namespace_name FROM flowie_control_published_bundle WHERE 1=0",
+      "SELECT namespace_name FROM flowie_control_published_rule WHERE 1=0",
+      "SELECT request_id FROM flowie_control_policy_publish_result WHERE 1=0",
+  };
+  if (!database) return TURBO_EINVAL;
+  if (flowie_control_schema_probe(database, version_probe)) return TURBO_OK;
+  for (size_t index = 0u; index < sizeof(legacy_probes) / sizeof(legacy_probes[0]); ++index) {
+    if (flowie_control_schema_probe(database, legacy_probes[index])) return TURBO_EPROTO;
+  }
+  return TURBO_OK;
 }
 
 static int flowie_control_schema_validate(flowie_control_database_t *database) {
@@ -254,8 +282,8 @@ static int flowie_control_schema_validate(flowie_control_database_t *database) {
       flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
       flowie_control_database_column_type(statement, 1) != FLOWIE_CONTROL_DB_TEXT ||
       flowie_control_database_column_int(statement, 0) != FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION ||
-      strcmp((const char *)flowie_control_database_column_text(statement, 1),
-             FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT) != 0 ||
+      !flowie_control_column_text_equal(statement, 1,
+                                        FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT) ||
       flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE) {
     rc = TURBO_EPROTO;
     goto done;
@@ -271,16 +299,86 @@ static int flowie_control_open_database(const flowie_control_store_t *store,
   flowie_control_database_t *database = NULL;
   int status;
   if (out) *out = NULL;
-  if (!store || !store->database_path || !out) return TURBO_EINVAL;
-  status =
-      flowie_control_database_open_sqlite(store->database_path, store->busy_timeout_ms, &database);
-  if (status == FLOWIE_CONTROL_DB_OK)
-    status = flowie_control_database_exec(database, "PRAGMA foreign_keys=ON", NULL, NULL, NULL);
+  if (!store || !store->database_driver || !out) return TURBO_EINVAL;
+  status = flowie_control_database_open(&store->database_config, &database);
   if (status != FLOWIE_CONTROL_DB_OK) {
     if (database) (void)flowie_control_database_close(database);
     return flowie_control_database_status(status);
   }
   *out = database;
+  return TURBO_OK;
+}
+
+static void flowie_control_store_database_config_destroy(flowie_control_store_t *store) {
+  if (!store) return;
+  for (uint32_t index = 0u; index < store->database_config.option_count; ++index) {
+    if (store->database_option_keywords) tstr_freep(&store->database_option_keywords[index]);
+    if (store->database_option_values && store->database_option_values[index]) {
+      /* Resolved TurboDB options may contain credentials and must not survive release. */
+      volatile unsigned char *cursor =
+          (volatile unsigned char *)store->database_option_values[index];
+      size_t remaining = tstr_len(store->database_option_values[index]);
+      while (remaining-- != 0u)
+        *cursor++ = 0u;
+      tstr_freep(&store->database_option_values[index]);
+    }
+  }
+  free(store->database_option_keywords);
+  free(store->database_option_values);
+  free(store->database_options);
+  tstr_freep(&store->database_driver);
+  memset(&store->database_config, 0, sizeof(store->database_config));
+}
+
+static int flowie_control_store_database_config_copy(flowie_control_store_t *store,
+                                                     const orm_config_t *source) {
+  if (!store || !source || source->struct_size != sizeof(*source) ||
+      source->abi_version != ORM_C_ABI_VERSION || !source->driver.data ||
+      source->driver.len == 0u || (source->option_count != 0u && !source->options))
+    return TURBO_EINVAL;
+  orm_config(&store->database_config);
+  store->database_config.option_count = source->option_count;
+  store->database_config.max_parameters = source->max_parameters;
+  store->database_config.max_columns = source->max_columns;
+  store->database_config.max_predicates = source->max_predicates;
+  store->database_config.max_assignments = source->max_assignments;
+  store->database_config.max_query_bytes = source->max_query_bytes;
+  store->database_config.max_parameter_bytes = source->max_parameter_bytes;
+  store->database_config.max_result_rows = source->max_result_rows;
+  store->database_config.max_result_bytes = source->max_result_bytes;
+  store->database_driver = tstr_new_len(source->driver.data, source->driver.len);
+  if (!store->database_driver) return TURBO_ENOMEM;
+  store->database_config.driver =
+      (orm_string_view_t){store->database_driver, tstr_len(store->database_driver)};
+  if (source->option_count == 0u) {
+    store->database_config.options = NULL;
+    return TURBO_OK;
+  }
+  store->database_options =
+      (orm_option_t *)calloc(source->option_count, sizeof(*store->database_options));
+  store->database_option_keywords =
+      (tstr *)calloc(source->option_count, sizeof(*store->database_option_keywords));
+  store->database_option_values =
+      (tstr *)calloc(source->option_count, sizeof(*store->database_option_values));
+  if (!store->database_options || !store->database_option_keywords ||
+      !store->database_option_values)
+    return TURBO_ENOMEM;
+  for (uint32_t index = 0u; index < source->option_count; ++index) {
+    const orm_option_t *input = &source->options[index];
+    if (!input->keyword.data || input->keyword.len == 0u ||
+        (!input->value.data && input->value.len != 0u))
+      return TURBO_EINVAL;
+    store->database_option_keywords[index] = tstr_new_len(input->keyword.data, input->keyword.len);
+    store->database_option_values[index] =
+        tstr_new_len(input->value.data ? input->value.data : "", input->value.len);
+    if (!store->database_option_keywords[index] || !store->database_option_values[index])
+      return TURBO_ENOMEM;
+    store->database_options[index].keyword = (orm_string_view_t){
+        store->database_option_keywords[index], tstr_len(store->database_option_keywords[index])};
+    store->database_options[index].value = (orm_string_view_t){
+        store->database_option_values[index], tstr_len(store->database_option_values[index])};
+  }
+  store->database_config.options = store->database_options;
   return TURBO_OK;
 }
 
@@ -368,11 +466,6 @@ static int flowie_control_replay(flowie_control_database_t *database, const char
                                  const char *target_id, const char *target_detail,
                                  flowie_control_command_result_t *result, int *found_out) {
   flowie_control_statement_t *statement = NULL;
-  const unsigned char *stored_actor;
-  const unsigned char *stored_operation;
-  const unsigned char *stored_root;
-  const unsigned char *stored_target;
-  const unsigned char *stored_detail;
   int status;
   int rc = TURBO_EIO;
   if (!database || !request_id || !actor || !operation || !domain_id || !target_id || !result ||
@@ -403,17 +496,11 @@ static int flowie_control_replay(flowie_control_database_t *database, const char
     rc = status == FLOWIE_CONTROL_DB_ROW ? TURBO_EPROTO : flowie_control_database_status(status);
     goto done;
   }
-  stored_actor = flowie_control_database_column_text(statement, 0);
-  stored_operation = flowie_control_database_column_text(statement, 1);
-  stored_root = flowie_control_database_column_text(statement, 2);
-  stored_target = flowie_control_database_column_text(statement, 3);
-  stored_detail = flowie_control_database_column_text(statement, 4);
-  if (!stored_actor || !stored_operation || !stored_root || !stored_target || !stored_detail ||
-      strcmp((const char *)stored_actor, actor) != 0 ||
-      strcmp((const char *)stored_operation, operation) != 0 ||
-      strcmp((const char *)stored_root, domain_id) != 0 ||
-      strcmp((const char *)stored_target, target_id) != 0 ||
-      (target_detail && strcmp((const char *)stored_detail, target_detail) != 0)) {
+  if (!flowie_control_column_text_equal(statement, 0, actor) ||
+      !flowie_control_column_text_equal(statement, 1, operation) ||
+      !flowie_control_column_text_equal(statement, 2, domain_id) ||
+      !flowie_control_column_text_equal(statement, 3, target_id) ||
+      (target_detail && !flowie_control_column_text_equal(statement, 4, target_detail))) {
     rc = TURBO_EBUSY;
     goto done;
   }
@@ -1029,8 +1116,7 @@ static int flowie_control_policy_validate_database(flowie_control_database_t *da
                                                  (size_t)line_size, &document, &expanded, &denied);
     if (rc != TURBO_OK) goto done;
     if (flowie_control_database_column_int(statement, 0) != (int)document.subject_kind ||
-        strcmp((const char *)flowie_control_database_column_text(statement, 1), document.subject) !=
-            0) {
+        !flowie_control_column_text_equal(statement, 1, document.subject)) {
       rc = TURBO_EPROTO;
       goto done;
     }
@@ -1077,18 +1163,11 @@ int flowie_control_store_open(const flowie_control_store_config_t *config,
   int status;
   int rc;
   if (out) *out = NULL;
-  if (!config || config->size < sizeof(*config) || !out || !config->database_path ||
-      !config->database_path[0] || config->busy_timeout_ms < 0 ||
-      config->busy_timeout_ms > FLOWIE_CONTROL_BUSY_TIMEOUT_MAX_MS)
-    return TURBO_EINVAL;
+  if (!config || config->size < sizeof(*config) || !out || !config->database) return TURBO_EINVAL;
   store = (flowie_control_store_t *)calloc(1u, sizeof(*store));
   if (!store) return TURBO_ENOMEM;
-  store->database_path = tstr_dup(config->database_path);
-  store->busy_timeout_ms = config->busy_timeout_ms;
-  if (!store->database_path) {
-    rc = TURBO_ENOMEM;
-    goto fail;
-  }
+  rc = flowie_control_store_database_config_copy(store, config->database);
+  if (rc != TURBO_OK) goto fail;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) goto fail;
   rc = flowie_control_schema_preflight(database);
@@ -1118,7 +1197,7 @@ fail:
 
 void flowie_control_store_destroy(flowie_control_store_t *store) {
   if (!store) return;
-  tstr_freep(&store->database_path);
+  flowie_control_store_database_config_destroy(store);
   store->repository = (flowie_control_repository_t)FLOWIE_CONTROL_REPOSITORY_INIT;
   free(store);
 }
@@ -1149,7 +1228,7 @@ int flowie_control_store_domain_create(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1243,7 +1322,7 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1376,7 +1455,7 @@ int flowie_control_store_group_delete(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1480,7 +1559,7 @@ int flowie_control_store_user_create(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1583,7 +1662,7 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1837,7 +1916,7 @@ static int flowie_control_store_credential_issue(
   if (rc != TURBO_OK) goto done;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) goto done;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -1989,7 +2068,7 @@ int flowie_control_store_credential_revoke(
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -2484,7 +2563,7 @@ int flowie_control_store_membership_add(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -2601,7 +2680,7 @@ int flowie_control_store_membership_remove(
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -2712,7 +2791,7 @@ int flowie_control_store_role_create(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -2814,7 +2893,7 @@ int flowie_control_store_role_disable(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -2924,7 +3003,7 @@ int flowie_control_store_user_role_add(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -3040,7 +3119,7 @@ int flowie_control_store_user_role_remove(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -3161,7 +3240,7 @@ int flowie_control_store_policy_subject_rule_put(
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -3420,7 +3499,6 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
   if (rc != TURBO_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     flowie_control_policy_subject_rule_view_t *view;
-    const unsigned char *subject;
     const unsigned char *text;
     int64_t ordinal;
     int64_t revision;
@@ -3439,7 +3517,6 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
         flowie_control_database_column_type(statement, 5) != FLOWIE_CONTROL_DB_INTEGER ||
         (ordinal = flowie_control_database_column_int64(statement, 0)) < 0 ||
         ordinal >= FLOWIE_SECURITY_MAX_RULES ||
-        !(subject = flowie_control_database_column_text(statement, 2)) ||
         !(text = flowie_control_database_column_text(statement, 3)) ||
         (text_size = flowie_control_database_column_bytes(statement, 3)) <= 0 ||
         (revision = flowie_control_database_column_int64(statement, 4)) <= 0 ||
@@ -3451,7 +3528,7 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
     view = &items[count];
     rc = flowie_control_acl_parse((const char *)text, (size_t)text_size, &view->document);
     if (rc != TURBO_OK || stored_kind != (int)view->document.subject_kind ||
-        strcmp((const char *)subject, view->document.subject) != 0) {
+        !flowie_control_column_text_equal(statement, 2, view->document.subject)) {
       rc = TURBO_EPROTO;
       goto done;
     }
@@ -3501,7 +3578,7 @@ int flowie_control_store_policy_subject_rule_delete(
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
@@ -3840,7 +3917,7 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     return TURBO_EINVAL;
   rc = flowie_control_open_database(store, &database);
   if (rc != TURBO_OK) return rc;
-  status = flowie_control_database_exec(database, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;

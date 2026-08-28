@@ -3,6 +3,7 @@
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_service_credential_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "platform.h"
 #include "CoroNet/turbo_coro_context.h"
@@ -332,6 +333,7 @@ static void control_test_tls_material_close(control_tls_material_t *material) {
 static int control_test_seed_store(const char *database_path, char *secret_base64,
                                    size_t secret_base64_capacity) {
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_store_t *store = NULL;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
@@ -351,7 +353,8 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
   int rc;
   if (!secret_base64 || secret_base64_capacity == 0u) return TURBO_EINVAL;
   secret_base64[0] = '\0';
-  store_config.database_path = database_path;
+  check_equal(flowie_control_test_turbodb_init(&test_database, database_path), 0);
+  store_config.database = &test_database.config;
   rc = flowie_control_store_open(&store_config, &store);
   if (rc != TURBO_OK) return rc;
   rc =
@@ -554,8 +557,12 @@ static int control_test_write_config(const char *path, const char *database_path
                   "    key_file: '%s'\n"
                   "    client_auth: none\n"
                   "storage:\n"
-                  "  sqlite:\n"
-                  "    path: '%s'\n"
+                  "  turbodb:\n"
+                  "    driver: sqlite\n"
+                  "    options:\n"
+                  "      filename: '%s'\n"
+                  "      open_mode: read_write_create\n"
+                  "      busy_timeout_ms: '1000'\n"
                   "management:\n"
                   "  rpc_path: /v2/control/rpc\n"
                   "  session:\n"
@@ -992,7 +999,7 @@ static int control_test_run_network_gate(void) {
   if (control_test_reserve_port(&port) != 0) goto cleanup;
   failure_stage = "generate TLS material";
   if (control_test_tls_material_open(&material) != 0) goto cleanup;
-  failure_stage = "seed SQLite store";
+  failure_stage = "seed TurboDB store";
   if (control_test_seed_store(database_path, secret_base64, sizeof(secret_base64)) != TURBO_OK)
     goto cleanup;
   failure_stage = "write controller configuration";

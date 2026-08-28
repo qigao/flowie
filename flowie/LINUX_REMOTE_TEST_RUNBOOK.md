@@ -705,14 +705,7 @@ export LD_LIBRARY_PATH="$TR/lib:$FM/lib:$TH/lib:$TD/lib:$TN/lib:$TP/lib:$TU/lib$
 ```bash
 cd "$FLOWIE_SRC"
 FLOWIE_RELEASE_BUILD="$FLOWIE_SRC/build/linux-eu-release"
-FLOWIE_CONTROL_PGSQL_ARGS=()
-if [[ "${FLOWIE_RUN_CONTROL_PGSQL_LIVE:-0}" == "1" ]]; then
-  test -n "${TURBO_FLOW_PGSQL_TEST_CONNINFO:-}"
-  FLOWIE_CONTROL_PGSQL_ARGS+=(
-    -DFLOWIE_CONTROL_PGSQL=ON
-    -DTURBO_FLOW_PGSQL_LIVE_TESTS=ON
-  )
-fi
+: "${FLOWIE_TURBODB_TEST_CONNINFO:?set a dedicated PostgreSQL conninfo from the EU secret store}"
 
 env \
   TURBOUTILS_ROOT="$TU" TURBOPARSER_ROOT="$TP" TURBONET_ROOT="$TN" \
@@ -725,6 +718,7 @@ cmake -S "$FLOWIE_SRC" -B "$FLOWIE_RELEASE_BUILD" -G Ninja \
   -DVCPKG_MANIFEST_MODE=ON \
   -DCMAKE_INSTALL_PREFIX="$SDK_ROOT/flowie/release" \
   -DFLOWIE_MQTT_RELEASE_GATE=ON \
+  -DFLOWIE_TURBODB_LIVE_TESTS=ON \
   -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF \
   -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=ON \
   -DFLOWIE_MQTT_FIXED_CA_FILE="$CERT_DIR/ca.pem" \
@@ -737,7 +731,6 @@ cmake -S "$FLOWIE_SRC" -B "$FLOWIE_RELEASE_BUILD" -G Ninja \
   -DFLOWIE_MQTT_SOAK_TESTS=ON \
   -DFLOWIE_MQTT_FUZZ_TARGETS=OFF \
   -DFLOWIE_RELEASE_REVISION="$SOURCE_REVISION" \
-  "${FLOWIE_CONTROL_PGSQL_ARGS[@]}" \
   -DENABLE_TESTS=ON -DBUILD_TESTING=ON
 
 cmake --build "$FLOWIE_RELEASE_BUILD" --parallel "$(nproc)" \
@@ -756,14 +749,8 @@ ctest --test-dir "$FLOWIE_RELEASE_BUILD" -N \
   2>&1 | tee "$ARTIFACT_ROOT/flowie-linux-tests.txt"
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
-  -R '^(test_flowie_protocol_repository|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
+  -R '^(test_flowie_protocol_repository|test_flowie_protocol_repository_turbodb_live|test_flowie_control_turbodb_live|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
   --output-junit "$ARTIFACT_ROOT/persistence.xml"
-
-if [[ "${FLOWIE_RUN_CONTROL_PGSQL_LIVE:-0}" == "1" ]]; then
-  ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
-    -R '^(test_flowie_protocol_repository_pgsql_live|test_flowie_control_pgsql_database(_live)?)$' \
-    --output-junit "$ARTIFACT_ROOT/control-postgresql.xml"
-fi
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
   -L 'mqtt-fixed-interop' \
