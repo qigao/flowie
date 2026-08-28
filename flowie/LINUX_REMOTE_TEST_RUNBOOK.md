@@ -85,6 +85,7 @@ tar.exe -a -cf $bundle `
     --exclude='turbonet/turbonet/vcpkg_installed' `
     --exclude='turbonet/turbodb/build' `
     --exclude='turbonet/turbodb/vcpkg_installed' `
+    --exclude='TurboHTTP/.tmp' `
     --exclude='TurboHTTP/build' `
     --exclude='TurboHTTP/vcpkg_installed' `
     --exclude='turbonet/flowmq/build' `
@@ -636,6 +637,16 @@ configure_build_test_install() {
   install_dir="$3"
   shift 3
   build_dir="$source_dir/build/linux-eu-release"
+  package_args=()
+  if [[ "$package" == "turboutils" ]]; then
+    package_args+=(-DTURBO_ENABLE_EPOLL_READINESS=ON)
+  elif [[ "$package" == "turbonet" ]]; then
+    package_args+=(-DTURBONET_ENABLE_LSQUIC=OFF)
+  elif [[ "$package" == "turbodb" ]]; then
+    package_args+=(-DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON)
+  elif [[ "$package" == "turbohttp" ]]; then
+    package_args+=(-DBUILD_EXAMPLES=OFF)
+  fi
   vcpkg_args=(
     -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake
     -DVCPKG_INSTALLED_DIR="$source_dir/vcpkg_installed"
@@ -651,6 +662,7 @@ configure_build_test_install() {
   env "$@" cmake -S "$source_dir" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     "${vcpkg_args[@]}" \
+    "${package_args[@]}" \
     -DCMAKE_INSTALL_PREFIX="$install_dir" \
     -DENABLE_TESTS=ON -DBUILD_TESTING=ON
   env "$@" cmake --build "$build_dir" --parallel "$(nproc)"
@@ -693,6 +705,14 @@ export LD_LIBRARY_PATH="$TR/lib:$FM/lib:$TH/lib:$TD/lib:$TN/lib:$TP/lib:$TU/lib$
 ```bash
 cd "$FLOWIE_SRC"
 FLOWIE_RELEASE_BUILD="$FLOWIE_SRC/build/linux-eu-release"
+FLOWIE_CONTROL_PGSQL_ARGS=()
+if [[ "${FLOWIE_RUN_CONTROL_PGSQL_LIVE:-0}" == "1" ]]; then
+  test -n "${TURBO_FLOW_PGSQL_TEST_CONNINFO:-}"
+  FLOWIE_CONTROL_PGSQL_ARGS+=(
+    -DFLOWIE_CONTROL_PGSQL=ON
+    -DTURBO_FLOW_PGSQL_LIVE_TESTS=ON
+  )
+fi
 
 env \
   TURBOUTILS_ROOT="$TU" TURBOPARSER_ROOT="$TP" TURBONET_ROOT="$TN" \
@@ -717,6 +737,7 @@ cmake -S "$FLOWIE_SRC" -B "$FLOWIE_RELEASE_BUILD" -G Ninja \
   -DFLOWIE_MQTT_SOAK_TESTS=ON \
   -DFLOWIE_MQTT_FUZZ_TARGETS=OFF \
   -DFLOWIE_RELEASE_REVISION="$SOURCE_REVISION" \
+  "${FLOWIE_CONTROL_PGSQL_ARGS[@]}" \
   -DENABLE_TESTS=ON -DBUILD_TESTING=ON
 
 cmake --build "$FLOWIE_RELEASE_BUILD" --parallel "$(nproc)" \
@@ -737,6 +758,12 @@ ctest --test-dir "$FLOWIE_RELEASE_BUILD" -N \
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
   -R '^(test_flowie_protocol_repository|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
   --output-junit "$ARTIFACT_ROOT/persistence.xml"
+
+if [[ "${FLOWIE_RUN_CONTROL_PGSQL_LIVE:-0}" == "1" ]]; then
+  ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
+    -R '^(test_flowie_protocol_repository_pgsql_live|test_flowie_control_pgsql_database(_live)?)$' \
+    --output-junit "$ARTIFACT_ROOT/control-postgresql.xml"
+fi
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
   -L 'mqtt-fixed-interop' \

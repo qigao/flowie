@@ -29,10 +29,11 @@ void flowie_control_pgsql_command_destroy(flowie_control_pgsql_command_t *comman
  * differs returns TURBO_EBUSY; a matching identity with a different revision returns TURBO_EPROTO.
  * This is the recovery read used when the COMMIT response is unavailable.
  */
-int flowie_control_pgsql_command_commit_confirm(
-    flowie_control_pgsql_command_t *view, const char *request_id, const char *actor,
-    const char *operation, const char *domain_id, const char *target_id,
-    const char *target_detail, uint64_t revision, int *committed_out);
+int flowie_control_pgsql_command_commit_confirm(flowie_control_pgsql_command_t *view,
+                                                const char *request_id, const char *actor,
+                                                const char *operation, const char *domain_id,
+                                                const char *target_id, const char *target_detail,
+                                                uint64_t revision, int *committed_out);
 
 int flowie_control_pgsql_command_domain_create(
     flowie_control_pgsql_command_t *view, const flowie_control_domain_create_command_t *command,
@@ -68,9 +69,9 @@ int flowie_control_pgsql_command_credential_revoke(
 int flowie_control_pgsql_command_group_create(flowie_control_pgsql_command_t *view,
                                               const flowie_control_group_create_command_t *command,
                                               flowie_control_command_result_t *result);
-int flowie_control_pgsql_command_group_delete(
-    flowie_control_pgsql_command_t *view, const flowie_control_group_delete_command_t *command,
-    flowie_control_command_result_t *result);
+int flowie_control_pgsql_command_group_delete(flowie_control_pgsql_command_t *view,
+                                              const flowie_control_group_delete_command_t *command,
+                                              flowie_control_command_result_t *result);
 int flowie_control_pgsql_command_membership_add(
     flowie_control_pgsql_command_t *view, const flowie_control_membership_add_command_t *command,
     flowie_control_command_result_t *result);
@@ -89,12 +90,13 @@ int flowie_control_pgsql_command_user_role_add(
 int flowie_control_pgsql_command_user_role_remove(
     flowie_control_pgsql_command_t *view, const flowie_control_user_role_remove_command_t *command,
     flowie_control_command_result_t *result);
-int flowie_control_pgsql_command_policy_rule_put(
-    flowie_control_pgsql_command_t *view, const flowie_control_policy_rule_put_command_t *command,
-    flowie_control_command_result_t *result);
-int flowie_control_pgsql_command_policy_rule_delete(
+int flowie_control_pgsql_command_policy_subject_rule_put(
     flowie_control_pgsql_command_t *view,
-    const flowie_control_policy_rule_delete_command_t *command,
+    const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_pgsql_command_policy_subject_rule_delete(
+    flowie_control_pgsql_command_t *view,
+    const flowie_control_policy_subject_rule_delete_command_t *command,
     flowie_control_command_result_t *result);
 int flowie_control_pgsql_command_policy_publish(
     flowie_control_pgsql_command_t *view, const flowie_control_policy_publish_command_t *command,

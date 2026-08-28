@@ -1,7 +1,7 @@
-#include "flowie_control_runtime_internal.h"
 #include "flowie_control_bootstrap_internal.h"
 #include "flowie_control_dashboard_internal.h"
 #include "flowie_control_management_session_internal.h"
+#include "flowie_control_runtime_internal.h"
 #include "flowie_control_service_credential_internal.h"
 
 #include "platform.h"
@@ -43,8 +43,8 @@
 #define CONTROL_INTEGRATION_STATUS_RPC_BODY                                                        \
   "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\",\"id\":1}"
 #define CONTROL_INTEGRATION_USER_CREATE_RPC_BODY                                                   \
-  "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"                  \
-  "\"principal_id\":\"integration-rpc-device\",\"principal_type\":\"device\","              \
+  "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"                           \
+  "\"principal_id\":\"integration-rpc-device\",\"principal_type\":\"device\","                     \
   "\"request_id\":\"integration-rpc-device-create\"},\"id\":2}"
 #define CONTROL_INTEGRATION_AUTH_STATS_RPC_BODY                                                    \
   "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"params\":{},\"id\":2}"
@@ -341,7 +341,9 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
   flowie_control_generated_credential_t generated = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
   flowie_control_user_role_add_command_t assignment = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
-  flowie_control_policy_rule_put_command_t rule = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+  flowie_control_acl_document_t rule_document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_policy_subject_rule_put_command_t rule =
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
   flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
   flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
   flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
@@ -352,10 +354,10 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
   store_config.database_path = database_path;
   rc = flowie_control_store_open(&store_config, &store);
   if (rc != TURBO_OK) return rc;
-  rc = flowie_control_bootstrap_apply(
-      flowie_control_store_repository(store), &config.bootstrap,
-      FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
-      sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 1u);
+  rc =
+      flowie_control_bootstrap_apply(flowie_control_store_repository(store), &config.bootstrap,
+                                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
+                                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 1u);
   if (rc == TURBO_OK) rc = flowie_control_store_current_revision(store, &revision);
 
   root.domain_id = "root-a";
@@ -389,10 +391,9 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_credential_generate(store, &issue, &generated);
     revision = generated.revision;
   }
-  if (rc == TURBO_OK &&
-      tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
-                           sizeof(CONTROL_INTEGRATION_ADMIN_PASSWORD) - 1u, secret_base64,
-                           secret_base64_capacity) != 0)
+  if (rc == TURBO_OK && tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
+                                             sizeof(CONTROL_INTEGRATION_ADMIN_PASSWORD) - 1u,
+                                             secret_base64, secret_base64_capacity) != 0)
     rc = TURBO_ENOMEM;
   flowie_control_generated_credential_wipe(&generated);
   if (rc == TURBO_OK) {
@@ -431,17 +432,19 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     revision = result.revision;
   }
   if (rc == TURBO_OK) {
+    static const char rule_text[] = "user admin-a allow {\n"
+                                    "  read topic root-a/groups/operators/devices/+/heartbeat\n"
+                                    "}";
+    rc = flowie_control_acl_parse(rule_text, sizeof(rule_text) - 1u, &rule_document);
     rule.domain_id = "root-a";
     rule.ordinal = 10u;
-    rule.rule_line = "user admin-a allow {\n"
-                     "  read topic root-a/groups/operators/devices/+/heartbeat\n"
-                     "}";
+    rule.document = &rule_document;
     rule.actor = "bootstrap";
     rule.request_id = "integration-policy-rule";
     rule.expected_revision = revision;
     rule.occurred_at = 6u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    rc = flowie_control_store_policy_rule_put(store, &rule, &result);
+    if (rc == TURBO_OK) rc = flowie_control_store_policy_subject_rule_put(store, &rule, &result);
     revision = result.revision;
   }
   if (rc == TURBO_OK) {
@@ -611,8 +614,7 @@ static http_response_t *control_test_acl_request(const control_http_state_t *sta
                        "\"principal\":{\"id\":\"admin-a\",\"type\":\"operator\","
                        "\"domain\":\"root-a\",\"expires_at\":%llu,\"policy_version\":%llu,"
                        "\"roles\":[],\"groups\":[]}}",
-                       access, topic,
-                       (unsigned long long)CONTROL_INTEGRATION_POLICY_EXPIRES_AT,
+                       access, topic, (unsigned long long)CONTROL_INTEGRATION_POLICY_EXPIRES_AT,
                        (unsigned long long)policy_version);
   if (body_size <= 0 || (size_t)body_size >= sizeof(body)) return NULL;
   headers[0] = "Content-Type: application/json";
@@ -627,8 +629,7 @@ static http_response_t *control_test_acl_request(const control_http_state_t *sta
   tls.cert_file = cert_path;
   tls.key_file = key_path;
   if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
-  response = http_request(client, HTTP_POST, "/v4/acl/check", headers, 4, body,
-                          (size_t)body_size);
+  response = http_request(client, HTTP_POST, "/v4/acl/check", headers, 4, body, (size_t)body_size);
 done:
   memset(body, 0, sizeof(body));
   http_client_destroy(client);
@@ -637,10 +638,9 @@ done:
 
 static http_response_t *control_test_auth_request(const control_http_state_t *state,
                                                   const char *secret_base64) {
-  const char *headers[] = {"Content-Type: application/json",
-                           "Authorization: Bearer " CONTROL_INTEGRATION_SERVICE_TOKEN,
-                           "X-Flowie-Service-Id: integration-broker",
-                           "X-Flowie-Service-Domain: root-a"};
+  const char *headers[] = {
+      "Content-Type: application/json", "Authorization: Bearer " CONTROL_INTEGRATION_SERVICE_TOKEN,
+      "X-Flowie-Service-Id: integration-broker", "X-Flowie-Service-Domain: root-a"};
   http_client_t *client = NULL;
   http_response_t *response = NULL;
   turbo_tls_client_config_t tls = {0};
@@ -691,9 +691,10 @@ static int control_test_hidden_value(const char *html, const char *name, char *v
   return 1;
 }
 
-static int control_test_management_login(
-    const control_http_state_t *state, http_client_t *client, http_cookie_jar_t *jar,
-    char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u]) {
+static int
+control_test_management_login(const control_http_state_t *state, http_client_t *client,
+                              http_cookie_jar_t *jar,
+                              char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u]) {
   http_response_t *response = NULL;
   char origin[160];
   char form[512];
@@ -708,8 +709,7 @@ static int control_test_management_login(
     goto done;
   headers[0] = "Content-Type: application/x-www-form-urlencoded";
   headers[1] = origin;
-  response = http_request(client, HTTP_POST, "/v2/control/login", headers, 2, form,
-                          strlen(form));
+  response = http_request(client, HTTP_POST, "/v2/control/login", headers, 2, form, strlen(form));
   token = http_cookie_jar_get(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE);
   if (response && response->status_code == 303 && response->error_code == HTTP_ERROR_NONE &&
       token &&
@@ -728,16 +728,15 @@ done:
 static http_response_t *control_test_dashboard_content(http_client_t *client) {
   const char *headers[] = {"HX-Request: true"};
   if (!client) return NULL;
-  return http_request(client, HTTP_GET, "/v2/control/dashboard/content?section=users", headers,
-                      1, NULL, 0u);
+  return http_request(client, HTTP_GET, "/v2/control/dashboard/content?section=users", headers, 1,
+                      NULL, 0u);
 }
 
 static http_response_t *control_test_dashboard_action(http_client_t *client, const char *form) {
-  const char *headers[] = {"Content-Type: application/x-www-form-urlencoded",
-                           "HX-Request: true"};
+  const char *headers[] = {"Content-Type: application/x-www-form-urlencoded", "HX-Request: true"};
   if (!client || !form) return NULL;
-  return http_request(client, HTTP_POST, "/v2/control/dashboard/action?section=users", headers,
-                      2, form, strlen(form));
+  return http_request(client, HTTP_POST, "/v2/control/dashboard/action?section=users", headers, 2,
+                      form, strlen(form));
 }
 
 static int control_test_management_workflow(control_http_state_t *state) {
@@ -770,17 +769,16 @@ static int control_test_management_workflow(control_http_state_t *state) {
 
   if (!control_test_management_login(state, client, jar, first_token)) goto done;
   response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_STATUS_RPC_BODY);
-  state->session_rpc_ok =
-      response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
-      response->body && strstr(response->body, "\"result\"") != NULL;
+  state->session_rpc_ok = response && response->status_code == 200 &&
+                          response->error_code == HTTP_ERROR_NONE && response->body &&
+                          strstr(response->body, "\"result\"") != NULL;
   http_response_free(response);
   response = NULL;
   if (state->session_rpc_ok) {
-    response = http_post_json(client, "/v2/control/rpc",
-                              CONTROL_INTEGRATION_USER_CREATE_RPC_BODY);
-    state->session_rpc_ok =
-        response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
-        response->body && strstr(response->body, "\"result\"") != NULL;
+    response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_USER_CREATE_RPC_BODY);
+    state->session_rpc_ok = response && response->status_code == 200 &&
+                            response->error_code == HTTP_ERROR_NONE && response->body &&
+                            strstr(response->body, "\"result\"") != NULL;
     http_response_free(response);
     response = NULL;
   }
@@ -790,9 +788,9 @@ static int control_test_management_workflow(control_http_state_t *state) {
       response->body && strstr(response->body, "aria-current=\"page\">Users") != NULL &&
       strstr(response->body, "<section id=\"users\"") != NULL &&
       strstr(response->body, "<section id=\"groups\"") == NULL &&
-       control_test_hidden_value(response->body, "csrf", csrf, sizeof(csrf)) &&
-       strlen(csrf) == FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE &&
-       strstr(response->body, "expected_revision") == NULL;
+      control_test_hidden_value(response->body, "csrf", csrf, sizeof(csrf)) &&
+      strlen(csrf) == FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE &&
+      strstr(response->body, "expected_revision") == NULL;
   http_response_free(response);
   response = NULL;
   if (!state->session_rpc_ok || !state->dashboard_htmx_ok) goto done;
@@ -801,8 +799,8 @@ static int control_test_management_workflow(control_http_state_t *state) {
   invalid_csrf[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE] = '\0';
   form_size = snprintf(form, sizeof(form),
                        "csrf=%s&operation=user.create&principal_id=dashboard-denied&"
-                        "principal_type=operator&request_id=integration-dashboard-csrf",
-                        invalid_csrf);
+                       "principal_type=operator&request_id=integration-dashboard-csrf",
+                       invalid_csrf);
   if (form_size <= 0 || (size_t)form_size >= sizeof(form)) goto done;
   response = control_test_dashboard_action(client, form);
   state->dashboard_csrf_rejected =
@@ -813,14 +811,14 @@ static int control_test_management_workflow(control_http_state_t *state) {
 
   form_size = snprintf(form, sizeof(form),
                        "csrf=%s&operation=user.create&principal_id=dashboard-created&"
-                        "principal_type=operator&request_id=integration-dashboard-create",
-                        csrf);
+                       "principal_type=operator&request_id=integration-dashboard-create",
+                       csrf);
   if (form_size <= 0 || (size_t)form_size >= sizeof(form)) goto done;
   response = control_test_dashboard_action(client, form);
-  state->dashboard_write_ok =
-      response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
-       response->body && strstr(response->body, "dashboard-created") != NULL &&
-       strstr(response->body, "expected_revision") == NULL;
+  state->dashboard_write_ok = response && response->status_code == 200 &&
+                              response->error_code == HTTP_ERROR_NONE && response->body &&
+                              strstr(response->body, "dashboard-created") != NULL &&
+                              strstr(response->body, "expected_revision") == NULL;
   http_response_free(response);
   response = NULL;
   if (!state->dashboard_write_ok) goto done;
@@ -831,8 +829,7 @@ static int control_test_management_workflow(control_http_state_t *state) {
   logout_headers[0] = origin;
   logout_headers[1] = cookie_header;
   http_client_set_cookie_jar(client, NULL);
-  response =
-      http_request(client, HTTP_POST, "/v2/control/logout", logout_headers, 2, NULL, 0u);
+  response = http_request(client, HTTP_POST, "/v2/control/logout", logout_headers, 2, NULL, 0u);
   set_cookie = response ? http_response_get_header(response, "Set-Cookie") : NULL;
   state->dashboard_logout_ok =
       response && response->status_code == 303 && response->error_code == HTTP_ERROR_NONE &&
@@ -858,18 +855,18 @@ static int control_test_management_workflow(control_http_state_t *state) {
   http_response_free(response);
   response = NULL;
   form_size = snprintf(form, sizeof(form),
-                        "csrf=%s&operation=role.remove&principal_id=admin-a&role_id=%s&"
-                        "request_id=integration-dashboard-role-remove",
-                        csrf, FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN);
+                       "csrf=%s&operation=role.remove&principal_id=admin-a&role_id=%s&"
+                       "request_id=integration-dashboard-role-remove",
+                       csrf, FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN);
   if (form_size <= 0 || (size_t)form_size >= sizeof(form)) goto done;
   response = control_test_dashboard_action(client, form);
   if (!response || response->status_code != 200 || response->error_code != HTTP_ERROR_NONE)
     goto done;
   http_response_free(response);
   response = control_test_dashboard_content(client);
-  state->dashboard_role_revocation_ok =
-      response && response->status_code == 401 && response->error_code == HTTP_ERROR_NONE &&
-      response->body && strstr(response->body, "Authentication required") != NULL;
+  state->dashboard_role_revocation_ok = response && response->status_code == 401 &&
+                                        response->error_code == HTTP_ERROR_NONE && response->body &&
+                                        strstr(response->body, "Authentication required") != NULL;
   result = state->dashboard_role_revocation_ok;
 
 done:
@@ -926,28 +923,27 @@ static void control_test_http_task(coro_t *coroutine, void *arg) {
       response && response->status_code == 403 && response->error_code == HTTP_ERROR_NONE;
   http_response_free(response);
 
-  response = control_test_acl_request(state, NULL, NULL,
-                                      CONTROL_INTEGRATION_SERVICE_TOKEN, 1u, "connect", "root-a");
-  state->acl_decision_allowed =
-      response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
-      response->body && strstr(response->body, "\"version\":4") != NULL &&
-      strstr(response->body, "\"allowed\":true") != NULL &&
-      strstr(response->body, "\"reason\":\"allow_rule\"") != NULL &&
-      strstr(response->body, "\"policy_version\":1") != NULL &&
-      strstr(response->body, "\"principal\"") == NULL;
+  response = control_test_acl_request(state, NULL, NULL, CONTROL_INTEGRATION_SERVICE_TOKEN, 1u,
+                                      "connect", "root-a");
+  state->acl_decision_allowed = response && response->status_code == 200 &&
+                                response->error_code == HTTP_ERROR_NONE && response->body &&
+                                strstr(response->body, "\"version\":4") != NULL &&
+                                strstr(response->body, "\"allowed\":true") != NULL &&
+                                strstr(response->body, "\"reason\":\"allow_rule\"") != NULL &&
+                                strstr(response->body, "\"policy_version\":1") != NULL &&
+                                strstr(response->body, "\"principal\"") == NULL;
   http_response_free(response);
 
-  response = control_test_acl_request(
-      state, NULL, NULL, CONTROL_INTEGRATION_SERVICE_TOKEN, 1u, "read",
-      "root-a/groups/operators/devices/+/heartbeat");
+  response = control_test_acl_request(state, NULL, NULL, CONTROL_INTEGRATION_SERVICE_TOKEN, 1u,
+                                      "read", "root-a/groups/operators/devices/+/heartbeat");
   state->acl_subscription_filter_allowed =
       response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
       response->body && strstr(response->body, "\"allowed\":true") != NULL &&
       strstr(response->body, "\"reason\":\"allow_rule\"") != NULL;
   http_response_free(response);
 
-  response = control_test_acl_request(state, NULL, NULL,
-                                      CONTROL_INTEGRATION_SERVICE_TOKEN, 2u, "connect", "root-a");
+  response = control_test_acl_request(state, NULL, NULL, CONTROL_INTEGRATION_SERVICE_TOKEN, 2u,
+                                      "connect", "root-a");
   state->acl_version_mismatch_denied =
       response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
       response->body && strstr(response->body, "\"allowed\":false") != NULL &&
@@ -1027,15 +1023,13 @@ static int control_test_run_network_gate(void) {
   if (coro_context_spawn(context, control_test_http_task, &http_state) != TURBO_OK) goto cleanup;
   failure_stage = "complete HTTPS ACL requests";
   coro_context_run(context, TURBO_RUN_DEFAULT);
-  if (http_state.ready && http_state.unauthenticated_rpc_forbidden &&
-      http_state.session_rpc_ok && http_state.dashboard_htmx_ok &&
-      http_state.dashboard_csrf_rejected && http_state.dashboard_write_ok &&
-      http_state.dashboard_logout_ok && http_state.dashboard_role_revocation_ok &&
-      http_state.local_auth_ok &&
+  if (http_state.ready && http_state.unauthenticated_rpc_forbidden && http_state.session_rpc_ok &&
+      http_state.dashboard_htmx_ok && http_state.dashboard_csrf_rejected &&
+      http_state.dashboard_write_ok && http_state.dashboard_logout_ok &&
+      http_state.dashboard_role_revocation_ok && http_state.local_auth_ok &&
       http_state.local_auth_bad_secret_forbidden && http_state.acl_decision_allowed &&
-      http_state.acl_subscription_filter_allowed &&
-      http_state.acl_version_mismatch_denied && http_state.acl_bad_token_forbidden &&
-      http_state.client_certificate_does_not_authenticate_rpc)
+      http_state.acl_subscription_filter_allowed && http_state.acl_version_mismatch_denied &&
+      http_state.acl_bad_token_forbidden && http_state.client_certificate_does_not_authenticate_rpc)
     rc = TURBO_OK;
 
 cleanup:
@@ -1047,14 +1041,12 @@ cleanup:
                   "local-auth=%d local-auth-bad=%d "
                   "acl=%d acl-filter=%d acl-miss=%d acl-token=%d client-cert-rpc=%d\n",
                   failure_stage, http_state.ready, http_state.unauthenticated_rpc_forbidden,
-                  http_state.session_rpc_ok,
-                  http_state.dashboard_htmx_ok, http_state.dashboard_csrf_rejected,
-                  http_state.dashboard_write_ok, http_state.dashboard_logout_ok,
-                  http_state.dashboard_role_revocation_ok,
+                  http_state.session_rpc_ok, http_state.dashboard_htmx_ok,
+                  http_state.dashboard_csrf_rejected, http_state.dashboard_write_ok,
+                  http_state.dashboard_logout_ok, http_state.dashboard_role_revocation_ok,
                   http_state.local_auth_ok, http_state.local_auth_bad_secret_forbidden,
                   http_state.acl_decision_allowed, http_state.acl_subscription_filter_allowed,
-                  http_state.acl_version_mismatch_denied,
-                  http_state.acl_bad_token_forbidden,
+                  http_state.acl_version_mismatch_denied, http_state.acl_bad_token_forbidden,
                   http_state.client_certificate_does_not_authenticate_rpc);
   }
   if (context) coro_context_destroy(context);

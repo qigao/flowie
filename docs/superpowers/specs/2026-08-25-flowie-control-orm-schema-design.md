@@ -99,8 +99,8 @@ redesigning it. Existing table contents and invariants are preserved.
 | `membership` | user-to-group relation | unique user/group pair; both sides must exist |
 | `user_role` | user-to-role relation | unique user/role pair; both sides must exist |
 | `policy_draft` | current editable policy state | domain-scoped revision |
-| `acl_rule` | ordered draft/published ACL rule | stable domain/version/order identity |
-| `acl_bundle` | published ACL metadata | immutable published version |
+| `published_rule` | ordered draft/published ACL rule | stable domain/version/order identity |
+| `published_bundle` | published ACL metadata | immutable published version |
 | `policy_publish_result` | idempotent publish outcome | unique request identity |
 | `audit` | append-only management record | written in the same transaction as its mutation |
 

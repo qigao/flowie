@@ -578,9 +578,10 @@ int flowie_control_dashboard_process_form_result(
                                                  "request_id"};
   static const char *const credential_keys[] = {"csrf", "operation", "principal_id",
                                                  "request_id"};
-  static const char *const rule_keys[] = {"csrf", "operation", "ordinal", "rule_line",
+  static const char *const rule_keys[] = {"csrf", "operation", "ordinal", "rule_document",
                                           "request_id"};
-  static const char *const rule_delete_keys[] = {"csrf", "operation", "ordinal", "request_id"};
+  static const char *const rule_delete_keys[] = {"csrf", "operation", "subject_kind",
+                                                 "subject_id", "request_id"};
   static const char *const publish_keys[] = {"csrf", "operation", "request_id", "expires_at"};
   flowie_control_dashboard_form_t form;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
@@ -857,8 +858,11 @@ int flowie_control_dashboard_process_form_result(
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_role_remove(dashboard->service, caller, &command, &result);
-  } else if (strcmp(operation, "policy.rule.put") == 0) {
-    flowie_control_policy_rule_put_command_t command = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+  } else if (strcmp(operation, "policy.subject_rule.put") == 0) {
+    flowie_control_policy_subject_rule_put_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
+    flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    const char *rule_document;
     uint64_t ordinal = 0u;
     if (!flowie_control_dashboard_form_exact(&form, rule_keys,
                                              sizeof(rule_keys) / sizeof(rule_keys[0])) ||
@@ -868,32 +872,47 @@ int flowie_control_dashboard_process_form_result(
       rc = TURBO_EPROTO;
       goto done;
     }
-    command.domain_id = caller->domain_id;
-    command.ordinal = (uint32_t)ordinal;
-    command.rule_line = flowie_control_dashboard_form_get(&form, "rule_line");
-    command.actor = caller->actor;
-    command.request_id = request_id;
-    command.occurred_at = occurred_at;
-    rc = flowie_control_management_policy_rule_put(dashboard->service, caller, &command, &result);
-  } else if (strcmp(operation, "policy.rule.delete") == 0) {
-    flowie_control_policy_rule_delete_command_t command =
-        FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT;
-    uint64_t ordinal = 0u;
-    if (!flowie_control_dashboard_form_exact(
-            &form, rule_delete_keys, sizeof(rule_delete_keys) / sizeof(rule_delete_keys[0])) ||
-        flowie_control_dashboard_u64(flowie_control_dashboard_form_get(&form, "ordinal"), 1,
-                                     &ordinal) != TURBO_OK ||
-        ordinal >= FLOWIE_SECURITY_MAX_RULES) {
+    rule_document = flowie_control_dashboard_form_get(&form, "rule_document");
+    if (!rule_document ||
+        flowie_control_acl_parse(rule_document, strlen(rule_document), &document) != TURBO_OK) {
       rc = TURBO_EPROTO;
       goto done;
     }
     command.domain_id = caller->domain_id;
     command.ordinal = (uint32_t)ordinal;
+    command.document = &document;
     command.actor = caller->actor;
     command.request_id = request_id;
     command.occurred_at = occurred_at;
-    rc =
-        flowie_control_management_policy_rule_delete(dashboard->service, caller, &command, &result);
+    rc = flowie_control_management_policy_subject_rule_put(dashboard->service, caller, &command,
+                                                            &result);
+  } else if (strcmp(operation, "policy.subject_rule.delete") == 0) {
+    flowie_control_policy_subject_rule_delete_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
+    const char *subject_kind;
+    if (!flowie_control_dashboard_form_exact(
+            &form, rule_delete_keys, sizeof(rule_delete_keys) / sizeof(rule_delete_keys[0]))) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    subject_kind = flowie_control_dashboard_form_get(&form, "subject_kind");
+    if (subject_kind && strcmp(subject_kind, "user") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    else if (subject_kind && strcmp(subject_kind, "role") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_ROLE;
+    else if (subject_kind && strcmp(subject_kind, "group") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_GROUP;
+    else {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    command.domain_id = caller->domain_id;
+    command.subject_id = flowie_control_dashboard_form_get(&form, "subject_id");
+    command.actor = caller->actor;
+    command.request_id = request_id;
+    command.occurred_at = occurred_at;
+    rc = flowie_control_management_policy_subject_rule_delete(dashboard->service, caller, &command,
+                                                               &result);
   } else if (strcmp(operation, "policy.publish") == 0) {
     flowie_control_policy_publish_command_t command = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_policy_publish_result_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;

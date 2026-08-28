@@ -206,19 +206,6 @@ static int pgsql_role_list(void *ctx, const char *domain_id, const char *after_r
                                               count_out, has_more_out);
 }
 
-static int pgsql_policy_rule_put(void *ctx, const flowie_control_policy_rule_put_command_t *command,
-                                 flowie_control_command_result_t *result) {
-  return flowie_control_pgsql_command_policy_rule_put(flowie_control_pgsql_provider(ctx)->command,
-                                                      command, result);
-}
-
-static int pgsql_policy_rule_delete(void *ctx,
-                                    const flowie_control_policy_rule_delete_command_t *command,
-                                    flowie_control_command_result_t *result) {
-  return flowie_control_pgsql_command_policy_rule_delete(
-      flowie_control_pgsql_provider(ctx)->command, command, result);
-}
-
 static int pgsql_policy_validate(void *ctx, const char *domain_id,
                                  flowie_control_policy_validation_t *out) {
   return flowie_control_pgsql_query_policy_validate(flowie_control_pgsql_provider(ctx)->query,
@@ -229,14 +216,6 @@ static int pgsql_policy_publish(void *ctx, const flowie_control_policy_publish_c
                                 flowie_control_policy_publish_result_t *result) {
   return flowie_control_pgsql_command_policy_publish(flowie_control_pgsql_provider(ctx)->command,
                                                      command, result);
-}
-
-static int pgsql_policy_rule_list(void *ctx, const char *domain_id, uint32_t after_ordinal,
-                                  int has_after, flowie_control_policy_rule_view_t *items,
-                                  size_t item_capacity, size_t *count_out, int *has_more_out) {
-  return flowie_control_pgsql_query_policy_rule_list(flowie_control_pgsql_provider(ctx)->query,
-                                                     domain_id, after_ordinal, has_after, items,
-                                                     item_capacity, count_out, has_more_out);
 }
 
 static int pgsql_policy_status(void *ctx, const char *domain_id,
@@ -254,6 +233,37 @@ static int pgsql_policy_bundle_load(void *ctx, const char *domain_id, uint64_t r
 static void pgsql_policy_bundle_release(void *ctx, flowie_security_policy_bundle_t *bundle) {
   (void)ctx;
   flowie_control_pgsql_query_policy_bundle_release(bundle);
+}
+
+static int pgsql_policy_subject_rule_put(
+    void *ctx, const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result) {
+  return flowie_control_pgsql_command_policy_subject_rule_put(
+      flowie_control_pgsql_provider(ctx)->command, command, result);
+}
+
+static int pgsql_policy_subject_rule_delete(
+    void *ctx, const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result) {
+  return flowie_control_pgsql_command_policy_subject_rule_delete(
+      flowie_control_pgsql_provider(ctx)->command, command, result);
+}
+
+static int pgsql_policy_subject_rule_get(void *ctx, const char *domain_id,
+                                         flowie_security_subject_kind_t subject_kind,
+                                         const char *subject_id,
+                                         flowie_control_policy_subject_rule_view_t *out) {
+  return flowie_control_pgsql_query_policy_subject_rule_get(
+      flowie_control_pgsql_provider(ctx)->query, domain_id, subject_kind, subject_id, out);
+}
+
+static int pgsql_policy_subject_rule_list(
+    void *ctx, const char *domain_id, flowie_security_subject_kind_t subject_kind,
+    uint32_t after_ordinal, int has_after, flowie_control_policy_subject_rule_view_t *items,
+    size_t item_capacity, size_t *count_out, int *has_more_out) {
+  return flowie_control_pgsql_query_policy_subject_rule_list(
+      flowie_control_pgsql_provider(ctx)->query, domain_id, subject_kind, after_ordinal, has_after,
+      items, item_capacity, count_out, has_more_out);
 }
 
 static int pgsql_audit_list(void *ctx, const char *domain_id, uint64_t after_revision,
@@ -287,9 +297,15 @@ static const flowie_control_repository_role_ops_t PGSQL_ROLE_OPS = {
     pgsql_role_assignment_add, pgsql_role_assignment_remove,
     pgsql_effective_roles,     pgsql_role_list};
 static const flowie_control_repository_policy_ops_t PGSQL_POLICY_OPS = {
-    pgsql_policy_rule_put,    pgsql_policy_rule_delete,   pgsql_policy_validate,
-    pgsql_policy_publish,     pgsql_policy_rule_list,     pgsql_policy_status,
-    pgsql_policy_bundle_load, pgsql_policy_bundle_release};
+    .validate = pgsql_policy_validate,
+    .publish = pgsql_policy_publish,
+    .status = pgsql_policy_status,
+    .bundle_load = pgsql_policy_bundle_load,
+    .bundle_release = pgsql_policy_bundle_release,
+    .subject_rule_put = pgsql_policy_subject_rule_put,
+    .subject_rule_delete = pgsql_policy_subject_rule_delete,
+    .subject_rule_get = pgsql_policy_subject_rule_get,
+    .subject_rule_list = pgsql_policy_subject_rule_list};
 static const flowie_control_repository_audit_ops_t PGSQL_AUDIT_OPS = {
     pgsql_current_revision, pgsql_audit_list, pgsql_audit_count};
 

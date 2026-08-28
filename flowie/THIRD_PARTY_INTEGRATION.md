@@ -175,24 +175,46 @@ MQTT 登录时：
 - 当前全局 username 解析要求一个 username 只对应一个 enabled Domain；跨 Domain 重名会 fail
   closed，因此接入方应使用全局唯一 username，例如 `warehouse-device-202`。
 
-## 3. 创建 Group 与 ACL
+## 3. 创建 Role/Group 与 ACL
 
-Group 可以有多层父子关系，最大深度为 16。topic 中必须写出完整父链：
+ACL 可以归属于 Role、Group 或单个 User。Role 规则供 Domain 内所有有效拥有该 Role 的用户使用，
+Group 规则供有效 Group 成员使用，User 规则用于个体覆盖。topic 是受限 MQTT filter；其中的
+`groups`、`devices` 等 segment 只是业务资源名称，不引用 Control Group。
+
+例如，设备可以发布：
 
 ```text
-warehouse/groups/china/east/operators/devices/warehouse-device-202/event
+warehouse/telemetry/warehouse-device-202/event
 ```
 
-为用户保存一份 canonical ACL 文档：
+先创建业务 Role 并分配给用户（若已存在/已分配，则使用各查询接口确认状态，不要以新 request ID
+重复写入）：
+
+```json
+{"jsonrpc":"2.0","method":"control.role.create","params":{"role_id":"device-publisher","request_id":"device-publisher-create"},"id":"role-create-1"}
+```
+
+```json
+{"jsonrpc":"2.0","method":"control.role.assign","params":{"principal_id":"warehouse-device-202","role_id":"device-publisher","request_id":"warehouse-device-202-publisher-assign"},"id":"role-assign-1"}
+```
+
+再为业务 Role 保存一份结构化 ACL：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "control.policy.rule.put",
+  "method": "control.policy.subject_rule.put",
   "params": {
+    "subject_kind": "role",
+    "subject_id": "device-publisher",
     "ordinal": 10,
-    "rule_line": "user warehouse-device-202 allow {\n  write topic warehouse/groups/china/east/operators/devices/%u/{event,heartbeat}\n  read topic warehouse/groups/china/east/operators/devices/%c/command\n  deny readwrite topic warehouse/groups/china/east/operators/devices/%u/private\n}",
-    "request_id": "warehouse-device-202-acl-v1"
+    "connection": "allow",
+    "entries": [
+      {"effect": "allow", "access": "write", "topic": "warehouse/telemetry/%u/{event,heartbeat}"},
+      {"effect": "allow", "access": "read", "topic": "warehouse/commands/%c/+"},
+      {"effect": "deny", "access": "readwrite", "topic": "warehouse/telemetry/%u/private"}
+    ],
+    "request_id": "warehouse-device-publisher-acl-v1"
   },
   "id": "acl-put-1"
 }
@@ -213,10 +235,10 @@ warehouse/groups/china/east/operators/devices/warehouse-device-202/event
 }
 ```
 
-同一 subject 在同一 Domain 只能保存一份 ACL 文档。更新时替换该文档，删除时删除整份文档；只有
-成功 `publish` 后才改变 Broker 使用的 active policy。`read` 是 SUBSCRIBE，`write` 是 PUBLISH，
-`deny` 只拒绝匹配的操作，不表示拒绝 MQTT 连接。`%u` 匹配 MQTT username，`%c` 匹配 MQTT
-client ID。
+同一 `(subject type, subject ID)` 在同一 Domain 只能保存一份 ACL 文档；不同类型可以使用同名 ID。
+更新时替换该文档，删除时删除整份文档；只有成功 `publish` 后才改变 Broker 使用的 active policy。
+所有适用的 Role、Group、User 规则共同求值，任一匹配 deny 优先。`read` 是 SUBSCRIBE，`write` 是
+PUBLISH；`%u` 匹配 MQTT username，`%c` 匹配 MQTT client ID。
 
 完整 grammar、canonical 格式、wildcard 和容量限制见 [ACL_GRAMMAR.md](ACL_GRAMMAR.md)。
 

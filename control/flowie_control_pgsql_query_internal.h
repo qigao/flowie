@@ -21,29 +21,27 @@ int flowie_control_pgsql_query_create(flowie_control_pgsql_pool_t *pool,
 void flowie_control_pgsql_query_destroy(flowie_control_pgsql_query_t *query);
 
 int flowie_control_pgsql_query_domain_get(flowie_control_pgsql_query_t *query,
-                                              const char *domain_id,
-                                              flowie_control_domain_view_t *out);
+                                          const char *domain_id, flowie_control_domain_view_t *out);
 int flowie_control_pgsql_query_domain_list(flowie_control_pgsql_query_t *query,
-                                               const char *after_domain_id,
-                                               flowie_control_domain_view_t *items,
-                                               size_t item_capacity, size_t *count_out,
-                                               int *has_more_out);
-int flowie_control_pgsql_query_user_get(flowie_control_pgsql_query_t *query,
-                                        const char *domain_id, const char *principal_id,
-                                        flowie_control_user_view_t *out);
-int flowie_control_pgsql_query_user_list(flowie_control_pgsql_query_t *query,
-                                         const char *domain_id, const char *after_principal_id,
+                                           const char *after_domain_id,
+                                           flowie_control_domain_view_t *items,
+                                           size_t item_capacity, size_t *count_out,
+                                           int *has_more_out);
+int flowie_control_pgsql_query_user_get(flowie_control_pgsql_query_t *query, const char *domain_id,
+                                        const char *principal_id, flowie_control_user_view_t *out);
+int flowie_control_pgsql_query_user_list(flowie_control_pgsql_query_t *query, const char *domain_id,
+                                         const char *after_principal_id,
                                          flowie_control_user_view_t *items, size_t item_capacity,
                                          size_t *count_out, int *has_more_out);
 
 int flowie_control_pgsql_query_credential_verify(flowie_control_pgsql_query_t *query,
-                                                 const char *domain_id,
-                                                 const char *principal_id, const void *secret,
-                                                 size_t secret_size,
+                                                 const char *domain_id, const char *principal_id,
+                                                 const void *secret, size_t secret_size,
                                                  flowie_control_credential_verify_result_t *result);
-int flowie_control_pgsql_query_credential_resolve(
-    flowie_control_pgsql_query_t *query, const char *principal_id, const void *secret,
-    size_t secret_size, flowie_control_credential_resolution_t *result);
+int flowie_control_pgsql_query_credential_resolve(flowie_control_pgsql_query_t *query,
+                                                  const char *principal_id, const void *secret,
+                                                  size_t secret_size,
+                                                  flowie_control_credential_resolution_t *result);
 int flowie_control_pgsql_query_credential_state(flowie_control_pgsql_query_t *query,
                                                 const char *domain_id, const char *principal_id,
                                                 flowie_control_credential_verify_result_t *result);
@@ -67,26 +65,28 @@ int flowie_control_pgsql_query_group_list(flowie_control_pgsql_query_t *query,
 int flowie_control_pgsql_query_effective_roles(flowie_control_pgsql_query_t *query,
                                                const char *domain_id, const char *principal_id,
                                                flowie_control_effective_roles_view_t *out);
-int flowie_control_pgsql_query_role_list(flowie_control_pgsql_query_t *query,
-                                         const char *domain_id, const char *after_role_id,
+int flowie_control_pgsql_query_role_list(flowie_control_pgsql_query_t *query, const char *domain_id,
+                                         const char *after_role_id,
                                          flowie_control_role_view_t *items, size_t item_capacity,
                                          size_t *count_out, int *has_more_out);
 
 int flowie_control_pgsql_query_policy_validate(flowie_control_pgsql_query_t *query,
                                                const char *domain_id,
                                                flowie_control_policy_validation_t *out);
-int flowie_control_pgsql_query_policy_rule_list(flowie_control_pgsql_query_t *query,
-                                                const char *domain_id, uint32_t after_ordinal,
-                                                int has_after,
-                                                flowie_control_policy_rule_view_t *items,
-                                                size_t item_capacity, size_t *count_out,
-                                                int *has_more_out);
+int flowie_control_pgsql_query_policy_subject_rule_get(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out);
+int flowie_control_pgsql_query_policy_subject_rule_list(
+    flowie_control_pgsql_query_t *query, const char *domain_id,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out);
 int flowie_control_pgsql_query_policy_status(flowie_control_pgsql_query_t *query,
                                              const char *domain_id,
                                              flowie_control_policy_status_t *out);
 int flowie_control_pgsql_query_policy_bundle_load(flowie_control_pgsql_query_t *query,
-                                                  const char *domain_id,
-                                                  uint64_t required_version,
+                                                  const char *domain_id, uint64_t required_version,
                                                   flowie_security_policy_bundle_t *bundle_out);
 void flowie_control_pgsql_query_policy_bundle_release(flowie_security_policy_bundle_t *bundle);
 

@@ -490,7 +490,9 @@ spec("Flowie ACL dashboard") {
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
     flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
-    flowie_control_policy_rule_put_command_t rule = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+    flowie_control_acl_document_t policy_document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    flowie_control_policy_subject_rule_put_command_t rule =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     iris_app_t *app = iris_app_create();
 
@@ -537,15 +539,21 @@ spec("Flowie ACL dashboard") {
     check_equal(flowie_control_management_role_create(service, &caller, &role, &result), TURBO_OK);
     rule.domain_id = caller.domain_id;
     rule.ordinal = 10u;
-    rule.rule_line =
-        "user device-1 allow {\n"
-        "  readwrite topic root-a/groups/operators/operators-east/devices/%u/events\n"
-        "}";
+    check_equal(flowie_control_acl_parse("role publisher allow {\n"
+                                         "  readwrite topic root-a/telemetry/%u/events\n"
+                                         "}",
+                                         sizeof("role publisher allow {\n"
+                                                "  readwrite topic root-a/telemetry/%u/events\n"
+                                                "}") -
+                                             1u,
+                                         &policy_document),
+                TURBO_OK);
+    rule.document = &policy_document;
     rule.actor = caller.actor;
     rule.request_id = "request-rule";
     rule.expected_revision = 6u;
     rule.occurred_at = 2005u;
-    check_equal(flowie_control_management_policy_rule_put(service, &caller, &rule, &result),
+    check_equal(flowie_control_management_policy_subject_rule_put(service, &caller, &rule, &result),
                  TURBO_OK);
 
     check_equal(
@@ -558,7 +566,7 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "operation\" value=\"user.disable");
     check_contains(html, "operation\" value=\"group.member.add");
     check_contains(html, "operation\" value=\"role.assign");
-    check_contains(html, "operation\" value=\"policy.rule.delete");
+    check_contains(html, "operation\" value=\"policy.subject_rule.delete");
     check_contains(html, "hx-post=\"/v2/control/dashboard/action\"");
     check_contains(html, "hx-include=\"closest .command\"");
     check_contains(html, "hx-target=\"#dashboard\"");
@@ -577,12 +585,12 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "class=\"group-tree__node group-tree__node--depth-0\" role=\"treeitem\"");
     check_contains(html, "class=\"group-tree__node group-tree__node--depth-1\" role=\"treeitem\"");
     check_contains(html, "aria-label=\"Roles pagination\"");
-    check_contains(html, "aria-label=\"User ACL pagination\"");
+    check_contains(html, "aria-label=\"ACL pagination\"");
     check_contains(html, "aria-label=\"Audit pagination\"");
     check_contains(html, "aria-label=\"Users tools\"");
     check_contains(html, "aria-label=\"Groups tools\"");
     check_contains(html, "aria-label=\"Roles tools\"");
-    check_contains(html, "aria-label=\"User ACL tools\"");
+    check_contains(html, "aria-label=\"ACL tools\"");
     check_contains(html, "popovertarget=\"users-query\"");
     check_contains(html, "popovertarget=\"users-add\"");
     check_contains(html, "popovertarget=\"user-access-1\"");
@@ -612,12 +620,17 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "data-request-id");
     check_false(strstr(html, "Request ID") != NULL);
     check_contains(html, "data-acl-builder-host");
+    check_contains(html, "data-acl-subject-kind");
+    check_contains(html, "data-acl-subject=\"user\"");
+    check_contains(html, "data-acl-subject=\"role\"");
+    check_contains(html, "data-acl-subject=\"group\"");
     check_contains(html, "Topic permissions<textarea data-acl-entries");
     check_contains(html, "<span>Canonical document</span>");
     check_false(strstr(html, "data-acl-action") != NULL);
     check_contains(html, "<table class=\"acl-rule-table\"");
     check_contains(html, "<tr class=\"acl-rule-row\"><td class=\"acl-rule__ordinal\">10</td>");
-    check_contains(html, "<td class=\"acl-rule__subject\"><code>device-1</code></td>");
+    check_contains(html,
+                   "<td class=\"acl-rule__subject\"><small>Role</small><code>publisher</code></td>");
     check_contains(html, "<td class=\"acl-rule__decision\">Allow</td>");
     check_contains(html, "1 statements · 1 rules");
     check_contains(html, "<code>%u</code> username");
@@ -628,7 +641,7 @@ spec("Flowie ACL dashboard") {
     check_false(strstr(html, "role-edit-") != NULL);
     check_contains(html, "popovertarget=\"user-delete-1\"");
     check_contains(html, "popovertarget=\"acl-edit-1\"");
-    check_contains(html, "Edit user ACL");
+    check_contains(html, "Edit ACL");
     check_contains(html, "popovertarget=\"acl-delete-1\"");
     check_contains(html, "class=\"actions-column\">Actions");
     check_false(strstr(html, "<form") != NULL);
@@ -918,7 +931,7 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "operation\" value=\"user.create");
     check_contains(html, "operation\" value=\"group.create");
     check_contains(html, "operation\" value=\"role.create");
-    check_contains(html, "operation\" value=\"policy.rule.put");
+    check_contains(html, "operation\" value=\"policy.subject_rule.put");
     check_contains(html, "hx-post=\"/v2/control/dashboard/action\"");
     check_contains(html, "id=\"domain-scope\"");
     check_contains(html, "hx-trigger=\"change from:#domain-scope\"");
@@ -1268,7 +1281,8 @@ spec("Flowie ACL dashboard") {
     flowie_control_dashboard_t *dashboard = NULL;
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
-    flowie_control_policy_rule_view_t rule = FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT;
+    flowie_control_policy_subject_rule_view_t rule =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
     uint64_t revision = 0u;
     size_t count = 0u;
     int has_more = 0;
@@ -1342,15 +1356,16 @@ spec("Flowie ACL dashboard") {
                                                        strlen(body)),
                  TURBO_OK);
     (void)snprintf(body, sizeof(body),
-                    "csrf=%s&operation=policy.rule.put&ordinal=10&"
-                    "rule_line=user%%20device-1%%20allow&"
+                    "csrf=%s&operation=policy.subject_rule.put&ordinal=10&"
+                    "rule_document=user%%20device-1%%20allow&"
                     "request_id=request-rule-put",
                     DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
                                                        strlen(body)),
                  TURBO_OK);
     (void)snprintf(body, sizeof(body),
-                   "csrf=%s&operation=policy.rule.delete&ordinal=10&"
+                   "csrf=%s&operation=policy.subject_rule.delete&subject_kind=user&"
+                   "subject_id=device-1&"
                    "request_id=request-rule-delete",
                    DASHBOARD_CSRF);
     check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
@@ -1367,8 +1382,9 @@ spec("Flowie ACL dashboard") {
     check_equal(flowie_control_management_user_get(service, &caller, "device-1", &user), TURBO_OK);
     check_false(user.enabled);
     check_equal(user.revision, 13u);
-    check_equal(flowie_control_management_policy_rule_list(service, &caller, 0u, 0, &rule, 1u,
-                                                            &count, &has_more),
+    check_equal(flowie_control_management_policy_subject_rule_list(
+                    service, &caller, FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, &rule, 1u, &count,
+                    &has_more),
                  TURBO_OK);
     check_equal(count, 0u);
     check_false(has_more);

@@ -1,6 +1,8 @@
 #ifndef FLOWIE_CONTROL_PGSQL_DATABASE_INTERNAL_H
 #define FLOWIE_CONTROL_PGSQL_DATABASE_INTERNAL_H
 
+#include "orm.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -8,11 +10,8 @@
 extern "C" {
 #endif
 
-typedef struct pg_conn PGconn;
-typedef struct pg_result PGresult;
-
 #define FLOWIE_CONTROL_PGSQL_DATABASE_VERSION 1u
-#define FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION 3u
+#define FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION 5u
 #define FLOWIE_CONTROL_PGSQL_SCHEMA_NAME_MAX 63u
 #define FLOWIE_CONTROL_PGSQL_CONNINFO_MAX 4096u
 #define FLOWIE_CONTROL_PGSQL_TIMEOUT_MAX_MS 60000
@@ -21,6 +20,8 @@ typedef struct pg_result PGresult;
 
 typedef struct flowie_control_pgsql_database_s flowie_control_pgsql_database_t;
 typedef struct flowie_control_pgsql_pool_s flowie_control_pgsql_pool_t;
+typedef struct flowie_control_pgsql_connection_s flowie_control_pgsql_connection_t;
+typedef orm_result_t flowie_control_pgsql_result_t;
 
 typedef enum flowie_control_pgsql_schema_mode_e {
   FLOWIE_CONTROL_PGSQL_SCHEMA_VALIDATE = 0,
@@ -37,7 +38,7 @@ typedef struct flowie_control_pgsql_database_config_s {
   int connect_timeout_seconds;
   int statement_timeout_ms;
   int lock_timeout_ms;
-  /** Require an effective libpq sslmode of verify-full and an active TLS session. */
+  /** Require TurboDB to establish a verify-full TLS session. */
   int require_tls;
   flowie_control_pgsql_schema_mode_t schema_mode;
 } flowie_control_pgsql_database_config_t;
@@ -70,12 +71,12 @@ typedef struct flowie_control_pgsql_pool_config_s {
  * One exclusive pool lease.
  *
  * The fields are an internal ownership token and must not be copied or modified. A successful
- * acquire must reach exactly one release. The PGconn borrowed from the lease becomes invalid at
- * release, pool close, or pool destruction.
+ * acquire must reach exactly one release. The TurboDB connection borrowed from the lease becomes
+ * invalid at release, pool close, or pool destruction.
  */
 typedef struct flowie_control_pgsql_pool_lease_s {
   flowie_control_pgsql_pool_t *owner;
-  PGconn *connection;
+  flowie_control_pgsql_connection_t *connection;
   size_t slot;
   uint64_t generation;
 } flowie_control_pgsql_pool_lease_t;
@@ -100,7 +101,7 @@ typedef struct flowie_control_pgsql_pool_stats_s {
 /**
  * Open one startup/migration session.
  *
- * The object owns its libpq connection and copied configuration. It is not thread-safe and must
+ * The object owns its TurboDB connection and copied configuration. It is not thread-safe and must
  * not be used as the future request connection pool. `MIGRATE` takes a transaction-scoped advisory
  * lock and applies monotonic schema migrations; `VALIDATE` performs no DDL.
  */
@@ -113,7 +114,7 @@ void flowie_control_pgsql_database_destroy(flowie_control_pgsql_database_t *data
 uint32_t
 flowie_control_pgsql_database_schema_version(const flowie_control_pgsql_database_t *database);
 
-/** Map a five-byte PostgreSQL SQLSTATE to the repository error vocabulary. */
+/** Map a five-byte PostgreSQL SQLSTATE carried by TurboDB diagnostics. */
 int flowie_control_pgsql_sqlstate_status(const char *sqlstate);
 
 /**
@@ -124,13 +125,26 @@ int flowie_control_pgsql_sqlstate_status(const char *sqlstate);
  */
 int flowie_control_pgsql_public_conninfo_validate(const char *conninfo);
 
-/** Validate one libpq result status and map its SQLSTATE on failure. */
-int flowie_control_pgsql_result_status(PGresult *result, int expected_status);
+int flowie_control_pgsql_connection_execute(flowie_control_pgsql_connection_t *connection,
+                                            const char *sql, int parameter_count,
+                                            const char *const *values,
+                                            flowie_control_pgsql_result_t **result_out);
+int flowie_control_pgsql_connection_command(flowie_control_pgsql_connection_t *connection,
+                                            const char *sql);
+int flowie_control_pgsql_result_rows(const flowie_control_pgsql_result_t *result);
+int flowie_control_pgsql_result_columns(const flowie_control_pgsql_result_t *result);
+int flowie_control_pgsql_result_is_null(const flowie_control_pgsql_result_t *result, int row,
+                                        int column);
+const char *flowie_control_pgsql_result_value(const flowie_control_pgsql_result_t *result, int row,
+                                              int column);
+int flowie_control_pgsql_result_length(const flowie_control_pgsql_result_t *result, int row,
+                                       int column);
+void flowie_control_pgsql_result_destroy(flowie_control_pgsql_result_t *result);
 
 /**
  * Create a bounded MPMC connection pool.
  *
- * Every slot owns one independently validated libpq connection. `MIGRATE` is applied only by the
+ * Every slot owns one independently validated TurboDB connection. `MIGRATE` is applied only by the
  * first slot; the remaining slots validate that same schema. Creation is atomic: failure to open
  * any configured slot destroys the whole pool.
  */
@@ -148,7 +162,8 @@ int flowie_control_pgsql_pool_create(const flowie_control_pgsql_pool_config_t *c
 int flowie_control_pgsql_pool_acquire(flowie_control_pgsql_pool_t *pool,
                                       flowie_control_pgsql_pool_lease_t *lease);
 
-PGconn *flowie_control_pgsql_pool_lease_connection(const flowie_control_pgsql_pool_lease_t *lease);
+flowie_control_pgsql_connection_t *
+flowie_control_pgsql_pool_lease_connection(const flowie_control_pgsql_pool_lease_t *lease);
 
 /** Copy a lock-consistent bounded-resource snapshot into caller-owned storage. */
 int flowie_control_pgsql_pool_stats(flowie_control_pgsql_pool_t *pool,

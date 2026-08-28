@@ -74,6 +74,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbonet/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DTURBONET_ENABLE_LSQUIC=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -96,6 +97,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbodb/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
