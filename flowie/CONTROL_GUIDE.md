@@ -9,7 +9,7 @@ Auth 可选择本地 Repository verifier，
 后续用户、Group、Role、credential 与 ACL 只通过管理 RPC 修改。当前仍缺少连接/请求级限流、
 HA/migration 和完整安全发布 gate，因此不能据此宣称整个控制面已达到生产就绪。
 
-外部系统接入、认证、并发控制、错误码与 32 个方法的逐项契约见
+外部系统接入、认证、并发控制、错误码与 33 个方法的逐项契约见
 [Management JSON-RPC API](MANAGEMENT_RPC_API.md)。
 
 ## 构建与预检
@@ -371,7 +371,7 @@ Group 并显式管理目标域；业务 `security_admin` 永远不能跨 Domain�
 所选 Repository 中已存在、启用且至少拥有一个保留角色。空 Repository 必须使用上文
 一次性 bootstrap；不能通过直接编辑 TurboDB 底层数据绕过领域事务、revision 与审计不变量。
 
-Management RPC 当前注册 32 个方法，其中 `control.domain.list` 只允许登录在 `system` Root 且拥有
+Management RPC 当前注册 33 个方法，其中 `control.domain.list` 只允许登录在 `system` Root 且拥有
 `system_admin` 的 caller 调用。它以 Repository 的 Domain 记录作为唯一事实源，并提供
 `after`/`limit` keyset 分页；Domain 不是 Group，也不会出现在 effective Groups 中。
 

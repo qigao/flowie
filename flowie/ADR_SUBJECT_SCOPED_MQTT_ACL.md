@@ -6,9 +6,10 @@
 
 本文记录 Flowie Control ACL 当前的控制面语义；用户可见语法以
 [ACL_GRAMMAR.md](ACL_GRAMMAR.md) 为准。实现复用了既有 typed runtime rule 和 draft/publish 流程，
-但控制面存储和 Management RPC 已切换为 typed subject rule。数据库只接受全新的 v5 schema；旧规则、
-旧 schema 和旧 RPC 不迁移、不读取、不注册。published bundle C ABI 和 `/v4/acl/check` wire contract
-保持不变，因为它们是 Broker 运行时边界，不是旧控制面规则接口。
+但控制面存储和 Management RPC 已切换为 typed subject rule。当前数据库只接受 v6 schema；v6 保留
+v5 引入的 typed subject 契约，并把持久化的 64 位值统一为 `BIGINT`。包括 v5 在内的旧 schema、旧规则
+和旧 RPC 不迁移、不读取、不注册。published bundle C ABI 和 `/v4/acl/check` wire contract 保持不变，
+因为它们是 Broker 运行时边界，不是旧控制面规则接口。
 
 ## 背景
 
@@ -240,7 +241,7 @@ Broker request + principal snapshot ──> /v4/acl/check decision
 - 资源路径中的普通 segment 不再引用 Control Group。只有 `group <group-id>` subject 和 membership
   才引用 Group 事实。
 
-v5 draft 表保存 canonical text 以及在写入边界验证过的 subject 索引。published rule 包含编译后的
+当前 draft 表保存 canonical text 以及在写入边界验证过的 subject 索引。published rule 包含编译后的
 subject kind；索引只能从 canonical document 推导，必须可重建且不能成为第二事实源。
 
 ## 身份变更与生效边界
@@ -263,7 +264,7 @@ policy version：
 - 删除 `control.policy.rule.put/list/delete`，改为结构化的
   `control.policy.subject_rule.put/get/list/delete`；
 - draft 主键从 `(domain_id, ordinal)` 改为 `(domain_id, subject_kind, subject_id)`；
-- 只接受全新的 v5 schema；旧 schema 不迁移、不读取，启动时直接报 schema 不兼容；
+- 只接受全新的 v6 schema；包括 v5 在内的旧 schema 不迁移、不读取，启动时直接报 schema 不兼容；
 - `ordinal` 仅保留为 Domain 内唯一的稳定排序字段；revision、request ID、audit 和原子发布流程保留；
 
 详见 [ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md](ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md)。
@@ -311,17 +312,17 @@ command 边界已经足够，增加通用抽象只会产生无益间接层。
 
 ## 部署与回滚边界
 
-### 全新 v5 数据边界
+### 全新 v6 数据边界
 
-- v5 是不兼容 schema，不提供旧规则转换、导入、读取、双写或启动时自动升级。
+- v6 是不兼容 schema，不提供旧规则转换、导入、读取、双写或启动时自动升级。
 - 部署前如需保留旧环境，应在部署系统层面对旧数据库做独立备份；新版本不会消费该备份。
-- 新环境必须创建空的 v5 Repository，再通过 `control.policy.subject_rule.*` 提交 typed subject rules 并发布。
+- 新环境必须创建空的 v6 Repository，再通过 `control.policy.subject_rule.*` 提交 typed subject rules 并发布。
 - 所有 Control 写节点必须同时切换；不得让旧、新 binary 写同一个 Repository。
 
 ### 回滚
 
-- 应用 binary 可回滚，但 v5 Repository 不能交给旧 binary 继续使用。
-- 回滚必须切换到部署前的完整旧环境快照，或创建新的空 Repository；不允许把 v5 数据反向转换成旧规则。
+- 应用 binary 可回滚，但 v6 Repository 不能交给旧 binary 继续使用。
+- 回滚必须切换到部署前的完整旧环境快照，或创建新的空 Repository；不允许把 v6 数据反向转换成旧规则。
 - published policy version 不降级，不直接修改数据库，不以旧 RPC 或兼容 parser 作为恢复路径。
 
 ## 风险
@@ -353,7 +354,7 @@ command 边界已经足够，增加通用抽象只会产生无益间接层。
 7. Repository：SQLite 与 PostgreSQL 的 draft、reference、publish、exact version 和并发事务语义一致；
 8. Management/Dashboard：typed subject CRUD、分页、审计、权限矩阵和 canonical preview；
 9. HTTPS/endpoint：ACL v4 wire contract 不变，CONNECT/read/write allow/deny 与故障 fail closed；
-10. incompatibility：旧 schema 启动失败、旧 RPC method-not-found、v5 不被旧 binary 复用。
+10. incompatibility：旧 schema 启动失败、旧 RPC method-not-found、v6 不被旧 binary 复用。
 
 验证顺序为 parser/compiler 最小测试、Repository contract、ACL decision、真实 MQTT/TLS integration，最后
 执行完整 Control/Flowie 回归和有界性能测试。
