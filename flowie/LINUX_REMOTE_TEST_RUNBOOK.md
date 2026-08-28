@@ -2,8 +2,8 @@
 
 本文用于从 Windows 工作站打包当前工作树，将 TurboUtils、TurboParser、TurboNet、TurboDB、TurboHTTP、
 FlowMQ、TurboRaft 和 Flowie 上传到 `root@eu:/root/dev`，在隔离目录中构建八个仓库，从同一份源码构建 Flowie server Docker
-镜像，启动 run-scoped 固定 Mosquitto，并运行 Flowie MQTT release/nightly cases。远端已有 PostgreSQL、
-Redis 或 Nginx 属于外部基础设施，本 runbook 只读取其状态，不创建、重启或清理它们。
+镜像，启动 run-scoped 固定 Mosquitto 与 PostgreSQL，并运行 Flowie MQTT release/nightly cases。远端已有
+PostgreSQL、Redis 或 Nginx 属于外部基础设施，本 runbook 不修改、重启或清理它们。
 
 ## 1. 执行边界
 
@@ -15,8 +15,8 @@ Redis 或 Nginx 属于外部基础设施，本 runbook 只读取其状态，不�
 - 所有命令 fail fast。不要用发布必需用例的跳过、Disabled 或仅编译结果替代测试成功；
   可选 public broker smoke 默认 Disabled。
 - release 与 nightly 分开：release 使用 GCC；libFuzzer/nightly 使用 Clang 独立构建树。
-- PostgreSQL、Redis 属于可选外部 release evidence；固定 broker 属于本次 run 的证据。可选 public broker
-  smoke 只验证公网访问能力。
+- run-scoped PostgreSQL 与固定 broker 都属于本次 release 证据；PostgreSQL 数据只写入容器 tmpfs，容器端口
+  由 Docker 随机分配并只绑定 `127.0.0.1`。Redis 与 public broker 仍属于可选外部 evidence。
 - 当前 Flowie server transport 发布基线仅为 TCP/TLS/WS/WSS，四者均须提供端到端证据。UDP 与 Unix
   Pipe 列为 TODO；CoroNet/runtime adapter 的低层通过不代表 server 已支持，也不计入本 run 的成功条件。
 - Flowie server 镜像必须由本次解包的八个源码目录构建；不得复用宿主机 SDK、预编译二进制或浮动镜像。
@@ -705,7 +705,6 @@ export LD_LIBRARY_PATH="$TR/lib:$FM/lib:$TH/lib:$TD/lib:$TN/lib:$TP/lib:$TU/lib$
 ```bash
 cd "$FLOWIE_SRC"
 FLOWIE_RELEASE_BUILD="$FLOWIE_SRC/build/linux-eu-release"
-: "${FLOWIE_TURBODB_TEST_CONNINFO:?set a dedicated PostgreSQL conninfo from the EU secret store}"
 
 env \
   TURBOUTILS_ROOT="$TU" TURBOPARSER_ROOT="$TP" TURBONET_ROOT="$TN" \
@@ -739,8 +738,9 @@ cmake --build "$FLOWIE_RELEASE_BUILD" --parallel "$(nproc)" \
 
 ## 8. 分层运行 cases
 
-以下顺序先验证外部依赖，再运行 Flowie release label、全量 CTest 和 release evidence。任何一步失败即
-停止，不继续用后续结果掩盖失败。
+以下顺序先验证 shell 合约与 run-scoped PostgreSQL live gate，再运行其余 persistence、Flowie release label、
+非重复全量 CTest 和 release evidence。任何一步失败即停止，不继续用后续结果掩盖失败。PostgreSQL runner
+使用随机密码、loopback 随机端口和 tmpfs 数据目录；退出时保留容器日志并删除容器，不接触已有数据库。
 
 ```bash
 cd "$FLOWIE_SRC"
@@ -748,8 +748,17 @@ cd "$FLOWIE_SRC"
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" -N \
   2>&1 | tee "$ARTIFACT_ROOT/flowie-linux-tests.txt"
 
+bash "$FLOWIE_SRC/deploy/server/tests/test-turbodb-postgres-live-runner.sh" \
+  2>&1 | tee "$ARTIFACT_ROOT/turbodb-postgres-runner-contract.log"
+
+bash "$FLOWIE_SRC/deploy/server/tests/run-turbodb-postgres-live.sh" \
+  --build-dir "$FLOWIE_RELEASE_BUILD" \
+  --artifacts "$ARTIFACT_ROOT/turbodb-postgres-live" \
+  --image postgres:17.6-alpine3.22
+
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
-  -R '^(test_flowie_protocol_repository|test_flowie_protocol_repository_turbodb_live|test_flowie_control_turbodb_live|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
+  --no-tests=error \
+  -R '^(test_flowie_protocol_repository|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
   --output-junit "$ARTIFACT_ROOT/persistence.xml"
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
@@ -761,6 +770,8 @@ ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
   --output-junit "$ARTIFACT_ROOT/flowie-release.xml"
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
+  --no-tests=error \
+  -E '^(test_flowie_protocol_repository_turbodb_live|test_flowie_control_turbodb_live)$' \
   --output-junit "$ARTIFACT_ROOT/flowie-linux-release.xml"
 
 cmake --build "$FLOWIE_RELEASE_BUILD" --target flowie_release_evidence \
@@ -850,8 +861,9 @@ try {
 
 ## 11. 精确清理 Docker 资源
 
-只在日志与结果包生成后执行。以下保护确保仅删除本次 Flowie/Mosquitto compose project 和本次 Flowie
-镜像；源码、SDK 和证据仍保留在 `$RUN_ROOT`，已有 PostgreSQL、Redis、Nginx 容器及其卷均不在清理范围。
+只在日志与结果包生成后执行。run-scoped PostgreSQL 已由 runner 的退出 trap 删除。以下保护确保仅删除
+本次 Flowie/Mosquitto compose project 和本次 Flowie 镜像；源码、SDK 和证据仍保留在 `$RUN_ROOT`，已有
+PostgreSQL、Redis、Nginx 容器及其卷均不在清理范围。
 
 ```bash
 case "$COMPOSE_PROJECT_NAME" in flowie*) ;; *) exit 1 ;; esac
@@ -868,8 +880,9 @@ docker image rm "$FLOWIE_SERVER_IMAGE"
 
 - TurboUtils、TurboParser、TurboNet、TurboDB、TurboHTTP、FlowMQ、TurboRaft 与 Flowie configure/build 成功。
 - 七个依赖 JUnit 与 Flowie release JUnit 结果无失败，Flowie 全量 CTest 不是零用例。
-- TCP/TLS/WS/WSS 的 Flowie 端到端用例均有实际 PASS，固定 Mosquitto 与 TLS/WSS/mTLS 证据均完整；
-  UDP/Unix Pipe 不属于当前成功条件。若本次启用 Redis/PostgreSQL live gate，对应结果也必须 PASS。
+- TCP/TLS/WS/WSS 的 Flowie 端到端用例均有实际 PASS，固定 Mosquitto、run-scoped PostgreSQL 与
+  TLS/WSS/mTLS 证据均完整；两个 TurboDB PostgreSQL live tests 必须实际 PASS。UDP/Unix Pipe 不属于当前
+  成功条件；若本次启用 Redis live gate，其结果也必须 PASS。
 - `flowie-release-evidence.json` 通过内置 verifier。
 - `deploy/server/Dockerfile` 从本次八仓库源码构建成功；镜像 revision 等于源码归档 SHA-256，
   runtime 用户和动态库验证通过；`flowie_server --help` 输出 usage，且符合当前 TurboUtils parser 的
