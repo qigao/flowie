@@ -1,6 +1,7 @@
 #include "flowie_control_auth_cache_internal.h"
 #include "flowie_control_credential_internal.h"
 #include "flowie_control_store_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -13,8 +14,7 @@
 #include <string.h>
 
 static int auth_cache_domain_create(flowie_control_store_t *store) {
-  flowie_control_domain_create_command_t command =
-      FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
+  flowie_control_domain_create_command_t command = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   command.domain_id = "root-a";
   command.actor = "admin-1";
@@ -25,10 +25,12 @@ static int auth_cache_domain_create(flowie_control_store_t *store) {
 
 static flowie_control_store_t *auth_cache_store_open(char **path_out) {
   flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_store_t *store = NULL;
   *path_out = tt_make_temp_file("flowie-auth-cache", ".sqlite3");
   check_not_null(*path_out);
-  config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  config.database = &test_database.config;
   check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
   check_not_null(store);
   check_equal(auth_cache_domain_create(store), TURBO_OK);
@@ -152,9 +154,8 @@ spec("Flowie control authentication cache") {
     int cache_hit = -1;
 
     check_equal(auth_cache_user_create(store, "device-a", "request-user-a", 1u), TURBO_OK);
-    check_equal(
-        auth_cache_credential_generate(store, "device-a", "request-generate-a", 2u, &first),
-        TURBO_OK);
+    check_equal(auth_cache_credential_generate(store, "device-a", "request-generate-a", 2u, &first),
+                TURBO_OK);
     config.capacity = 2u;
     config.ttl_ms = 100u;
     config.clock_ms = auth_cache_test_clock;
@@ -162,79 +163,78 @@ spec("Flowie control authentication cache") {
     check_equal(flowie_control_auth_cache_create(&config, &cache), TURBO_OK);
 
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(verified.user_revision, 2u);
     check_equal(verified.credential_revision, 3u);
     check_equal(flowie_control_auth_cache_size(cache), 1u);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_true(cache_hit);
 
     memcpy(wrong, first.token, sizeof(wrong));
     wrong[0] ^= 0x40u;
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a", wrong,
-                                                  sizeof(wrong), &verified, &cache_hit),
-                 TURBO_EPERM);
+                                                 sizeof(wrong), &verified, &cache_hit),
+                TURBO_EPERM);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 2u);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a", wrong,
-                                                  sizeof(wrong), &verified, &cache_hit),
-                 TURBO_EPERM);
+                                                 sizeof(wrong), &verified, &cache_hit),
+                TURBO_EPERM);
     check_true(cache_hit);
     flowie_control_credential_wipe(wrong, sizeof(wrong));
 
     now_ms = 1100u;
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
 
     check_equal(auth_cache_credential_rotate(store, "device-a", "request-rotate-a", 3u, &second),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_EPERM);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_EPERM);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  second.token, second.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 second.token, second.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  second.token, second.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 second.token, second.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_true(cache_hit);
 
     check_equal(auth_cache_credential_revoke(store, "device-a", 4u), TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  second.token, second.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_EPERM);
+                                                 second.token, second.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_EPERM);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
 
-    check_equal(
-        auth_cache_credential_rotate(store, "device-a", "request-reactivate-a", 5u, &third),
-        TURBO_OK);
+    check_equal(auth_cache_credential_rotate(store, "device-a", "request-reactivate-a", 5u, &third),
+                TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  third.token, third.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 third.token, third.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(auth_cache_user_disable(store, "device-a", 6u), TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  third.token, third.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_EPERM);
+                                                 third.token, third.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_EPERM);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
 
@@ -259,9 +259,8 @@ spec("Flowie control authentication cache") {
     int cache_hit = -1;
 
     check_equal(auth_cache_user_create(store, "device-a", "request-user-a", 1u), TURBO_OK);
-    check_equal(
-        auth_cache_credential_generate(store, "device-a", "request-generate-a", 2u, &first),
-        TURBO_OK);
+    check_equal(auth_cache_credential_generate(store, "device-a", "request-generate-a", 2u, &first),
+                TURBO_OK);
     check_equal(auth_cache_user_create(store, "device-b", "request-user-b", 3u), TURBO_OK);
     check_equal(
         auth_cache_credential_generate(store, "device-b", "request-generate-b", 4u, &second),
@@ -272,20 +271,20 @@ spec("Flowie control authentication cache") {
     check_equal(flowie_control_auth_cache_create(&config, &cache), TURBO_OK);
 
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-b",
-                                                  second.token, second.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 second.token, second.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 1u);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  first.token, first.token_size, &verified,
-                                                  &cache_hit),
-                 TURBO_OK);
+                                                 first.token, first.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 1u);
 
@@ -313,14 +312,14 @@ spec("Flowie control authentication cache") {
         TURBO_OK);
     check_equal(flowie_control_auth_cache_create(&config, &cache), TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_OK);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_OK);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_true(cache_hit);
 
     backup_path = tt_make_temp_file("flowie-auth-cache-backup", ".sqlite3");
@@ -330,29 +329,29 @@ spec("Flowie control authentication cache") {
     check_equal(turbo_fs_mkdir(path, 0700), TURBO_OK);
 
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_EIO);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_EIO);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_EIO);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_EIO);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
 
     check_equal(turbo_fs_rmdir(path), TURBO_OK);
     check_equal(turbo_fs_rename(backup_path, path), TURBO_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_OK);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
-                                                  generated.token, generated.token_size,
-                                                  &verified, &cache_hit),
-                 TURBO_OK);
+                                                 generated.token, generated.token_size, &verified,
+                                                 &cache_hit),
+                TURBO_OK);
     check_true(cache_hit);
 
     flowie_control_auth_cache_destroy(cache);
@@ -392,7 +391,7 @@ spec("Flowie control authentication cache") {
     }
     check_equal(atomic_load_explicit(&task.failures, memory_order_relaxed), 0);
     check_equal(atomic_load_explicit(&task.hits, memory_order_relaxed),
-                 THREAD_COUNT * VERIFY_COUNT - 1);
+                THREAD_COUNT * VERIFY_COUNT - 1);
     check_equal(flowie_control_auth_cache_size(cache), 1u);
 
     flowie_control_auth_cache_destroy(cache);

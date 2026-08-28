@@ -35,6 +35,8 @@ static int flowie_control_database_map_status(orm_status_t status) {
     return FLOWIE_CONTROL_DB_OK;
   case ORM_STATUS_BUSY:
     return FLOWIE_CONTROL_DB_BUSY;
+  case ORM_STATUS_CONSTRAINT:
+    return FLOWIE_CONTROL_DB_CONSTRAINT;
   case ORM_STATUS_OUT_OF_MEMORY:
     return FLOWIE_CONTROL_DB_NOMEM;
   case ORM_STATUS_OUT_OF_RANGE:
@@ -63,34 +65,15 @@ static int flowie_control_database_query_create(flowie_control_statement_t *stat
   return flowie_control_database_record(statement->database, status);
 }
 
-int flowie_control_database_open_sqlite(const char *path, int busy_timeout_ms,
-                                        flowie_control_database_t **out) {
+int flowie_control_database_open(const orm_config_t *config, flowie_control_database_t **out) {
   flowie_control_database_t *database;
-  orm_config_t config;
-  orm_option_t options[3];
-  char timeout[32];
-  int timeout_size;
   orm_status_t status;
   if (out != NULL) *out = NULL;
-  if (path == NULL || path[0] == '\0' || busy_timeout_ms < 0 || out == NULL)
-    return FLOWIE_CONTROL_DB_MISMATCH;
-  timeout_size = snprintf(timeout, sizeof(timeout), "%d", busy_timeout_ms);
-  if (timeout_size <= 0 || (size_t)timeout_size >= sizeof(timeout)) return FLOWIE_CONTROL_DB_RANGE;
+  if (config == NULL || out == NULL) return FLOWIE_CONTROL_DB_MISMATCH;
   database = (flowie_control_database_t *)calloc(1u, sizeof(*database));
   if (database == NULL) return FLOWIE_CONTROL_DB_NOMEM;
   orm_error_init(&database->error);
-  orm_config(&config);
-  options[0].keyword = orm_view("filename");
-  options[0].value = orm_view(path);
-  options[1].keyword = orm_view("open_mode");
-  options[1].value = orm_view("read_write_create");
-  options[2].keyword = orm_view("busy_timeout_ms");
-  options[2].value.data = timeout;
-  options[2].value.len = (size_t)timeout_size;
-  config.driver = orm_view("sqlite");
-  config.options = options;
-  config.option_count = (uint32_t)(sizeof(options) / sizeof(options[0]));
-  status = orm_connect(&config, &database->connection, &database->error);
+  status = orm_connect(config, &database->connection, &database->error);
   if (status != ORM_STATUS_OK) {
     const int mapped = flowie_control_database_record(database, status);
     free(database);

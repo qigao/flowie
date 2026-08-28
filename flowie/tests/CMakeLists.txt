@@ -38,25 +38,16 @@ cmake_add_test(
 
 set_tests_properties(test_flowie_protocol_repository PROPERTIES LABELS "flowie;flowie-release;storage")
 
-if(FLOWIE_CONTROL_PGSQL)
+if(FLOWIE_TURBODB_LIVE_TESTS)
   cmake_add_test(
-    test_flowie_protocol_repository_pgsql_live
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository_pgsql_live.c
-    LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest TurboUtils::Core
+    test_flowie_protocol_repository_turbodb_live
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository_turbodb_live.c
+    LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest
     FOLDER "flowie/tests")
   set_tests_properties(
-    test_flowie_protocol_repository_pgsql_live
-    PROPERTIES LABELS "flowie;flowie-release;storage;postgresql;integration"
-               TIMEOUT 300)
-  if(NOT TURBO_FLOW_PGSQL_LIVE_TESTS)
-    set_tests_properties(test_flowie_protocol_repository_pgsql_live PROPERTIES DISABLED TRUE)
-  endif()
-  if(WIN32)
-    set_tests_properties(
-      test_flowie_protocol_repository_pgsql_live
-      PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-  endif()
+    test_flowie_protocol_repository_turbodb_live
+    PROPERTIES LABELS "flowie;live;turbodb;postgresql;storage"
+               TIMEOUT 120)
 endif()
 
 cmake_add_test(

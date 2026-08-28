@@ -1,5 +1,6 @@
 #include "flowie_control_repository_contract.h"
 #include "flowie_control_repository_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -15,9 +16,11 @@ typedef struct repository_fixture_s {
 static repository_fixture_t repository_fixture_open(void) {
   repository_fixture_t fixture = {0};
   flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   fixture.path = tt_make_temp_file("flowie-control-repository", ".sqlite3");
   check_not_null(fixture.path);
-  config.database_path = fixture.path;
+  check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
+  config.database = &test_database.config;
   check_equal(flowie_control_store_open(&config, &fixture.store), TURBO_OK);
   fixture.repository = flowie_control_store_repository(fixture.store);
   check_not_null(fixture.repository);

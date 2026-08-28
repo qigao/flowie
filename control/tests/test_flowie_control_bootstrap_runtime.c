@@ -1,5 +1,6 @@
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_store_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "tls_test_support.h"
@@ -16,6 +17,7 @@ spec("Flowie controller bootstrap runtime") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     flowie_control_runtime_t *runtime = NULL;
     flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
     flowie_control_store_t *store = NULL;
     flowie_control_credential_verify_result_t credential =
         FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
@@ -30,18 +32,19 @@ spec("Flowie controller bootstrap runtime") {
                    cert_file);
     (void)snprintf(config.listener.tls.key_file, sizeof(config.listener.tls.key_file), "%s",
                    key_file);
-    (void)snprintf(config.sqlite_path, sizeof(config.sqlite_path), "%s", database_path);
+    check_equal(flowie_control_test_runtime_turbodb(&config, database_path), 0);
 
     check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
     check_not_null(runtime);
     check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
-    store_config.database_path = database_path;
+    check_equal(flowie_control_test_turbodb_init(&test_database, database_path), 0);
+    store_config.database = &test_database.config;
     check_equal(flowie_control_store_open(&store_config, &store), TURBO_OK);
     check_equal(flowie_control_store_repository(store)->auth->credential_verify(
-                     flowie_control_store_repository(store)->ctx, "system", "admin",
-                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
-                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, &credential),
-                 TURBO_OK);
+                    flowie_control_store_repository(store)->ctx, "system", "admin",
+                    FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
+                    sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, &credential),
+                TURBO_OK);
     flowie_control_store_destroy(store);
     check_equal(tt_remove_file(database_path), 0);
     free(database_path);

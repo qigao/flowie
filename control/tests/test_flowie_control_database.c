@@ -1,4 +1,5 @@
 #include "flowie_control_database_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 
@@ -10,8 +11,7 @@ spec("Flowie TurboDB control database adapter") {
     flowie_control_statement_t *statement = NULL;
     static const unsigned char payload[] = {0x00u, 0x7fu, 0xffu};
 
-    check_equal(flowie_control_database_open_sqlite(":memory:", 1000, &database),
-                FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_test_database_open(":memory:", &database), FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_database_exec(database,
                                              "create table item(id integer, name text, data blob)",
                                              NULL, NULL, NULL),
@@ -39,8 +39,8 @@ spec("Flowie TurboDB control database adapter") {
     check_equal(flowie_control_database_column_type(statement, 0), FLOWIE_CONTROL_DB_INTEGER);
     check_equal(flowie_control_database_column_int64(statement, 0), (int64_t)7);
     check_equal(flowie_control_database_column_type(statement, 1), FLOWIE_CONTROL_DB_TEXT);
-    check_true(strcmp((const char *)flowie_control_database_column_text(statement, 1), "Alice") ==
-               0);
+    check_equal(flowie_control_database_column_bytes(statement, 1), 5);
+    check_equal(memcmp(flowie_control_database_column_text(statement, 1), "Alice", 5u), 0);
     check_equal(flowie_control_database_column_type(statement, 2), FLOWIE_CONTROL_DB_BLOB);
     check_equal(flowie_control_database_column_bytes(statement, 2), (int)sizeof(payload));
     check_true(
@@ -49,7 +49,7 @@ spec("Flowie TurboDB control database adapter") {
     check_equal(flowie_control_database_finalize(statement), FLOWIE_CONTROL_DB_OK);
     statement = NULL;
 
-    check_equal(flowie_control_database_exec(database, "begin immediate", NULL, NULL, NULL),
+    check_equal(flowie_control_database_exec(database, "begin", NULL, NULL, NULL),
                 FLOWIE_CONTROL_DB_OK);
     check_equal(
         flowie_control_database_exec(database, "delete from item where id=7", NULL, NULL, NULL),

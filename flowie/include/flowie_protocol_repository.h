@@ -1,10 +1,11 @@
 #ifndef FLOWIE_PROTOCOL_REPOSITORY_H
 #define FLOWIE_PROTOCOL_REPOSITORY_H
 
+#include "platform.h"
 #include "flowie_export.h"
 #include "flowie_mqtt_protocol.h"
 #include "flowie_security.h"
-#include "platform.h"
+#include "orm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -16,11 +17,6 @@ extern "C" {
 #define FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION 2u
 
 typedef struct flowie_protocol_repository_s flowie_protocol_repository_t;
-
-typedef struct flowie_protocol_repository_option_s {
-  const char *name;
-  const char *value;
-} flowie_protocol_repository_option_t;
 
 typedef struct flowie_protocol_repository_limits_s {
   size_t max_sessions;
@@ -36,16 +32,14 @@ typedef struct flowie_protocol_repository_limits_s {
 
 typedef struct flowie_protocol_repository_config_s {
   size_t size;
-  const char *driver;
-  const flowie_protocol_repository_option_t *options;
-  size_t option_count;
+  const orm_config_t *database;
   const char *namespace_name;
   int create_schema;
   flowie_protocol_repository_limits_t limits;
 } flowie_protocol_repository_config_t;
 
-#define FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT                                                \
-  {sizeof(flowie_protocol_repository_config_t), NULL, NULL, 0u, NULL, 0,                      \
+#define FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT                                                     \
+  {sizeof(flowie_protocol_repository_config_t), NULL, NULL, 0,                                     \
    FLOWIE_PROTOCOL_REPOSITORY_LIMITS_INIT}
 
 typedef struct flowie_protocol_subscription_row_s {
@@ -106,10 +100,28 @@ typedef struct flowie_protocol_session_row_s {
   flowie_protocol_will_row_t will;
 } flowie_protocol_session_row_t;
 
-#define FLOWIE_PROTOCOL_SESSION_ROW_INIT                                                     \
-  {sizeof(flowie_protocol_session_row_t), {NULL, 0u}, 0u, 0u, 0u, 0u,                        \
-   FLOWIE_MQTT_VERSION_UNSPECIFIED, 0u, 0u, 0u, 0u, 0u, 0, FLOWIE_SECURITY_PRINCIPAL_INIT,   \
-   NULL, 0u, NULL, 0u, NULL, 0u, {0}}
+#define FLOWIE_PROTOCOL_SESSION_ROW_INIT                                                           \
+  {sizeof(flowie_protocol_session_row_t),                                                          \
+   {NULL, 0u},                                                                                     \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   FLOWIE_MQTT_VERSION_UNSPECIFIED,                                                                \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0u,                                                                                             \
+   0,                                                                                              \
+   FLOWIE_SECURITY_PRINCIPAL_INIT,                                                                 \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   {0}}
 
 typedef struct flowie_protocol_retained_row_s {
   size_t size;
@@ -124,41 +136,41 @@ typedef struct flowie_protocol_retained_row_s {
   flowie_mqtt_span_t payload;
 } flowie_protocol_retained_row_t;
 
-#define FLOWIE_PROTOCOL_RETAINED_ROW_INIT                                                    \
-  {sizeof(flowie_protocol_retained_row_t), {NULL, 0u}, 0u, 0u, 0u, 0u,                       \
-   FLOWIE_MQTT_VERSION_UNSPECIFIED, 0u, {NULL, 0u}, {NULL, 0u}}
+#define FLOWIE_PROTOCOL_RETAINED_ROW_INIT                                                          \
+  {sizeof(flowie_protocol_retained_row_t), {NULL, 0u}, 0u,         0u,        0u, 0u,              \
+   FLOWIE_MQTT_VERSION_UNSPECIFIED,        0u,         {NULL, 0u}, {NULL, 0u}}
 
 typedef int (*flowie_protocol_session_visit_fn)(void *ctx,
-                                                 const flowie_protocol_session_row_t *row);
+                                                const flowie_protocol_session_row_t *row);
 typedef int (*flowie_protocol_retained_visit_fn)(void *ctx,
-                                                  const flowie_protocol_retained_row_t *row);
+                                                 const flowie_protocol_retained_row_t *row);
 
 /**
  * Open a V2 ORM repository. Unknown or non-V2 schema data is rejected; it is never migrated.
  * The returned repository and all calls belong to one caller-serialized thread domain.
  */
-FLOWIE_C_API int flowie_protocol_repository_open(
-    const flowie_protocol_repository_config_t *config,
-    flowie_protocol_repository_t **out);
+FLOWIE_C_API int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *config,
+                                                 flowie_protocol_repository_t **out);
 FLOWIE_C_API void flowie_protocol_repository_close(flowie_protocol_repository_t *repository);
 
-FLOWIE_C_API int flowie_protocol_repository_session_save(
-    flowie_protocol_repository_t *repository, const flowie_protocol_session_row_t *row);
-FLOWIE_C_API int flowie_protocol_repository_session_delete(
-    flowie_protocol_repository_t *repository, flowie_mqtt_span_t client_id,
-    uint64_t expected_revision);
-FLOWIE_C_API int flowie_protocol_repository_session_visit(
-    flowie_protocol_repository_t *repository, flowie_protocol_session_visit_fn visit,
-    void *visit_ctx);
+FLOWIE_C_API int flowie_protocol_repository_session_save(flowie_protocol_repository_t *repository,
+                                                         const flowie_protocol_session_row_t *row);
+FLOWIE_C_API int flowie_protocol_repository_session_delete(flowie_protocol_repository_t *repository,
+                                                           flowie_mqtt_span_t client_id,
+                                                           uint64_t expected_revision);
+FLOWIE_C_API int flowie_protocol_repository_session_visit(flowie_protocol_repository_t *repository,
+                                                          flowie_protocol_session_visit_fn visit,
+                                                          void *visit_ctx);
 
-FLOWIE_C_API int flowie_protocol_repository_retained_save(
-    flowie_protocol_repository_t *repository, const flowie_protocol_retained_row_t *row);
-FLOWIE_C_API int flowie_protocol_repository_retained_delete(
-    flowie_protocol_repository_t *repository, flowie_mqtt_span_t topic,
-    uint64_t expected_revision);
-FLOWIE_C_API int flowie_protocol_repository_retained_visit(
-    flowie_protocol_repository_t *repository, flowie_protocol_retained_visit_fn visit,
-    void *visit_ctx);
+FLOWIE_C_API int
+flowie_protocol_repository_retained_save(flowie_protocol_repository_t *repository,
+                                         const flowie_protocol_retained_row_t *row);
+FLOWIE_C_API int
+flowie_protocol_repository_retained_delete(flowie_protocol_repository_t *repository,
+                                           flowie_mqtt_span_t topic, uint64_t expected_revision);
+FLOWIE_C_API int flowie_protocol_repository_retained_visit(flowie_protocol_repository_t *repository,
+                                                           flowie_protocol_retained_visit_fn visit,
+                                                           void *visit_ctx);
 
 #ifdef __cplusplus
 }

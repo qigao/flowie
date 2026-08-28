@@ -1,6 +1,8 @@
 #ifndef FLOWIE_CONTROL_DATABASE_INTERNAL_H
 #define FLOWIE_CONTROL_DATABASE_INTERNAL_H
 
+#include "orm.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -35,8 +37,7 @@ enum {
   FLOWIE_CONTROL_DB_NULL = 5
 };
 
-int flowie_control_database_open_sqlite(const char *path, int busy_timeout_ms,
-                                        flowie_control_database_t **out);
+int flowie_control_database_open(const orm_config_t *config, flowie_control_database_t **out);
 int flowie_control_database_close(flowie_control_database_t *database);
 int flowie_control_database_exec(flowie_control_database_t *database, const char *sql,
                                  void *callback, void *callback_context, char **error_message);

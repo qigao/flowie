@@ -1,5 +1,6 @@
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_store_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -27,16 +28,16 @@ static int management_session_policy_version(void *ctx, const char *domain_id,
                                              uint64_t *version_out) {
   (void)ctx;
   if (version_out) *version_out = 0u;
-  if (!domain_id || !version_out || strcmp(domain_id, "root-a") != 0)
-    return TURBO_EINVAL;
+  if (!domain_id || !version_out || strcmp(domain_id, "root-a") != 0) return TURBO_EINVAL;
   *version_out = 1u;
   return TURBO_OK;
 }
 
-static management_session_fixture_t management_session_fixture_open(
-    size_t capacity, size_t max_sessions_per_principal) {
+static management_session_fixture_t
+management_session_fixture_open(size_t capacity, size_t max_sessions_per_principal) {
   management_session_fixture_t fixture = {0};
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_auth_service_config_t auth_config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
   flowie_control_management_session_config_t session_config =
       FLOWIE_CONTROL_MANAGEMENT_SESSION_CONFIG_INIT;
@@ -52,7 +53,8 @@ static management_session_fixture_t management_session_fixture_open(
 
   fixture.database_path = tt_make_temp_file("flowie-management-session", ".sqlite3");
   check_not_null(fixture.database_path);
-  store_config.database_path = fixture.database_path;
+  check_equal(flowie_control_test_turbodb_init(&test_database, fixture.database_path), 0);
+  store_config.database = &test_database.config;
   check_equal(flowie_control_store_open(&store_config, &fixture.store), TURBO_OK);
 
   root.domain_id = "root-a";
@@ -83,7 +85,7 @@ static management_session_fixture_t management_session_fixture_open(
   credential.initial_secret = SESSION_TEST_PASSWORD_A;
   credential.initial_secret_size = sizeof(SESSION_TEST_PASSWORD_A) - 1u;
   check_equal(flowie_control_store_credential_generate(fixture.store, &credential, &generated),
-               TURBO_OK);
+              TURBO_OK);
   revision = generated.revision;
   flowie_control_generated_credential_wipe(&generated);
 
@@ -103,7 +105,7 @@ static management_session_fixture_t management_session_fixture_open(
   credential.initial_secret_size = sizeof(SESSION_TEST_PASSWORD_B) - 1u;
   generated = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   check_equal(flowie_control_store_credential_generate(fixture.store, &credential, &generated),
-               TURBO_OK);
+              TURBO_OK);
   revision = generated.revision;
   flowie_control_generated_credential_wipe(&generated);
 
@@ -147,7 +149,7 @@ static management_session_fixture_t management_session_fixture_open(
   session_config.ttl_seconds = 3600u;
   session_config.clock = management_session_clock;
   check_equal(flowie_control_management_session_store_create(&session_config, &fixture.sessions),
-               TURBO_OK);
+              TURBO_OK);
   return fixture;
 }
 
@@ -160,13 +162,13 @@ static void management_session_fixture_close(management_session_fixture_t *fixtu
   memset(fixture, 0, sizeof(*fixture));
 }
 
-static int management_session_login(flowie_control_management_session_store_t *sessions,
-                                    const char *principal, const char *password,
-                                    char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE +
-                                                   1u]) {
-  return flowie_control_management_session_login(
-      sessions, "root-a", principal, (const uint8_t *)password, strlen(password),
-      "127.0.0.1:443", token_out);
+static int
+management_session_login(flowie_control_management_session_store_t *sessions, const char *principal,
+                         const char *password,
+                         char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u]) {
+  return flowie_control_management_session_login(sessions, "root-a", principal,
+                                                 (const uint8_t *)password, strlen(password),
+                                                 "127.0.0.1:443", token_out);
 }
 
 spec("Flowie management sessions") {
@@ -179,37 +181,37 @@ spec("Flowie management sessions") {
 
     for (size_t index = 0u; index < 5u; ++index)
       check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
-                                            admin_a_tokens[index]),
-                   TURBO_OK);
+                                           admin_a_tokens[index]),
+                  TURBO_OK);
 
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[0],
-                                                            &identity),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[0], &identity),
+        TURBO_OK);
     check_equal(management_session_login(fixture.sessions, "admin-b", SESSION_TEST_PASSWORD_B,
-                                          admin_b_token),
-                 TURBO_OK);
+                                         admin_b_token),
+                TURBO_OK);
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
-                                          admin_a_tokens[5]),
-                 TURBO_OK);
+                                         admin_a_tokens[5]),
+                TURBO_OK);
 
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[0],
-                                                            &identity),
-                 TURBO_EPERM);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[0], &identity),
+        TURBO_EPERM);
     for (size_t index = 1u; index < 6u; ++index) {
       identity = (flowie_control_management_session_identity_t)
           FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-      check_equal(flowie_control_management_session_resolve(fixture.sessions,
-                                                              admin_a_tokens[index], &identity),
-                   TURBO_OK);
+      check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[index],
+                                                            &identity),
+                  TURBO_OK);
       check_equal(identity.principal_id, "admin-a");
     }
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_b_token,
-                                                            &identity),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_b_token, &identity),
+        TURBO_OK);
     check_equal(identity.principal_id, "admin-b");
 
     management_session_fixture_close(&fixture);
@@ -224,33 +226,33 @@ spec("Flowie management sessions") {
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
 
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
-                                          admin_a_first),
-                 TURBO_OK);
+                                         admin_a_first),
+                TURBO_OK);
     check_equal(management_session_login(fixture.sessions, "admin-b", SESSION_TEST_PASSWORD_B,
-                                          admin_b_token),
-                 TURBO_OK);
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_first,
-                                                            &identity),
-                 TURBO_OK);
+                                         admin_b_token),
+                TURBO_OK);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_a_first, &identity),
+        TURBO_OK);
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
-                                          admin_a_second),
-                 TURBO_OK);
+                                         admin_a_second),
+                TURBO_OK);
 
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_b_token,
-                                                            &identity),
-                 TURBO_EPERM);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_b_token, &identity),
+        TURBO_EPERM);
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_first,
-                                                            &identity),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_a_first, &identity),
+        TURBO_OK);
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
-    check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_second,
-                                                            &identity),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_management_session_resolve(fixture.sessions, admin_a_second, &identity),
+        TURBO_OK);
 
     management_session_fixture_close(&fixture);
   }

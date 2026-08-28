@@ -23,7 +23,7 @@ build\Msvc-Release\bin\flowie-control.exe --check `
   --config flowie\examples\flowie-control.yml
 ```
 
-真实 listener/Auth/ACL gate 使用临时证书、SQLite 和子进程，覆盖本地 credential 成功/拒绝、
+真实 listener/Auth/ACL gate 使用临时证书、TurboDB 测试驱动和子进程，覆盖本地 credential 成功/拒绝、
 登录会话、逐请求 ACL decision、策略版本不匹配、Repository service credential，以及客户端证书不能代替管理登录；
 测试不修改源码树中的部署文件：
 
@@ -31,12 +31,9 @@ build\Msvc-Release\bin\flowie-control.exe --check `
 ctest --preset win-release-user -R test_flowie_control_https_integration --output-on-failure
 ```
 
-PostgreSQL focused gate 使用相同的 provider-neutral contract 验证 Repository 事务、生产本地 Auth
-service 与 ACL generation 的组合，以及 JSON-RPC 下层 management service 的账户/Group/Role/ACL/audit
-操作和权限边界；它只有在显式打开 live tests 并提供专用测试连接时才运行。远程打包、旧测试容器复用、
-数据清理和证据下载流程见
-[`LINUX_REMOTE_TEST_RUNBOOK.md`](LINUX_REMOTE_TEST_RUNBOOK.md)。该测试连接可以使用隔离环境，
-产品 runtime 仍固定要求 `sslmode=verify-full` 和实际 TLS session。
+Repository 事务、生产本地 Auth、ACL generation 与 JSON-RPC management service 统一通过 TurboDB
+contract 验证。远程打包、测试容器复用、数据清理和证据下载流程见
+[`LINUX_REMOTE_TEST_RUNBOOK.md`](LINUX_REMOTE_TEST_RUNBOOK.md)。
 
 也可使用环境变量，优先级固定为 CLI、进程环境、显式 DotEnv：
 
@@ -48,8 +45,8 @@ build\Msvc-Release\bin\flowie-control.exe --check
 仅在本地开发时使用 `--env-file/-E`。程序不会隐式读取当前目录 `.env`。`--check` 解析完整 schema，
 并用 CoroNet/OpenSSL 实际加载 server chain、private key、client CA，以及启用的第三方 HTTPS client
 CA/certificate/private key；它不打开 listener、不连接第三方服务或控制数据库，也不执行 schema
-migration。选择 PostgreSQL 时，它还校验非秘密 conninfo 与 password secret reference。证书、私钥、
-CA、conninfo 或 secret reference 无法加载时立即失败，不回退到 HTTP、SQLite 或本地 credential。
+migration。证书、私钥、CA 或 secret reference 无法加载时立即失败，不回退到 HTTP、其他 TurboDB
+driver 或本地 credential。
 
 ## Auth 来源选择
 
@@ -83,7 +80,7 @@ principal 映射；ACL 始终只来自 control Repository。
 | 本地 user enabled、Domain、Role/Group、ACL | control Repository | 在第三方认证成功后执行本地授权映射 |
 | MQTT session、retained、inflight | TurboDB ORM/session store | 不参与身份认证 |
 | 第三方 Redis/PostgreSQL/LDAP/AD/OIDC/RADIUS | 第三方服务内部实现 | Broker 与 control 领域核心不加载其 SDK |
-| control SQLite/PostgreSQL | control Repository | 只由 `flowie-control` 访问；Broker 不接收连接配置 |
+| control TurboDB database | control Repository | 只由 `flowie-control` 通过 TurboDB 访问；Broker 不接收连接配置 |
 
 同一请求不会同时查询两个认证来源。第三方拒绝、超时、TLS/协议错误或服务不可用时直接 fail closed，
 不会验证本地密码、切换 TurboDB ORM/database backend 或匿名放行。若未来需要第三方 profile/目录查询，
@@ -107,14 +104,8 @@ principal 映射；ACL 始终只来自 control Repository。
 | `listener.tls.client_auth` | `none`（默认）或 `required`；Dashboard 启用时只能为 `none` |
 | `listener.tls.client_ca_file` | 仅 `client_auth: required` 时必填；`none` 时禁止配置 |
 | `listener.limits.*` | Iris header、URL、JSON、body 与 header count 的有界配额 |
-| `storage.control_store` | `sqlite` 或 `postgresql`；缺失时为兼容旧配置选择 SQLite |
-| `storage.sqlite.*` | SQLite path 与 busy timeout；选择 SQLite 时必填，不能出现 PostgreSQL block |
-| `storage.postgresql.conninfo` | 非秘密 libpq conninfo；必须显式 `sslmode=verify-full`，拒绝 password/passfile/sslpassword/service/servicefile |
-| `storage.postgresql.password_ref` | 必填且只接受 `env://...`；密码作为独立 libpq 参数传入并在 provider 销毁时清零 |
-| `storage.postgresql.schema_name` | 默认 `flowie_control`；只接受安全 PostgreSQL identifier |
-| `storage.postgresql.*_timeout*` | connect `1..60s`；statement/lock/acquire `1..60000ms` |
-| `storage.postgresql.pool_capacity` | `1..64` 个独占连接，默认 `4` |
-| `storage.postgresql.schema_mode` | `validate`（默认，无 DDL）或显式 `migrate` |
+| `storage.turbodb.driver` | 必填的 TurboDB driver 名称；Flowie 不注册或选择数据库 provider |
+| `storage.turbodb.options` | 最多 16 个字符串键值；`conninfo`、`password`、`sslpassword`、`uri`、`url` 必须使用 `env://UPPER_CASE_NAME`，其他值原样交给 TurboDB |
 | `management.rpc_path` | 静态绝对 path，默认 `/v2/control/rpc` |
 | `management.session.capacity` | 有界登录会话数，默认 `1024`，最大 `65536` |
 | `management.session.max_sessions_per_principal` | 每个 `(domain, principal)` 最多保留的会话数，默认 `5`，最大 `65536`；新登录撤销该主体最早签发的会话 |
@@ -145,32 +136,26 @@ fail closed。
 `100 requests/s`、burst `200`，每个 `(caller, domain, principal)` 为 `5 requests/s`、burst `10`。
 连续失败消耗 identity bucket；成功凭据只清除该 identity 的失败 bucket，不能重置 caller 总量。
 桶有界且只保留 keyed digest，不保存 identity、证书指纹或 secret 明文。
-本地 Auth 的 Argon2id、SQLite 与同步 PostgreSQL 调用只进入专用 executor。Iris request/response/socket
+本地 Auth 的 Argon2id 与同步 TurboDB 调用只进入专用 executor。Iris request/response/socket
 不跨线程；deadline 只结束 HTTP 等待，不会强行取消正在执行的同步 KDF/SQL。迟到结果被丢弃，任务自行
 擦除 secret；endpoint shutdown 停止接单并 drain。显式 `local_executor` 与 `external_https` 互斥，
 外部 HTTPS Auth 始终留在 CoroNet coroutine I/O 路径。
 YAML 不保存 ACL rule body、用户 credential、service token 或私钥内容。
 
-控制事实源二选一示例：
+唯一数据库边界示例：
 
 ```yaml
 storage:
-  control_store: postgresql
-  postgresql:
-    conninfo: host=control-db.internal dbname=flowie user=flowie_control sslmode=verify-full sslrootcert=certs/control-db-ca.pem
-    password_ref: env://FLOWIE_CONTROL_PG_PASSWORD
-    schema_name: flowie_control
-    connect_timeout_seconds: 5
-    statement_timeout_ms: 5000
-    lock_timeout_ms: 5000
-    pool_capacity: 4
-    acquire_timeout_ms: 5000
-    schema_mode: validate
+  turbodb:
+    driver: sqlite
+    options:
+      filename: data/flowie-control.sqlite3
+      open_mode: read_write_create
+      busy_timeout_ms: "1000"
 ```
 
-不要同时保留 `sqlite` 与 `postgresql` block。生产实例通常以 `schema_mode: validate` 启动；迁移任务
-必须显式改为 `migrate`，成功后再恢复 `validate`。当前尚未完成 HA fencing、PITR 与回滚门禁，
-因此多实例迁移/写入策略仍不是已发布保证。
+旧 `storage.control_store`、`storage.sqlite` 与 `storage.postgresql` 会作为未知字段拒绝；没有兼容 parser、
+provider fallback 或双写路径。driver 与 option 的具体契约由所安装的 TurboDB package 定义。
 
 ## 首位管理员 bootstrap
 
@@ -193,8 +178,7 @@ credential 创建；bootstrap 完成后重启只验证系统管理员结构，�
 `password_change_required` 并撤销当前 session。重新登录后，系统管理员通过 `control.domain.create` 创建
 `root-a/root-b/...`，再显式为目标 root 创建首位用户，通过 `control.password.set` 的 `create` mode
 设置人类密码，并创建、分配 `security_admin` 角色。管理员重置已有密码时必须显式使用 `replace`
-mode，不会从 create 失败自动降级为替换。之后把 PostgreSQL `schema_mode` 从迁移任务使用的
-`migrate` 恢复为 `validate`。后续只通过登录 session 保护的 JSON-RPC 创建/禁用用户，生成/轮换/
+mode，不会从 create 失败自动降级为替换。后续只通过登录 session 保护的 JSON-RPC 创建/禁用用户，生成/轮换/
 撤销 credential，维护 Group/Role，验证并发布 ACL；不得再次添加 bootstrap，也不得直接修改数据库。
 
 Dashboard 对该流程提供同一组命令的可视化入口。`system/admin` 重新登录后，在 Overview 的
@@ -385,7 +369,7 @@ verified login credential in the presented Domain
 Group 并显式管理目标域；业务 `security_admin` 永远不能跨 Domain。任一步失败都返回未授权。
 保留角色是精确字符串；其他业务角色不会获得管理权限。principal 必须在
 所选 Repository 中已存在、启用且至少拥有一个保留角色。空 Repository 必须使用上文
-一次性 bootstrap；不能通过直接编辑 SQLite/PostgreSQL 绕过领域事务、revision 与审计不变量。
+一次性 bootstrap；不能通过直接编辑 TurboDB 底层数据绕过领域事务、revision 与审计不变量。
 
 Management RPC 当前注册 32 个方法，其中 `control.domain.list` 只允许登录在 `system` Root 且拥有
 `system_admin` 的 caller 调用。它以 Repository 的 Domain 记录作为唯一事实源，并提供
@@ -414,7 +398,7 @@ build\Msvc-Release\bin\flowie_server.exe `
 
 Server Application 先创建并同步绑定 Control HTTPS listener，再启动 MQTT worker；MQTT 启动失败会关闭
 Control listener。正常关闭顺序是先停止 MQTT，再在 Control 所属 CoroNet context 线程取消连接、关闭
-listener、停止 context 并 join。以下独立入口仅用于兼容和诊断：
+listener、停止 context 并 join。以下独立入口仅用于诊断：
 
 ```powershell
 build\Msvc-Release\bin\flowie-control.exe `
@@ -424,8 +408,8 @@ build\Msvc-Release\bin\flowie-control.exe `
 正常启动只调用显式 host 的 `iris_app_listen_tls_on()`；默认
 `TURBO_TLS_CLIENT_AUTH_NONE`。只有 Dashboard 关闭且显式配置 `listener.tls.client_auth: required` 时，
 才启用高安全服务端 mTLS 部署能力。独立入口收到 `SIGINT`/`SIGTERM` 后停止 event loop；runtime 随后先解除
-Auth、Dashboard 和 RPC 绑定，再销毁 app、caller-owned RPC context、service 与所选 Repository。
-PostgreSQL provider 会先拒绝新 lease 并检查所有 lease 已归还；关闭失败会返回进程错误而不是静默退出。
+Auth、Dashboard 和 RPC 绑定，再销毁 app、caller-owned RPC context、service 与 TurboDB Repository。
+Repository 关闭失败会返回进程错误而不是静默退出。
 
 Dashboard 入口为 `/v2/control/dashboard`，只显示状态概览；管理数据集使用独立页面：
 `/v2/control/dashboard/users`、`/groups`、`/roles`、`/acls` 和 `/audit`（均以 Dashboard 入口为
