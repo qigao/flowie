@@ -72,8 +72,8 @@
         "TURBONET_ROOT": "$env{PKG_ROOT}/turbonet/debug",
         "TURBODB_ROOT": "$env{PKG_ROOT}/turbodb/debug",
         "TURBOHTTP_ROOT": "$env{PKG_ROOT}/turbohttp/debug",
-        "TURBORAFT_ROOT": "$env{PKG_ROOT}/turboraft/debug",
-        "FLOWMQ_ROOT": "$env{PKG_ROOT}/flowmq/debug",
+        "TURBORAFT_ROOT": "$env{PKG_ROOT}/turboraft-debug",
+        "FLOWMQ_ROOT": "$env{PKG_ROOT}/flowmq-debug",
         "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$env{TURBOPARSER_ROOT}/bin${pathListSep}$env{TURBONET_ROOT}/bin${pathListSep}$env{TURBODB_ROOT}/bin${pathListSep}$env{TURBOHTTP_ROOT}/bin${pathListSep}$env{TURBORAFT_ROOT}/bin${pathListSep}$env{FLOWMQ_ROOT}/bin${pathListSep}$penv{PATH}"
       },
       "cacheVariables": {

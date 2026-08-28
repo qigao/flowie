@@ -69,7 +69,6 @@ find_package(TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwne
              PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
 find_package(TurboHttp CONFIG REQUIRED
              PATHS "$ENV{TURBOHTTP_ROOT}" NO_DEFAULT_PATH)
-find_package(SQLite3 REQUIRED)
 add_subdirectory(tools)
 include(FindTools)
 add_subdirectory(vendor)

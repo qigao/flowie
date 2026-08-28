@@ -25,12 +25,10 @@ typedef enum flowie_control_repository_capability_e {
 
 typedef struct flowie_control_repository_user_ops_s {
   int (*domain_create)(void *ctx, const flowie_control_domain_create_command_t *command,
-                           flowie_control_command_result_t *result);
-  int (*domain_get)(void *ctx, const char *domain_id,
-                        flowie_control_domain_view_t *out);
-  int (*domain_list)(void *ctx, const char *after_domain_id,
-                         flowie_control_domain_view_t *items, size_t item_capacity,
-                         size_t *count_out, int *has_more_out);
+                       flowie_control_command_result_t *result);
+  int (*domain_get)(void *ctx, const char *domain_id, flowie_control_domain_view_t *out);
+  int (*domain_list)(void *ctx, const char *after_domain_id, flowie_control_domain_view_t *items,
+                     size_t item_capacity, size_t *count_out, int *has_more_out);
   int (*create)(void *ctx, const flowie_control_user_create_command_t *command,
                 flowie_control_command_result_t *result);
   int (*disable)(void *ctx, const flowie_control_user_disable_command_t *command,
@@ -49,8 +47,7 @@ typedef struct flowie_control_repository_auth_ops_s {
   int (*credential_state)(void *ctx, const char *domain_id, const char *principal_id,
                           flowie_control_credential_verify_result_t *result);
   int (*credential_resolve)(void *ctx, const char *principal_id, const void *secret,
-                            size_t secret_size,
-                            flowie_control_credential_resolution_t *result);
+                            size_t secret_size, flowie_control_credential_resolution_t *result);
   int (*current_revision)(void *ctx, uint64_t *revision_out);
   int (*principal_snapshot)(void *ctx, const char *domain_id, const char *principal_id,
                             const flowie_control_credential_verify_result_t *expected,
@@ -109,19 +106,19 @@ typedef struct flowie_control_repository_policy_ops_s {
   int (*bundle_load)(void *ctx, const char *domain_id, uint64_t required_version,
                      flowie_security_policy_bundle_t *bundle_out);
   void (*bundle_release)(void *ctx, flowie_security_policy_bundle_t *bundle);
-  int (*subject_rule_put)(
-      void *ctx, const flowie_control_policy_subject_rule_put_command_t *command,
-      flowie_control_command_result_t *result);
-  int (*subject_rule_delete)(
-      void *ctx, const flowie_control_policy_subject_rule_delete_command_t *command,
-      flowie_control_command_result_t *result);
+  int (*subject_rule_put)(void *ctx,
+                          const flowie_control_policy_subject_rule_put_command_t *command,
+                          flowie_control_command_result_t *result);
+  int (*subject_rule_delete)(void *ctx,
+                             const flowie_control_policy_subject_rule_delete_command_t *command,
+                             flowie_control_command_result_t *result);
   int (*subject_rule_get)(void *ctx, const char *domain_id,
                           flowie_security_subject_kind_t subject_kind, const char *subject_id,
                           flowie_control_policy_subject_rule_view_t *out);
-  int (*subject_rule_list)(
-      void *ctx, const char *domain_id, flowie_security_subject_kind_t subject_kind,
-      uint32_t after_ordinal, int has_after, flowie_control_policy_subject_rule_view_t *items,
-      size_t item_capacity, size_t *count_out, int *has_more_out);
+  int (*subject_rule_list)(void *ctx, const char *domain_id,
+                           flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal,
+                           int has_after, flowie_control_policy_subject_rule_view_t *items,
+                           size_t item_capacity, size_t *count_out, int *has_more_out);
 } flowie_control_repository_policy_ops_t;
 
 typedef struct flowie_control_repository_audit_ops_s {
@@ -168,9 +165,9 @@ struct flowie_control_repository_s {
 
 int flowie_control_repository_validate(const flowie_control_repository_t *repository);
 
-/** Bind the existing SQLite fact store as a borrowed repository implementation. */
-int flowie_control_repository_bind_sqlite(flowie_control_store_t *store,
-                                          flowie_control_repository_t *repository);
+/** Bind the existing TurboDB-backed fact store as a borrowed repository implementation. */
+int flowie_control_repository_bind_turbodb(flowie_control_store_t *store,
+                                           flowie_control_repository_t *repository);
 
 #ifdef __cplusplus
 }

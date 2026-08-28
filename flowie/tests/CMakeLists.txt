@@ -33,17 +33,16 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_protocol_repository
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository.c
-  LIBS Flowie::App SQLite::SQLite3 TurboUtils::TinyTest
+  LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest
   FOLDER "flowie/tests")
 
 set_tests_properties(test_flowie_protocol_repository PROPERTIES LABELS "flowie;flowie-release;storage")
 
 if(FLOWIE_CONTROL_PGSQL)
-  find_package(PostgreSQL REQUIRED)
   cmake_add_test(
     test_flowie_protocol_repository_pgsql_live
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository_pgsql_live.c
-    LIBS Flowie::App PostgreSQL::PostgreSQL TurboUtils::TinyTest TurboUtils::Core
+    LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest TurboUtils::Core
     FOLDER "flowie/tests")
   set_tests_properties(
     test_flowie_protocol_repository_pgsql_live
@@ -56,7 +55,7 @@ if(FLOWIE_CONTROL_PGSQL)
     set_tests_properties(
       test_flowie_protocol_repository_pgsql_live
       PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:PostgreSQL::PostgreSQL>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
   endif()
 endif()
 

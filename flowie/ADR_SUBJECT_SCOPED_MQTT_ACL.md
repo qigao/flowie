@@ -6,8 +6,9 @@
 
 本文记录 Flowie Control ACL 当前的控制面语义；用户可见语法以
 [ACL_GRAMMAR.md](ACL_GRAMMAR.md) 为准。实现复用了既有 typed runtime rule 和 draft/publish 流程，
-无需数据库 schema、C ABI、published bundle 或 `/v4/acl/check` 协议迁移。旧的规范化 `user` 文档与
-`<domain>/groups/.../devices/...` topic 保持兼容，但这些资源 segment 不再具有组织引用语义。
+但控制面存储和 Management RPC 已切换为 typed subject rule。数据库只接受全新的 v5 schema；旧规则、
+旧 schema 和旧 RPC 不迁移、不读取、不注册。published bundle C ABI 和 `/v4/acl/check` wire contract
+保持不变，因为它们是 Broker 运行时边界，不是旧控制面规则接口。
 
 ## 背景
 
@@ -37,7 +38,7 @@ compiler 只是把所有文档固定编译为 `PRINCIPAL`。因此应扩展控�
 - 用户 ACL 只在需要个体补充或收紧时存在。
 - Topic 仅强制当前 Domain 前缀，不绑定 `groups/devices` 业务结构。
 - 保持默认拒绝、显式 deny 全局优先、跨 Domain fail closed。
-- 保持现有 `user` ACL 文档、published rule ABI 和 `/v4/acl/check` 契约兼容。
+- 保持 published rule ABI 和 `/v4/acl/check` 运行时契约稳定。
 - 保持 draft 校验、原子发布、不可变 `policy_version` 和 Repository 单一事实源。
 
 ## 非目标
@@ -84,10 +85,10 @@ Role、effective Group 和 User 都是同一个 typed rule 模型中的适用主
 ```
 
 - 优点：顺序无关、可复验、兼容 Core 现有模型和既有 user allow；用户 deny 可收紧共享权限。
-- 缺点：用户 allow 可以补充 Role/Group 未授予的权限，但不能越过任何上层 deny。
+- 缺点：用户 allow 可以补充 Role/Group 未授予的权限，但不能越过任何共享层 deny。
 
-选择方案四。它以确定的 effect lattice 表达继承，不把策略顺序变成隐藏状态，并保留现有 user-only
-policy 的授权结果。
+选择方案四。它以确定的 effect lattice 表达继承，不把策略顺序变成隐藏状态。`user` 是新 typed
+subject 模型中的一种主体，而不是旧 user-rule 存储接口的兼容入口。
 
 ## 主体模型
 
@@ -137,7 +138,7 @@ applicable = matching_roles
 该语义具有以下结果：
 
 - Role/Group allow 提供共享权限；
-- User allow 可以补充个体权限，保持当前每用户策略兼容；
+- User allow 可以补充个体权限；
 - User deny 可以收紧 Role/Group allow；
 - User allow 不能覆盖 Role/Group deny；
 - 多个 Role/Group 之间不按名称、创建时间、层级深度或 ordinal 排序；
@@ -205,8 +206,8 @@ UTF-8 文本：
 - read 规则继续使用 MQTT Topic Filter containment 语义授权 SUBSCRIBE，不能因 filter 仅有交集而放行；
 - write 规则使用 MQTT Topic Filter match 语义授权实际 PUBLISH Topic Name。
 
-旧的 `<domain>/groups/.../devices/...` 只包含上述合法 segment，因此是新文法的合法子集，但 `groups`
-和 `devices` 不再具有结构关键字或数据库引用语义。
+`groups` 和 `devices` 在 Topic 中只是普通静态 segment，不具有结构关键字或数据库引用语义。新系统
+不会读取或迁移旧规则；若新建 typed rule 使用相同的 Topic 文本，则只按本节通用 Topic 文法解释。
 
 ### Canonical 格式
 
@@ -216,7 +217,7 @@ UTF-8 文本：
 - 顶层 connection 为 `deny` 时不能包含 topic block；
 - 不接受空行、行尾空格、CRLF 或末尾额外换行；
 - formatter 输出必须与提交文本 byte-for-byte 相同；
-- 现有 canonical `user` 文档格式不变。
+- `user`、`role`、`group` 都通过同一个 typed subject document formatter 生成，不存在旧 user 文档入口。
 
 ## 状态归属与发布
 
@@ -229,7 +230,7 @@ ACL draft ── validate/publish ──> immutable Domain policy version
 Broker request + principal snapshot ──> /v4/acl/check decision
 ```
 
-- draft 仍按 `(domain_id, ordinal)` 保存 canonical document；
+- draft 按 `(domain_id, subject_kind, subject_id)` 保存 canonical document，`ordinal` 只负责域内稳定排序；
 - subject kind 是文档中的类型化事实，compiler 写入已有 `flowie_security_rule_t.subject_kind`；
 - publish 在同一 Repository 事务内重新验证所有主体、Topic、容量和重复键，然后原子产生新
   `policy_version`；
@@ -239,9 +240,8 @@ Broker request + principal snapshot ──> /v4/acl/check decision
 - 资源路径中的普通 segment 不再引用 Control Group。只有 `group <group-id>` subject 和 membership
   才引用 Group 事实。
 
-现有 draft 表只保存 canonical text，published v3 rule 已包含 subject kind，因此实现可以不修改表布局、
-published rule ABI 或 ACL v4 HTTP payload。若实现选择新增索引列，索引只能是 canonical document 的
-派生数据，必须可重建且不能成为第二事实源。
+v5 draft 表保存 canonical text 以及在写入边界验证过的 subject 索引。published rule 包含编译后的
+subject kind；索引只能从 canonical document 推导，必须可重建且不能成为第二事实源。
 
 ## 身份变更与生效边界
 
@@ -258,12 +258,12 @@ policy version：
 
 ## 接口影响
 
-### v4 不兼容变更
+### 不兼容变更
 
 - 删除 `control.policy.rule.put/list/delete`，改为结构化的
   `control.policy.subject_rule.put/get/list/delete`；
 - draft 主键从 `(domain_id, ordinal)` 改为 `(domain_id, subject_kind, subject_id)`；
-- v3→v4 升级删除所有旧 draft、published bundle、compiled rule 与 publish replay 数据，不迁移；
+- 只接受全新的 v5 schema；旧 schema 不迁移、不读取，启动时直接报 schema 不兼容；
 - `ordinal` 仅保留为 Domain 内唯一的稳定排序字段；revision、request ID、audit 和原子发布流程保留；
 
 详见 [ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md](ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md)。
@@ -309,28 +309,20 @@ command 边界已经足够，增加通用抽象只会产生无益间接层。
 - 不把无 Role/Group、无规则或无匹配解释为匿名权限；
 - 不自动把无效新格式降级为旧 parser，也不在失败后尝试 Mosquitto ACL 格式。
 
-## 兼容性与迁移
+## 部署与回滚边界
 
-### 数据兼容
+### 全新 v5 数据边界
 
-现有 canonical `user` 文档和固定树 Topic 都是新文法子集，其编译结果与授权结果必须保持
-byte-for-byte / rule-for-rule 一致。无需批量重写数据库，也不能在启动时静默格式化用户数据。
-
-### 部署顺序
-
-1. 备份当前 Repository，并记录每个 Domain 的 active policy version。
-2. 部署支持新 parser/validator/compiler 的全部 Control 实例，期间不得混跑不同 grammar 的写节点。
-3. 对现有 draft 执行 validate，并回归旧 user policy 的编译与 decision parity。
-4. 先新增 Role/Group 文档并发布一个更高 policy version，再按业务确认逐步删除重复 user 文档。
-5. 验证新连接、已有连接 TTL、Role/Group 撤权、显式 deny 和跨 Domain 拒绝。
+- v5 是不兼容 schema，不提供旧规则转换、导入、读取、双写或启动时自动升级。
+- 部署前如需保留旧环境，应在部署系统层面对旧数据库做独立备份；新版本不会消费该备份。
+- 新环境必须创建空的 v5 Repository，再通过 `control.policy.subject_rule.*` 提交 typed subject rules 并发布。
+- 所有 Control 写节点必须同时切换；不得让旧、新 binary 写同一个 Repository。
 
 ### 回滚
 
-- 尚未保存新格式文档时，可整体回滚 Control binary，现有 user 文档无需迁移。
-- 已保存 `role/group` 或通用 Topic 文档后，旧 binary 可能拒绝读取 draft，不能直接降级。
-- 回滚前必须使用新版本 Control 发布一个更高 policy version，其中只包含旧 grammar 可表达的 user
-  文档；确认 Broker decision 后，再删除新格式 draft 并整体回滚 binary。
-- 不降低 policy version，不直接修改 SQLite/PostgreSQL，不让新旧 Control 同时写同一 Repository。
+- 应用 binary 可回滚，但 v5 Repository 不能交给旧 binary 继续使用。
+- 回滚必须切换到部署前的完整旧环境快照，或创建新的空 Repository；不允许把 v5 数据反向转换成旧规则。
+- published policy version 不降级，不直接修改数据库，不以旧 RPC 或兼容 parser 作为恢复路径。
 
 ## 风险
 
@@ -352,7 +344,7 @@ byte-for-byte / rule-for-rule 一致。无需批量重写数据库，也不能�
 1. parser/formatter：三个 subject kind、generic Topic、placeholder、wildcard、alternatives 和 canonical
    round trip；
 2. validation：主体存在/enabled、typed duplicate、跨 Domain、非法 wildcard、容量与 publish rollback；
-3. compiler：subject kind 正确写入，旧 user 文档生成完全相同的 internal rules；
+3. compiler：三个 subject kind 正确写入 internal rules，ordinal 不参与授权决策；
 4. decision matrix：Role allow + User deny、Role deny + User allow、Group ancestor allow、多个 Role 冲突、
    无匹配 default deny；
 5. MQTT matcher：PUBLISH match、SUBSCRIBE containment、`+/#`、`%u/%c`、共享订阅 inner filter 和
@@ -361,7 +353,7 @@ byte-for-byte / rule-for-rule 一致。无需批量重写数据库，也不能�
 7. Repository：SQLite 与 PostgreSQL 的 draft、reference、publish、exact version 和并发事务语义一致；
 8. Management/Dashboard：typed subject CRUD、分页、审计、权限矩阵和 canonical preview；
 9. HTTPS/endpoint：ACL v4 wire contract 不变，CONNECT/read/write allow/deny 与故障 fail closed；
-10. migration：现有生产格式零重写升级，以及含新格式时的受控回滚路径。
+10. incompatibility：旧 schema 启动失败、旧 RPC method-not-found、v5 不被旧 binary 复用。
 
 验证顺序为 parser/compiler 最小测试、Repository contract、ACL decision、真实 MQTT/TLS integration，最后
 执行完整 Control/Flowie 回归和有界性能测试。

@@ -38,15 +38,15 @@ spec("Flowie control PostgreSQL database") {
 
   it("accepts only non-secret verify-full public conninfo") {
     check_equal(flowie_control_pgsql_public_conninfo_validate(
-                     "host=db.internal dbname=flowie user=flowie sslmode=verify-full"),
-                 TURBO_OK);
+                    "host=db.internal dbname=flowie user=flowie sslmode=verify-full"),
+                TURBO_OK);
     check_equal(flowie_control_pgsql_public_conninfo_validate(
-                     "host=db.internal dbname=flowie user=flowie password=secret "
-                     "sslmode=verify-full"),
-                 TURBO_EPERM);
+                    "host=db.internal dbname=flowie user=flowie password=secret "
+                    "sslmode=verify-full"),
+                TURBO_EPERM);
     check_equal(flowie_control_pgsql_public_conninfo_validate(
-                     "postgresql://flowie:secret@db.internal/flowie?sslmode=verify-full"),
-                 TURBO_EPERM);
+                    "postgresql://flowie:secret@db.internal/flowie?sslmode=verify-full"),
+                TURBO_EPERM);
     check_equal(
         flowie_control_pgsql_public_conninfo_validate("service=production sslmode=verify-full"),
         TURBO_EPERM);
@@ -86,7 +86,7 @@ spec("Flowie control PostgreSQL database") {
     flowie_control_effective_groups_view_t groups = FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
-    flowie_control_policy_rule_view_t rule = FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT;
+    flowie_control_policy_subject_rule_view_t rule = FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
     flowie_control_policy_status_t status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
     size_t count = 0u;
     int has_more = 0;
@@ -94,25 +94,26 @@ spec("Flowie control PostgreSQL database") {
     check_equal(flowie_control_pgsql_query_create(NULL, &query), TURBO_EINVAL);
     check_null(query);
     check_equal(flowie_control_pgsql_query_user_get(NULL, "root-a", "device-7", &user),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(
         flowie_control_pgsql_query_user_list(NULL, "root-a", NULL, &user, 1u, &count, &has_more),
         TURBO_EINVAL);
     check_equal(flowie_control_pgsql_query_effective_groups(NULL, "root-a", "device-7", &groups),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(
         flowie_control_pgsql_query_group_list(NULL, "root-a", NULL, &group, 1u, &count, &has_more),
         TURBO_EINVAL);
     check_equal(flowie_control_pgsql_query_effective_roles(NULL, "root-a", "device-7", &roles),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(
         flowie_control_pgsql_query_role_list(NULL, "root-a", NULL, &role, 1u, &count, &has_more),
         TURBO_EINVAL);
     check_equal(flowie_control_pgsql_query_policy_validate(NULL, "root-a", &validation),
-                 TURBO_EINVAL);
-    check_equal(flowie_control_pgsql_query_policy_rule_list(NULL, "root-a", 0u, 0, &rule, 1u,
-                                                             &count, &has_more),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
+    check_equal(
+        flowie_control_pgsql_query_policy_subject_rule_list(
+            NULL, "root-a", FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, &rule, 1u, &count, &has_more),
+        TURBO_EINVAL);
     check_equal(flowie_control_pgsql_query_policy_status(NULL, "root-a", &status), TURBO_EINVAL);
     check_equal(flowie_control_pgsql_repository_create(NULL, NULL), TURBO_EINVAL);
     check_null(flowie_control_pgsql_repository_view(NULL));
@@ -136,10 +137,10 @@ spec("Flowie control PostgreSQL database") {
         FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     flowie_control_user_role_remove_command_t user_role_remove =
         FLOWIE_CONTROL_USER_ROLE_REMOVE_COMMAND_INIT;
-    flowie_control_policy_rule_put_command_t policy_put =
-        FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
-    flowie_control_policy_rule_delete_command_t policy_delete =
-        FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT;
+    flowie_control_policy_subject_rule_put_command_t policy_put =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_subject_rule_delete_command_t policy_delete =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
     flowie_control_policy_publish_command_t policy_publish =
         FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
@@ -149,30 +150,31 @@ spec("Flowie control PostgreSQL database") {
     check_equal(flowie_control_pgsql_command_create(NULL, &view), TURBO_EINVAL);
     check_null(view);
     check_equal(flowie_control_pgsql_command_credential_generate(NULL, &issue, &generated),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_credential_rotate(NULL, &issue, &generated),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_credential_revoke(NULL, &revoke, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_group_create(NULL, &group, &result), TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_group_delete(NULL, &group_delete, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_membership_add(NULL, &membership_add, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_membership_remove(NULL, &membership_remove, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_role_create(NULL, &role, &result), TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_role_disable(NULL, &role_disable, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_user_role_add(NULL, &user_role_add, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_user_role_remove(NULL, &user_role_remove, &result),
-                 TURBO_EINVAL);
-    check_equal(flowie_control_pgsql_command_policy_rule_put(NULL, &policy_put, &result),
-                 TURBO_EINVAL);
-    check_equal(flowie_control_pgsql_command_policy_rule_delete(NULL, &policy_delete, &result),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
+    check_equal(flowie_control_pgsql_command_policy_subject_rule_put(NULL, &policy_put, &result),
+                TURBO_EINVAL);
+    check_equal(
+        flowie_control_pgsql_command_policy_subject_rule_delete(NULL, &policy_delete, &result),
+        TURBO_EINVAL);
     check_equal(flowie_control_pgsql_command_policy_publish(NULL, &policy_publish, &published),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
   }
 }

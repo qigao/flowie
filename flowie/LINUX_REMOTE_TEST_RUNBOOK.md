@@ -637,6 +637,16 @@ configure_build_test_install() {
   install_dir="$3"
   shift 3
   build_dir="$source_dir/build/linux-eu-release"
+  package_args=()
+  if [[ "$package" == "turboutils" ]]; then
+    package_args+=(-DTURBO_ENABLE_EPOLL_READINESS=ON)
+  elif [[ "$package" == "turbonet" ]]; then
+    package_args+=(-DTURBONET_ENABLE_LSQUIC=OFF)
+  elif [[ "$package" == "turbodb" ]]; then
+    package_args+=(-DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON)
+  elif [[ "$package" == "turbohttp" ]]; then
+    package_args+=(-DBUILD_EXAMPLES=OFF)
+  fi
   vcpkg_args=(
     -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake
     -DVCPKG_INSTALLED_DIR="$source_dir/vcpkg_installed"
@@ -652,6 +662,7 @@ configure_build_test_install() {
   env "$@" cmake -S "$source_dir" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     "${vcpkg_args[@]}" \
+    "${package_args[@]}" \
     -DCMAKE_INSTALL_PREFIX="$install_dir" \
     -DENABLE_TESTS=ON -DBUILD_TESTING=ON
   env "$@" cmake --build "$build_dir" --parallel "$(nproc)"

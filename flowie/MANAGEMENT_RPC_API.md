@@ -443,10 +443,10 @@ PUBLISH, `%u` matches the MQTT username, and `%c` matches the MQTT client ID. Se
 [ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, inheritance/evaluation semantics, limits,
 deny precedence, and UI/RPC publishing workflow.
 
-Schema v4 is deliberately incompatible. On v3→v4 migration all old drafts, published bundles,
-compiled ACL rows, and publish replay results are deleted. The old `control.policy.rule.*` methods
-are not registered and return JSON-RPC method-not-found. Submit and publish new structured rules
-after upgrade; until then authorization remains fail closed.
+Schema v5 is deliberately incompatible. Flowie does not migrate or read an older control store;
+schema validation fails at startup. The old `control.policy.rule.*` methods are not registered and
+return JSON-RPC method-not-found. Create a fresh v5 store, then submit and publish structured rules;
+until then authorization remains fail closed.
 
 ### Audit
 

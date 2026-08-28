@@ -12,7 +12,7 @@
 #include "turbo_error.h"
 #include "turbo_thread.h"
 
-#include "libpq-fe.h"
+#include "orm.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,23 +20,88 @@
 
 enum { FLOWIE_CONTROL_PGSQL_TEST_SEED_SQL_CAPACITY = 8192 };
 
+static orm_result_t *test_orm_execute(const char *conninfo, const char *sql) {
+  orm_config_t config;
+  orm_option_t option;
+  orm_connection_t *connection = NULL;
+  orm_query_t *query = NULL;
+  orm_result_t *result = NULL;
+  orm_error_t error;
+  orm_config(&config);
+  orm_error_init(&error);
+  option.keyword = orm_view("conninfo");
+  option.value = orm_view(conninfo);
+  config.driver = orm_view("postgresql");
+  config.options = &option;
+  config.option_count = 1u;
+  check_equal(orm_connect(&config, &connection, &error), ORM_STATUS_OK);
+  check_equal(orm_raw(connection, orm_view(sql), &query, &error), ORM_STATUS_OK);
+  check_equal(orm_query_execute(query, &result, &error), ORM_STATUS_OK);
+  orm_query_destroy(query);
+  orm_disconnect(connection);
+  return result;
+}
+
+static void test_flowie_script(flowie_control_pgsql_connection_t *connection, const char *script) {
+  const char *begin = script;
+  const char *cursor = script;
+  char statement[FLOWIE_CONTROL_PGSQL_TEST_SEED_SQL_CAPACITY];
+  while (*cursor) {
+    if (*cursor == ';') {
+      size_t size = (size_t)(cursor - begin);
+      check_true(size < sizeof(statement));
+      memcpy(statement, begin, size);
+      statement[size] = '\0';
+      check_equal(flowie_control_pgsql_connection_command(connection, statement), TURBO_OK);
+      begin = cursor + 1u;
+    }
+    ++cursor;
+  }
+  check_equal(begin, cursor);
+}
+
+static int test_policy_subject_put(flowie_control_pgsql_command_t *commands,
+                                   flowie_control_policy_subject_rule_put_command_t *command,
+                                   const char *rule_text, flowie_control_command_result_t *result) {
+  flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  int rc;
+  if (!rule_text) return TURBO_EINVAL;
+  rc = flowie_control_acl_parse(rule_text, strlen(rule_text), &document);
+  if (rc != TURBO_OK) return rc;
+  command->document = &document;
+  return flowie_control_pgsql_command_policy_subject_rule_put(commands, command, result);
+}
+
 static const char *const PICIMPACT_ACL_RULES[] = {
     "allow|principal|picimpact-backend|booth|connect|generic|prefix|picimpact-backend-eu",
     "allow|principal|picimpact-backend|booth|publish|mqtt_topic|adapter|tenant/+/device/+/command",
     "allow|principal|picimpact-backend|booth|publish|mqtt_topic|adapter|tenant/+/device/+/payment",
     "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/event",
-    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/heartbeat",
-    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/payment",
-    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/process",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|connect|generic|prefix|1f213a9c-a12d-4302-8a00-a9fcc43088a0",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/event",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/heartbeat",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/process",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|subscribe|mqtt_topic|adapter|tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/command",
-    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|subscribe|mqtt_topic|adapter|tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/payment",
+    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/"
+    "heartbeat",
+    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/"
+    "payment",
+    "allow|principal|picimpact-backend|booth|subscribe|mqtt_topic|adapter|tenant/+/device/+/"
+    "process",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|connect|generic|prefix|1f213a9c-"
+    "a12d-4302-8a00-a9fcc43088a0",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/"
+    "f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/event",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/"
+    "f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/heartbeat",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|publish|mqtt_topic|adapter|tenant/"
+    "f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/process",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|subscribe|mqtt_topic|adapter|"
+    "tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/"
+    "command",
+    "allow|principal|127b7f51-f122-487e-9da2-7c3aac3c01f5|booth|subscribe|mqtt_topic|adapter|"
+    "tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/127b7f51-f122-487e-9da2-7c3aac3c01f5/"
+    "payment",
     "allow|principal|picimpact-e2e-device|booth|connect|generic|prefix|secure-",
-    "allow|principal|picimpact-e2e-device|booth|publish|mqtt_topic|adapter|tenant/picimpact-e2e/device/picimpact-e2e-device/event",
-    "allow|principal|picimpact-e2e-device|booth|subscribe|mqtt_topic|adapter|tenant/picimpact-e2e/device/picimpact-e2e-device/event",
+    "allow|principal|picimpact-e2e-device|booth|publish|mqtt_topic|adapter|tenant/picimpact-e2e/"
+    "device/picimpact-e2e-device/event",
+    "allow|principal|picimpact-e2e-device|booth|subscribe|mqtt_topic|adapter|tenant/picimpact-e2e/"
+    "device/picimpact-e2e-device/event",
 };
 
 static void hex_encode(const uint8_t *input, size_t input_size, char *output,
@@ -52,7 +117,8 @@ static void hex_encode(const uint8_t *input, size_t input_size, char *output,
   output[input_size * 2u] = '\0';
 }
 
-static void seed_query_contract(PGconn *connection, const char *schema_name,
+static void seed_query_contract(flowie_control_pgsql_connection_t *connection,
+                                const char *schema_name,
                                 const flowie_control_credential_kdf_params_t *params,
                                 const uint8_t salt[FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE],
                                 const uint8_t verifier[FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE]) {
@@ -63,7 +129,6 @@ static void seed_query_contract(PGconn *connection, const char *schema_name,
   char verifier_hex[FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE * 2u + 1u];
   char sql[FLOWIE_CONTROL_PGSQL_TEST_SEED_SQL_CAPACITY];
   int written;
-  PGresult *result;
 
   hex_encode(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE, salt_hex, sizeof(salt_hex));
   hex_encode(verifier, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE, verifier_hex, sizeof(verifier_hex));
@@ -86,9 +151,9 @@ static void seed_query_contract(PGconn *connection, const char *schema_name,
       " VALUES('root-a','device-7','operators',6,1005);"
       "INSERT INTO %s.user_role(domain_id,principal_id,role_id,revision,created_at)"
       " VALUES('root-a','device-7','reader',7,1006);"
-      "INSERT INTO %s.acl_bundle(namespace_name,policy_version,expires_at)"
+      "INSERT INTO %s.published_bundle(namespace_name,policy_version,expires_at)"
       " VALUES('root-a',1,20000);"
-      "INSERT INTO %s.acl_rule(namespace_name,ordinal,rule_line) VALUES"
+      "INSERT INTO %s.published_rule(namespace_name,ordinal,rule_line) VALUES"
       "('root-a',0,'%s'),('root-a',1,'%s');"
       "INSERT INTO %s.audit(request_id,actor,operation,domain_id,target_id,target_detail,"
       "result_revision,occurred_at) VALUES"
@@ -101,31 +166,28 @@ static void seed_query_contract(PGconn *connection, const char *schema_name,
       schema_name, schema_name, deny_rule, allow_rule, schema_name, schema_name);
   check_true(written > 0);
   check_true((size_t)written < sizeof(sql));
-  result = PQexec(connection, sql);
-  check_not_null(result);
-  check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-  PQclear(result);
+  test_flowie_script(connection, sql);
 }
 
-static void seed_picimpact_acl_bundle(PGconn *connection, const char *schema_name) {
+static void seed_picimpact_published_bundle(flowie_control_pgsql_connection_t *connection,
+                                            const char *schema_name) {
   static const char *const bundle_values[] = {"booth", "5", "0"};
   char sql[256];
-  PGresult *result;
+  flowie_control_pgsql_result_t *result = NULL;
   int written;
 
   written = snprintf(sql, sizeof(sql),
-                     "INSERT INTO %s.acl_bundle(namespace_name,policy_version,expires_at) "
+                     "INSERT INTO %s.published_bundle(namespace_name,policy_version,expires_at) "
                      "VALUES($1,$2::bigint,$3::bigint)",
                      schema_name);
   check_greater(written, 0);
   check_true((size_t)written < sizeof(sql));
-  result = PQexecParams(connection, sql, 3, NULL, bundle_values, NULL, NULL, 0);
-  check_not_null(result);
-  check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-  PQclear(result);
+  check_equal(flowie_control_pgsql_connection_execute(connection, sql, 3, bundle_values, &result),
+              TURBO_OK);
+  flowie_control_pgsql_result_destroy(result);
 
   written = snprintf(sql, sizeof(sql),
-                     "INSERT INTO %s.acl_rule(namespace_name,ordinal,rule_line) "
+                     "INSERT INTO %s.published_rule(namespace_name,ordinal,rule_line) "
                      "VALUES($1,$2::integer,$3)",
                      schema_name);
   check_greater(written, 0);
@@ -137,45 +199,31 @@ static void seed_picimpact_acl_bundle(PGconn *connection, const char *schema_nam
     written = snprintf(ordinal, sizeof(ordinal), "%zu", index);
     check_greater(written, 0);
     check_true((size_t)written < sizeof(ordinal));
-    result = PQexecParams(connection, sql, 3, NULL, values, NULL, NULL, 0);
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-    PQclear(result);
+    result = NULL;
+    check_equal(flowie_control_pgsql_connection_execute(connection, sql, 3, values, &result),
+                TURBO_OK);
+    flowie_control_pgsql_result_destroy(result);
   }
 }
 
 static void drop_test_schema(const char *conninfo, const char *schema_name) {
-  const char *keywords[] = {"dbname", "connect_timeout", "application_name", NULL};
-  const char *values[] = {conninfo, "5", "flowie-control-test-cleanup", NULL};
   char sql[160];
-  PGconn *connection = PQconnectdbParams(keywords, values, 1);
-  PGresult *result;
-  check_not_null(connection);
-  check_equal(PQstatus(connection), CONNECTION_OK);
+  orm_result_t *result;
   check_true(snprintf(sql, sizeof(sql), "DROP SCHEMA \"%s\" CASCADE", schema_name) > 0);
-  result = PQexec(connection, sql);
-  check_not_null(result);
-  check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-  PQclear(result);
-  PQfinish(connection);
+  result = test_orm_execute(conninfo, sql);
+  orm_result_destroy(result);
 }
 
 static void terminate_test_backend(const char *conninfo, int backend_pid) {
-  const char *keywords[] = {"dbname", "connect_timeout", "application_name", NULL};
-  const char *values[] = {conninfo, "5", "flowie-control-test-terminator", NULL};
   char sql[96];
-  PGconn *connection = PQconnectdbParams(keywords, values, 1);
-  PGresult *result;
-  check_not_null(connection);
-  check_equal(PQstatus(connection), CONNECTION_OK);
-  check_true(snprintf(sql, sizeof(sql), "SELECT pg_catalog.pg_terminate_backend(%d)",
-                      backend_pid) > 0);
-  result = PQexec(connection, sql);
-  check_not_null(result);
-  check_equal(PQresultStatus(result), PGRES_TUPLES_OK);
-  check_equal(PQgetvalue(result, 0, 0), "t");
-  PQclear(result);
-  PQfinish(connection);
+  orm_result_t *result;
+  uint8_t terminated = 0u;
+  check_true(snprintf(sql, sizeof(sql), "SELECT pg_catalog.pg_terminate_backend(%d)", backend_pid) >
+             0);
+  result = test_orm_execute(conninfo, sql);
+  check_equal(orm_result_get_boolean(result, 0u, 0u, &terminated, NULL), ORM_STATUS_OK);
+  check_true(terminated);
+  orm_result_destroy(result);
 }
 
 spec("Flowie control PostgreSQL database live") {
@@ -208,21 +256,21 @@ spec("Flowie control PostgreSQL database live") {
     repository = flowie_control_pgsql_repository_view(provider);
     check_not_null(repository);
     check_equal(flowie_control_bootstrap_apply(repository, &bootstrap, password,
-                                                sizeof(password) - 1u, 1000u),
-                 TURBO_OK);
+                                               sizeof(password) - 1u, 1000u),
+                TURBO_OK);
     check_equal(flowie_control_bootstrap_apply(repository, &bootstrap, password,
-                                                sizeof(password) - 1u, 2000u),
-                 TURBO_OK);
+                                               sizeof(password) - 1u, 2000u),
+                TURBO_OK);
     check_equal(repository->auth->credential_verify(repository->ctx, "root-a", "admin-a", password,
-                                                     sizeof(password) - 1u, &credential),
-                 TURBO_OK);
+                                                    sizeof(password) - 1u, &credential),
+                TURBO_OK);
     check_equal(repository->auth->principal_snapshot(repository->ctx, "root-a", "admin-a",
-                                                      &credential, &principal),
-                 TURBO_OK);
+                                                     &credential, &principal),
+                TURBO_OK);
     check_equal(principal.effective_groups.group_count, 0u);
     check_equal(principal.effective_roles.role_count, 2u);
     check_equal(principal.effective_roles.roles[0],
-                 FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED);
+                FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED);
     check_equal(principal.effective_roles.roles[1], FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN);
     check_equal(flowie_control_pgsql_repository_destroy(provider, 5000), TURBO_OK);
     drop_test_schema(conninfo, schema_name);
@@ -244,98 +292,15 @@ spec("Flowie control PostgreSQL database live") {
     config.schema_mode = FLOWIE_CONTROL_PGSQL_SCHEMA_MIGRATE;
     check_equal(flowie_control_pgsql_database_open(&config, &database), TURBO_OK);
     check_equal(flowie_control_pgsql_database_schema_version(database),
-                  FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION);
+                FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION);
     flowie_control_pgsql_database_destroy(database);
     database = NULL;
 
     config.schema_mode = FLOWIE_CONTROL_PGSQL_SCHEMA_VALIDATE;
     check_equal(flowie_control_pgsql_database_open(&config, &database), TURBO_OK);
     check_equal(flowie_control_pgsql_database_schema_version(database),
-                  FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION);
-    flowie_control_pgsql_database_destroy(database);
-    drop_test_schema(conninfo, schema_name);
-  }
-
-  it("purges every v3 policy row while preserving domain state") {
-    const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
-    char schema_name[64];
-    char sql[8192];
-    flowie_control_pgsql_database_config_t config = FLOWIE_CONTROL_PGSQL_DATABASE_CONFIG_INIT;
-    flowie_control_pgsql_database_t *database = NULL;
-    PGconn *connection;
-    PGresult *result;
-    int written;
-
-    check_not_null(conninfo);
-    check_true(conninfo[0] != '\0');
-    (void)snprintf(schema_name, sizeof(schema_name), "flowie_control_v3_purge_%llu",
-                   (unsigned long long)turbo_hrtime());
-    connection = PQconnectdb(conninfo);
-    check_not_null(connection);
-    check_equal(PQstatus(connection), CONNECTION_OK);
-    written = snprintf(
-        sql, sizeof(sql),
-        "CREATE SCHEMA %s;"
-        "CREATE TABLE %s.schema_version(singleton SMALLINT PRIMARY KEY,version INTEGER NOT NULL,"
-        "fingerprint TEXT NOT NULL);"
-        "INSERT INTO %s.schema_version VALUES(1,3,"
-        "'flowie-control-acl-document-schema-v3-20260805');"
-        "CREATE TABLE %s.domain(domain_id TEXT PRIMARY KEY);"
-        "INSERT INTO %s.domain VALUES('root-a');"
-        "CREATE TABLE %s.policy_draft(domain_id TEXT NOT NULL,ordinal INTEGER NOT NULL,"
-        "rule_line TEXT NOT NULL,revision BIGINT NOT NULL,updated_at BIGINT NOT NULL);"
-        "INSERT INTO %s.policy_draft VALUES('root-a',1,'user old-device allow',1,1);"
-        "CREATE TABLE %s.acl_bundle(namespace_name TEXT PRIMARY KEY,policy_version BIGINT NOT "
-        "NULL,expires_at BIGINT NOT NULL);"
-        "INSERT INTO %s.acl_bundle VALUES('root-a',1,9999);"
-        "CREATE TABLE %s.acl_rule(namespace_name TEXT NOT NULL,ordinal INTEGER NOT NULL,"
-        "rule_line TEXT NOT NULL);"
-        "INSERT INTO %s.acl_rule VALUES('root-a',1,'user old-device allow');"
-        "CREATE TABLE %s.policy_publish_result(request_id TEXT PRIMARY KEY,policy_version BIGINT "
-        "NOT NULL);"
-        "INSERT INTO %s.policy_publish_result VALUES('old-publish',1);",
-        schema_name, schema_name, schema_name, schema_name, schema_name, schema_name, schema_name,
-        schema_name, schema_name, schema_name, schema_name, schema_name, schema_name);
-    check_true(written > 0);
-    check_true((size_t)written < sizeof(sql));
-    result = PQexec(connection, sql);
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-    PQclear(result);
-    PQfinish(connection);
-
-    config.conninfo = conninfo;
-    config.schema_name = schema_name;
-    config.require_tls = 0;
-    config.schema_mode = FLOWIE_CONTROL_PGSQL_SCHEMA_MIGRATE;
-    check_equal(flowie_control_pgsql_database_open(&config, &database), TURBO_OK);
-    check_equal(flowie_control_pgsql_database_schema_version(database),
                 FLOWIE_CONTROL_PGSQL_SCHEMA_VERSION);
     flowie_control_pgsql_database_destroy(database);
-
-    connection = PQconnectdb(conninfo);
-    check_not_null(connection);
-    check_equal(PQstatus(connection), CONNECTION_OK);
-    written = snprintf(
-        sql, sizeof(sql),
-        "SELECT (SELECT count(*) FROM %s.domain),(SELECT count(*) FROM %s.policy_draft),"
-        "(SELECT count(*) FROM %s.acl_bundle),(SELECT count(*) FROM %s.acl_rule),"
-        "(SELECT count(*) FROM %s.policy_publish_result)",
-        schema_name, schema_name, schema_name, schema_name, schema_name);
-    check_true(written > 0);
-    check_true((size_t)written < sizeof(sql));
-    result = PQexec(connection, sql);
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_TUPLES_OK);
-    check_equal(PQntuples(result), 1);
-    check_equal(PQnfields(result), 5);
-    check_equal(PQgetvalue(result, 0, 0), "1");
-    check_equal(PQgetvalue(result, 0, 1), "0");
-    check_equal(PQgetvalue(result, 0, 2), "0");
-    check_equal(PQgetvalue(result, 0, 3), "0");
-    check_equal(PQgetvalue(result, 0, 4), "0");
-    PQclear(result);
-    PQfinish(connection);
     drop_test_schema(conninfo, schema_name);
   }
 
@@ -347,7 +312,7 @@ spec("Flowie control PostgreSQL database live") {
     flowie_control_pgsql_pool_lease_t first = FLOWIE_CONTROL_PGSQL_POOL_LEASE_INIT;
     flowie_control_pgsql_pool_lease_t second = FLOWIE_CONTROL_PGSQL_POOL_LEASE_INIT;
     flowie_control_pgsql_pool_stats_t stats = FLOWIE_CONTROL_PGSQL_POOL_STATS_INIT;
-    PGresult *result;
+    flowie_control_pgsql_result_t *result = NULL;
 
     check_not_null(conninfo);
     check_true(conninfo[0] != '\0');
@@ -373,16 +338,18 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(stats.leased, 1u);
     check_equal(stats.acquisition_timeouts, 1u);
 
-    result = PQexec(flowie_control_pgsql_pool_lease_connection(&first), "BEGIN");
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-    PQclear(result);
+    check_equal(flowie_control_pgsql_connection_command(
+                    flowie_control_pgsql_pool_lease_connection(&first), "BEGIN"),
+                TURBO_OK);
     check_equal(flowie_control_pgsql_pool_release(&first), TURBO_OK);
     check_null(flowie_control_pgsql_pool_lease_connection(&first));
 
     check_equal(flowie_control_pgsql_pool_acquire(pool, &second), TURBO_OK);
-    check_equal(PQtransactionStatus(flowie_control_pgsql_pool_lease_connection(&second)),
-                 PQTRANS_IDLE);
+    check_equal(
+        flowie_control_pgsql_connection_execute(flowie_control_pgsql_pool_lease_connection(&second),
+                                                "SELECT 1::text", 0, NULL, &result),
+        TURBO_OK);
+    flowie_control_pgsql_result_destroy(result);
     check_equal(flowie_control_pgsql_pool_close(pool, 1), TURBO_ETIMEDOUT);
     check_equal(flowie_control_pgsql_pool_acquire(pool, &first), TURBO_ESHUTDOWN);
     check_equal(flowie_control_pgsql_pool_release(&second), TURBO_OK);
@@ -400,8 +367,9 @@ spec("Flowie control PostgreSQL database live") {
     flowie_control_pgsql_pool_lease_t lease = FLOWIE_CONTROL_PGSQL_POOL_LEASE_INIT;
     flowie_control_pgsql_pool_stats_t stats = FLOWIE_CONTROL_PGSQL_POOL_STATS_INIT;
     flowie_control_pgsql_database_t *restored = NULL;
-    PGconn *connection;
-    PGresult *result;
+    flowie_control_pgsql_connection_t *connection;
+    flowie_control_pgsql_result_t *result = NULL;
+    int backend_pid;
 
     check_not_null(conninfo);
     check_true(conninfo[0] != '\0');
@@ -418,11 +386,18 @@ spec("Flowie control PostgreSQL database live") {
     connection = flowie_control_pgsql_pool_lease_connection(&lease);
     check_not_null(connection);
 
-    terminate_test_backend(conninfo, PQbackendPID(connection));
-    result = PQexec(connection, "SELECT 1");
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_FATAL_ERROR);
-    PQclear(result);
+    check_equal(flowie_control_pgsql_connection_execute(
+                    connection, "SELECT pg_catalog.pg_backend_pid()::text", 0, NULL, &result),
+                TURBO_OK);
+    backend_pid = atoi(flowie_control_pgsql_result_value(result, 0, 0));
+    check_true(backend_pid > 0);
+    flowie_control_pgsql_result_destroy(result);
+    result = NULL;
+    terminate_test_backend(conninfo, backend_pid);
+    check_not_equal(
+        flowie_control_pgsql_connection_execute(connection, "SELECT 1::text", 0, NULL, &result),
+        TURBO_OK);
+    flowie_control_pgsql_result_destroy(result);
     drop_test_schema(conninfo, schema_name);
 
     check_not_equal(flowie_control_pgsql_pool_release(&lease), TURBO_OK);
@@ -493,22 +468,21 @@ spec("Flowie control PostgreSQL database live") {
 
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 7u);
-    check_equal(
-        flowie_control_pgsql_query_credential_state(query, "root-a", "device-7", &verified),
-        TURBO_OK);
+    check_equal(flowie_control_pgsql_query_credential_state(query, "root-a", "device-7", &verified),
+                TURBO_OK);
     check_equal(verified.user_revision, 2u);
     check_equal(verified.credential_revision, 3u);
     check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", wrong_token, sizeof(wrong_token), &verified),
-                 TURBO_EPERM);
-    check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
-                     &verified),
-                 TURBO_OK);
+                    query, "root-a", "device-7", wrong_token, sizeof(wrong_token), &verified),
+                TURBO_EPERM);
+    check_equal(flowie_control_pgsql_query_credential_verify(query, "root-a", "device-7", token,
+                                                             FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                             &verified),
+                TURBO_OK);
 
     check_equal(flowie_control_pgsql_query_principal_snapshot(query, "root-a", "device-7",
-                                                               &verified, &principal),
-                 TURBO_OK);
+                                                              &verified, &principal),
+                TURBO_OK);
     check_equal(principal.principal_type, "device");
     check_equal(principal.effective_groups.group_count, 1u);
     check_equal(principal.effective_groups.groups[0], "operators");
@@ -517,12 +491,12 @@ spec("Flowie control PostgreSQL database live") {
 
     principal = (flowie_control_principal_snapshot_t)FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        99u, &principal),
-                 TURBO_OK);
+                                                                       99u, &principal),
+                TURBO_OK);
     check_equal(principal.credential_revision, 99u);
 
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a", 0u, &bundle),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(bundle.policy_version, 1u);
     check_equal(bundle.expires_at, 20000u);
     check_equal(bundle.rule_count, 2u);
@@ -530,15 +504,15 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(bundle.rules[1].pattern, "root-a/events/#");
     flowie_control_pgsql_query_policy_bundle_release(&bundle);
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a", 1u, &bundle),
-                 TURBO_OK);
+                TURBO_OK);
     flowie_control_pgsql_query_policy_bundle_release(&bundle);
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a", 2u, &bundle),
-                 TURBO_ENOENT);
+                TURBO_ENOENT);
     check_equal(flowie_control_pgsql_query_audit_count(query, &audit_count), TURBO_OK);
     check_equal(audit_count, 2u);
     check_equal(flowie_control_pgsql_query_audit_list(query, "root-a", 0u, audit, 1u, &page_count,
-                                                       &has_more),
-                 TURBO_OK);
+                                                      &has_more),
+                TURBO_OK);
     check_equal(page_count, 1u);
     check_true(has_more);
     check_equal(audit[0].request_id, "request-user");
@@ -572,7 +546,6 @@ spec("Flowie control PostgreSQL database live") {
     flowie_control_principal_snapshot_t principal = FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     uint64_t revision = 0u;
     size_t audit_count = 0u;
-    PGresult *result;
     int written;
 
     check_not_null(conninfo);
@@ -594,16 +567,16 @@ spec("Flowie control PostgreSQL database live") {
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
     check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 1u);
     check_false(command_result.replayed);
     check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 1u);
     check_true(command_result.replayed);
     root.actor = "different-admin";
     check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &command_result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     root.actor = "admin-1";
 
     user.domain_id = "root-a";
@@ -614,18 +587,18 @@ spec("Flowie control PostgreSQL database live") {
     user.expected_revision = 1u;
     user.occurred_at = 1001u;
     check_equal(flowie_control_pgsql_command_user_create(commands, &user, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 2u);
     check_false(command_result.replayed);
     check_equal(flowie_control_pgsql_command_user_create(commands, &user, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_true(command_result.replayed);
 
     stale = user;
     stale.principal_id = "device-stale";
     stale.request_id = "request-user-stale";
     check_equal(flowie_control_pgsql_command_user_create(commands, &stale, &command_result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 2u);
 
@@ -637,10 +610,9 @@ spec("Flowie control PostgreSQL database live") {
                        schema_name, referenced_rule);
     check_true(written > 0);
     check_true((size_t)written < sizeof(policy_sql));
-    result = PQexec(flowie_control_pgsql_pool_lease_connection(&seed), policy_sql);
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-    PQclear(result);
+    check_equal(flowie_control_pgsql_connection_command(
+                    flowie_control_pgsql_pool_lease_connection(&seed), policy_sql),
+                TURBO_OK);
     check_equal(flowie_control_pgsql_pool_release(&seed), TURBO_OK);
 
     disable.domain_id = "root-a";
@@ -650,7 +622,7 @@ spec("Flowie control PostgreSQL database live") {
     disable.expected_revision = 2u;
     disable.occurred_at = 1003u;
     check_equal(flowie_control_pgsql_command_user_disable(commands, &disable, &command_result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 2u);
 
@@ -659,23 +631,22 @@ spec("Flowie control PostgreSQL database live") {
                        "DELETE FROM %s.policy_draft WHERE domain_id='root-a'", schema_name);
     check_true(written > 0);
     check_true((size_t)written < sizeof(policy_sql));
-    result = PQexec(flowie_control_pgsql_pool_lease_connection(&seed), policy_sql);
-    check_not_null(result);
-    check_equal(PQresultStatus(result), PGRES_COMMAND_OK);
-    PQclear(result);
+    check_equal(flowie_control_pgsql_connection_command(
+                    flowie_control_pgsql_pool_lease_connection(&seed), policy_sql),
+                TURBO_OK);
     check_equal(flowie_control_pgsql_pool_release(&seed), TURBO_OK);
 
     check_equal(flowie_control_pgsql_command_user_disable(commands, &disable, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 3u);
     check_false(command_result.replayed);
     check_equal(flowie_control_pgsql_command_user_disable(commands, &disable, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 3u);
     check_true(command_result.replayed);
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        1u, &principal),
-                 TURBO_EPERM);
+                                                                       1u, &principal),
+                TURBO_EPERM);
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 3u);
     check_equal(flowie_control_pgsql_query_audit_count(query, &audit_count), TURBO_OK);
@@ -715,41 +686,40 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     check_equal(result.revision, 1u);
 
-    check_equal(flowie_control_pgsql_command_commit_confirm(
-                     commands, "request-root", "admin-1", "domain.create", "root-a", "root-a",
-                     "domain", 1u, &committed),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_commit_confirm(commands, "request-root", "admin-1",
+                                                            "domain.create", "root-a", "root-a",
+                                                            "domain", 1u, &committed),
+                TURBO_OK);
     check_true(committed);
 
     committed = 1;
-    check_equal(flowie_control_pgsql_command_commit_confirm(
-                     commands, "request-missing", "admin-1", "domain.create", "root-a",
-                     "root-a", "domain", 1u, &committed),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_commit_confirm(commands, "request-missing", "admin-1",
+                                                            "domain.create", "root-a", "root-a",
+                                                            "domain", 1u, &committed),
+                TURBO_OK);
     check_false(committed);
 
     committed = 1;
     check_equal(flowie_control_pgsql_command_commit_confirm(
-                     commands, "request-root", "different-admin", "domain.create", "root-a",
-                     "root-a", "domain", 1u, &committed),
-                 TURBO_EBUSY);
+                    commands, "request-root", "different-admin", "domain.create", "root-a",
+                    "root-a", "domain", 1u, &committed),
+                TURBO_EBUSY);
     check_false(committed);
 
     committed = 1;
-    check_equal(flowie_control_pgsql_command_commit_confirm(
-                     commands, "request-root", "admin-1", "domain.create", "root-a", "root-a",
-                     "domain", 2u, &committed),
-                 TURBO_EPROTO);
+    check_equal(flowie_control_pgsql_command_commit_confirm(commands, "request-root", "admin-1",
+                                                            "domain.create", "root-a", "root-a",
+                                                            "domain", 2u, &committed),
+                TURBO_EPROTO);
     check_false(committed);
 
     check_equal(flowie_control_pgsql_command_commit_confirm(commands, "request-root", "admin-1",
-                                                             "domain.create", "root-a",
-                                                             "root-a", NULL, 1u, &committed),
-                 TURBO_EINVAL);
+                                                            "domain.create", "root-a", "root-a",
+                                                            NULL, 1u, &committed),
+                TURBO_EINVAL);
 
     flowie_control_pgsql_command_destroy(commands);
     check_equal(flowie_control_pgsql_pool_close(pool, 100), TURBO_OK);
@@ -799,7 +769,7 @@ spec("Flowie control PostgreSQL database live") {
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
     check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
 
     user.domain_id = "root-a";
     user.principal_id = "device-7";
@@ -809,7 +779,7 @@ spec("Flowie control PostgreSQL database live") {
     user.expected_revision = 1u;
     user.occurred_at = 1001u;
     check_equal(flowie_control_pgsql_command_user_create(commands, &user, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
 
     issue.domain_id = "root-a";
     issue.principal_id = "device-7";
@@ -818,47 +788,47 @@ spec("Flowie control PostgreSQL database live") {
     issue.expected_revision = 2u;
     issue.occurred_at = 1002u;
     check_equal(flowie_control_pgsql_command_credential_generate(commands, &issue, &generated),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(generated.revision, 3u);
     check_equal(generated.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_starts_with(generated.token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX);
     memcpy(first_token, generated.token, sizeof(first_token));
     check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", first_token, sizeof(first_token), &verified),
-                 TURBO_OK);
+                    query, "root-a", "device-7", first_token, sizeof(first_token), &verified),
+                TURBO_OK);
     check_equal(verified.credential_revision, 3u);
 
     check_equal(flowie_control_pgsql_command_credential_generate(commands, &issue, &generated),
-                 TURBO_EALREADY);
+                TURBO_EALREADY);
     check_equal(generated.token_size, 0u);
     issue.actor = "different-admin";
     check_equal(flowie_control_pgsql_command_credential_generate(commands, &issue, &generated),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     issue.actor = "admin-1";
     issue.request_id = "request-credential-generate-existing";
     issue.expected_revision = 3u;
     check_equal(flowie_control_pgsql_command_credential_generate(commands, &issue, &generated),
-                 TURBO_EALREADY);
+                TURBO_EALREADY);
 
     issue.request_id = "request-credential-rotate";
     issue.expected_revision = 3u;
     issue.occurred_at = 1003u;
     check_equal(flowie_control_pgsql_command_credential_rotate(commands, &issue, &rotated),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(rotated.revision, 4u);
     check_equal(rotated.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_not_equal(rotated.token, first_token, sizeof(first_token));
     memcpy(active_token, rotated.token, sizeof(active_token));
     check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", first_token, sizeof(first_token), &verified),
-                 TURBO_EPERM);
+                    query, "root-a", "device-7", first_token, sizeof(first_token), &verified),
+                TURBO_EPERM);
     check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", active_token, sizeof(active_token), &verified),
-                 TURBO_OK);
+                    query, "root-a", "device-7", active_token, sizeof(active_token), &verified),
+                TURBO_OK);
     issue.request_id = "request-credential-rotate-stale";
     issue.expected_revision = 3u;
     check_equal(flowie_control_pgsql_command_credential_rotate(commands, &issue, &rotated),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     check_equal(rotated.token_size, 0u);
 
     revoke.domain_id = "root-a";
@@ -868,31 +838,30 @@ spec("Flowie control PostgreSQL database live") {
     revoke.expected_revision = 4u;
     revoke.occurred_at = 1004u;
     check_equal(flowie_control_pgsql_command_credential_revoke(commands, &revoke, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 5u);
     check_false(command_result.replayed);
     check_equal(flowie_control_pgsql_command_credential_revoke(commands, &revoke, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(command_result.revision, 5u);
     check_true(command_result.replayed);
-    check_equal(
-        flowie_control_pgsql_query_credential_state(query, "root-a", "device-7", &verified),
-        TURBO_EPERM);
+    check_equal(flowie_control_pgsql_query_credential_state(query, "root-a", "device-7", &verified),
+                TURBO_EPERM);
     revoke.request_id = "request-credential-revoke-disabled";
     revoke.expected_revision = 5u;
     check_equal(flowie_control_pgsql_command_credential_revoke(commands, &revoke, &command_result),
-                 TURBO_EALREADY);
+                TURBO_EALREADY);
 
     issue.request_id = "request-credential-reactivate";
     issue.expected_revision = 5u;
     issue.occurred_at = 1005u;
     rotated = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
     check_equal(flowie_control_pgsql_command_credential_rotate(commands, &issue, &rotated),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(rotated.revision, 6u);
     check_equal(flowie_control_pgsql_query_credential_verify(
-                     query, "root-a", "device-7", rotated.token, rotated.token_size, &verified),
-                 TURBO_OK);
+                    query, "root-a", "device-7", rotated.token, rotated.token_size, &verified),
+                TURBO_OK);
 
     disable.domain_id = "root-a";
     disable.principal_id = "device-7";
@@ -901,12 +870,12 @@ spec("Flowie control PostgreSQL database live") {
     disable.expected_revision = 6u;
     disable.occurred_at = 1006u;
     check_equal(flowie_control_pgsql_command_user_disable(commands, &disable, &command_result),
-                 TURBO_OK);
+                TURBO_OK);
     issue.request_id = "request-disabled-user-rotate";
     issue.expected_revision = 7u;
     issue.occurred_at = 1007u;
     check_equal(flowie_control_pgsql_command_credential_rotate(commands, &issue, &generated),
-                 TURBO_EPERM);
+                TURBO_EPERM);
     check_equal(generated.token_size, 0u);
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 7u);
@@ -961,8 +930,7 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     user.domain_id = "root-a";
     user.principal_id = "device-7";
     user.principal_type = "device";
@@ -1000,8 +968,8 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(flowie_control_pgsql_command_membership_add(commands, &add, &result), TURBO_OK);
     check_equal(result.revision, 5u);
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        99u, &principal),
-                 TURBO_OK);
+                                                                       99u, &principal),
+                TURBO_OK);
     check_equal(principal.effective_groups.group_count, 2u);
     check_equal(principal.effective_groups.groups[0], "engineering");
     check_equal(principal.effective_groups.groups[1], "backend");
@@ -1013,11 +981,11 @@ spec("Flowie control PostgreSQL database live") {
     delete_group.expected_revision = 5u;
     delete_group.occurred_at = 1005u;
     check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     delete_group.group_id = "backend";
     delete_group.request_id = "request-delete-backend";
     check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
 
     remove.domain_id = "root-a";
     remove.principal_id = "device-7";
@@ -1027,21 +995,24 @@ spec("Flowie control PostgreSQL database live") {
     remove.expected_revision = 5u;
     remove.occurred_at = 1006u;
     check_equal(flowie_control_pgsql_command_membership_remove(commands, &remove, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 6u);
     check_equal(flowie_control_pgsql_command_membership_remove(commands, &remove, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_true(result.replayed);
     delete_group.expected_revision = 6u;
-    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result), TURBO_OK);
+    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result),
+                TURBO_OK);
     check_equal(result.revision, 7u);
-    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result), TURBO_OK);
+    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result),
+                TURBO_OK);
     check_true(result.replayed);
     delete_group.group_id = "engineering";
     delete_group.request_id = "request-delete-engineering";
     delete_group.expected_revision = 7u;
     delete_group.occurred_at = 1007u;
-    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result), TURBO_OK);
+    check_equal(flowie_control_pgsql_command_group_delete(commands, &delete_group, &result),
+                TURBO_OK);
     check_equal(result.revision, 8u);
     check_equal(flowie_control_pgsql_query_current_revision(query, &revision), TURBO_OK);
     check_equal(revision, 8u);
@@ -1091,8 +1062,7 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     user.domain_id = "root-a";
     user.principal_id = "device-7";
     user.principal_type = "device";
@@ -1135,8 +1105,7 @@ spec("Flowie control PostgreSQL database live") {
     add.request_id = "request-member-overflow";
     add.expected_revision = revision;
     add.occurred_at = 4000u + revision;
-    check_equal(flowie_control_pgsql_command_membership_add(commands, &add, &result),
-                 TURBO_ENOSPC);
+    check_equal(flowie_control_pgsql_command_membership_add(commands, &add, &result), TURBO_ENOSPC);
     check_equal(flowie_control_pgsql_query_current_revision(query, &actual_revision), TURBO_OK);
     check_equal(actual_revision, revision);
     check_equal(flowie_control_pgsql_query_audit_count(query, &audit_count), TURBO_OK);
@@ -1175,7 +1144,6 @@ spec("Flowie control PostgreSQL database live") {
         FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     flowie_control_effective_roles_view_t effective_roles =
         FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
-    PGresult *seed_result = NULL;
     uint64_t revision = 0u;
     size_t audit_count = 0u;
     size_t page_count = 0u;
@@ -1199,8 +1167,7 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     user.domain_id = "root-a";
     user.principal_id = "device-7";
     user.principal_type = "device";
@@ -1240,24 +1207,24 @@ spec("Flowie control PostgreSQL database live") {
     add.occurred_at = 1005u;
     check_equal(flowie_control_pgsql_command_user_role_add(commands, &add, &result), TURBO_OK);
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        99u, &principal),
-                 TURBO_OK);
+                                                                       99u, &principal),
+                TURBO_OK);
     check_equal(principal.effective_roles.role_count, 2u);
     check_equal(principal.effective_roles.roles[0], "reader");
     check_equal(principal.effective_roles.roles[1], "writer");
     check_equal(flowie_control_pgsql_query_user_get(query, "root-a", "device-7", &users[0]),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(users[0].principal_type, "device");
     users[0] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
     check_equal(flowie_control_pgsql_query_user_list(query, "root-a", NULL, users, 1u, &page_count,
-                                                      &has_more),
-                 TURBO_OK);
+                                                     &has_more),
+                TURBO_OK);
     check_equal(page_count, 1u);
     check_false(has_more);
     check_equal(users[0].principal_id, "device-7");
     check_equal(flowie_control_pgsql_query_group_list(query, "root-a", NULL, groups, 1u,
-                                                       &page_count, &has_more),
-                 TURBO_OK);
+                                                      &page_count, &has_more),
+                TURBO_OK);
     check_equal(page_count, 0u);
     check_false(has_more);
     check_equal(
@@ -1271,15 +1238,15 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(effective_roles.roles[0], "reader");
     check_equal(effective_roles.roles[1], "writer");
     check_equal(flowie_control_pgsql_query_role_list(query, "root-a", NULL, roles, 1u, &page_count,
-                                                      &has_more),
-                 TURBO_OK);
+                                                     &has_more),
+                TURBO_OK);
     check_equal(page_count, 1u);
     check_true(has_more);
     check_equal(roles[0].role_id, "reader");
     roles[0] = (flowie_control_role_view_t)FLOWIE_CONTROL_ROLE_VIEW_INIT;
     check_equal(flowie_control_pgsql_query_role_list(query, "root-a", "reader", roles, 1u,
-                                                      &page_count, &has_more),
-                 TURBO_OK);
+                                                     &page_count, &has_more),
+                TURBO_OK);
     check_equal(page_count, 1u);
     check_false(has_more);
     check_equal(roles[0].role_id, "writer");
@@ -1298,8 +1265,8 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(result.revision, 7u);
     principal = (flowie_control_principal_snapshot_t)FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        100u, &principal),
-                 TURBO_OK);
+                                                                       100u, &principal),
+                TURBO_OK);
     check_equal(principal.effective_roles.role_count, 1u);
     check_equal(principal.effective_roles.roles[0], "reader");
     disable.expected_revision = 0u;
@@ -1319,25 +1286,21 @@ spec("Flowie control PostgreSQL database live") {
     remove.expected_revision = 7u;
     remove.occurred_at = 1008u;
     check_equal(flowie_control_pgsql_command_user_role_remove(commands, &remove, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 8u);
     remove.expected_revision = 0u;
     check_equal(flowie_control_pgsql_command_user_role_remove(commands, &remove, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_true(result.replayed);
 
     check_equal(flowie_control_pgsql_pool_acquire(pool, &seed), TURBO_OK);
     check_true(snprintf(policy_sql, sizeof(policy_sql),
-                         "INSERT INTO %s.acl_bundle(namespace_name,policy_version,expires_at) "
-                         "VALUES('root-a',1,0);"
-                         "INSERT INTO %s.acl_rule(namespace_name,ordinal,rule_line) "
-                         "VALUES('root-a',10,'%s')",
-                         schema_name, schema_name, role_rule) > 0);
-    seed_result = PQexec(flowie_control_pgsql_pool_lease_connection(&seed), policy_sql);
-    check_not_null(seed_result);
-    check_equal(PQresultStatus(seed_result), PGRES_COMMAND_OK);
-    PQclear(seed_result);
-    seed_result = NULL;
+                        "INSERT INTO %s.published_bundle(namespace_name,policy_version,expires_at) "
+                        "VALUES('root-a',1,0);"
+                        "INSERT INTO %s.published_rule(namespace_name,ordinal,rule_line) "
+                        "VALUES('root-a',10,'%s')",
+                        schema_name, schema_name, role_rule) > 0);
+    test_flowie_script(flowie_control_pgsql_pool_lease_connection(&seed), policy_sql);
     check_equal(flowie_control_pgsql_pool_release(&seed), TURBO_OK);
 
     disable.role_id = "reader";
@@ -1345,16 +1308,15 @@ spec("Flowie control PostgreSQL database live") {
     disable.expected_revision = 8u;
     disable.occurred_at = 1011u;
     check_equal(flowie_control_pgsql_command_role_disable(commands, &disable, &result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     check_equal(flowie_control_pgsql_pool_acquire(pool, &seed), TURBO_OK);
-    check_true(snprintf(policy_sql, sizeof(policy_sql),
-                         "DELETE FROM %s.acl_rule WHERE namespace_name='root-a' AND ordinal=10",
-                         schema_name) > 0);
-    seed_result = PQexec(flowie_control_pgsql_pool_lease_connection(&seed), policy_sql);
-    check_not_null(seed_result);
-    check_equal(PQresultStatus(seed_result), PGRES_COMMAND_OK);
-    PQclear(seed_result);
-    seed_result = NULL;
+    check_true(
+        snprintf(policy_sql, sizeof(policy_sql),
+                 "DELETE FROM %s.published_rule WHERE namespace_name='root-a' AND ordinal=10",
+                 schema_name) > 0);
+    check_equal(flowie_control_pgsql_connection_command(
+                    flowie_control_pgsql_pool_lease_connection(&seed), policy_sql),
+                TURBO_OK);
     check_equal(flowie_control_pgsql_pool_release(&seed), TURBO_OK);
     disable.request_id = "request-disable-reader";
     check_equal(flowie_control_pgsql_command_role_disable(commands, &disable, &result), TURBO_OK);
@@ -1408,8 +1370,7 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     user.domain_id = "root-a";
     user.principal_id = "device-7";
     user.principal_type = "device";
@@ -1453,8 +1414,8 @@ spec("Flowie control PostgreSQL database live") {
     add.occurred_at = 4000u + revision;
     check_equal(flowie_control_pgsql_command_user_role_add(commands, &add, &result), TURBO_ENOSPC);
     check_equal(flowie_control_pgsql_query_external_principal_snapshot(query, "root-a", "device-7",
-                                                                        99u, &principal),
-                 TURBO_OK);
+                                                                       99u, &principal),
+                TURBO_OK);
     check_equal(principal.effective_roles.role_count, FLOWIE_SECURITY_MAX_ROLES);
     check_equal(flowie_control_pgsql_query_current_revision(query, &actual_revision), TURBO_OK);
     check_equal(actual_revision, revision);
@@ -1469,10 +1430,9 @@ spec("Flowie control PostgreSQL database live") {
   }
 
   it("publishes validated ACL drafts as atomic versioned bundles") {
-    static const char device_rule[] =
-        "user device-7 allow {\n"
-        "  write topic root-a/groups/operators/devices/%u/event\n"
-        "}";
+    static const char device_rule[] = "user device-7 allow {\n"
+                                      "  write topic root-a/groups/operators/devices/%u/event\n"
+                                      "}";
     static const char deny_rule[] =
         "user device-8 allow {\n"
         "  deny write topic root-a/groups/operators/devices/%u/private\n"
@@ -1491,14 +1451,16 @@ spec("Flowie control PostgreSQL database live") {
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_user_disable_command_t disable = FLOWIE_CONTROL_USER_DISABLE_COMMAND_INIT;
     flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
-    flowie_control_policy_rule_put_command_t put = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
-    flowie_control_policy_rule_delete_command_t remove =
-        FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT;
+    flowie_control_policy_subject_rule_put_command_t put =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_subject_rule_delete_command_t remove =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
     flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
     flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
-    flowie_control_policy_rule_view_t rules[1] = {FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT};
+    flowie_control_policy_subject_rule_view_t rules[1] = {
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT};
     flowie_control_policy_status_t status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
     flowie_security_policy_bundle_t first = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
     flowie_security_policy_bundle_t second = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
@@ -1525,8 +1487,7 @@ spec("Flowie control PostgreSQL database live") {
     root.request_id = "request-root";
     root.expected_revision = 0u;
     root.occurred_at = 1000u;
-    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_domain_create(commands, &root, &result), TURBO_OK);
     user.domain_id = "root-a";
     user.principal_type = "device";
     user.actor = "admin-1";
@@ -1556,48 +1517,48 @@ spec("Flowie control PostgreSQL database live") {
 
     put.domain_id = "root-a";
     put.ordinal = 2u;
-    put.rule_line = device_rule;
     put.actor = "admin-1";
     put.request_id = "request-put-device-7";
     put.expected_revision = 5u;
     put.occurred_at = 1005u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, device_rule, &result), TURBO_OK);
     check_equal(result.revision, 6u);
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, device_rule, &result), TURBO_OK);
     check_true(result.replayed);
     put.ordinal = 10u;
-    put.rule_line = deny_rule;
     put.request_id = "request-put-deny";
     put.expected_revision = 6u;
     put.occurred_at = 1006u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, deny_rule, &result), TURBO_OK);
     put.ordinal = 30u;
-    put.rule_line = "user missing allow";
     put.request_id = "request-put-missing-user";
     put.expected_revision = 7u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result),
-                 TURBO_ENOENT);
-    put.rule_line =
-        "user device-7 allow { read topic root-a/groups/operators/devices/%u/#/tail }";
+    check_equal(test_policy_subject_put(commands, &put, "user missing allow", &result),
+                TURBO_ENOENT);
     put.request_id = "request-put-bad-filter";
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result),
-                 TURBO_EPROTO);
-    check_equal(flowie_control_pgsql_query_policy_validate(query, "root-a", &validation),
-                 TURBO_OK);
+    check_equal(test_policy_subject_put(
+                    commands, &put,
+                    "user device-7 allow { read topic root-a/groups/operators/devices/%u/#/tail }",
+                    &result),
+                TURBO_EPROTO);
+    check_equal(flowie_control_pgsql_query_policy_validate(query, "root-a", &validation), TURBO_OK);
     check_equal(validation.store_revision, 7u);
     check_equal(validation.rule_count, 4u);
     check_equal(validation.deny_rule_count, 1u);
-    check_equal(flowie_control_pgsql_query_policy_rule_list(query, "root-a", 0u, 0, rules, 1u,
-                                                             &page_count, &has_more),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_pgsql_query_policy_subject_rule_list(
+            query, "root-a", FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, rules, 1u, &page_count, &has_more),
+        TURBO_OK);
     check_equal(page_count, 1u);
     check_true(has_more);
     check_equal(rules[0].ordinal, 2u);
-    check_equal(rules[0].rule_line, device_rule);
-    rules[0] = (flowie_control_policy_rule_view_t)FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT;
-    check_equal(flowie_control_pgsql_query_policy_rule_list(query, "root-a", 2u, 1, rules, 1u,
-                                                             &page_count, &has_more),
-                 TURBO_OK);
+    check_equal(rules[0].document.subject, "device-7");
+    rules[0] =
+        (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+    check_equal(
+        flowie_control_pgsql_query_policy_subject_rule_list(
+            query, "root-a", FLOWIE_SECURITY_SUBJECT_ANY, 2u, 1, rules, 1u, &page_count, &has_more),
+        TURBO_OK);
     check_equal(page_count, 1u);
     check_false(has_more);
     check_equal(rules[0].ordinal, 10u);
@@ -1614,7 +1575,7 @@ spec("Flowie control PostgreSQL database live") {
     publish.occurred_at = 2000u;
     publish.expires_at = 20000u;
     check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(published.revision, 8u);
     check_equal(published.policy_version, 1u);
     check_false(published.replayed);
@@ -1626,32 +1587,33 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(status.published_rule_count, 4u);
     publish.expected_revision = 0u;
     check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
-                 TURBO_OK);
+                TURBO_OK);
     check_true(published.replayed);
     check_equal(published.revision, 8u);
     check_equal(published.policy_version, 1u);
     publish.expires_at = 21000u;
     check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     publish.expires_at = 20000u;
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a", 1u, &first),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(first.rule_count, 4u);
     check_equal(first.rules[0].subject, "device-7");
     check_equal(first.rules[3].pattern, "root-a/groups/operators/devices/%u/private");
 
     remove.domain_id = "root-a";
-    remove.ordinal = 2u;
+    remove.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    remove.subject_id = "device-7";
     remove.actor = "admin-1";
     remove.request_id = "request-delete-role-rule";
     remove.expected_revision = 8u;
     remove.occurred_at = 2001u;
-    check_equal(flowie_control_pgsql_command_policy_rule_delete(commands, &remove, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_policy_subject_rule_delete(commands, &remove, &result),
+                TURBO_OK);
     check_equal(result.revision, 9u);
     remove.expected_revision = 0u;
-    check_equal(flowie_control_pgsql_command_policy_rule_delete(commands, &remove, &result),
-                 TURBO_OK);
+    check_equal(flowie_control_pgsql_command_policy_subject_rule_delete(commands, &remove, &result),
+                TURBO_OK);
     check_true(result.replayed);
 
     disable.domain_id = "root-a";
@@ -1661,23 +1623,22 @@ spec("Flowie control PostgreSQL database live") {
     disable.expected_revision = 9u;
     disable.occurred_at = 2002u;
     check_equal(flowie_control_pgsql_command_user_disable(commands, &disable, &result),
-                 TURBO_EBUSY);
+                TURBO_EBUSY);
     put.ordinal = 2u;
-    put.rule_line = replacement_rule;
     put.request_id = "request-put-replacement";
     put.expected_revision = 9u;
     put.occurred_at = 2003u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, replacement_rule, &result), TURBO_OK);
     publish.request_id = "request-publish-second";
     publish.expected_revision = 10u;
     publish.occurred_at = 2004u;
     publish.expires_at = 22000u;
     check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(published.revision, 11u);
     check_equal(published.policy_version, 2u);
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a", 2u, &second),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(second.rule_count, 4u);
     check_equal(second.rules[1].pattern, "root-a/groups/operators/devices/%c/public");
     check_equal(first.rules[0].subject, "device-7");
@@ -1703,14 +1664,12 @@ spec("Flowie control PostgreSQL database live") {
   }
 
   it("publishes role group and user ACL subjects with typed uniqueness") {
-    static const char role_rule[] =
-        "role shared allow {\n"
-        "  read topic root-a/commands/#\n"
-        "}";
-    static const char group_rule[] =
-        "group shared allow {\n"
-        "  write topic root-a/telemetry/%u/event\n"
-        "}";
+    static const char role_rule[] = "role shared allow {\n"
+                                    "  read topic root-a/commands/#\n"
+                                    "}";
+    static const char group_rule[] = "group shared allow {\n"
+                                     "  write topic root-a/telemetry/%u/event\n"
+                                     "}";
     static const char user_rule[] = "user shared allow";
     const char *conninfo = getenv("TURBO_FLOW_PGSQL_TEST_CONNINFO");
     char schema_name[64];
@@ -1722,7 +1681,8 @@ spec("Flowie control PostgreSQL database live") {
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
     flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
-    flowie_control_policy_rule_put_command_t put = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+    flowie_control_policy_subject_rule_put_command_t put =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
@@ -1773,31 +1733,25 @@ spec("Flowie control PostgreSQL database live") {
     put.domain_id = "root-a";
     put.actor = "admin-1";
     put.ordinal = 10u;
-    put.rule_line = role_rule;
     put.request_id = "request-role-rule";
     put.expected_revision = 4u;
     put.occurred_at = 1004u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, role_rule, &result), TURBO_OK);
     put.ordinal = 20u;
-    put.rule_line = group_rule;
     put.request_id = "request-group-rule";
     put.expected_revision = 5u;
     put.occurred_at = 1005u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, group_rule, &result), TURBO_OK);
     put.ordinal = 30u;
-    put.rule_line = user_rule;
     put.request_id = "request-user-rule";
     put.expected_revision = 6u;
     put.occurred_at = 1006u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result), TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, user_rule, &result), TURBO_OK);
     put.ordinal = 40u;
-    put.rule_line = role_rule;
     put.request_id = "request-duplicate-role";
     put.expected_revision = 7u;
-    check_equal(flowie_control_pgsql_command_policy_rule_put(commands, &put, &result),
-                TURBO_EALREADY);
-    check_equal(flowie_control_pgsql_query_policy_validate(query, "root-a", &validation),
-                TURBO_OK);
+    check_equal(test_policy_subject_put(commands, &put, role_rule, &result), TURBO_EALREADY);
+    check_equal(flowie_control_pgsql_query_policy_validate(query, "root-a", &validation), TURBO_OK);
     check_equal(validation.rule_count, 5u);
 
     publish.domain_id = "root-a";
@@ -1809,7 +1763,7 @@ spec("Flowie control PostgreSQL database live") {
     check_equal(flowie_control_pgsql_command_policy_publish(commands, &publish, &published),
                 TURBO_OK);
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "root-a",
-                                                               published.policy_version, &bundle),
+                                                              published.policy_version, &bundle),
                 TURBO_OK);
     check_equal(bundle.rule_count, 5u);
     check_equal(bundle.rules[0].subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
@@ -1839,9 +1793,9 @@ spec("Flowie control PostgreSQL database live") {
          ++index) {
       flowie_security_rule_t rule = FLOWIE_SECURITY_RULE_INIT;
       info("PicImpact ACL rule index: %zu", index);
-      check_equal(flowie_security_rule_parse_line(
-                       PICIMPACT_ACL_RULES[index], strlen(PICIMPACT_ACL_RULES[index]), &rule),
-                   TURBO_OK);
+      check_equal(flowie_security_rule_parse_line(PICIMPACT_ACL_RULES[index],
+                                                  strlen(PICIMPACT_ACL_RULES[index]), &rule),
+                  TURBO_OK);
       check_equal(rule.domain_id, "booth");
     }
     (void)snprintf(schema_name, sizeof(schema_name), "flowie_control_picimpact_%llu",
@@ -1854,20 +1808,18 @@ spec("Flowie control PostgreSQL database live") {
 
     check_equal(flowie_control_pgsql_pool_create(&config, &pool), TURBO_OK);
     check_equal(flowie_control_pgsql_pool_acquire(pool, &seed), TURBO_OK);
-    seed_picimpact_acl_bundle(flowie_control_pgsql_pool_lease_connection(&seed), schema_name);
+    seed_picimpact_published_bundle(flowie_control_pgsql_pool_lease_connection(&seed), schema_name);
     check_equal(flowie_control_pgsql_pool_release(&seed), TURBO_OK);
     check_equal(flowie_control_pgsql_query_create(pool, &query), TURBO_OK);
 
     check_equal(flowie_control_pgsql_query_policy_bundle_load(query, "booth", 5u, &bundle),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(bundle.policy_version, 5u);
     check_equal(bundle.expires_at, 0u);
-    check_equal(bundle.rule_count,
-                  sizeof(PICIMPACT_ACL_RULES) / sizeof(PICIMPACT_ACL_RULES[0]));
+    check_equal(bundle.rule_count, sizeof(PICIMPACT_ACL_RULES) / sizeof(PICIMPACT_ACL_RULES[0]));
     check_equal(bundle.rules[7].subject, "127b7f51-f122-487e-9da2-7c3aac3c01f5");
-    check_equal(bundle.rules[9].pattern,
-                 "tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/"
-                 "127b7f51-f122-487e-9da2-7c3aac3c01f5/heartbeat");
+    check_equal(bundle.rules[9].pattern, "tenant/f0f4c9cf-18d7-4f76-9d6d-3d7e8b24a5d1/device/"
+                                         "127b7f51-f122-487e-9da2-7c3aac3c01f5/heartbeat");
     flowie_control_pgsql_query_policy_bundle_release(&bundle);
 
     flowie_control_pgsql_query_destroy(query);

@@ -650,18 +650,19 @@ endpoint registration before the listener starts.
 
 ### Internal ACL management plane
 
-`flowie/control` now contains an internal, non-installed management plane. Its SQLite control store
-is the single fact source for root-scoped users, credentials, hierarchical groups, roles, ACL draft
-rules and audit records. Draft rules are canonical v3 rule lines. A publish command runs under one
+`flowie/control` now contains an internal, non-installed management plane. Its TurboDB-backed
+control store is the single fact source for root-scoped users, credentials, hierarchical groups,
+roles, subject-keyed ACL draft rules and audit records. Draft rules are canonical subject-scoped
+documents. A publish command runs under one
 `BEGIN IMMEDIATE` transaction, revalidates the complete draft and every referenced principal,
 group, role and MQTT adapter filter, then atomically replaces the provider-compatible
-`turbo_flow_acl_bundle_v3`/`turbo_flow_acl_rule_v3` generation. Store revision and policy version
+`flowie_control_published_bundle`/`flowie_control_published_rule` generation. Store revision and policy version
 advance independently. Failed or stale publishes leave the previous provider snapshot unchanged.
 
 The management service is the only interface used above the store. It enforces the root/actor
 identity supplied by a trusted transport adapter and the `viewer`, `user_admin`, `policy_admin` and
 `security_admin` permission matrix. Read APIs use bounded keyset pages; no HTTP or Dashboard handler
-receives a SQLite handle.
+receives a database handle.
 
 The optional Iris JSON-RPC adapter binds a caller-owned `rpc_context_t` to an explicit app/path and
 registers 28 bounded management methods. Introspection, batch and notifications are disabled; body

@@ -1,5 +1,3 @@
-find_package(SQLite3 REQUIRED)
-
 cmake_add_grammar(FLOWIE_CONTROL_ACL
   LEXER_RE ${CMAKE_CURRENT_SOURCE_DIR}/parser/acl_lexer.re
   GRAMMAR_Y ${CMAKE_CURRENT_SOURCE_DIR}/parser/acl_grammar.y
@@ -34,10 +32,12 @@ add_library(flowie_control_core STATIC ${FLOWIE_CONTROL_ACL_LEXER_GEN}
                                         flowie_control_management_session_internal.h
                                         flowie_control_validation.c
                                         flowie_control_validation_internal.h
+                                        flowie_control_database.c
+                                        flowie_control_database_internal.h
                                         flowie_control_store.c
                                         flowie_control_store_internal.h
-                                        flowie_security_sqlite.c
-                                        flowie_security_sqlite.h)
+                                        flowie_security_turbodb.c
+                                        flowie_security_turbodb.h)
 add_dependencies(flowie_control_core ${FLOWIE_CONTROL_ACL_LEXER_TARGET}
                                      ${FLOWIE_CONTROL_ACL_GRAMMAR_TARGET})
 cmake_config_target(flowie_control_core NO_INSTALL FOLDER "flowie/control/internal")
@@ -45,11 +45,10 @@ target_include_directories(flowie_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
                                               PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(flowie_control_core
                       PUBLIC Flowie::App
-                      PRIVATE Flowie::Protocol SQLite::SQLite3 flowie_orm_flow
+                      PRIVATE Flowie::Protocol flowie_orm_flow
                               TurboUtils::Core TurboUtils::STL monocypher)
 
 if(FLOWIE_CONTROL_PGSQL)
-  find_package(PostgreSQL REQUIRED)
   add_library(flowie_control_pgsql STATIC
               flowie_control_pgsql_database.c
               flowie_control_pgsql_database_internal.h
@@ -62,8 +61,8 @@ if(FLOWIE_CONTROL_PGSQL)
   cmake_config_target(flowie_control_pgsql NO_INSTALL FOLDER "flowie/control/internal")
   target_include_directories(flowie_control_pgsql PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(flowie_control_pgsql
-                        PUBLIC flowie_control_core
-                        PRIVATE PostgreSQL::PostgreSQL TurboUtils::Core monocypher)
+                        PUBLIC flowie_control_core flowie_orm_flow
+                        PRIVATE TurboUtils::Core monocypher)
 endif()
 
   find_package(OpenSSL REQUIRED)
@@ -238,7 +237,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_pgsql_database
       SOURCES tests/test_flowie_control_pgsql_database.c
-      LIBS flowie_control_pgsql PostgreSQL::PostgreSQL TurboUtils::TinyTest
+      LIBS flowie_control_pgsql TurboUtils::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(
@@ -248,7 +247,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_pgsql_database_live
       SOURCES tests/test_flowie_control_pgsql_database_live.c
-      LIBS flowie_control_pgsql PostgreSQL::PostgreSQL TurboUtils::TinyTest
+      LIBS flowie_control_pgsql TurboUtils::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(
@@ -264,7 +263,7 @@ if(BUILD_TESTS)
         test_flowie_control_pgsql_database
         test_flowie_control_pgsql_database_live
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:PostgreSQL::PostgreSQL>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
   endif()
 
@@ -305,9 +304,17 @@ if(BUILD_TESTS)
   set_tests_properties(test_flowie_control_config
                        PROPERTIES LABELS "flowie;control-plane;security-contract")
   cmake_add_test(
+    test_flowie_control_database
+    SOURCES tests/test_flowie_control_database.c
+    LIBS flowie_control_core TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER "flowie/control/tests")
+  set_tests_properties(test_flowie_control_database
+                       PROPERTIES LABELS "flowie;control-plane;storage-contract")
+  cmake_add_test(
     test_flowie_control_store
     SOURCES tests/test_flowie_control_store.c
-    LIBS flowie_control_core SQLite::SQLite3 TurboUtils::TinyTest
+    LIBS flowie_control_core TurboUtils::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_store
