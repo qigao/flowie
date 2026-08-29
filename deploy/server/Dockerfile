@@ -74,6 +74,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbonet/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DTURBONET_ENABLE_LSQUIC=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -96,6 +97,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbodb/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -175,6 +177,8 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     install -d /opt/flowie-runtime/bin /opt/flowie-runtime/lib; \
     install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie_server" \
       /opt/flowie-runtime/bin/flowie_server; \
+    install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control" \
+      /opt/flowie-runtime/bin/flowie-control; \
     for libdir in \
       "/opt/turboutils/$FLOWIE_PROFILE/lib" "/opt/turboparser/$FLOWIE_PROFILE/lib" \
       "/opt/turbonet/$FLOWIE_PROFILE/lib" "/opt/turbodb/$FLOWIE_PROFILE/lib" \
@@ -201,14 +205,20 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
           -exec cp -a '{}' /opt/flowie-runtime/lib/ ';'; \
       fi; \
     done; \
-    LD_LIBRARY_PATH=/opt/flowie-runtime/lib ldd /opt/flowie-runtime/bin/flowie_server \
-      | tee /opt/flowie-runtime/flowie-server.ldd; \
-    ! grep -F 'not found' /opt/flowie-runtime/flowie-server.ldd
+    for executable in flowie_server flowie-control; do \
+      case "$executable" in \
+        flowie_server) manifest=flowie-server ;; \
+        *) manifest=$executable ;; \
+      esac; \
+      LD_LIBRARY_PATH=/opt/flowie-runtime/lib ldd "/opt/flowie-runtime/bin/$executable" \
+        | tee "/opt/flowie-runtime/$manifest.ldd"; \
+      ! grep -F 'not found' "/opt/flowie-runtime/$manifest.ldd"; \
+    done
 
 FROM debian:bookworm-slim AS runtime
 ARG SOURCE_REVISION=unknown
-LABEL org.opencontainers.image.title="Flowie server" \
-      org.opencontainers.image.description="Standalone Flowie MQTT broker" \
+LABEL org.opencontainers.image.title="Flowie server and control" \
+      org.opencontainers.image.description="Flowie MQTT broker and HTTPS control runtime" \
       org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -221,20 +231,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          /etc/flowie /etc/flowie/certs /opt/flowie/plugins /var/lib/flowie/control
 
 COPY --from=builder /opt/flowie-runtime/bin/flowie_server /usr/local/bin/flowie_server
+COPY --from=builder /opt/flowie-runtime/bin/flowie-control /usr/local/bin/flowie-control
 COPY --from=builder /opt/flowie-runtime/lib/ /usr/local/lib/
 COPY --from=builder /opt/flowie/share/ /opt/flowie/share/
 COPY --from=builder /opt/flowie-runtime/flowie-server.ldd /usr/share/doc/flowie/flowie-server.ldd
+COPY --from=builder /opt/flowie-runtime/flowie-control.ldd /usr/share/doc/flowie/flowie-control.ldd
 COPY --chmod=0755 deploy/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=0755 deploy/server/flowie-control-entrypoint.sh \
+  /usr/local/bin/flowie-control-entrypoint
+COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh \
+  /usr/local/bin/flowie-combined-entrypoint
 COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
 
 RUN ldconfig \
-    && ldd /usr/local/bin/flowie_server | tee /usr/share/doc/flowie/flowie-server-runtime.ldd \
-    && ! grep -F 'not found' /usr/share/doc/flowie/flowie-server-runtime.ldd
+    && for executable in flowie_server flowie-control; do \
+         case "$executable" in \
+           flowie_server) manifest=flowie-server ;; \
+           *) manifest=$executable ;; \
+         esac; \
+         ldd "/usr/local/bin/$executable" \
+           | tee "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
+         ! grep -F 'not found' "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
+       done
 
 ENV FLOWIE_HOST=127.0.0.1 \
     FLOWIE_PORT=18883 \
     FLOWIE_TRANSPORT=tcp \
     FLOWIE_PATH=/mqtt \
+    FLOWIE_PROTOCOL_STORE_DRIVER=sqlite \
+    FLOWIE_PROTOCOL_STORE_OPTIONS='{"filename":"/var/lib/flowie/flowie-protocol.sqlite3"}' \
     FLOWIE_MAX_CONNECTIONS=1024 \
     FLOWIE_MAX_INFLIGHT_PER_SESSION=64 \
     FLOWIE_LOG_LEVEL=INFO \

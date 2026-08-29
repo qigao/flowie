@@ -5,6 +5,7 @@ include(CMakeFindDependencyMacro)
 find_dependency(TurboUtils CONFIG REQUIRED)
 find_dependency(TurboParser CONFIG REQUIRED)
 find_dependency(TurboNet CONFIG REQUIRED)
+find_dependency(Orm CONFIG REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/FlowieTargets.cmake")
 

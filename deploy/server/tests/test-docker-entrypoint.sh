@@ -9,14 +9,19 @@ trap 'rm -rf "$TEST_ROOT"' EXIT HUP INT TERM
 cat >"$TEST_ROOT/flowie_server" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$@" >"$FLOWIE_TEST_ARGUMENTS"
+printf '%s\n%s\n' "$FLOWIE_PROTOCOL_STORE_DRIVER" "$FLOWIE_PROTOCOL_STORE_OPTIONS" \
+  >"$FLOWIE_TEST_STORAGE"
 EOF
 chmod +x "$TEST_ROOT/flowie_server"
 
 FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/arguments.txt" \
+FLOWIE_TEST_STORAGE="$TEST_ROOT/storage.txt" \
 FLOWIE_HOST=127.0.0.2 \
 FLOWIE_PORT=28883 \
 FLOWIE_TRANSPORT=tcp \
 FLOWIE_PATH=/mqtt-test \
+FLOWIE_PROTOCOL_STORE_DRIVER=postgresql \
+FLOWIE_PROTOCOL_STORE_OPTIONS='{"conninfo":"host=postgres dbname=flowie"}' \
 FLOWIE_MAX_PACKET_SIZE=262144 \
 FLOWIE_MAX_CONNECTIONS=321 \
 FLOWIE_MAX_SESSIONS=654 \
@@ -87,16 +92,40 @@ DEBUG
 EOF
 
 cmp "$TEST_ROOT/expected.txt" "$TEST_ROOT/arguments.txt"
+cat >"$TEST_ROOT/expected-storage.txt" <<'EOF'
+postgresql
+{"conninfo":"host=postgres dbname=flowie"}
+EOF
+cmp "$TEST_ROOT/expected-storage.txt" "$TEST_ROOT/storage.txt"
+
+FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/check-arguments.txt" \
+FLOWIE_TEST_STORAGE="$TEST_ROOT/check-storage.txt" \
+FLOWIE_CHECK=yes \
+PATH="$TEST_ROOT:$PATH" \
+  sh "$ENTRYPOINT"
+test "$(sed -n '1p' "$TEST_ROOT/check-arguments.txt")" = '--check'
+test "$(sed -n '2p' "$TEST_ROOT/check-arguments.txt")" = '--host'
 
 FLOWIE_TEST_PASSTHROUGH=ok sh "$ENTRYPOINT" sh -c \
   'test "$FLOWIE_TEST_PASSTHROUGH" = ok'
 
 if FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/invalid-arguments.txt" \
+  FLOWIE_TEST_STORAGE="$TEST_ROOT/invalid-storage.txt" \
   FLOWIE_TCP_KEEPALIVE=maybe \
   PATH="$TEST_ROOT:$PATH" \
   sh "$ENTRYPOINT"; then
   echo "docker-entrypoint accepted invalid FLOWIE_TCP_KEEPALIVE" >&2
   exit 1
 fi
+
+if FLOWIE_TEST_ARGUMENTS="$TEST_ROOT/invalid-check-arguments.txt" \
+  FLOWIE_TEST_STORAGE="$TEST_ROOT/invalid-check-storage.txt" \
+  FLOWIE_CHECK=maybe \
+  PATH="$TEST_ROOT:$PATH" \
+  sh "$ENTRYPOINT"; then
+  echo "docker-entrypoint accepted invalid FLOWIE_CHECK" >&2
+  exit 1
+fi
+test ! -e "$TEST_ROOT/invalid-check-arguments.txt"
 
 echo "docker-entrypoint contract: PASS"

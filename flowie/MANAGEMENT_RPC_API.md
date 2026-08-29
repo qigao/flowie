@@ -404,29 +404,49 @@ Authorization Roles grant Management RPC permissions; other roles remain applica
 | Method | Permission | Params | Result / behavior |
 | --- | --- | --- | --- |
 | `control.policy.status` | `viewer` | `domain_id?` | `{policy_version, expires_at, draft_rules, published_rules}`. |
-| `control.policy.rule.list` | `viewer` | `domain_id?`, `after_ordinal?`, `limit?` | Page of `{ordinal, rule_line, updated_at}` ordered by ordinal. |
-| `control.policy.rule.put` | `policy_admin` | `domain_id?`, `ordinal`, `rule_line`, `request_id` | Command result. Inserts or replaces the stable ordinal. |
-| `control.policy.rule.delete` | `policy_admin` | `domain_id?`, `ordinal`, `request_id` | Command result. Other ordinals are not renumbered. |
+| `control.policy.subject_rule.get` | `viewer` | `domain_id?`, `subject_kind`, `subject_id` | One structured subject rule. |
+| `control.policy.subject_rule.list` | `viewer` | `domain_id?`, `subject_kind?`, `after_ordinal?`, `limit?` | Page of structured subject rules ordered by ordinal. |
+| `control.policy.subject_rule.put` | `policy_admin` | `domain_id?`, `subject_kind`, `subject_id`, `ordinal`, `connection`, `entries`, `request_id` | Inserts or replaces the rule selected by its typed subject key. |
+| `control.policy.subject_rule.delete` | `policy_admin` | `domain_id?`, `subject_kind`, `subject_id`, `request_id` | Deletes exactly one typed subject rule. |
 | `control.policy.validate` | `viewer` | `domain_id?` | `{rule_count, deny_rule_count}` without modifying state. |
 | `control.policy.publish` | `policy_admin` | `domain_id?`, `request_id`, `expires_at?` | `{policy_version, replayed}`. Publishes an immutable generation atomically. |
 
-`ordinal` is `0..4095`. Despite its historical name, `rule_line` now contains one complete canonical
-user ACL document, not one pipe-delimited internal rule. The Management JSON-RPC boundary accepts at
-most 2047 bytes. For example:
+`ordinal` is `0..4095` and is unique within the Domain, but lookup/replacement/deletion use
+`(domain_id, subject_kind, subject_id)`. `subject_kind` is `role`, `group`, or `user`.
+`connection` and each entry `effect` are `allow` or `deny`; entry `access` is `read`, `write`, or
+`readwrite`. A top-level `deny` rule must have an empty `entries` array. Example:
 
-```text
-user device-7 allow {
-  write topic root-a/groups/operators/devices/%u/{event,heartbeat}
-  read topic root-a/groups/operators/devices/%c/command
-  deny readwrite topic root-a/groups/operators/devices/%u/private
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "control.policy.subject_rule.put",
+  "params": {
+    "subject_kind": "role",
+    "subject_id": "publisher",
+    "ordinal": 10,
+    "connection": "allow",
+    "entries": [
+      {"effect": "allow", "access": "write", "topic": "root-a/telemetry/%u/{event,heartbeat}"},
+      {"effect": "allow", "access": "read", "topic": "root-a/commands/%c/+"},
+      {"effect": "deny", "access": "readwrite", "topic": "root-a/telemetry/%u/private"}
+    ],
+    "request_id": "publisher-acl-v1"
+  },
+  "id": 1
 }
 ```
 
-Each enabled user may have only one draft ACL document in a Domain. The document's embedded Domain
-must match the selected RPC Domain, and all named groups must form an existing enabled parent chain.
-`read` authorizes SUBSCRIBE, `write` authorizes PUBLISH, `%u` matches the MQTT username, and `%c`
-matches the MQTT client ID. See [ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, canonical
-format, topic tree, limits, deny precedence, and UI/RPC publishing workflow.
+The referenced enabled subject must exist in the selected Domain. Each `(subject kind, subject ID)`
+has one draft rule, while the same ID may be reused by different kinds. Topic paths are bounded MQTT
+filters rather than Control Group references. `read` authorizes SUBSCRIBE, `write` authorizes
+PUBLISH, `%u` matches the MQTT username, and `%c` matches the MQTT client ID. See
+[ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, inheritance/evaluation semantics, limits,
+deny precedence, and UI/RPC publishing workflow.
+
+Schema v6 is deliberately incompatible. Flowie does not migrate or read an older control store,
+including v5; schema validation fails at startup. The old `control.policy.rule.*` methods are not
+registered and return JSON-RPC method-not-found. Create a fresh v6 store, then submit and publish
+structured rules; until then authorization remains fail closed.
 
 ### Audit
 

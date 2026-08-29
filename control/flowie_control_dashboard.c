@@ -565,6 +565,9 @@ int flowie_control_dashboard_process_form_result(
                                            "principal_type", "request_id"};
   static const char *const user_disable_keys[] = {"csrf", "operation", "principal_id",
                                                   "request_id"};
+  static const char *const password_keys[] = {"csrf",          "operation",    "principal_id",
+                                               "mode",          "new_password", "confirm_password",
+                                               "request_id"};
   static const char *const group_keys[] = {
       "csrf", "operation", "group_id", "parent_group_id", "request_id"};
   static const char *const group_delete_keys[] = {"csrf", "operation", "group_id", "request_id"};
@@ -575,9 +578,10 @@ int flowie_control_dashboard_process_form_result(
                                                  "request_id"};
   static const char *const credential_keys[] = {"csrf", "operation", "principal_id",
                                                  "request_id"};
-  static const char *const rule_keys[] = {"csrf", "operation", "ordinal", "rule_line",
+  static const char *const rule_keys[] = {"csrf", "operation", "ordinal", "rule_document",
                                           "request_id"};
-  static const char *const rule_delete_keys[] = {"csrf", "operation", "ordinal", "request_id"};
+  static const char *const rule_delete_keys[] = {"csrf", "operation", "subject_kind",
+                                                 "subject_id", "request_id"};
   static const char *const publish_keys[] = {"csrf", "operation", "request_id", "expires_at"};
   flowie_control_dashboard_form_t form;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
@@ -646,6 +650,49 @@ int flowie_control_dashboard_process_form_result(
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_disable(dashboard->service, caller, &command, &result);
+  } else if (strcmp(operation, "password.set") == 0) {
+    flowie_control_password_set_command_t command = FLOWIE_CONTROL_PASSWORD_SET_COMMAND_INIT;
+    const char *new_password;
+    const char *confirm_password;
+    const char *mode;
+    size_t password_size;
+    size_t confirmation_size;
+    if (!flowie_control_dashboard_form_exact(&form, password_keys,
+                                             sizeof(password_keys) / sizeof(password_keys[0]))) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    new_password = flowie_control_dashboard_form_get(&form, "new_password");
+    confirm_password = flowie_control_dashboard_form_get(&form, "confirm_password");
+    mode = flowie_control_dashboard_form_get(&form, "mode");
+    password_size =
+        new_password ? strnlen(new_password, FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX + 1u) : 0u;
+    confirmation_size =
+        confirm_password ? strnlen(confirm_password, FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX + 1u)
+                         : 0u;
+    if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE ||
+        password_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX ||
+        confirmation_size != password_size ||
+        memcmp(new_password, confirm_password, password_size) != 0) {
+      rc = TURBO_EINVAL;
+      goto done;
+    }
+    if (strcmp(mode, "create") == 0)
+      command.mode = FLOWIE_CONTROL_PASSWORD_CREATE;
+    else if (strcmp(mode, "replace") == 0)
+      command.mode = FLOWIE_CONTROL_PASSWORD_REPLACE;
+    else {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    command.domain_id = caller->domain_id;
+    command.principal_id = flowie_control_dashboard_form_get(&form, "principal_id");
+    command.new_password = new_password;
+    command.new_password_size = password_size;
+    command.actor = caller->actor;
+    command.request_id = request_id;
+    command.occurred_at = occurred_at;
+    rc = flowie_control_management_password_set(dashboard->service, caller, &command, &result);
   } else if (strcmp(operation, "credential.issue") == 0) {
     flowie_control_credential_issue_command_t command =
         FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
@@ -811,8 +858,11 @@ int flowie_control_dashboard_process_form_result(
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_role_remove(dashboard->service, caller, &command, &result);
-  } else if (strcmp(operation, "policy.rule.put") == 0) {
-    flowie_control_policy_rule_put_command_t command = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+  } else if (strcmp(operation, "policy.subject_rule.put") == 0) {
+    flowie_control_policy_subject_rule_put_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
+    flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    const char *rule_document;
     uint64_t ordinal = 0u;
     if (!flowie_control_dashboard_form_exact(&form, rule_keys,
                                              sizeof(rule_keys) / sizeof(rule_keys[0])) ||
@@ -822,32 +872,47 @@ int flowie_control_dashboard_process_form_result(
       rc = TURBO_EPROTO;
       goto done;
     }
-    command.domain_id = caller->domain_id;
-    command.ordinal = (uint32_t)ordinal;
-    command.rule_line = flowie_control_dashboard_form_get(&form, "rule_line");
-    command.actor = caller->actor;
-    command.request_id = request_id;
-    command.occurred_at = occurred_at;
-    rc = flowie_control_management_policy_rule_put(dashboard->service, caller, &command, &result);
-  } else if (strcmp(operation, "policy.rule.delete") == 0) {
-    flowie_control_policy_rule_delete_command_t command =
-        FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT;
-    uint64_t ordinal = 0u;
-    if (!flowie_control_dashboard_form_exact(
-            &form, rule_delete_keys, sizeof(rule_delete_keys) / sizeof(rule_delete_keys[0])) ||
-        flowie_control_dashboard_u64(flowie_control_dashboard_form_get(&form, "ordinal"), 1,
-                                     &ordinal) != TURBO_OK ||
-        ordinal >= FLOWIE_SECURITY_MAX_RULES) {
+    rule_document = flowie_control_dashboard_form_get(&form, "rule_document");
+    if (!rule_document ||
+        flowie_control_acl_parse(rule_document, strlen(rule_document), &document) != TURBO_OK) {
       rc = TURBO_EPROTO;
       goto done;
     }
     command.domain_id = caller->domain_id;
     command.ordinal = (uint32_t)ordinal;
+    command.document = &document;
     command.actor = caller->actor;
     command.request_id = request_id;
     command.occurred_at = occurred_at;
-    rc =
-        flowie_control_management_policy_rule_delete(dashboard->service, caller, &command, &result);
+    rc = flowie_control_management_policy_subject_rule_put(dashboard->service, caller, &command,
+                                                            &result);
+  } else if (strcmp(operation, "policy.subject_rule.delete") == 0) {
+    flowie_control_policy_subject_rule_delete_command_t command =
+        FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
+    const char *subject_kind;
+    if (!flowie_control_dashboard_form_exact(
+            &form, rule_delete_keys, sizeof(rule_delete_keys) / sizeof(rule_delete_keys[0]))) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    subject_kind = flowie_control_dashboard_form_get(&form, "subject_kind");
+    if (subject_kind && strcmp(subject_kind, "user") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    else if (subject_kind && strcmp(subject_kind, "role") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_ROLE;
+    else if (subject_kind && strcmp(subject_kind, "group") == 0)
+      command.subject_kind = FLOWIE_SECURITY_SUBJECT_GROUP;
+    else {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    command.domain_id = caller->domain_id;
+    command.subject_id = flowie_control_dashboard_form_get(&form, "subject_id");
+    command.actor = caller->actor;
+    command.request_id = request_id;
+    command.occurred_at = occurred_at;
+    rc = flowie_control_management_policy_subject_rule_delete(dashboard->service, caller, &command,
+                                                               &result);
   } else if (strcmp(operation, "policy.publish") == 0) {
     flowie_control_policy_publish_command_t command = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_policy_publish_result_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
@@ -870,6 +935,12 @@ int flowie_control_dashboard_process_form_result(
   }
 
 done:
+  {
+    char *new_password = (char *)flowie_control_dashboard_form_get(&form, "new_password");
+    char *confirm_password = (char *)flowie_control_dashboard_form_get(&form, "confirm_password");
+    if (new_password) crypto_wipe(new_password, strlen(new_password));
+    if (confirm_password) crypto_wipe(confirm_password, strlen(confirm_password));
+  }
   flowie_control_dashboard_form_destroy(&form);
   return rc;
 }

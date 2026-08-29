@@ -7,7 +7,7 @@ MQTT 规范符合性或生产稳定性。
 
 ## 基线与目标
 
-当前基线按两种互斥持久化模式验证：standalone 使用 `TurboDB::ORM` SQLite repository；cluster
+当前基线按两种互斥持久化模式验证：standalone 使用 `Orm::C` SQLite repository；cluster
 使用 TurboRaft committed state machine 和 WalStorage。release gate 不再把 Redis/PostgreSQL live
 backend 当作 cluster 正确性的证据，也不允许 endpoint-local repository 与 cluster 同时存在。
 

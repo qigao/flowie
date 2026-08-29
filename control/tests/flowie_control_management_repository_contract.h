@@ -42,7 +42,9 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   flowie_control_membership_add_command_t membership = FLOWIE_CONTROL_MEMBERSHIP_ADD_COMMAND_INIT;
   flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
   flowie_control_user_role_add_command_t assignment = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
-  flowie_control_policy_rule_put_command_t rule = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+  flowie_control_acl_document_t policy_document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_policy_subject_rule_put_command_t rule =
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
   flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
@@ -57,8 +59,9 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   flowie_control_effective_groups_view_t effective_groups =
       FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
   flowie_control_effective_roles_view_t effective_roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
-  flowie_control_policy_rule_view_t rule_page[2] = {FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT,
-                                                    FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT};
+  flowie_control_policy_subject_rule_view_t rule_page[2] = {
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT,
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT};
   flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
   flowie_control_policy_status_t policy_status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
   flowie_control_audit_view_t audit_page[16] = {
@@ -208,23 +211,28 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
 
   rule.domain_id = "root-a";
   rule.ordinal = 10u;
-  rule.rule_line = policy_rule;
+  check_equal(flowie_control_acl_parse(policy_rule, sizeof(policy_rule) - 1u, &policy_document),
+              TURBO_OK);
+  rule.document = &policy_document;
   rule.actor = policy_admin.actor;
   rule.request_id = "management-contract-rule";
   rule.expected_revision = 7u;
   rule.occurred_at = 1007u;
-  check_equal(flowie_control_management_policy_rule_put(service, &viewer, &rule, &result),
+  check_equal(flowie_control_management_policy_subject_rule_put(service, &viewer, &rule, &result),
                TURBO_EPERM);
-  check_equal(flowie_control_management_policy_rule_put(service, &policy_admin, &rule, &result),
+  check_equal(
+      flowie_control_management_policy_subject_rule_put(service, &policy_admin, &rule, &result),
                TURBO_OK);
   check_equal(result.revision, 8u);
-  check_equal(flowie_control_management_policy_rule_list(service, &viewer, 0u, 0, rule_page, 2u,
-                                                          &count, &has_more),
+  check_equal(flowie_control_management_policy_subject_rule_list(
+                  service, &viewer, FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0, rule_page, 2u, &count,
+                  &has_more),
                TURBO_OK);
   check_equal(count, 1u);
   check_false(has_more);
   check_equal(rule_page[0].ordinal, 10u);
-  check_equal(rule_page[0].rule_line, policy_rule);
+  check_equal(rule_page[0].document.subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
+  check_equal(rule_page[0].document.subject, "device-a");
   check_equal(flowie_control_management_policy_validate(service, &viewer, &validation), TURBO_OK);
   check_equal(validation.store_revision, 8u);
   check_equal(validation.rule_count, 2u);

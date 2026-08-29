@@ -2,8 +2,8 @@
 
 本文用于从 Windows 工作站打包当前工作树，将 TurboUtils、TurboParser、TurboNet、TurboDB、TurboHTTP、
 FlowMQ、TurboRaft 和 Flowie 上传到 `root@eu:/root/dev`，在隔离目录中构建八个仓库，从同一份源码构建 Flowie server Docker
-镜像，启动 run-scoped 固定 Mosquitto，并运行 Flowie MQTT release/nightly cases。远端已有 PostgreSQL、
-Redis 或 Nginx 属于外部基础设施，本 runbook 只读取其状态，不创建、重启或清理它们。
+镜像，启动 run-scoped 固定 Mosquitto 与 PostgreSQL，并运行 Flowie MQTT release/nightly cases。远端已有
+PostgreSQL、Redis 或 Nginx 属于外部基础设施，本 runbook 不修改、重启或清理它们。
 
 ## 1. 执行边界
 
@@ -15,12 +15,66 @@ Redis 或 Nginx 属于外部基础设施，本 runbook 只读取其状态，不�
 - 所有命令 fail fast。不要用发布必需用例的跳过、Disabled 或仅编译结果替代测试成功；
   可选 public broker smoke 默认 Disabled。
 - release 与 nightly 分开：release 使用 GCC；libFuzzer/nightly 使用 Clang 独立构建树。
-- PostgreSQL、Redis 属于可选外部 release evidence；固定 broker 属于本次 run 的证据。可选 public broker
-  smoke 只验证公网访问能力。
+- run-scoped PostgreSQL 与固定 broker 都属于本次 release 证据；PostgreSQL 数据只写入容器 tmpfs，容器端口
+  由 Docker 随机分配并只绑定 `127.0.0.1`。Redis 与 public broker 仍属于可选外部 evidence。
 - 当前 Flowie server transport 发布基线仅为 TCP/TLS/WS/WSS，四者均须提供端到端证据。UDP 与 Unix
   Pipe 列为 TODO；CoroNet/runtime adapter 的低层通过不代表 server 已支持，也不计入本 run 的成功条件。
 - Flowie server 镜像必须由本次解包的八个源码目录构建；不得复用宿主机 SDK、预编译二进制或浮动镜像。
   发布证据失败时保留本次 run 目录和日志。
+
+### 1.1 EU 交互式连接：tssh QUIC/UDP 漫游模式
+
+交互式运维默认使用 [trzsz-ssh/tssh](https://github.com/trzsz/trzsz-ssh/blob/main/README.cn.md) 的
+QUIC/UDP 模式；批量打包、上传、下载命令仍使用 OpenSSH `ssh`/`scp` 的 TCP 路径。`tssh` 会先通过
+TCP/22 完成认证，再为当前会话临时启动一个 `tsshd` 进程；EU 不运行常驻 `tsshd` 服务。
+
+EU 当前约定如下：
+
+- 服务端版本：`tsshd 0.1.9`
+- 服务端路径：`/usr/local/bin/tsshd`
+- 传输协议：QUIC/UDP
+- UDP 端口范围：`61000-61010`
+- 网络前置：客户端到 EU 的 TCP/22 与 UDP/61000-61010 均须可达。2026-08-29 启用此模式时，
+  EU 主机侧防火墙已允许 UDP，因此未修改主机防火墙规则；不要据此扩大新的防火墙或安全组规则。
+
+Windows 工作站的 `~/.ssh/config` 中，保留既有 `HostName`、`User` 和 `IdentityFile`，并在同一个
+`Host eu` 块中加入：
+
+```sshconfig
+Host eu
+    # Existing HostName, User and IdentityFile remain unchanged.
+    #!! UdpMode QUIC
+    #!! TsshdPort 61000-61010
+    #!! TsshdPath /usr/local/bin/tsshd
+```
+
+`#!!` 配置由 `tssh` 读取、被 OpenSSH 当作注释忽略。首次准备或恢复服务端二进制时，从已能通过
+TCP 登录的工作站执行固定版本安装：
+
+```powershell
+tssh --tcp --install-tsshd --tsshd-version 0.1.9 --install-path /usr/local/bin eu
+if ($LASTEXITCODE -ne 0) { throw 'EU tsshd installation failed' }
+```
+
+安装或配置变更后必须同时验证服务端版本和实际 UDP 会话：
+
+```powershell
+tssh --tcp -T -n -- eu /usr/local/bin/tsshd --version
+if ($LASTEXITCODE -ne 0) { throw 'EU tsshd version check failed' }
+tssh -T -n eu hostname
+if ($LASTEXITCODE -ne 0) { throw 'EU QUIC/UDP login failed' }
+```
+
+第一条命令应输出 `trzsz sshd 0.1.9`，第二条命令应返回 EU 主机名。UDP 连接异常时，使用
+`tssh --tcp eu` 强制走传统 SSH 进行诊断；不要把 TCP 成功当作 UDP 验证成功。
+
+需要停用此模式时：
+
+1. 从本机 `Host eu` 块删除上述三个 `#!!` 配置项，或临时使用 `tssh --tcp eu`。
+2. 确认所有 `tssh` UDP 会话已退出，并通过 `tssh --tcp -T -n -- eu pgrep -af tsshd` 确认没有
+   `tsshd` 进程。
+3. 若不再需要服务端能力，精确删除 `/usr/local/bin/tsshd`；若曾为此模式单独增加
+   UDP/61000-61010 网络放行规则，同时删除该精确规则。当前 EU 启用过程没有新增主机防火墙规则。
 
 ## 2. Windows：打包并上传当前源码
 
@@ -85,6 +139,7 @@ tar.exe -a -cf $bundle `
     --exclude='turbonet/turbonet/vcpkg_installed' `
     --exclude='turbonet/turbodb/build' `
     --exclude='turbonet/turbodb/vcpkg_installed' `
+    --exclude='TurboHTTP/.tmp' `
     --exclude='TurboHTTP/build' `
     --exclude='TurboHTTP/vcpkg_installed' `
     --exclude='turbonet/flowmq/build' `
@@ -119,13 +174,14 @@ Write-Host "uploaded=$bundleName sha256=$hash"
 ## 3. Linux：进入持久会话并准备 run 目录
 
 ```bash
-ssh root@eu
+tssh eu
 cd /root/dev
 tmux new-session -s flowie-eu
 ```
 
-后续命令在同一个 `tmux` shell 中执行。需要断开 SSH 时按 `Ctrl-b d`；重新进入使用
-`tmux attach-session -t flowie-eu`。
+后续命令在同一个 `tmux` shell 中执行。需要离开远端时先按 `Ctrl-b d` 脱离 `tmux`，然后退出
+`tssh`；重新连接后使用 `tmux attach-session -t flowie-eu`。网络切换或短时中断由 UDP 漫游会话处理，
+但 `tmux` 仍是长时间构建和测试的持久状态边界。
 
 Debian/Ubuntu 主机先准备基线工具；`/opt/vcpkg` 必须由运维预装并固定到团队批准的 revision：
 
@@ -283,6 +339,8 @@ docker run --detach \
   --tmpfs /run:size=16m,mode=0755 \
   --env FLOWIE_PORT="$FLOWIE_RUNTIME_PORT" \
   --env FLOWIE_HEALTH_PORT="$FLOWIE_RUNTIME_PORT" \
+  --env FLOWIE_PROTOCOL_STORE_DRIVER=sqlite \
+  --env 'FLOWIE_PROTOCOL_STORE_OPTIONS={"filename":":memory:"}' \
   "$FLOWIE_SERVER_IMAGE"
 
 for attempt in $(seq 1 60); do
@@ -636,6 +694,16 @@ configure_build_test_install() {
   install_dir="$3"
   shift 3
   build_dir="$source_dir/build/linux-eu-release"
+  package_args=()
+  if [[ "$package" == "turboutils" ]]; then
+    package_args+=(-DTURBO_ENABLE_EPOLL_READINESS=ON)
+  elif [[ "$package" == "turbonet" ]]; then
+    package_args+=(-DTURBONET_ENABLE_LSQUIC=OFF)
+  elif [[ "$package" == "turbodb" ]]; then
+    package_args+=(-DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON)
+  elif [[ "$package" == "turbohttp" ]]; then
+    package_args+=(-DBUILD_EXAMPLES=OFF)
+  fi
   vcpkg_args=(
     -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake
     -DVCPKG_INSTALLED_DIR="$source_dir/vcpkg_installed"
@@ -651,6 +719,7 @@ configure_build_test_install() {
   env "$@" cmake -S "$source_dir" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     "${vcpkg_args[@]}" \
+    "${package_args[@]}" \
     -DCMAKE_INSTALL_PREFIX="$install_dir" \
     -DENABLE_TESTS=ON -DBUILD_TESTING=ON
   env "$@" cmake --build "$build_dir" --parallel "$(nproc)"
@@ -746,6 +815,7 @@ cmake -S "$FLOWIE_SRC" -B "$FLOWIE_RELEASE_BUILD" -G Ninja \
   -DVCPKG_MANIFEST_MODE=ON \
   -DCMAKE_INSTALL_PREFIX="$SDK_ROOT/flowie/release" \
   -DFLOWIE_MQTT_RELEASE_GATE=ON \
+  -DFLOWIE_TURBODB_LIVE_TESTS=ON \
   -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF \
   -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=ON \
   -DFLOWIE_MQTT_FIXED_CA_FILE="$CERT_DIR/ca.pem" \
@@ -766,8 +836,11 @@ cmake --build "$FLOWIE_RELEASE_BUILD" --parallel "$(nproc)" \
 
 ## 8. 分层运行 cases
 
-以下顺序先验证外部依赖，再运行 Flowie release label、全量 CTest 和 release evidence。任何一步失败即
-停止，不继续用后续结果掩盖失败。
+以下顺序先验证 shell 合约与 run-scoped PostgreSQL live gate，再运行 persistence、fixed-interop、
+Flowie release label、排除两个已完成 live 用例后的全量 CTest 和 release evidence。persistence 与
+fixed-interop 用例会在各自阶段及后续 label/全量阶段重复运行，以分别生成专项 JUnit 证据；这属于有意的
+分层复验。任何一步失败即停止，不继续用后续结果掩盖失败。PostgreSQL runner
+使用随机密码、loopback 随机端口和 tmpfs 数据目录；退出时保留容器日志并删除容器，不接触已有数据库。
 
 ```bash
 cd "$FLOWIE_SRC"
@@ -775,7 +848,16 @@ cd "$FLOWIE_SRC"
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" -N \
   2>&1 | tee "$ARTIFACT_ROOT/flowie-linux-tests.txt"
 
+bash "$FLOWIE_SRC/deploy/server/tests/test-turbodb-postgres-live-runner.sh" \
+  2>&1 | tee "$ARTIFACT_ROOT/turbodb-postgres-runner-contract.log"
+
+bash "$FLOWIE_SRC/deploy/server/tests/run-turbodb-postgres-live.sh" \
+  --build-dir "$FLOWIE_RELEASE_BUILD" \
+  --artifacts "$ARTIFACT_ROOT/turbodb-postgres-live" \
+  --image postgres:17.6-alpine3.22
+
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
+  --no-tests=error \
   -R '^(test_flowie_protocol_repository|test_flowie_cluster_raft_store|test_flowie_cluster_state_machine)$' \
   --output-junit "$ARTIFACT_ROOT/persistence.xml"
 
@@ -788,6 +870,8 @@ ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
   --output-junit "$ARTIFACT_ROOT/flowie-release.xml"
 
 ctest --test-dir "$FLOWIE_RELEASE_BUILD" --output-on-failure \
+  --no-tests=error \
+  -E '^(test_flowie_protocol_repository_turbodb_live|test_flowie_control_turbodb_live)$' \
   --output-junit "$ARTIFACT_ROOT/flowie-linux-release.xml"
 
 cmake --build "$FLOWIE_RELEASE_BUILD" --target flowie_release_evidence \
@@ -877,8 +961,9 @@ try {
 
 ## 11. 精确清理 Docker 资源
 
-只在日志与结果包生成后执行。以下保护确保仅删除本次 Flowie/Mosquitto compose project 和本次 Flowie
-镜像；源码、SDK 和证据仍保留在 `$RUN_ROOT`，已有 PostgreSQL、Redis、Nginx 容器及其卷均不在清理范围。
+只在日志与结果包生成后执行。run-scoped PostgreSQL 已由 runner 的退出 trap 删除。以下保护确保仅删除
+本次 Flowie/Mosquitto compose project 和本次 Flowie 镜像；源码、SDK 和证据仍保留在 `$RUN_ROOT`，已有
+PostgreSQL、Redis、Nginx 容器及其卷均不在清理范围。
 
 ```bash
 case "$COMPOSE_PROJECT_NAME" in flowie*) ;; *) exit 1 ;; esac
@@ -895,8 +980,9 @@ docker image rm "$FLOWIE_SERVER_IMAGE"
 
 - TurboUtils、TurboParser、TurboNet、TurboDB、TurboHTTP、FlowMQ、TurboRaft 与 Flowie configure/build 成功。
 - 七个依赖 JUnit 与 Flowie release JUnit 结果无失败，Flowie 全量 CTest 不是零用例。
-- TCP/TLS/WS/WSS 的 Flowie 端到端用例均有实际 PASS，固定 Mosquitto 与 TLS/WSS/mTLS 证据均完整；
-  UDP/Unix Pipe 不属于当前成功条件。若本次启用 Redis/PostgreSQL live gate，对应结果也必须 PASS。
+- TCP/TLS/WS/WSS 的 Flowie 端到端用例均有实际 PASS，固定 Mosquitto、run-scoped PostgreSQL 与
+  TLS/WSS/mTLS 证据均完整；两个 TurboDB PostgreSQL live tests 必须实际 PASS。UDP/Unix Pipe 不属于当前
+  成功条件；若本次启用 Redis live gate，其结果也必须 PASS。
 - `flowie-release-evidence.json` 通过内置 verifier。
 - `deploy/server/Dockerfile` 从本次八仓库源码构建成功；镜像 revision 等于源码归档 SHA-256，
   runtime 用户和动态库验证通过；`flowie_server --help` 输出 usage，且符合当前 TurboUtils parser 的

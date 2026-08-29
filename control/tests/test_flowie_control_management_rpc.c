@@ -1,12 +1,32 @@
 #include "flowie_control_management_rpc_internal.h"
+#include "flowie_control_test_turbodb.h"
 
+#include "platform.h"
+#include "CoroNet.h"
 #include "flowie_control_credential_internal.h"
 #include "tinytest.h"
 #include "turbo_error.h"
 #include "turbo_parser.h"
+#include "turbo_thread.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef enum management_rpc_policy_operation_e {
+  MANAGEMENT_RPC_POLICY_VALIDATE = 1,
+  MANAGEMENT_RPC_POLICY_PUBLISH = 2
+} management_rpc_policy_operation_t;
+
+typedef struct management_rpc_policy_gate_s {
+  management_rpc_policy_operation_t operation;
+  atomic_int entered;
+  atomic_int completed;
+  atomic_int release;
+  atomic_int status_completed;
+} management_rpc_policy_gate_t;
+
+static _Atomic(management_rpc_policy_gate_t *) management_rpc_active_policy_gate;
 
 typedef struct management_rpc_fixture_s {
   flowie_control_management_caller_t caller;
@@ -15,7 +35,49 @@ typedef struct management_rpc_fixture_s {
   int external_https_enabled;
   size_t external_https_stats_calls;
   flowie_control_external_https_authenticator_stats_t external_https_stats;
+  management_rpc_policy_gate_t *policy_gate;
+  flowie_control_repository_t repository;
+  flowie_control_repository_policy_ops_t policy_ops;
 } management_rpc_fixture_t;
+
+static int management_rpc_policy_gate_wait(management_rpc_policy_operation_t operation) {
+  management_rpc_policy_gate_t *gate =
+      atomic_load_explicit(&management_rpc_active_policy_gate, memory_order_acquire);
+  if (!gate || gate->operation != operation) return TURBO_EINVAL;
+  atomic_store_explicit(&gate->entered, 1, memory_order_release);
+  while (!atomic_load_explicit(&gate->release, memory_order_acquire))
+    turbo_sleep_ms(1u);
+  atomic_store_explicit(&gate->completed, 1, memory_order_release);
+  return TURBO_OK;
+}
+
+static int management_rpc_policy_validate(void *ctx, const char *domain_id,
+                                          flowie_control_policy_validation_t *out) {
+  int rc;
+  (void)ctx;
+  if (!domain_id || !out || out->size < sizeof(*out)) return TURBO_EINVAL;
+  rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_VALIDATE);
+  if (rc != TURBO_OK) return rc;
+  out->store_revision = 2u;
+  out->rule_count = 3u;
+  out->deny_rule_count = 1u;
+  return TURBO_OK;
+}
+
+static int management_rpc_policy_publish(void *ctx,
+                                         const flowie_control_policy_publish_command_t *command,
+                                         flowie_control_policy_publish_result_t *result) {
+  int rc;
+  (void)ctx;
+  if (!command || command->size < sizeof(*command) || !result || result->size < sizeof(*result))
+    return TURBO_EINVAL;
+  rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_PUBLISH);
+  if (rc != TURBO_OK) return rc;
+  result->revision = 3u;
+  result->policy_version = 2u;
+  result->replayed = 0;
+  return TURBO_OK;
+}
 
 static int management_rpc_resolve(void *ctx, const Req *request,
                                   flowie_control_management_caller_t *caller_out) {
@@ -43,6 +105,7 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
                     flowie_control_management_service_t **service_out, rpc_context_t **rpc_out,
                     iris_app_t **app_out, management_rpc_fixture_t *fixture) {
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
   flowie_control_command_result_t root_result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   flowie_control_management_service_config_t service_config =
@@ -54,7 +117,8 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
 
   *path_out = tt_make_temp_file("flowie-management-rpc", ".sqlite3");
   check_not_null(*path_out);
-  store_config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  store_config.database = &test_database.config;
   check_equal(flowie_control_store_open(&store_config, store_out), TURBO_OK);
   root.domain_id = "root-a";
   root.actor = "bootstrap";
@@ -62,6 +126,14 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
   root.occurred_at = 1000u;
   check_equal(flowie_control_store_domain_create(*store_out, &root, &root_result), TURBO_OK);
   service_config.repository = flowie_control_store_repository(*store_out);
+  if (fixture->policy_gate) {
+    fixture->repository = *service_config.repository;
+    fixture->policy_ops = *fixture->repository.policy;
+    fixture->policy_ops.validate = management_rpc_policy_validate;
+    fixture->policy_ops.publish = management_rpc_policy_publish;
+    fixture->repository.policy = &fixture->policy_ops;
+    service_config.repository = &fixture->repository;
+  }
   check_equal(flowie_control_management_service_create(&service_config, service_out), TURBO_OK);
   rpc_config.endpoint = "/v2/control/rpc";
   rpc_config.enable_batch = 0;
@@ -119,8 +191,18 @@ static turbo_json_doc_t *management_rpc_call(flowie_control_management_rpc_serve
   *status_out = flowie_control_management_rpc_server_execute(server, &request, &response);
   check_equal(rpc_build_response(&response, &response_json, &response_size), 0);
   check_not_null(response_json);
-  check_equal(turbo_parse_json((const uint8_t *)response_json, response_size, &document),
-               TURBO_OK);
+  check_equal(turbo_parse_json((const uint8_t *)response_json, response_size, &document), TURBO_OK);
+  return document;
+}
+
+static turbo_json_doc_t *management_rpc_request(
+    flowie_control_management_rpc_server_t *server, iris_app_t *app,
+    iris_security_context_t *security, const char *body, int *status_out) {
+  turbo_json_doc_t *document;
+  mem_pool_t arena;
+  check_equal(mem_init(&arena, 0u), 0);
+  document = management_rpc_call(server, app, &arena, security, body, status_out);
+  mem_destroy(&arena);
   return document;
 }
 
@@ -129,7 +211,236 @@ static int management_rpc_error_code(turbo_json_doc_t *document) {
   return error ? (int)turbo_json_number(turbo_json_object_get(error, "code")) : 0;
 }
 
+typedef struct management_rpc_responsiveness_scenario_s {
+  flowie_control_management_rpc_server_t *server;
+  iris_app_t *app;
+  iris_security_context_t security;
+  management_rpc_policy_gate_t *gate;
+  const char *policy_body;
+  int policy_ok;
+  int status_ok;
+  int status_completed_before_policy;
+} management_rpc_responsiveness_scenario_t;
+
+static void management_rpc_policy_task(coro_t *co, void *arg) {
+  management_rpc_responsiveness_scenario_t *scenario =
+      (management_rpc_responsiveness_scenario_t *)arg;
+  turbo_json_doc_t *document = NULL;
+  mem_pool_t arena;
+  int status = TURBO_EIO;
+  (void)co;
+  if (mem_init(&arena, 0u) != 0) return;
+  document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
+                                 scenario->policy_body, &status);
+  scenario->policy_ok = status == TURBO_OK && management_rpc_error_code(document) == 0;
+  turbo_free_json(&document);
+  mem_destroy(&arena);
+}
+
+static void management_rpc_status_task(coro_t *co, void *arg) {
+  static const char status_body[] =
+      "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\",\"id\":3}";
+  management_rpc_responsiveness_scenario_t *scenario =
+      (management_rpc_responsiveness_scenario_t *)arg;
+  turbo_json_doc_t *document = NULL;
+  mem_pool_t arena;
+  int status = TURBO_EIO;
+  (void)co;
+  while (!atomic_load_explicit(&scenario->gate->entered, memory_order_acquire))
+    coro_sleep(coro_context_current(), 1u);
+  if (mem_init(&arena, 0u) == 0) {
+    document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
+                                   status_body, &status);
+    scenario->status_ok = status == TURBO_OK && management_rpc_error_code(document) == 0;
+    turbo_free_json(&document);
+    mem_destroy(&arena);
+  }
+  scenario->status_completed_before_policy =
+      !atomic_load_explicit(&scenario->gate->completed, memory_order_acquire);
+  atomic_store_explicit(&scenario->gate->status_completed, 1, memory_order_release);
+  atomic_store_explicit(&scenario->gate->release, 1, memory_order_release);
+}
+
+static void management_rpc_watchdog(void *arg) {
+  management_rpc_policy_gate_t *gate = (management_rpc_policy_gate_t *)arg;
+  uint64_t deadline = turbo_monotonic_ms() + 750u;
+  while (!atomic_load_explicit(&gate->status_completed, memory_order_acquire) &&
+         turbo_monotonic_ms() < deadline)
+    turbo_sleep_ms(1u);
+  atomic_store_explicit(&gate->release, 1, memory_order_release);
+}
+
+static void management_rpc_run_responsiveness_scenario(management_rpc_policy_operation_t operation,
+                                                       const char *policy_body) {
+  char *path = NULL;
+  flowie_control_store_t *store = NULL;
+  flowie_control_management_service_t *service = NULL;
+  flowie_control_management_rpc_server_t *server = NULL;
+  rpc_context_t *rpc = NULL;
+  iris_app_t *app = NULL;
+  management_rpc_fixture_t fixture;
+  management_rpc_policy_gate_t gate;
+  management_rpc_responsiveness_scenario_t scenario;
+  coro_context_t *context;
+  turbo_thread_t watchdog = NULL;
+
+  memset(&fixture, 0, sizeof(fixture));
+  memset(&gate, 0, sizeof(gate));
+  memset(&scenario, 0, sizeof(scenario));
+  gate.operation = operation;
+  atomic_init(&gate.entered, 0);
+  atomic_init(&gate.completed, 0);
+  atomic_init(&gate.release, 0);
+  atomic_init(&gate.status_completed, 0);
+  fixture.caller = (flowie_control_management_caller_t)FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+  fixture.caller.domain_id = "root-a";
+  fixture.caller.actor = "policy-admin-1";
+  fixture.caller.permissions =
+      FLOWIE_CONTROL_MANAGEMENT_VIEWER | FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
+  fixture.now = 2000u;
+  fixture.policy_gate = &gate;
+  atomic_store_explicit(&management_rpc_active_policy_gate, &gate, memory_order_release);
+  server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+  context = coro_context_create(NULL);
+  check_not_null(context);
+  scenario.server = server;
+  scenario.app = app;
+  scenario.security.authenticated = true;
+  scenario.gate = &gate;
+  scenario.policy_body = policy_body;
+  check_equal(coro_context_spawn(context, management_rpc_policy_task, &scenario), TURBO_OK);
+  check_equal(coro_context_spawn(context, management_rpc_status_task, &scenario), TURBO_OK);
+  check_equal(turbo_thread_create(&watchdog, management_rpc_watchdog, &gate), TURBO_OK);
+  check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
+  check_equal(turbo_thread_join(&watchdog), TURBO_OK);
+  turbo_thread_destroy(&watchdog);
+
+  check_true(scenario.policy_ok);
+  check_true(scenario.status_ok);
+  check_true(scenario.status_completed_before_policy);
+  coro_context_destroy(context);
+  management_rpc_close(server, rpc, app, service, store, path);
+  atomic_store_explicit(&management_rpc_active_policy_gate, NULL, memory_order_release);
+}
+
 spec("Flowie management JSON-RPC") {
+  it("round-trips structured subject rules and removes every legacy rule method") {
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    iris_security_context_t security = {0};
+    mem_pool_t arena;
+    turbo_json_doc_t *document = NULL;
+    json_value_t *result;
+    json_value_t *entries;
+    int status = 0;
+
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "security-admin";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    security.authenticated = true;
+    check_equal(mem_init(&arena, 0u), 0);
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+        "\"role_id\":\"publisher\",\"request_id\":\"create-publisher\"},\"id\":1}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.put\","
+                            "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\","
+                            "\"ordinal\":10,\"connection\":\"allow\",\"entries\":[{"
+                            "\"effect\":\"allow\",\"access\":\"write\","
+                            "\"topic\":\"root-a/telemetry/%u/event\"}],"
+                            "\"request_id\":\"put-publisher-rule\"},\"id\":2}",
+                            &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.get\","
+                            "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\"},"
+                            "\"id\":3}",
+                            &status);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_equal(turbo_json_string(turbo_json_object_get(result, "subject_kind")), "role");
+    check_equal(turbo_json_string(turbo_json_object_get(result, "subject_id")), "publisher");
+    check_equal((uint64_t)turbo_json_number(turbo_json_object_get(result, "ordinal")), 10u);
+    entries = turbo_json_object_get(result, "entries");
+    check_equal(turbo_json_array_size(entries), 1u);
+    check_equal(
+        turbo_json_string(turbo_json_object_get(turbo_json_array_get(entries, 0u), "access")),
+        "write");
+    turbo_free_json(&document);
+
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.list\","
+                            "\"params\":{\"subject_kind\":\"role\",\"limit\":10},\"id\":4}",
+                            &status);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_equal(turbo_json_array_size(turbo_json_object_get(result, "items")), 1u);
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.delete\","
+        "\"params\":{\"subject_kind\":\"role\",\"subject_id\":\"publisher\","
+        "\"request_id\":\"delete-publisher-rule\"},\"id\":5}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.put\","
+                            "\"params\":{\"ordinal\":1,\"rule_line\":\"role publisher allow\","
+                            "\"request_id\":\"legacy\"},\"id\":6}",
+                            &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.list\",\"id\":7}", &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.rule.delete\","
+        "\"params\":{\"ordinal\":10,\"request_id\":\"legacy-delete\"},\"id\":8}",
+        &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
+    turbo_free_json(&document);
+
+    management_rpc_close(server, rpc, app, service, store, path);
+    mem_destroy(&arena);
+  }
+
+  it("keeps the CoroNet owner responsive while validating policy") {
+    management_rpc_run_responsiveness_scenario(
+        MANAGEMENT_RPC_POLICY_VALIDATE,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.validate\",\"id\":1}");
+  }
+
+  it("keeps the CoroNet owner responsive while publishing policy") {
+    management_rpc_run_responsiveness_scenario(
+        MANAGEMENT_RPC_POLICY_PUBLISH,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.publish\",\"params\":{"
+        "\"request_id\":\"policy-publish-responsive\"},\"id\":2}");
+  }
+
   it("binds a dedicated caller-owned context and rejects unsafe RPC forms") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
@@ -148,7 +459,7 @@ spec("Flowie management JSON-RPC") {
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
     check_equal(mem_init(&arena, 0u), 0);
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
-    check_equal(rpc->method_count, 32u);
+    check_equal(rpc->method_count, 33u);
     check_equal(iris_app_lookup_rpc_context(app, "/v2/control/rpc"), server);
 
     document = management_rpc_call(
@@ -157,16 +468,15 @@ spec("Flowie management JSON-RPC") {
     check_equal(management_rpc_error_code(document), -32001);
     turbo_free_json(&document);
     security.authenticated = true;
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\","
-        "\"params\":{\"domain_id\":\"root-a\"},\"id\":2}",
-        &status);
+    document = management_rpc_call(server, app, &arena, &security,
+                                   "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\","
+                                   "\"params\":{\"domain_id\":\"root-a\"},\"id\":2}",
+                                   &status);
     check_equal(status, TURBO_OK);
     check_equal(management_rpc_error_code(document), 0);
-    check_equal(turbo_json_string(turbo_json_object_get(
-                     turbo_json_object_get(document, "result"), "domain")),
-                 "root-a");
+    check_equal(turbo_json_string(
+                    turbo_json_object_get(turbo_json_object_get(document, "result"), "domain")),
+                "root-a");
     turbo_free_json(&document);
     document = management_rpc_call(
         server, app, &arena, &security,
@@ -188,11 +498,10 @@ spec("Flowie management JSON-RPC") {
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.disable\",\"id\":3}", &status);
     check_equal(management_rpc_error_code(document), RPC_ERROR_METHOD_NOT_FOUND);
     turbo_free_json(&document);
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\","
-        "\"params\":{\"expected_revision\":1},\"id\":3}",
-        &status);
+    document = management_rpc_call(server, app, &arena, &security,
+                                   "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\","
+                                   "\"params\":{\"expected_revision\":1},\"id\":3}",
+                                   &status);
     check_equal(management_rpc_error_code(document), RPC_ERROR_INVALID_PARAMS);
     turbo_free_json(&document);
 
@@ -262,20 +571,17 @@ spec("Flowie management JSON-RPC") {
     check_not_null(result);
     check_equal(turbo_json_object_size(result), 11u);
     check_true(turbo_json_bool(turbo_json_object_get(result, "enabled")));
-    check_within(turbo_json_number(turbo_json_object_get(result, "started_requests")), 17.0,
-                    0.001);
+    check_within(turbo_json_number(turbo_json_object_get(result, "started_requests")), 17.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "in_flight")), 2.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "succeeded")), 8.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "denied")), 3.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "local_overload")), 1.0, 0.001);
-    check_within(turbo_json_number(turbo_json_object_get(result, "remote_overload")), 1.0,
-                    0.001);
+    check_within(turbo_json_number(turbo_json_object_get(result, "remote_overload")), 1.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "remote_server_failures")), 1.0,
-                    0.001);
+                 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "transport_failures")), 1.0,
-                    0.001);
-    check_within(turbo_json_number(turbo_json_object_get(result, "protocol_failures")), 1.0,
-                    0.001);
+                 0.001);
+    check_within(turbo_json_number(turbo_json_object_get(result, "protocol_failures")), 1.0, 0.001);
     check_within(turbo_json_number(turbo_json_object_get(result, "local_failures")), 1.0, 0.001);
     check_equal(fixture.external_https_stats_calls, 1u);
     turbo_free_json(&document);
@@ -466,16 +772,16 @@ spec("Flowie management JSON-RPC") {
     memcpy(rotated_token, token, sizeof(rotated_token));
     turbo_free_json(&document);
 
-    check_equal(flowie_control_store_credential_verify(
-                     store, "root-a", "device-1", first_token,
-                     FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, &verified),
-                 TURBO_EPERM);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "device-1", first_token,
+                                                       FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                       &verified),
+                TURBO_EPERM);
     verified =
         (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(
-                     store, "root-a", "device-1", rotated_token,
-                     FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, &verified),
-                 TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "device-1", rotated_token,
+                                                       FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                       &verified),
+                TURBO_OK);
     check_equal(verified.credential_revision, 4u);
 
     document = management_rpc_call(
@@ -489,15 +795,111 @@ spec("Flowie management JSON-RPC") {
     check_not_null(result);
     check_null(turbo_json_object_get(result, "revision"));
     turbo_free_json(&document);
-    check_equal(flowie_control_store_credential_verify(
-                     store, "root-a", "device-1", rotated_token,
-                     FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, &verified),
-                 TURBO_EPERM);
+    check_equal(flowie_control_store_credential_verify(store, "root-a", "device-1", rotated_token,
+                                                       FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                       &verified),
+                TURBO_EPERM);
 
     flowie_control_credential_wipe(first_token, sizeof(first_token));
     flowie_control_credential_wipe(rotated_token, sizeof(rotated_token));
     management_rpc_close(server, rpc, app, service, store, path);
     mem_destroy(&arena);
+  }
+
+  it("syncs a 93-byte service principal with a role and credential") {
+    enum { PRINCIPAL_SIZE = 93u, REQUEST_CAPACITY = 1024u };
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    iris_security_context_t security = {0};
+    turbo_json_doc_t *document = NULL;
+    json_value_t *result = NULL;
+    flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
+    flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
+    flowie_control_credential_verify_result_t verified =
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    static const char principal_id[] =
+        "tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
+        "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a";
+    char request[REQUEST_CAPACITY];
+    char token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY] = {0};
+    const char *generated_token = NULL;
+    int written = 0;
+    int status = 0;
+
+    check_equal(strlen(principal_id), PRINCIPAL_SIZE);
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "security-admin-1";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    security.authenticated = true;
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+
+    written = snprintf(request, sizeof(request),
+                       "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
+                       "\"principal_id\":\"%s\",\"principal_type\":\"service\","
+                       "\"request_id\":\"long-principal-create\"},\"id\":1}",
+                       principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document = management_rpc_request(
+        server, app, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+        "\"role_id\":\"tenant-admin\",\"request_id\":\"tenant-admin-create\"},\"id\":2}",
+        &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    written = snprintf(request, sizeof(request),
+                       "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.assign\",\"params\":{"
+                       "\"principal_id\":\"%s\",\"role_id\":\"tenant-admin\","
+                       "\"request_id\":\"long-principal-role\"},\"id\":3}",
+                       principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    written = snprintf(
+        request, sizeof(request),
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.credential.generate\",\"params\":{"
+        "\"principal_id\":\"%s\",\"request_id\":\"long-principal-credential\"},\"id\":4}",
+        principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_not_null(result);
+    generated_token = turbo_json_string(turbo_json_object_get(result, "token"));
+    check_not_null(generated_token);
+    check_equal(strlen(generated_token), FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
+    memcpy(token, generated_token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE + 1u);
+    turbo_free_json(&document);
+
+    check_equal(flowie_control_store_user_get(store, "root-a", principal_id, &user), TURBO_OK);
+    check_equal(user.principal_id, principal_id);
+    check_equal(user.principal_type, "service");
+    check_equal(flowie_control_store_effective_roles(store, "root-a", principal_id, &roles),
+                TURBO_OK);
+    check_equal(roles.role_count, 1u);
+    check_equal(roles.roles[0], "tenant-admin");
+    check_equal(flowie_control_store_credential_verify(store, "root-a", principal_id, token,
+                                                       FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                       &verified),
+                TURBO_OK);
+
+    flowie_control_credential_wipe(token, sizeof(token));
+    management_rpc_close(server, rpc, app, service, store, path);
   }
 
   it("lets only the system administrator provision a root administrator") {
@@ -524,149 +926,147 @@ spec("Flowie management JSON-RPC") {
     check_equal(mem_init(&arena, 0u), 0);
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
-        "},\"id\":1}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
+                            "},\"id\":1}",
+                            &status);
     check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);
 
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN;
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
-        "},\"id\":2}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
+                            "},\"id\":2}",
+                            &status);
     check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);
 
     fixture.caller.domain_id = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN;
     fixture.caller.actor = "admin";
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN;
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
-        "},\"id\":3}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"request_id\":\"root-b-create\""
+                            "},\"id\":3}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
-        "\"principal_type\":\"human\",\"request_id\":\"admin-b-create\""
-        "},\"id\":3}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
+                            "\"principal_type\":\"human\",\"request_id\":\"admin-b-create\""
+                            "},\"id\":3}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.password.set\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
-        "\"new_password\":\"Root-B-Admin-Password-2026\",\"mode\":\"create\","
-        "\"request_id\":\"admin-b-password\"},\"id\":4}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.password.set\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
+                            "\"new_password\":\"Root-B-Admin-Password-2026\",\"mode\":\"create\","
+                            "\"request_id\":\"admin-b-password\"},\"id\":4}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     check_not_null(turbo_json_object_get(document, "result"));
     turbo_free_json(&document);
     check_equal(flowie_control_store_credential_verify(
-                     store, "root-b", "admin-b", "Root-B-Admin-Password-2026",
-                     sizeof("Root-B-Admin-Password-2026") - 1u, &verified),
-                 TURBO_OK);
+                    store, "root-b", "admin-b", "Root-B-Admin-Password-2026",
+                    sizeof("Root-B-Admin-Password-2026") - 1u, &verified),
+                TURBO_OK);
     check_equal(verified.credential_revision, 4u);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"role_id\":\"security_admin\","
-        "\"request_id\":\"root-b-security-role\"},\"id\":5}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"role_id\":\"security_admin\","
+                            "\"request_id\":\"root-b-security-role\"},\"id\":5}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.assign\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
-        "\"role_id\":\"security_admin\",\"request_id\":\"admin-b-role\""
-        "},\"id\":6}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.assign\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
+                            "\"role_id\":\"security_admin\",\"request_id\":\"admin-b-role\""
+                            "},\"id\":6}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
     check_equal(flowie_control_store_user_get(store, "root-b", "admin-b", &user), TURBO_OK);
     check_true(user.enabled);
-    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles),
-                 TURBO_OK);
+    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles), TURBO_OK);
     check_equal(roles.role_count, 1u);
     check_equal(roles.roles[0], FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.create\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
-        "\"request_id\":\"root-b-operators\""
-        "},\"id\":7}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.create\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
+                            "\"request_id\":\"root-b-operators\""
+                            "},\"id\":7}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.delete\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
-        "\"request_id\":\"root-b-operators-delete\""
-        "},\"id\":8}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.delete\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
+                            "\"request_id\":\"root-b-operators-delete\""
+                            "},\"id\":8}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.list\",\"params\":{"
-        "\"limit\":10},\"id\":8}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.list\",\"params\":{"
+                            "\"limit\":10},\"id\":8}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     {
       json_value_t *rpc_result = turbo_json_object_get(document, "result");
       json_value_t *items = turbo_json_object_get(rpc_result, "items");
       check_equal(turbo_json_array_size(items), 2u);
       check_equal(
-          turbo_json_string(
-              turbo_json_object_get(turbo_json_array_get(items, 1u), "domain_id")),
+          turbo_json_string(turbo_json_object_get(turbo_json_array_get(items, 1u), "domain_id")),
           "root-b");
     }
     turbo_free_json(&document);
 
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.list\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"limit\":10},\"id\":9}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.list\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"limit\":10},\"id\":9}",
+                            &status);
     check_equal(management_rpc_error_code(document), 0);
     {
       json_value_t *rpc_result = turbo_json_object_get(document, "result");
       json_value_t *items = turbo_json_object_get(rpc_result, "items");
       check_equal(turbo_json_array_size(items), 1u);
       check_equal(turbo_json_string(turbo_json_object_get(turbo_json_array_get(items, 0u), "id")),
-                   "admin-b");
+                  "admin-b");
     }
     turbo_free_json(&document);
 
     fixture.caller.domain_id = "root-a";
     fixture.caller.actor = "root-admin";
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.list\",\"params\":{"
-        "\"domain_id\":\"root-b\",\"limit\":10},\"id\":10}",
-        &status);
+    document =
+        management_rpc_call(server, app, &arena, &security,
+                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.list\",\"params\":{"
+                            "\"domain_id\":\"root-b\",\"limit\":10},\"id\":10}",
+                            &status);
     check_equal(status, TURBO_EPERM);
     check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);

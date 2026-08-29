@@ -189,4 +189,3 @@ The build adds no implicit provider fallback and no shared mutable state between
 Configuration format, Control HTTP contracts, MQTT protocol behavior, and PicImpact Compose mounts
 remain unchanged. The only deployment-visible addition is an explicit image-flavor identity used
 as a promotion gate.
-

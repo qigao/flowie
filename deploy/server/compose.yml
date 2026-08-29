@@ -2,8 +2,13 @@ services:
   flowie-server:
     image: ${FLOWIE_SERVER_IMAGE:?set FLOWIE_SERVER_IMAGE to an immutable tag or digest}
     container_name: flowie-server
+    entrypoint:
+      - /usr/local/bin/flowie-combined-entrypoint
     network_mode: host
     restart: unless-stopped
+    depends_on:
+      flowie-postgres:
+        condition: service_healthy
     stop_grace_period: 30s
     read_only: true
     init: true
@@ -20,6 +25,9 @@ services:
       FLOWIE_PORT: ${FLOWIE_PORT:-18883}
       FLOWIE_TRANSPORT: ${FLOWIE_TRANSPORT:-tcp}
       FLOWIE_PATH: ${FLOWIE_PATH:-/mqtt}
+      FLOWIE_PROTOCOL_STORE_DRIVER: ${FLOWIE_PROTOCOL_STORE_DRIVER:-postgresql}
+      FLOWIE_PROTOCOL_STORE_OPTIONS: ${FLOWIE_PROTOCOL_STORE_OPTIONS:?set FLOWIE_PROTOCOL_STORE_OPTIONS}
+      FLOWIE_CONTROL_DB_CONNINFO: ${FLOWIE_CONTROL_DB_CONNINFO:?set FLOWIE_CONTROL_DB_CONNINFO}
       FLOWIE_MAX_PACKET_SIZE: ${FLOWIE_MAX_PACKET_SIZE:-1048576}
       FLOWIE_MAX_CONNECTIONS: ${FLOWIE_MAX_CONNECTIONS:-1024}
       FLOWIE_MAX_SESSIONS: ${FLOWIE_MAX_SESSIONS:-${FLOWIE_MAX_CONNECTIONS:-1024}}
@@ -39,14 +47,68 @@ services:
       FLOWIE_TCP_KEEPALIVE_COUNT: ${FLOWIE_TCP_KEEPALIVE_COUNT:-0}
       FLOWIE_REUSE_PORT: ${FLOWIE_REUSE_PORT:-0}
       FLOWIE_LOG_LEVEL: ${FLOWIE_LOG_LEVEL:-INFO}
+      FLOWIE_COMBINED_CHECK: ${FLOWIE_COMBINED_CHECK:-0}
+      FLOWIE_CONTROL_CONFIG: /etc/flowie/control.yml
+      FLOWIE_CONTROL_CHECK: ${FLOWIE_CONTROL_CHECK:-0}
+      FLOWIE_CONTROL_KEY_PASSWORD_FILE: /run/secrets/flowie-control-key-password
       FLOWIE_HEALTH_HOST: ${FLOWIE_HEALTH_HOST:-127.0.0.1}
       FLOWIE_HEALTH_PORT: ${FLOWIE_HEALTH_PORT:-${FLOWIE_PORT:-18883}}
+      FLOWIE_HEALTH_SECONDARY_HOST: ${FLOWIE_CONTROL_HEALTH_HOST:-127.0.0.1}
+      FLOWIE_HEALTH_SECONDARY_PORT: ${FLOWIE_CONTROL_HEALTH_PORT:-8443}
+    secrets:
+      - source: flowie-control-key-password
+        target: flowie-control-key-password
     volumes:
       - flowie-data:/var/lib/flowie
+      - ${FLOWIE_CONTROL_CONFIG_FILE:?set FLOWIE_CONTROL_CONFIG_FILE}:/etc/flowie/control.yml:ro
+      - ${FLOWIE_CERT_DIR:?set FLOWIE_CERT_DIR}:/etc/flowie/certs:ro
+      - flowie-control-data:/var/lib/flowie/control
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /run:size=16m,mode=0755
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/flowie-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  flowie-postgres:
+    image: ${FLOWIE_POSTGRES_IMAGE:-postgres:17-bookworm}
+    container_name: flowie-postgres
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      POSTGRES_DB: flowie
+      POSTGRES_USER: flowie
+      POSTGRES_PASSWORD: ${FLOWIE_POSTGRES_PASSWORD:?set FLOWIE_POSTGRES_PASSWORD}
+      PGPORT: ${FLOWIE_POSTGRES_PORT:-55432}
+    command:
+      [
+        "postgres",
+        "-p",
+        "${FLOWIE_POSTGRES_PORT:-55432}",
+        "-c",
+        "listen_addresses=127.0.0.1",
+      ]
+    volumes:
+      - flowie-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p $${PGPORT} -U flowie -d flowie"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
 
 volumes:
   flowie-data:
     name: ${FLOWIE_DATA_VOLUME:-flowie-data}
+  flowie-control-data:
+    name: ${FLOWIE_CONTROL_DATA_VOLUME:-flowie-control-data}
+  flowie-postgres-data:
+    name: ${FLOWIE_POSTGRES_DATA_VOLUME:-flowie-postgres-data}
+
+secrets:
+  flowie-control-key-password:
+    file: ${FLOWIE_CONTROL_KEY_PASSWORD_FILE:?set FLOWIE_CONTROL_KEY_PASSWORD_FILE}

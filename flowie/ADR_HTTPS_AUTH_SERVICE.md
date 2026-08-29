@@ -45,7 +45,7 @@ third-party management backend
 - Broker 只依赖 HTTPS Auth/ACL 契约，不接收数据库连接信息或完整 ACL rule body。
 - `flowie-control` 拥有 Domain、principal、password/credential、Role、Group、ACL draft、published
   policy 和 audit。
-- SQLite 与 PostgreSQL 是同一 Repository port 的可替换实现，不改变 Broker 契约。
+- Control 只有一个 TurboDB Repository 实现；driver 选择不改变 Broker 契约。
 - Auth 与 ACL endpoint 的 caller 使用 Repository 生成的 service credential，不再使用静态 binding。
 - ACL 是逐请求 decision：CONNECT、SUBSCRIBE 和 PUBLISH 都由 Control 返回 allow/deny。
 - TurboDB ORM、ProtocolStore、session store 和 Graph adapter 不是 Auth/ACL 事实源。
@@ -291,9 +291,9 @@ secret reference、TLS 文件或 Repository 前置条件无效时启动直接失
 ## Repository 与一致性
 
 `flowie_control_repository_t` 是内部、版本化 persistence port。Auth service、ACL endpoint、
-Management service 和 Dashboard 只依赖该 port，不直接解释 SQLite/PostgreSQL SQL。
+Management service 和 Dashboard 只依赖该 port，不直接解释 TurboDB driver 或连接细节。
 
-- 每个运行实例只选择一个 Repository；禁止 SQLite/PostgreSQL 双写或故障后切换事实源。
+- 每个运行实例只选择一个 TurboDB Repository；禁止双写或故障后切换事实源。
 - username credential resolution 在 Repository 内完成唯一 Domain 判定；0 或多条匹配都拒绝。
 - service credential resolution 使用 `(service_domain, service_id, token)` 并重新读取 enabled、
   credential revision 和 effective endpoint Role。
@@ -301,7 +301,7 @@ Management service 和 Dashboard 只依赖该 port，不直接解释 SQLite/Post
 - credential 明文只在 generate/rotate 成功响应返回一次；Repository 只保存 verifier。
 - Management command 负责 revision、引用约束、幂等、事务和 audit；第三方不得直接改数据库。
 
-PostgreSQL principal snapshot 使用只读可重复读事务。credential KDF 不在持有数据库租约时执行，KDF
+principal snapshot 使用 Repository 事务读取。credential KDF 不在持有数据库事务时执行，KDF
 后重新读取 generation 以拒绝并发 rotate/revoke。写事务 `COMMIT` 结果不确定时，通过同一命令的
 audit 完整身份确认；无法确认则 fail closed，不猜测成功。
 
@@ -344,7 +344,7 @@ audit 完整身份确认；无法确认则 fail closed，不猜测成功。
 
 当前自动化覆盖：
 
-- SQLite/PostgreSQL repository-backed service credential resolution；
+- TurboDB repository-backed service credential resolution；
 - service endpoint Role 最小权限、错误 token/Domain/ID 和 revoke/disable 拒绝；
 - username 唯一 Domain 解析与跨 Domain 重名 fail closed；
 - Auth v3 严格 request/response、principal 清零、限流和 bounded executor；

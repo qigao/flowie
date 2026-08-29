@@ -76,7 +76,7 @@ avoids carrying two tenant vocabularies through every domain command.
 Reset and import are first-class offline operator operations:
 
 1. stop all writers;
-2. verify the exact SQLite file or PostgreSQL schema target;
+2. verify the exact target described by the TurboDB driver and options;
 3. create a backup unless an explicit disposable-store flag is supplied;
 4. reset the selected Auth Repository as one unit;
 5. start the service in schema migration mode when required;
@@ -92,7 +92,8 @@ are injected from a secret provider and are not stored in the manifest.
 
 - The standalone Docker remains operationally simple while Control keeps an explicit module and
   data boundary inside the bundle.
-- Control Repository data is owned by Control, not TurboDB ORM, ProtocolStore, or a Flowie worker.
+- Control owns the Repository domain state; TurboDB ORM is its only persistence boundary and does
+  not independently advance that state.
 - A third-party platform can use the same Domain administration model without Flowie terminology.
 - The release is intentionally incompatible with old RPC clients, configuration, and Control
   Repository schemas; deployment tooling must gate the coordinated upgrade.
@@ -117,7 +118,8 @@ binary and is never converted in place.
 
 - server application tests prove the bundled Control runtime starts before MQTT and shuts down in
   the documented order;
-- Control runtime tests continue to cover SQLite and PostgreSQL providers independently;
+- Control runtime tests cover the shared repository contract through TurboDB, with an optional
+  cross-driver PostgreSQL live gate;
 - Management RPC contract tests cover canonical Domain methods, rejection of every removed legacy
   method/field, permissions, idempotent replay, and concurrent-update conflicts;
 - Dashboard tests require Domain terminology and hierarchical Group selection;

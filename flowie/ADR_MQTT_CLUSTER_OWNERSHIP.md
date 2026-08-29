@@ -23,7 +23,7 @@ The cluster boundary is split as follows:
   Raft store. Snapshot bytes are stored by TurboRaft together with the log boundary.
 
 Standalone mode is separate. Its MQTT session, subscription, inflight, delivery, Will and retained
-facts use `TurboDB::ORM` through `flowie_protocol_repository`. Standalone ORM state is never opened
+facts use `Orm::C` through `flowie_protocol_repository`. Standalone ORM state is never opened
 or reused by cluster mode.
 
 ## Invariants

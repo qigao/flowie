@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳，当前适用于 `flowie/control` 内部 SQLite 事实源。Credential 生命周期已通过内部 management RPC
+已采纳，当前适用于 `flowie/control` 内部 TurboDB 事实源。Credential 生命周期已通过内部 management RPC
 暴露为 `flowie.credential.generate/rotate/revoke`。未配置 `auth.external_https` 时，这些 credential
 是本地 Auth 的 verifier 事实；配置外部 Auth 时不参与认证。`flowie-control` 不增加 OIDC listener
 或第三方数据库 auth backend。
@@ -10,7 +10,7 @@
 ## 背景
 
 控制面需要动态创建和轮换机器 credential，但数据库不能保存可直接用于登录的明文，也不能使用适合
-普通数据校验的快速 hash。密码 KDF 消耗较高，若在 SQLite 写事务内执行，会长时间占用单写者锁；若在
+普通数据校验的快速 hash。密码 KDF 消耗较高，若在数据库写事务内执行，会延长事务持有时间；若在
 事务外执行后不重新校验状态，又可能覆盖并发的禁用、撤销或轮换。
 
 本决策只定义 credential 事实的存储和内部命令语义。内部认证缓存和受信 Domain 绑定见本文后续章节及
@@ -30,7 +30,7 @@ credential 与正向 cache；出现时二者不参与该请求，第三方 HTTPS
 
 ## 数据与所有权
 
-SQLite `flowie_control_credential` 是 verifier 事实源，并以 `(domain_id, principal_id)` 为主键关联用户。
+TurboDB 中的 `flowie_control_credential` 是 verifier 事实源，并以 `(domain_id, principal_id)` 为主键关联用户。
 每条记录分别保存：
 
 - KDF algorithm、memory blocks、passes 和 lanes；
@@ -53,10 +53,10 @@ SQLite `flowie_control_credential` 是 verifier 事实源，并以 `(domain_id, 
 
 1. 只读预检 request replay、expected revision、用户状态和 credential 存在性；
 2. 在数据库事务外使用 CSPRNG 生成可打印 Token，并用 Argon2id 生成 salt 和 verifier；
-3. `BEGIN IMMEDIATE` 后重新检查 replay、revision、用户和 credential 状态，再原子写入 revision、audit 和
+3. 进入 TurboDB transaction 后重新检查 replay、revision、用户和 credential 状态，再原子写入 revision、audit 和
    verifier。
 
-因此昂贵 KDF 不持有 SQLite writer lock；并发状态变化会在第二次校验时失败，不会覆盖新事实。失败路径
+因此昂贵 KDF 不持有数据库写事务；并发状态变化会在第二次校验时失败，不会覆盖新事实。失败路径
 回滚事务并清零所有临时 entropy、Token、salt、verifier 和 KDF work area。`revoke` 在单事务内 tombstone 当前
 credential；`rotate` 可用新 verifier 显式重新启用已撤销 credential。
 
@@ -84,14 +84,14 @@ adapter 仍必须实现请求限流、失败审计和统一拒绝响应。
 - 缓存键是进程启动时由 TurboUtils CSPRNG 生成的 32-byte 随机 key 所派生的 keyed BLAKE2b digest；输入
   包含有长度边界的 domain、principal 和 credential。缓存不保存 credential、Base64 或可恢复明文。
 - 缓存只保存成功验证得到的 user/credential revision，不缓存失败结果，不成为用户状态事实源。
-- 每次候选命中都通过轻量 SQLite query 读取当前 active 状态和 revision。禁用、撤销或 revision 不一致时
+- 每次候选命中都通过轻量 TurboDB query 读取当前 active 状态和 revision。禁用、撤销或 revision 不一致时
   立即删除候选；revision 不一致时重新执行当前 verifier 的完整 Argon2id 验证。
 - 默认容量 256、TTL 5 秒；硬上限为 4096 entries 和 60 秒。达到容量时驱逐最久未使用 digest；过期项
   在访问或容量驱逐时清理，内存不会无界增长。
-- TurboUtils mutex 只保护 hash map、LRU sequence 和缓存 entry。SQLite、Argon2id 和外部 I/O 均在锁外
+- TurboUtils mutex 只保护 hash map、LRU sequence 和缓存 entry。TurboDB、Argon2id 和外部 I/O 均在锁外
   执行；cache destroy 要求调用方先停止并发认证。
 
-`flowie-control` 的本地 HTTPS Auth composition root 还把 Argon2id、SQLite 与同步 PostgreSQL 调用
+`flowie-control` 的本地 HTTPS Auth composition root 还把 Argon2id 与同步 TurboDB 调用
 放入专用有界 executor。每个任务拥有解码字段和 secret 副本；Iris `Req`/`Res`/socket 不跨线程。
 队列满返回 429，HTTP deadline 返回 503。同步工作不做不安全的强制取消：迟到结果丢弃、secret 由任务
 结束时擦除，shutdown 停止接单并 drain。第三方 HTTPS verifier 不使用该 executor。
@@ -114,7 +114,7 @@ adapter 仍必须实现请求限流、失败审计和统一拒绝响应。
 当前 TinyTest 覆盖一次性 Token 生成、Base64URL alphabet、正确/错误/不存在主体验证、幂等重放、轮换使旧
 Token 失效、撤销、重新启用、用户禁用和 Token wipe。缓存测试覆盖正向命中、TTL 过期、错误 credential
 不入缓存、revision
-失效、撤销/禁用 fail closed、LRU 容量驱逐和并发命中。SQLite revision 与 audit 同事务提交。
+失效、撤销/禁用 fail closed、LRU 容量驱逐和并发命中。revision 与 audit 通过 TurboDB 同事务提交。
 
 - **HIGH**：在 HTTPS 认证服务、防爆破和管理权限完成前，不得把内部 store API 直接暴露到公网。
 - **MED**：credential 正向缓存、事务化 principal snapshot 和内部 auth service 已完成；最终 principal
