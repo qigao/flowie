@@ -15,7 +15,8 @@
 
 typedef enum management_rpc_policy_operation_e {
   MANAGEMENT_RPC_POLICY_VALIDATE = 1,
-  MANAGEMENT_RPC_POLICY_PUBLISH = 2
+  MANAGEMENT_RPC_POLICY_PUBLISH = 2,
+  MANAGEMENT_RPC_POLICY_DRY_RUN = 3
 } management_rpc_policy_operation_t;
 
 typedef struct management_rpc_policy_gate_s {
@@ -79,6 +80,24 @@ static int management_rpc_policy_publish(void *ctx,
   return TURBO_OK;
 }
 
+static int management_rpc_policy_dry_run(void *ctx, const char *domain_id,
+                                         const flowie_control_policy_dry_run_change_t *changes,
+                                         size_t change_count,
+                                         flowie_control_policy_dry_run_result_t *result) {
+  int rc;
+  (void)ctx;
+  if (!domain_id || !changes || change_count == 0u || !result || result->size < sizeof(*result))
+    return TURBO_EINVAL;
+  rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_DRY_RUN);
+  if (rc != TURBO_OK) return rc;
+  result->valid = 1;
+  result->store_revision = 2u;
+  result->rule_count = 2u;
+  result->deny_rule_count = 0u;
+  result->diagnostic_count = 0u;
+  return TURBO_OK;
+}
+
 static int management_rpc_resolve(void *ctx, const Req *request,
                                   flowie_control_management_caller_t *caller_out) {
   management_rpc_fixture_t *fixture = (management_rpc_fixture_t *)ctx;
@@ -130,6 +149,7 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
     fixture->repository = *service_config.repository;
     fixture->policy_ops = *fixture->repository.policy;
     fixture->policy_ops.validate = management_rpc_policy_validate;
+    fixture->policy_ops.dry_run = management_rpc_policy_dry_run;
     fixture->policy_ops.publish = management_rpc_policy_publish;
     fixture->repository.policy = &fixture->policy_ops;
     service_config.repository = &fixture->repository;
@@ -195,9 +215,9 @@ static turbo_json_doc_t *management_rpc_call(flowie_control_management_rpc_serve
   return document;
 }
 
-static turbo_json_doc_t *management_rpc_request(
-    flowie_control_management_rpc_server_t *server, iris_app_t *app,
-    iris_security_context_t *security, const char *body, int *status_out) {
+static turbo_json_doc_t *management_rpc_request(flowie_control_management_rpc_server_t *server,
+                                                iris_app_t *app, iris_security_context_t *security,
+                                                const char *body, int *status_out) {
   turbo_json_doc_t *document;
   mem_pool_t arena;
   check_equal(mem_init(&arena, 0u), 0);
@@ -428,6 +448,109 @@ spec("Flowie management JSON-RPC") {
     mem_destroy(&arena);
   }
 
+  it("dry-runs structured policy changes without mutating repository state") {
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    iris_security_context_t security = {0};
+    mem_pool_t arena;
+    turbo_json_doc_t *document = NULL;
+    json_value_t *result = NULL;
+    uint64_t revision_before = 0u;
+    uint64_t revision_after = 0u;
+    size_t audit_before = 0u;
+    size_t audit_after = 0u;
+    int status = 0;
+
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "policy-admin";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
+    security.authenticated = true;
+    check_equal(mem_init(&arena, 0u), 0);
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+        "\"role_id\":\"publisher\",\"request_id\":\"create-publisher\"},\"id\":1}",
+        &status);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
+    check_equal(flowie_control_store_revision(store, &revision_before), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), TURBO_OK);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.dry_run\",\"params\":{"
+        "\"changes\":[{\"operation\":\"put\",\"subject_kind\":\"role\","
+        "\"subject_id\":\"publisher\",\"ordinal\":10,\"connection\":\"allow\","
+        "\"entries\":[{\"effect\":\"allow\",\"access\":\"write\","
+        "\"topic\":\"root-a/telemetry/%u/event\"}]}]},\"id\":2}",
+        &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_not_null(result);
+    check_true(turbo_json_bool(turbo_json_object_get(result, "valid")));
+    check_equal((uint64_t)turbo_json_number(turbo_json_object_get(result, "store_revision")),
+                revision_before);
+    check_equal((uint64_t)turbo_json_number(turbo_json_object_get(result, "rule_count")), 2u);
+    check_equal(turbo_json_array_size(turbo_json_object_get(result, "diagnostics")), 0u);
+    turbo_free_json(&document);
+
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.dry_run\",\"params\":{"
+        "\"changes\":[{\"operation\":\"delete\",\"subject_kind\":\"role\","
+        "\"subject_id\":\"publisher\"}]},\"id\":3}",
+        &status);
+    check_equal(management_rpc_error_code(document), -32003);
+    turbo_free_json(&document);
+
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.dry_run\",\"params\":{"
+        "\"changes\":[{\"operation\":\"put\",\"subject_kind\":\"role\","
+        "\"subject_id\":\"missing-role\",\"ordinal\":11,\"connection\":\"allow\","
+        "\"entries\":[{\"effect\":\"allow\",\"access\":\"read\","
+        "\"topic\":\"root-a/telemetry/%u/event\"}]}]},\"id\":4}",
+        &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_false(turbo_json_bool(turbo_json_object_get(result, "valid")));
+    check_equal(
+        turbo_json_string(turbo_json_object_get(
+            turbo_json_array_get(turbo_json_object_get(result, "diagnostics"), 0u), "code")),
+        "subject_not_found");
+    turbo_free_json(&document);
+
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.dry_run\",\"params\":{"
+        "\"changes\":[{\"operation\":\"delete\",\"subject_kind\":\"role\","
+        "\"subject_id\":\"publisher\",\"ordinal\":10}]},\"id\":5}",
+        &status);
+    check_equal(management_rpc_error_code(document), RPC_ERROR_INVALID_PARAMS);
+    turbo_free_json(&document);
+
+    check_equal(flowie_control_store_revision(store, &revision_after), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), TURBO_OK);
+    check_equal(revision_after, revision_before);
+    check_equal(audit_after, audit_before);
+
+    management_rpc_close(server, rpc, app, service, store, path);
+    mem_destroy(&arena);
+  }
+
   it("keeps the CoroNet owner responsive while validating policy") {
     management_rpc_run_responsiveness_scenario(
         MANAGEMENT_RPC_POLICY_VALIDATE,
@@ -439,6 +562,16 @@ spec("Flowie management JSON-RPC") {
         MANAGEMENT_RPC_POLICY_PUBLISH,
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.publish\",\"params\":{"
         "\"request_id\":\"policy-publish-responsive\"},\"id\":2}");
+  }
+
+  it("keeps the CoroNet owner responsive while dry-running policy") {
+    management_rpc_run_responsiveness_scenario(
+        MANAGEMENT_RPC_POLICY_DRY_RUN,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.dry_run\",\"params\":{"
+        "\"changes\":[{\"operation\":\"put\",\"subject_kind\":\"role\","
+        "\"subject_id\":\"publisher\",\"ordinal\":10,\"connection\":\"allow\","
+        "\"entries\":[{\"effect\":\"allow\",\"access\":\"write\","
+        "\"topic\":\"root-a/telemetry/%u/event\"}]}]},\"id\":4}");
   }
 
   it("binds a dedicated caller-owned context and rejects unsafe RPC forms") {
@@ -459,7 +592,7 @@ spec("Flowie management JSON-RPC") {
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
     check_equal(mem_init(&arena, 0u), 0);
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
-    check_equal(rpc->method_count, 33u);
+    check_equal(rpc->method_count, 34u);
     check_equal(iris_app_lookup_rpc_context(app, "/v2/control/rpc"), server);
 
     document = management_rpc_call(
@@ -822,9 +955,8 @@ spec("Flowie management JSON-RPC") {
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     flowie_control_credential_verify_result_t verified =
         FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    static const char principal_id[] =
-        "tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
-        "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a";
+    static const char principal_id[] = "tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
+                                       "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a";
     char request[REQUEST_CAPACITY];
     char token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY] = {0};
     const char *generated_token = NULL;
@@ -869,11 +1001,11 @@ spec("Flowie management JSON-RPC") {
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
-    written = snprintf(
-        request, sizeof(request),
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.credential.generate\",\"params\":{"
-        "\"principal_id\":\"%s\",\"request_id\":\"long-principal-credential\"},\"id\":4}",
-        principal_id);
+    written =
+        snprintf(request, sizeof(request),
+                 "{\"jsonrpc\":\"2.0\",\"method\":\"control.credential.generate\",\"params\":{"
+                 "\"principal_id\":\"%s\",\"request_id\":\"long-principal-credential\"},\"id\":4}",
+                 principal_id);
     check_true(written > 0 && (size_t)written < sizeof(request));
     document = management_rpc_request(server, app, &security, request, &status);
     check_equal(status, TURBO_OK);

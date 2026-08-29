@@ -199,7 +199,34 @@ warehouse/telemetry/warehouse-device-202/event
 {"jsonrpc":"2.0","method":"control.role.assign","params":{"principal_id":"warehouse-device-202","role_id":"device-publisher","request_id":"warehouse-device-202-publisher-assign"},"id":"role-assign-1"}
 ```
 
-再为业务 Role 保存一份结构化 ACL：
+先在不修改草稿的情况下校验拟议 ACL。第三方后端应把用户模板展开为每个实际主体的结构化
+`changes`，再调用 `control.policy.dry_run`；不要让浏览器直接持有 Flowie Management session：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "control.policy.dry_run",
+  "params": {
+    "changes": [{
+      "operation": "put",
+      "subject_kind": "role",
+      "subject_id": "device-publisher",
+      "ordinal": 10,
+      "connection": "allow",
+      "entries": [
+        {"effect": "allow", "access": "write", "topic": "warehouse/telemetry/%u/{event,heartbeat}"}
+      ]
+    }]
+  },
+  "id": "acl-dry-run-1"
+}
+```
+
+候选策略有问题时，RPC 仍返回正常 `result`，其中 `valid: false` 和 `diagnostics` 给出主体、ordinal、
+规则数量或空策略错误；请求结构错误才返回 `-32602`。dry-run 不修改 draft、revision 或 audit，也不
+publish，因此无需 `request_id`。它返回的 `store_revision` 是校验快照版本；后续写入仍可能发生竞态。
+
+校验通过后，再为业务 Role 保存同一份结构化 ACL：
 
 ```json
 {
@@ -421,7 +448,8 @@ Control 记录；客户端应用只负责对配置中的 topic 收发消息。
   失效，`-32003` 不做无界重试。
 - username 在所有 enabled Domain 中唯一。
 - ACL topic 的首段与用户 Domain 一致，Group path 与数据库父链一致。
-- ACL 已 validate 并 publish，而不只是保存到 draft。
+- 自定义 ACL 已先对所有实际主体执行 `control.policy.dry_run`，再保存、validate 并 publish，而不只是
+  在前端做字符串校验或只保存到 draft。
 - Broker 配置没有业务 `domain` 字段，只有 service credential 的 `service_domain`。
 - Auth 与 ACL URL 分别为 `/v4/authenticate` 和 `/v4/acl/check`。
 - service token 只存在于 secret provider，MQTT 客户端未持有该 token。

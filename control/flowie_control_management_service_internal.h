@@ -15,7 +15,7 @@ typedef struct flowie_control_management_service_s flowie_control_management_ser
 #define FLOWIE_CONTROL_MANAGEMENT_ROLE_POLICY_ADMIN "policy_admin"
 #define FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN "security_admin"
 #define FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN FLOWIE_CONTROL_SYSTEM_ADMIN_ROLE
-#define FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED                                   \
+#define FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED                                    \
   FLOWIE_CONTROL_PASSWORD_CHANGE_REQUIRED_ROLE
 #define FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN FLOWIE_CONTROL_SYSTEM_DOMAIN
 
@@ -61,7 +61,7 @@ typedef struct flowie_control_password_change_command_s {
   uint64_t occurred_at;
 } flowie_control_password_change_command_t;
 
-#define FLOWIE_CONTROL_PASSWORD_CHANGE_COMMAND_INIT                                               \
+#define FLOWIE_CONTROL_PASSWORD_CHANGE_COMMAND_INIT                                                \
   {sizeof(flowie_control_password_change_command_t), NULL, 0u, NULL, 0u, 0u}
 
 typedef enum flowie_control_password_set_mode_e {
@@ -82,9 +82,17 @@ typedef struct flowie_control_password_set_command_s {
   uint64_t occurred_at;
 } flowie_control_password_set_command_t;
 
-#define FLOWIE_CONTROL_PASSWORD_SET_COMMAND_INIT                                                  \
-  {sizeof(flowie_control_password_set_command_t), NULL, NULL, NULL, 0u,                           \
-   FLOWIE_CONTROL_PASSWORD_CREATE, NULL, NULL, 0u, 0u}
+#define FLOWIE_CONTROL_PASSWORD_SET_COMMAND_INIT                                                   \
+  {sizeof(flowie_control_password_set_command_t),                                                  \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   FLOWIE_CONTROL_PASSWORD_CREATE,                                                                 \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   0u}
 
 #define FLOWIE_CONTROL_MANAGEMENT_STATUS_INIT                                                      \
   {sizeof(flowie_control_management_status_t), 0u, FLOWIE_CONTROL_POLICY_STATUS_INIT}
@@ -105,39 +113,39 @@ int flowie_control_management_authorize(flowie_control_management_service_t *ser
  * The returned caller borrows `target_domain_id`. Same-Root access is unchanged; cross-Root
  * access requires a system_admin whose authenticated Domain is `system`.
  */
-int flowie_control_management_scope_caller(
-    flowie_control_management_service_t *service,
-    const flowie_control_management_caller_t *caller, const char *target_domain_id,
-    flowie_control_management_caller_t *scoped_out);
+int flowie_control_management_scope_caller(flowie_control_management_service_t *service,
+                                           const flowie_control_management_caller_t *caller,
+                                           const char *target_domain_id,
+                                           flowie_control_management_caller_t *scoped_out);
 
 /** Resolve one enabled local principal and its current effective roles into a borrowed caller. */
 int flowie_control_management_identity_resolve_principal(
-    const flowie_control_repository_t *repository, const char *domain_id,
-    const char *principal_id, flowie_control_management_caller_t *caller_out);
+    const flowie_control_repository_t *repository, const char *domain_id, const char *principal_id,
+    flowie_control_management_caller_t *caller_out);
 
 int flowie_control_management_system_status(flowie_control_management_service_t *service,
                                             const flowie_control_management_caller_t *caller,
                                             flowie_control_management_status_t *out);
-int flowie_control_management_domain_create(
-    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
-    const flowie_control_domain_create_command_t *command,
-    flowie_control_command_result_t *result);
-int flowie_control_management_domain_list(
-    flowie_control_management_service_t *service,
-    const flowie_control_management_caller_t *caller, const char *after_domain_id,
-    flowie_control_domain_view_t *items, size_t capacity, size_t *count_out,
-    int *has_more_out);
+int flowie_control_management_domain_create(flowie_control_management_service_t *service,
+                                            const flowie_control_management_caller_t *caller,
+                                            const flowie_control_domain_create_command_t *command,
+                                            flowie_control_command_result_t *result);
+int flowie_control_management_domain_list(flowie_control_management_service_t *service,
+                                          const flowie_control_management_caller_t *caller,
+                                          const char *after_domain_id,
+                                          flowie_control_domain_view_t *items, size_t capacity,
+                                          size_t *count_out, int *has_more_out);
 int flowie_control_management_password_change(
     flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
     const flowie_control_password_change_command_t *command,
     flowie_control_command_result_t *result);
-int flowie_control_management_password_set(
-    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
-    const flowie_control_password_set_command_t *command,
-    flowie_control_command_result_t *result);
-int flowie_control_management_current_revision(
-    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
-    uint64_t *revision_out);
+int flowie_control_management_password_set(flowie_control_management_service_t *service,
+                                           const flowie_control_management_caller_t *caller,
+                                           const flowie_control_password_set_command_t *command,
+                                           flowie_control_command_result_t *result);
+int flowie_control_management_current_revision(flowie_control_management_service_t *service,
+                                               const flowie_control_management_caller_t *caller,
+                                               uint64_t *revision_out);
 int flowie_control_management_user_get(flowie_control_management_service_t *service,
                                        const flowie_control_management_caller_t *caller,
                                        const char *principal_id, flowie_control_user_view_t *out);
@@ -239,6 +247,11 @@ int flowie_control_management_policy_subject_rule_list(
 int flowie_control_management_policy_validate(flowie_control_management_service_t *service,
                                               const flowie_control_management_caller_t *caller,
                                               flowie_control_policy_validation_t *out);
+int flowie_control_management_policy_dry_run(flowie_control_management_service_t *service,
+                                             const flowie_control_management_caller_t *caller,
+                                             const flowie_control_policy_dry_run_change_t *changes,
+                                             size_t change_count,
+                                             flowie_control_policy_dry_run_result_t *result);
 int flowie_control_management_policy_status(flowie_control_management_service_t *service,
                                             const flowie_control_management_caller_t *caller,
                                             flowie_control_policy_status_t *out);

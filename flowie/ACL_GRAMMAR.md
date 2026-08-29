@@ -131,6 +131,7 @@ Control UI 会从类型化主体表单生成 canonical 文档，并在提交前�
 | Repository 内部 ACL 文档 | 16383 bytes |
 | Control UI topic 输入 | 16000 characters |
 | Management JSON-RPC topic value | 511 bytes |
+| 单次 `control.policy.dry_run` 的候选变更 | 256 |
 | 一个已发布 bundle 的内部规则 | 4096 |
 
 每份文档固定产生 1 条 CONNECT 规则；普通 topic 语句产生 1 条规则，alternatives 产生候选值数量的
@@ -173,8 +174,15 @@ Management RPC 的 endpoint、登录与 bearer session 见
 }
 ```
 
-随后调用 `control.policy.validate` 校验整个 draft，再调用 `control.policy.publish` 原子发布新版本。同一次
-业务写入在传输结果不确定时必须复用原 `request_id`；不同写入不能复用。
+在写入前，可把一个或多个结构化 `put`/`delete` 候选放进 `control.policy.dry_run` 的 `changes`
+数组。它在当前 draft 的一致快照上应用内存 overlay，并复用 Control 的权威 ACL parser、主体状态、
+ordinal、Domain topic、展开数量与空策略检查；不会写 draft、revision、audit，也不会 publish。
+候选语义无效时返回 `valid: false` 与结构化 `diagnostics`，而不是 JSON-RPC error。
+
+dry-run 通过后，仍需调用 `control.policy.subject_rule.put/delete` 保存同一候选；随后调用
+`control.policy.validate` 校验整个 draft，再调用 `control.policy.publish` 原子发布新版本。同一次业务
+写入在传输结果不确定时必须复用原 `request_id`；不同写入不能复用。dry-run 不是写入锁，校验后其他
+管理方仍可能修改 draft。
 
 ## 常见拒绝原因
 

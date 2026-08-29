@@ -251,7 +251,7 @@ Reserved roles are exact, case-sensitive strings:
 | --- | --- |
 | `viewer` | Status and read/list/effective/validation methods. |
 | `user_admin` | User, Group, and Group membership writes. It does not imply `viewer`. |
-| `policy_admin` | Policy draft writes and publish. It does not imply `viewer`. |
+| `policy_admin` | Policy candidate dry-run, draft writes, and publish. It does not imply `viewer`. |
 | `security_admin` | All Domain-scoped management operations, including credential, password, role, audit, user, Group, and policy operations. |
 | `system_admin` | All operations when effective in the `system` Domain, plus Domain creation/listing and explicit cross-Domain administration. It is ignored outside `system`. |
 | `password_change_required` | Masks all other permissions until the caller changes its own password. |
@@ -409,6 +409,7 @@ Authorization Roles grant Management RPC permissions; other roles remain applica
 | `control.policy.subject_rule.put` | `policy_admin` | `domain_id?`, `subject_kind`, `subject_id`, `ordinal`, `connection`, `entries`, `request_id` | Inserts or replaces the rule selected by its typed subject key. |
 | `control.policy.subject_rule.delete` | `policy_admin` | `domain_id?`, `subject_kind`, `subject_id`, `request_id` | Deletes exactly one typed subject rule. |
 | `control.policy.validate` | `viewer` | `domain_id?` | `{rule_count, deny_rule_count}` without modifying state. |
+| `control.policy.dry_run` | `policy_admin` | `domain_id?`, `changes` | Validates an in-memory candidate overlay and returns structured diagnostics without modifying state. |
 | `control.policy.publish` | `policy_admin` | `domain_id?`, `request_id`, `expires_at?` | `{policy_version, replayed}`. Publishes an immutable generation atomically. |
 
 `ordinal` is `0..4095` and is unique within the Domain, but lookup/replacement/deletion use
@@ -442,6 +443,68 @@ filters rather than Control Group references. `read` authorizes SUBSCRIBE, `writ
 PUBLISH, `%u` matches the MQTT username, and `%c` matches the MQTT client ID. See
 [ACL_GRAMMAR.md](ACL_GRAMMAR.md) for the complete grammar, inheritance/evaluation semantics, limits,
 deny precedence, and UI/RPC publishing workflow.
+
+`control.policy.dry_run` accepts between 1 and 256 ordered changes. A `put` change uses the same
+structured fields as `control.policy.subject_rule.put`, except that it has no `request_id`; a
+`delete` change contains only `operation`, `subject_kind`, and `subject_id`. Unknown fields are
+rejected with `-32602`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "control.policy.dry_run",
+  "params": {
+    "changes": [
+      {
+        "operation": "put",
+        "subject_kind": "role",
+        "subject_id": "publisher",
+        "ordinal": 10,
+        "connection": "allow",
+        "entries": [
+          {"effect": "allow", "access": "write", "topic": "root-a/telemetry/%u/event"}
+        ]
+      },
+      {"operation": "delete", "subject_kind": "user", "subject_id": "retired-device"}
+    ]
+  },
+  "id": 2
+}
+```
+
+A syntactically valid request always returns a normal result for candidate-policy errors:
+
+```json
+{
+  "valid": false,
+  "store_revision": 42,
+  "rule_count": 0,
+  "deny_rule_count": 0,
+  "diagnostics": [
+    {
+      "code": "subject_not_found",
+      "message": "Policy subject does not exist",
+      "change_index": 0,
+      "subject_kind": "role",
+      "subject_id": "publisher",
+      "field": "subject_id"
+    }
+  ]
+}
+```
+
+Diagnostic codes are `invalid_document`, `subject_not_found`, `subject_disabled`,
+`ordinal_conflict`, `duplicate_change`, `delete_target_not_found`, `rule_limit`, and
+`empty_policy`. Optional `field` values are `changes`, `subject_id`, `ordinal`, and `entries`.
+`change_index` is zero-based and is omitted for a whole-policy diagnostic. When `valid` is false,
+the rule counts are zero.
+
+Dry-run reads one consistent draft snapshot, overlays the supplied typed-subject changes in memory,
+and applies the same parser, subject-state, ordinal, Domain-topic, expansion-limit, and empty-policy
+checks used by the authoritative store. It never writes the draft, advances the store revision,
+adds an audit record, or publishes a policy generation. Therefore it has no `request_id` and is safe
+to repeat. A later write can still race with the dry-run; clients that need to detect that race may
+compare the returned `store_revision` with a subsequent dry-run result before applying writes.
 
 Schema v6 is deliberately incompatible. Flowie does not migrate or read an older control store,
 including v5; schema validation fails at startup. The old `control.policy.rule.*` methods are not

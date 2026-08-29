@@ -17,7 +17,7 @@
 enum { FLOWIE_CONTROL_OPERATION_MAX = 31 };
 
 #define FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION 7
-#define FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT                                                \
+#define FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT                                                  \
   "flowie-control-persistent-session-schema-v7-20260829"
 
 #define FLOWIE_CONTROL_STRINGIFY_VALUE(value) #value
@@ -69,146 +69,145 @@ static const char FLOWIE_CONTROL_POLICY_SCHEMA[] =
     "FOREIGN KEY(request_id) REFERENCES flowie_control_audit(request_id));";
 static const char
     FLOWIE_CONTROL_SCHEMA
-        [] =
-            "CREATE TABLE IF NOT EXISTS flowie_control_schema_version("
-            "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
-            "version INTEGER NOT NULL CHECK(version>0),fingerprint TEXT NOT NULL);"
-            "INSERT INTO flowie_control_schema_version(singleton,version,fingerprint) "
-            "SELECT 1," FLOWIE_CONTROL_STRINGIFY(
-                FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION) ","
-                                                       "'" FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT
-                                                       "' WHERE NOT EXISTS(SELECT 1 FROM "
-                                                       "flowie_control_schema_version WHERE "
-                                                       "singleton=1);"
-                                                       "CREATE TABLE IF NOT EXISTS "
-                                                       "flowie_control_meta("
-                                                       "singleton INTEGER PRIMARY KEY "
-                                                       "CHECK(singleton=1),"
-                                                       "revision BIGINT NOT NULL "
-                                                       "CHECK(revision>=0));"
-                                                       "INSERT INTO "
-                                                       "flowie_control_meta(singleton,revision) "
-                                                       "SELECT 1,0 WHERE NOT EXISTS(SELECT 1 FROM "
-                                                       "flowie_control_meta WHERE singleton=1);"
-                                                       "CREATE TABLE IF NOT EXISTS "
-                                                       "flowie_control_domain("
-                                                       "domain_id TEXT PRIMARY KEY);"
-                                                       "CREATE TABLE IF NOT EXISTS "
-                                                       "flowie_control_user("
-                                                       "domain_id TEXT NOT NULL,principal_id TEXT "
-                                                       "NOT NULL,principal_type TEXT NOT NULL,"
-                                                       "enabled INTEGER NOT NULL CHECK(enabled "
-                                                       "IN(0,1)),"
-                                                       "revision BIGINT NOT NULL "
-                                                       "CHECK(revision>0),"
-                                                       "created_at BIGINT NOT NULL "
-                                                       "CHECK(created_at>0),"
-                                                       "updated_at BIGINT NOT NULL "
-                                                       "CHECK(updated_at>0),"
-                                                       "PRIMARY KEY(domain_id,principal_id),"
-                                                       "FOREIGN KEY(domain_id) REFERENCES "
-                                                       "flowie_control_domain(domain_id));"
-                                                       "CREATE TABLE IF NOT EXISTS "
-                                                       "flowie_control_credential("
-                                                       "domain_id TEXT NOT NULL,principal_id TEXT "
-                                                       "NOT NULL,"
-                                                       "kdf_algorithm INTEGER NOT NULL "
-                                                       "CHECK(kdf_"
-                                                       "algorithm=" FLOWIE_CONTROL_STRINGIFY(
-                                                           FLOWIE_CONTROL_CREDENTIAL_KDF_ARGON2ID) "),"
-                                                                                                   "memory_blocks INTEGER NOT NULL "
-                                                                                                   "CHECK(memory_blocks>0),"
-                                                                                                   "passes INTEGER NOT NULL CHECK(passes>0),"
-                                                                                                   "lanes INTEGER NOT NULL CHECK(lanes>0),"
-                                                                                                   "salt BYTEA NOT NULL "
-                                                                                                   "CHECK(length(salt)"
-                                                                                                   "=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE) "),"
-                                                                                                                                                                     "verifier BYTEA NOT NULL CHECK(length(verifier)=" FLOWIE_CONTROL_STRINGIFY(
-                                                                                                                                                                         FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE) "),"
-                                                                                                                                                                                                                  "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
-                                                                                                                                                                                                                  "revision BIGINT NOT NULL CHECK(revision>0),"
-                                                                                                                                                                                                                  "created_at BIGINT NOT NULL CHECK(created_at>0),"
-                                                                                                                                                                                                                  "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
-                                                                                                                                                                                                                  "PRIMARY KEY(domain_id,principal_id),"
-                                                                                                                                                                                                                  "FOREIGN KEY(domain_id,principal_id) REFERENCES "
-                                                                                                                                                                                                                  "flowie_control_user(domain_id,principal_id));"
-                                                                                                                                                                                                                  "CREATE TABLE IF NOT EXISTS flowie_control_group("
-                                                                                                                                                                                                                  "domain_id TEXT NOT NULL,group_id TEXT NOT NULL,parent_group_id TEXT,"
-                                                                                                                                                                                                                  "depth INTEGER NOT NULL CHECK(depth>=0 AND depth<=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_GROUP_MAX_DEPTH) "),"
-                                                                                                                                                                                                                                                                                                                               "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
-                                                                                                                                                                                                                                                                                                                               "revision BIGINT NOT NULL CHECK(revision>0),"
-                                                                                                                                                                                                                                                                                                                               "created_at BIGINT NOT NULL CHECK(created_at>0),"
-                                                                                                                                                                                                                                                                                                                               "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
-                                                                                                                                                                                                                                                                                                                               "PRIMARY KEY(domain_id,group_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,parent_group_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_group(domain_id,group_id),"
-                                                                                                                                                                                                                                                                                                                               "CHECK(group_id<>domain_id),"
-                                                                                                                                                                                                                                                                                                                               "CHECK((parent_group_id IS NULL AND depth=0) OR "
-                                                                                                                                                                                                                                                                                                                               "(parent_group_id IS NOT NULL AND depth>0)));"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_role("
-                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,role_id TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
-                                                                                                                                                                                                                                                                                                                               "revision BIGINT NOT NULL CHECK(revision>0),"
-                                                                                                                                                                                                                                                                                                                               "created_at BIGINT NOT NULL CHECK(created_at>0),"
-                                                                                                                                                                                                                                                                                                                               "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
-                                                                                                                                                                                                                                                                                                                               "PRIMARY KEY(domain_id,role_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_membership("
-                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,principal_id TEXT NOT "
-                                                                                                                                                                                                                                                                                                                               "NULL,group_id TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "revision BIGINT NOT NULL CHECK(revision>0),created_at "
-                                                                                                                                                                                                                                                                                                                               "BIGINT NOT NULL CHECK(created_at>0),"
-                                                                                                                                                                                                                                                                                                                               "PRIMARY KEY(domain_id,principal_id,group_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,principal_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_user(domain_id,principal_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,group_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_group(domain_id,group_id));"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_user_role("
-                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "role_id TEXT NOT NULL,revision BIGINT NOT NULL "
-                                                                                                                                                                                                                                                                                                                               "CHECK(revision>0),created_at BIGINT NOT NULL "
-                                                                                                                                                                                                                                                                                                                               "CHECK(created_at>0),"
-                                                                                                                                                                                                                                                                                                                               "PRIMARY KEY(domain_id,principal_id,role_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,principal_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_user(domain_id,principal_id),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,role_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_role(domain_id,role_id));"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_sequence("
-                                                                                                                                                                                                                                                                                                                               "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
-                                                                                                                                                                                                                                                                                                                               "value BIGINT NOT NULL CHECK(value>=0));"
-                                                                                                                                                                                                                                                                                                                               "INSERT INTO flowie_control_management_session_sequence("
-                                                                                                                                                                                                                                                                                                                               "singleton,value) SELECT 1,0 WHERE NOT EXISTS(SELECT 1 "
-                                                                                                                                                                                                                                                                                                                               "FROM flowie_control_management_session_sequence WHERE singleton=1);"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_management_session("
-                                                                                                                                                                                                                                                                                                                               "token_digest BYTEA PRIMARY KEY CHECK(length(token_digest)="
-                                                                                                                                                                                                                                                                                                                               FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE) "),"
-                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "csrf TEXT NOT NULL CHECK(length(csrf)="
-                                                                                                                                                                                                                                                                                                                               FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE) "),"
-                                                                                                                                                                                                                                                                                                                               "expires_at BIGINT NOT NULL CHECK(expires_at>0),"
-                                                                                                                                                                                                                                                                                                                               "issued_sequence BIGINT NOT NULL CHECK(issued_sequence>0),"
-                                                                                                                                                                                                                                                                                                                               "last_used BIGINT NOT NULL CHECK(last_used>0),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,principal_id) REFERENCES "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_user(domain_id,principal_id) ON DELETE CASCADE);"
-                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_principal_idx ON "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(domain_id,principal_id,issued_sequence);"
-                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_lru_idx ON "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(last_used);"
-                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_expiry_idx ON "
-                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(expires_at);"
-                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_audit("
-                                                                                                                                                                                                                                                                                                                               "request_id TEXT PRIMARY KEY,actor TEXT NOT NULL,operation "
-                                                                                                                                                                                                                                                                                                                               "TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,target_id TEXT NOT "
-                                                                                                                                                                                                                                                                                                                               "NULL,target_detail TEXT NOT NULL,"
-                                                                                                                                                                                                                                                                                                                               "result_revision BIGINT NOT NULL CHECK(result_revision>0),"
-                                                                                                                                                                                                                                                                                                                               "occurred_at BIGINT NOT NULL CHECK(occurred_at>0),"
-                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));";
+        [] = "CREATE TABLE IF NOT EXISTS flowie_control_schema_version("
+             "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+             "version INTEGER NOT NULL CHECK(version>0),fingerprint TEXT NOT NULL);"
+             "INSERT INTO flowie_control_schema_version(singleton,version,fingerprint) "
+             "SELECT 1," FLOWIE_CONTROL_STRINGIFY(
+                 FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION) ","
+                                                        "'" FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT
+                                                        "' WHERE NOT EXISTS(SELECT 1 FROM "
+                                                        "flowie_control_schema_version WHERE "
+                                                        "singleton=1);"
+                                                        "CREATE TABLE IF NOT EXISTS "
+                                                        "flowie_control_meta("
+                                                        "singleton INTEGER PRIMARY KEY "
+                                                        "CHECK(singleton=1),"
+                                                        "revision BIGINT NOT NULL "
+                                                        "CHECK(revision>=0));"
+                                                        "INSERT INTO "
+                                                        "flowie_control_meta(singleton,revision) "
+                                                        "SELECT 1,0 WHERE NOT EXISTS(SELECT 1 FROM "
+                                                        "flowie_control_meta WHERE singleton=1);"
+                                                        "CREATE TABLE IF NOT EXISTS "
+                                                        "flowie_control_domain("
+                                                        "domain_id TEXT PRIMARY KEY);"
+                                                        "CREATE TABLE IF NOT EXISTS "
+                                                        "flowie_control_user("
+                                                        "domain_id TEXT NOT NULL,principal_id TEXT "
+                                                        "NOT NULL,principal_type TEXT NOT NULL,"
+                                                        "enabled INTEGER NOT NULL CHECK(enabled "
+                                                        "IN(0,1)),"
+                                                        "revision BIGINT NOT NULL "
+                                                        "CHECK(revision>0),"
+                                                        "created_at BIGINT NOT NULL "
+                                                        "CHECK(created_at>0),"
+                                                        "updated_at BIGINT NOT NULL "
+                                                        "CHECK(updated_at>0),"
+                                                        "PRIMARY KEY(domain_id,principal_id),"
+                                                        "FOREIGN KEY(domain_id) REFERENCES "
+                                                        "flowie_control_domain(domain_id));"
+                                                        "CREATE TABLE IF NOT EXISTS "
+                                                        "flowie_control_credential("
+                                                        "domain_id TEXT NOT NULL,principal_id TEXT "
+                                                        "NOT NULL,"
+                                                        "kdf_algorithm INTEGER NOT NULL "
+                                                        "CHECK(kdf_"
+                                                        "algorithm=" FLOWIE_CONTROL_STRINGIFY(
+                                                            FLOWIE_CONTROL_CREDENTIAL_KDF_ARGON2ID) "),"
+                                                                                                    "memory_blocks INTEGER NOT NULL "
+                                                                                                    "CHECK(memory_blocks>0),"
+                                                                                                    "passes INTEGER NOT NULL CHECK(passes>0),"
+                                                                                                    "lanes INTEGER NOT NULL CHECK(lanes>0),"
+                                                                                                    "salt BYTEA NOT NULL "
+                                                                                                    "CHECK(length(salt)"
+                                                                                                    "=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE) "),"
+                                                                                                                                                                      "verifier BYTEA NOT NULL CHECK(length(verifier)=" FLOWIE_CONTROL_STRINGIFY(
+                                                                                                                                                                          FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE) "),"
+                                                                                                                                                                                                                   "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
+                                                                                                                                                                                                                   "revision BIGINT NOT NULL CHECK(revision>0),"
+                                                                                                                                                                                                                   "created_at BIGINT NOT NULL CHECK(created_at>0),"
+                                                                                                                                                                                                                   "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
+                                                                                                                                                                                                                   "PRIMARY KEY(domain_id,principal_id),"
+                                                                                                                                                                                                                   "FOREIGN KEY(domain_id,principal_id) REFERENCES "
+                                                                                                                                                                                                                   "flowie_control_user(domain_id,principal_id));"
+                                                                                                                                                                                                                   "CREATE TABLE IF NOT EXISTS flowie_control_group("
+                                                                                                                                                                                                                   "domain_id TEXT NOT NULL,group_id TEXT NOT NULL,parent_group_id TEXT,"
+                                                                                                                                                                                                                   "depth INTEGER NOT NULL CHECK(depth>=0 AND depth<=" FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_GROUP_MAX_DEPTH) "),"
+                                                                                                                                                                                                                                                                                                                                "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
+                                                                                                                                                                                                                                                                                                                                "revision BIGINT NOT NULL CHECK(revision>0),"
+                                                                                                                                                                                                                                                                                                                                "created_at BIGINT NOT NULL CHECK(created_at>0),"
+                                                                                                                                                                                                                                                                                                                                "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
+                                                                                                                                                                                                                                                                                                                                "PRIMARY KEY(domain_id,group_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,parent_group_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_group(domain_id,group_id),"
+                                                                                                                                                                                                                                                                                                                                "CHECK(group_id<>domain_id),"
+                                                                                                                                                                                                                                                                                                                                "CHECK((parent_group_id IS NULL AND depth=0) OR "
+                                                                                                                                                                                                                                                                                                                                "(parent_group_id IS NOT NULL AND depth>0)));"
+                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_role("
+                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,role_id TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
+                                                                                                                                                                                                                                                                                                                                "revision BIGINT NOT NULL CHECK(revision>0),"
+                                                                                                                                                                                                                                                                                                                                "created_at BIGINT NOT NULL CHECK(created_at>0),"
+                                                                                                                                                                                                                                                                                                                                "updated_at BIGINT NOT NULL CHECK(updated_at>0),"
+                                                                                                                                                                                                                                                                                                                                "PRIMARY KEY(domain_id,role_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));"
+                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_membership("
+                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,principal_id TEXT NOT "
+                                                                                                                                                                                                                                                                                                                                "NULL,group_id TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                "revision BIGINT NOT NULL CHECK(revision>0),created_at "
+                                                                                                                                                                                                                                                                                                                                "BIGINT NOT NULL CHECK(created_at>0),"
+                                                                                                                                                                                                                                                                                                                                "PRIMARY KEY(domain_id,principal_id,group_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,principal_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_user(domain_id,principal_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,group_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_group(domain_id,group_id));"
+                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_user_role("
+                                                                                                                                                                                                                                                                                                                                "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                "role_id TEXT NOT NULL,revision BIGINT NOT NULL "
+                                                                                                                                                                                                                                                                                                                                "CHECK(revision>0),created_at BIGINT NOT NULL "
+                                                                                                                                                                                                                                                                                                                                "CHECK(created_at>0),"
+                                                                                                                                                                                                                                                                                                                                "PRIMARY KEY(domain_id,principal_id,role_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,principal_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_user(domain_id,principal_id),"
+                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,role_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_role(domain_id,role_id));"
+                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                                "flowie_control_management_session_sequence("
+                                                                                                                                                                                                                                                                                                                                "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                                                                                                                                                                                                                                                                                                                                "value BIGINT NOT NULL CHECK(value>=0));"
+                                                                                                                                                                                                                                                                                                                                "INSERT INTO flowie_control_management_session_sequence("
+                                                                                                                                                                                                                                                                                                                                "singleton,value) SELECT 1,0 WHERE NOT EXISTS(SELECT 1 "
+                                                                                                                                                                                                                                                                                                                                "FROM flowie_control_management_session_sequence WHERE singleton=1);"
+                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_management_session("
+                                                                                                                                                                                                                                                                                                                                "token_digest BYTEA PRIMARY KEY CHECK(length(token_digest)=" FLOWIE_CONTROL_STRINGIFY(
+                                                                                                                                                                                                                                                                                                                                    FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE) "),"
+                                                                                                                                                                                                                                                                                                                                                                                   "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                                                                   "csrf TEXT NOT NULL CHECK(length(csrf)=" FLOWIE_CONTROL_STRINGIFY(
+                                                                                                                                                                                                                                                                                                                                                                                       FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE) "),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "expires_at BIGINT NOT NULL CHECK(expires_at>0),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "issued_sequence BIGINT NOT NULL CHECK(issued_sequence>0),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "last_used BIGINT NOT NULL CHECK(last_used>0),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "FOREIGN KEY(domain_id,principal_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_user(domain_id,principal_id) ON DELETE CASCADE);"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session_principal_idx ON "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session(domain_id,principal_id,issued_sequence);"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session_lru_idx ON "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session(last_used);"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session_expiry_idx ON "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "flowie_control_management_session(expires_at);"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "CREATE TABLE IF NOT EXISTS flowie_control_audit("
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "request_id TEXT PRIMARY KEY,actor TEXT NOT NULL,operation "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "domain_id TEXT NOT NULL,target_id TEXT NOT "
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "NULL,target_detail TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "result_revision BIGINT NOT NULL CHECK(result_revision>0),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "occurred_at BIGINT NOT NULL CHECK(occurred_at>0),"
+                                                                                                                                                                                                                                                                                                                                                                                                                                    "FOREIGN KEY(domain_id) REFERENCES flowie_control_domain(domain_id));";
 
 struct flowie_control_store_s {
   orm_config_t database_config;
@@ -244,8 +243,8 @@ static int flowie_control_database_status(int status) {
   return TURBO_EIO;
 }
 
-static int flowie_control_column_text_equal(const flowie_control_statement_t *statement,
-                                            int column, const char *expected) {
+static int flowie_control_column_text_equal(const flowie_control_statement_t *statement, int column,
+                                            const char *expected) {
   const unsigned char *actual;
   size_t expected_size;
   int actual_size;
@@ -312,8 +311,7 @@ static int flowie_control_schema_validate(flowie_control_database_t *database) {
       flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
       flowie_control_database_column_type(statement, 1) != FLOWIE_CONTROL_DB_TEXT ||
       flowie_control_database_column_int(statement, 0) != FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION ||
-      !flowie_control_column_text_equal(statement, 1,
-                                        FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT) ||
+      !flowie_control_column_text_equal(statement, 1, FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT) ||
       flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE) {
     rc = TURBO_EPROTO;
     goto done;
@@ -1186,6 +1184,270 @@ done:
   return rc;
 }
 
+static int flowie_control_policy_changes_target_row(
+    const flowie_control_policy_dry_run_change_t *changes, size_t change_count,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id, uint8_t *matched_changes) {
+  int matched = 0;
+  if (!changes || !subject_id) return 0;
+  for (size_t index = 0u; index < change_count; ++index) {
+    if (changes[index].subject_kind == subject_kind && changes[index].subject_id &&
+        strcmp(changes[index].subject_id, subject_id) == 0) {
+      if (matched_changes) matched_changes[index] = 1u;
+      matched = 1;
+    }
+  }
+  return matched;
+}
+
+static int flowie_control_policy_diagnostic_add(
+    flowie_control_policy_dry_run_result_t *result, flowie_control_policy_diagnostic_code_t code,
+    size_t change_index, const flowie_control_policy_dry_run_change_t *change,
+    flowie_control_policy_diagnostic_field_t field) {
+  flowie_control_policy_diagnostic_t diagnostic = FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT;
+  size_t subject_size = 0u;
+  if (!result || code == FLOWIE_CONTROL_POLICY_DIAGNOSTIC_NONE ||
+      result->diagnostic_count >= result->diagnostic_capacity || !result->diagnostics)
+    return TURBO_ENOSPC;
+  diagnostic.code = code;
+  diagnostic.change_index = change_index;
+  diagnostic.has_change_index = change != NULL;
+  diagnostic.field = field;
+  if (change) {
+    diagnostic.subject_kind = change->subject_kind;
+    if (change->subject_id) {
+      subject_size = strnlen(change->subject_id, FLOWIE_SECURITY_ID_MAX + 1u);
+      if (subject_size > FLOWIE_SECURITY_ID_MAX) return TURBO_EINVAL;
+      memcpy(diagnostic.subject_id, change->subject_id, subject_size + 1u);
+    }
+  }
+  result->diagnostics[result->diagnostic_count++] = diagnostic;
+  return TURBO_OK;
+}
+
+static int
+flowie_control_policy_candidate_error(flowie_control_policy_dry_run_result_t *result,
+                                      int candidate_rc, size_t change_index,
+                                      const flowie_control_policy_dry_run_change_t *change) {
+  switch (candidate_rc) {
+  case TURBO_ENOENT:
+    return flowie_control_policy_diagnostic_add(
+        result, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_SUBJECT_NOT_FOUND, change_index, change,
+        FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
+  case TURBO_EPERM:
+    return flowie_control_policy_diagnostic_add(
+        result, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_SUBJECT_DISABLED, change_index, change,
+        FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
+  case TURBO_ENOSPC:
+    return flowie_control_policy_diagnostic_add(result, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT,
+                                                change_index, change,
+                                                FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES);
+  case TURBO_EINVAL:
+  case TURBO_EPROTO:
+    return flowie_control_policy_diagnostic_add(
+        result, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INVALID_DOCUMENT, change_index, change,
+        FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES);
+  default:
+    return candidate_rc;
+  }
+}
+
+static int
+flowie_control_policy_dry_run_database(flowie_control_database_t *database, const char *domain_id,
+                                       const flowie_control_policy_dry_run_change_t *changes,
+                                       size_t change_count,
+                                       flowie_control_policy_dry_run_result_t *out) {
+  flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+  flowie_control_statement_t *statement = NULL;
+  uint8_t *used_ordinals = NULL;
+  uint8_t *matched_changes = NULL;
+  uint8_t *invalid_changes = NULL;
+  int status;
+  int rc;
+  if (!database || !domain_id || !changes || change_count == 0u ||
+      change_count > FLOWIE_CONTROL_POLICY_DRY_RUN_MAX_CHANGES || !out || out->size < sizeof(*out))
+    return TURBO_EINVAL;
+  dry_run.diagnostics = out->diagnostics;
+  dry_run.diagnostic_capacity = out->diagnostic_capacity;
+  rc = flowie_control_read_revision(database, &dry_run.store_revision);
+  if (rc != TURBO_OK) return rc;
+  used_ordinals = (uint8_t *)calloc(FLOWIE_SECURITY_MAX_RULES, sizeof(*used_ordinals));
+  if (!used_ordinals) return TURBO_ENOMEM;
+  matched_changes = (uint8_t *)calloc(change_count, sizeof(*matched_changes));
+  if (!matched_changes) {
+    free(used_ordinals);
+    return TURBO_ENOMEM;
+  }
+  invalid_changes = (uint8_t *)calloc(change_count, sizeof(*invalid_changes));
+  if (!invalid_changes) {
+    free(matched_changes);
+    free(used_ordinals);
+    return TURBO_ENOMEM;
+  }
+  for (size_t index = 0u; index < change_count; ++index) {
+    const flowie_control_policy_dry_run_change_t *change = &changes[index];
+    for (size_t prior = 0u; prior < index; ++prior) {
+      if (changes[prior].subject_kind == change->subject_kind && changes[prior].subject_id &&
+          change->subject_id && strcmp(changes[prior].subject_id, change->subject_id) == 0) {
+        rc = flowie_control_policy_diagnostic_add(
+            &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DUPLICATE_CHANGE, index, change,
+            FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES);
+        if (rc != TURBO_OK) goto done;
+        invalid_changes[index] = 1u;
+        break;
+      }
+    }
+  }
+  status = flowie_control_database_prepare(
+      database,
+      "SELECT subject_kind,subject_id,ordinal,rule_document FROM flowie_control_policy_draft "
+      "WHERE domain_id=?1 ORDER BY ordinal",
+      -1, &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  rc = flowie_control_bind_text(statement, 1, domain_id);
+  if (rc != TURBO_OK) goto done;
+  while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
+    const unsigned char *subject_id;
+    const unsigned char *document_text;
+    flowie_security_subject_kind_t subject_kind;
+    int ordinal;
+    int document_size;
+    size_t expanded = 0u;
+    size_t denied = 0u;
+    if (flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
+        flowie_control_database_column_type(statement, 1) != FLOWIE_CONTROL_DB_TEXT ||
+        flowie_control_database_column_type(statement, 2) != FLOWIE_CONTROL_DB_INTEGER ||
+        flowie_control_database_column_type(statement, 3) != FLOWIE_CONTROL_DB_TEXT) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    subject_kind = (flowie_security_subject_kind_t)flowie_control_database_column_int(statement, 0);
+    subject_id = flowie_control_database_column_text(statement, 1);
+    ordinal = flowie_control_database_column_int(statement, 2);
+    document_text = flowie_control_database_column_text(statement, 3);
+    document_size = flowie_control_database_column_bytes(statement, 3);
+    if (!subject_id || !document_text || document_size <= 0 || ordinal < 0 ||
+        ordinal >= (int)FLOWIE_SECURITY_MAX_RULES) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    if (flowie_control_policy_changes_target_row(changes, change_count, subject_kind,
+                                                 (const char *)subject_id, matched_changes))
+      continue;
+    rc = flowie_control_policy_document_validate(database, domain_id, (const char *)document_text,
+                                                 (size_t)document_size, NULL, &expanded, &denied);
+    if (rc != TURBO_OK) goto done;
+    if (used_ordinals[(size_t)ordinal]) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    used_ordinals[(size_t)ordinal] = 1u;
+    if (expanded > FLOWIE_SECURITY_MAX_RULES - dry_run.rule_count) {
+      rc = TURBO_ENOSPC;
+      goto done;
+    }
+    dry_run.rule_count += expanded;
+    dry_run.deny_rule_count += denied;
+  }
+  if (status != FLOWIE_CONTROL_DB_DONE) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  for (size_t index = 0u; index < change_count; ++index) {
+    const flowie_control_policy_dry_run_change_t *change = &changes[index];
+    flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    size_t expanded = 0u;
+    size_t denied = 0u;
+    if (invalid_changes[index]) continue;
+    if (change->size < sizeof(*change) ||
+        (change->operation != FLOWIE_CONTROL_POLICY_DRY_RUN_PUT &&
+         change->operation != FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE) ||
+        !flowie_control_text_valid(change->subject_id, FLOWIE_SECURITY_ID_MAX) ||
+        (change->subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
+         change->subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
+         change->subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP) ||
+        (change->operation == FLOWIE_CONTROL_POLICY_DRY_RUN_PUT &&
+         (change->ordinal >= FLOWIE_SECURITY_MAX_RULES || !change->document ||
+          change->document_size == 0u ||
+          change->document_size > FLOWIE_CONTROL_ACL_DOCUMENT_MAX)) ||
+        (change->operation == FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE &&
+         (change->document || change->document_size != 0u))) {
+      rc = TURBO_EINVAL;
+      goto done;
+    }
+    if (change->operation == FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE) {
+      if (!matched_changes[index]) {
+        rc = flowie_control_policy_diagnostic_add(
+            &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DELETE_TARGET_NOT_FOUND, index, change,
+            FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
+        if (rc != TURBO_OK) goto done;
+      }
+      continue;
+    }
+    rc = flowie_control_policy_document_validate(database, domain_id, change->document,
+                                                 change->document_size, &document, &expanded,
+                                                 &denied);
+    if (rc != TURBO_OK) {
+      rc = flowie_control_policy_candidate_error(&dry_run, rc, index, change);
+      if (rc != TURBO_OK) goto done;
+      continue;
+    }
+    if (document.subject_kind != change->subject_kind ||
+        strcmp(document.subject, change->subject_id) != 0) {
+      rc = flowie_control_policy_diagnostic_add(
+          &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INVALID_DOCUMENT, index, change,
+          FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
+      if (rc != TURBO_OK) goto done;
+      continue;
+    }
+    if (used_ordinals[change->ordinal]) {
+      rc = flowie_control_policy_diagnostic_add(
+          &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_ORDINAL_CONFLICT, index, change,
+          FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ORDINAL);
+      if (rc != TURBO_OK) goto done;
+      continue;
+    }
+    used_ordinals[change->ordinal] = 1u;
+    if (expanded > FLOWIE_SECURITY_MAX_RULES - dry_run.rule_count) {
+      rc = flowie_control_policy_diagnostic_add(
+          &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT, index, change,
+          FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES);
+      if (rc != TURBO_OK) goto done;
+      continue;
+    }
+    dry_run.rule_count += expanded;
+    dry_run.deny_rule_count += denied;
+  }
+  if (dry_run.diagnostic_count != 0u) {
+    dry_run.rule_count = 0u;
+    dry_run.deny_rule_count = 0u;
+    *out = dry_run;
+    rc = TURBO_OK;
+    goto done;
+  }
+  if (dry_run.rule_count == 0u) {
+    rc = flowie_control_policy_diagnostic_add(&dry_run,
+                                              FLOWIE_CONTROL_POLICY_DIAGNOSTIC_EMPTY_POLICY, 0u,
+                                              NULL, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES);
+    if (rc != TURBO_OK) goto done;
+    *out = dry_run;
+    rc = TURBO_OK;
+    goto done;
+  }
+  dry_run.valid = 1;
+  *out = dry_run;
+  rc = TURBO_OK;
+
+done:
+  if (statement) (void)flowie_control_database_finalize(statement);
+  free(used_ordinals);
+  free(matched_changes);
+  free(invalid_changes);
+  return rc;
+}
+
 int flowie_control_store_open(const flowie_control_store_config_t *config,
                               flowie_control_store_t **out) {
   flowie_control_store_t *store;
@@ -1247,8 +1509,8 @@ static int flowie_control_management_session_record_valid(
          strlen(record->csrf) == FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE;
 }
 
-static int flowie_control_management_session_next_sequence(
-    flowie_control_database_t *database, uint64_t *sequence_out) {
+static int flowie_control_management_session_next_sequence(flowie_control_database_t *database,
+                                                           uint64_t *sequence_out) {
   static const char update[] =
       "UPDATE flowie_control_management_session_sequence SET value=value+1 "
       "WHERE singleton=1 AND value<9223372036854775807";
@@ -1266,17 +1528,16 @@ static int flowie_control_management_session_next_sequence(
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   status = flowie_control_database_step(statement);
-  sequence = status == FLOWIE_CONTROL_DB_ROW
-                 ? flowie_control_database_column_int64(statement, 0)
-                 : 0;
+  sequence =
+      status == FLOWIE_CONTROL_DB_ROW ? flowie_control_database_column_int64(statement, 0) : 0;
   rc = status == FLOWIE_CONTROL_DB_ROW && sequence > 0 ? TURBO_OK : TURBO_EIO;
   (void)flowie_control_database_finalize(statement);
   if (rc == TURBO_OK) *sequence_out = (uint64_t)sequence;
   return rc;
 }
 
-static int flowie_control_management_session_delete_expired(
-    flowie_control_database_t *database, uint64_t now) {
+static int flowie_control_management_session_delete_expired(flowie_control_database_t *database,
+                                                            uint64_t now) {
   flowie_control_statement_t *statement = NULL;
   int status;
   int rc;
@@ -1294,9 +1555,9 @@ static int flowie_control_management_session_delete_expired(
   return rc;
 }
 
-static int flowie_control_management_session_count(
-    flowie_control_database_t *database, const char *domain_id, const char *principal_id,
-    size_t *count_out) {
+static int flowie_control_management_session_count(flowie_control_database_t *database,
+                                                   const char *domain_id, const char *principal_id,
+                                                   size_t *count_out) {
   flowie_control_statement_t *statement = NULL;
   int64_t count;
   int status;
@@ -1318,9 +1579,8 @@ static int flowie_control_management_session_count(
   }
   if (rc == TURBO_OK) {
     status = flowie_control_database_step(statement);
-    count = status == FLOWIE_CONTROL_DB_ROW
-                ? flowie_control_database_column_int64(statement, 0)
-                : -1;
+    count =
+        status == FLOWIE_CONTROL_DB_ROW ? flowie_control_database_column_int64(statement, 0) : -1;
     rc = status == FLOWIE_CONTROL_DB_ROW && count >= 0 && (uint64_t)count <= (uint64_t)SIZE_MAX
              ? TURBO_OK
              : TURBO_EIO;
@@ -1330,9 +1590,9 @@ static int flowie_control_management_session_count(
   return rc;
 }
 
-static int flowie_control_management_session_evict(
-    flowie_control_database_t *database, const char *domain_id, const char *principal_id,
-    size_t remove_count) {
+static int flowie_control_management_session_evict(flowie_control_database_t *database,
+                                                   const char *domain_id, const char *principal_id,
+                                                   size_t remove_count) {
   static const char principal_sql[] =
       "DELETE FROM flowie_control_management_session WHERE token_digest IN(SELECT token_digest "
       "FROM flowie_control_management_session WHERE domain_id=?1 AND principal_id=?2 "
@@ -1355,8 +1615,8 @@ static int flowie_control_management_session_evict(
     if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
   }
   if (rc == TURBO_OK) {
-    status = flowie_control_database_bind_int64(statement, domain_id ? 3 : 1,
-                                                (int64_t)remove_count);
+    status =
+        flowie_control_database_bind_int64(statement, domain_id ? 3 : 1, (int64_t)remove_count);
     rc = status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : flowie_control_database_status(status);
   }
   if (rc == TURBO_OK) {
@@ -1399,9 +1659,8 @@ int flowie_control_store_management_session_issue(
                                                &count);
   if (rc != TURBO_OK) goto done;
   if (count >= max_sessions_per_principal) {
-    rc = flowie_control_management_session_evict(
-        database, record->domain_id, record->principal_id,
-        count - max_sessions_per_principal + 1u);
+    rc = flowie_control_management_session_evict(database, record->domain_id, record->principal_id,
+                                                 count - max_sessions_per_principal + 1u);
     if (rc != TURBO_OK) goto done;
   }
   rc = flowie_control_management_session_count(database, NULL, NULL, &count);
@@ -1421,16 +1680,15 @@ int flowie_control_store_management_session_issue(
     rc = flowie_control_database_status(status);
     goto done;
   }
-  rc = flowie_control_bind_blob(statement, 1, record->token_digest,
-                                sizeof(record->token_digest));
+  rc = flowie_control_bind_blob(statement, 1, record->token_digest, sizeof(record->token_digest));
   if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 2, record->domain_id);
   if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 3, record->principal_id);
   if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 4, record->csrf);
   if (rc == TURBO_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)record->expires_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == TURBO_OK && flowie_control_database_bind_int64(statement, 6, (int64_t)sequence) !=
-                            FLOWIE_CONTROL_DB_OK)
+  if (rc == TURBO_OK &&
+      flowie_control_database_bind_int64(statement, 6, (int64_t)sequence) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
   if (rc == TURBO_OK) {
     status = flowie_control_database_step(statement);
@@ -1461,8 +1719,7 @@ int flowie_control_store_management_session_resolve(
     flowie_control_store_t *store,
     const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE], uint64_t now,
     flowie_control_management_session_record_t *out) {
-  flowie_control_management_session_record_t record =
-      FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
+  flowie_control_management_session_record_t record = FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
   flowie_control_database_t *database = NULL;
   flowie_control_statement_t *statement = NULL;
   uint64_t sequence = 0u;
@@ -1470,8 +1727,8 @@ int flowie_control_store_management_session_resolve(
   int status;
   int rc;
   if (out && out->size >= sizeof(*out))
-    *out = (flowie_control_management_session_record_t)
-        FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
+    *out =
+        (flowie_control_management_session_record_t)FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
   if (!store || !token_digest || now == 0u || now > (uint64_t)INT64_MAX || !out ||
       out->size < sizeof(*out))
     return TURBO_EINVAL;
@@ -1534,16 +1791,14 @@ int flowie_control_store_management_session_resolve(
     rc = flowie_control_bind_blob(statement, 1, token_digest, sizeof(record.token_digest));
     if (rc == TURBO_OK) {
       status = flowie_control_database_step(statement);
-      rc = status == FLOWIE_CONTROL_DB_DONE ? TURBO_ENOENT
-                                            : flowie_control_database_status(status);
+      rc = status == FLOWIE_CONTROL_DB_DONE ? TURBO_ENOENT : flowie_control_database_status(status);
     }
   } else {
     rc = flowie_control_management_session_next_sequence(database, &sequence);
     if (rc != TURBO_OK) goto done;
     status = flowie_control_database_prepare(
-        database,
-        "UPDATE flowie_control_management_session SET last_used=?1 WHERE token_digest=?2", -1,
-        &statement, NULL);
+        database, "UPDATE flowie_control_management_session SET last_used=?1 WHERE token_digest=?2",
+        -1, &statement, NULL);
     if (status != FLOWIE_CONTROL_DB_OK) {
       rc = flowie_control_database_status(status);
       goto done;
@@ -1600,10 +1855,8 @@ int flowie_control_store_management_session_revoke(
                                 FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE);
   if (rc == TURBO_OK) {
     status = flowie_control_database_step(statement);
-    if (status != FLOWIE_CONTROL_DB_DONE)
-      rc = flowie_control_database_status(status);
-    else
-      rc = flowie_control_database_changes(database) == 1 ? TURBO_OK : TURBO_ENOENT;
+    if (status != FLOWIE_CONTROL_DB_DONE) rc = flowie_control_database_status(status);
+    else rc = flowie_control_database_changes(database) == 1 ? TURBO_OK : TURBO_ENOENT;
   }
 
 done:
@@ -3762,6 +4015,48 @@ int flowie_control_store_policy_validate(flowie_control_store_t *store, const ch
   }
   transaction_started = 0;
   *out = validation;
+  rc = TURBO_OK;
+
+done:
+  if (transaction_started)
+    (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
+  (void)flowie_control_database_close(database);
+  return rc;
+}
+
+int flowie_control_store_policy_dry_run(flowie_control_store_t *store, const char *domain_id,
+                                        const flowie_control_policy_dry_run_change_t *changes,
+                                        size_t change_count,
+                                        flowie_control_policy_dry_run_result_t *result) {
+  flowie_control_database_t *database = NULL;
+  flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+  int transaction_started = 0;
+  int status;
+  int rc;
+  if (!store || !flowie_control_text_valid(domain_id, FLOWIE_SECURITY_ID_MAX) || !changes ||
+      change_count == 0u || change_count > FLOWIE_CONTROL_POLICY_DRY_RUN_MAX_CHANGES || !result ||
+      result->size < sizeof(*result) || (result->diagnostic_capacity != 0u && !result->diagnostics))
+    return TURBO_EINVAL;
+  dry_run.diagnostics = result->diagnostics;
+  dry_run.diagnostic_capacity = result->diagnostic_capacity;
+  *result = dry_run;
+  rc = flowie_control_open_database(store, &database);
+  if (rc != TURBO_OK) return rc;
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 1;
+  rc = flowie_control_policy_dry_run_database(database, domain_id, changes, change_count, &dry_run);
+  if (rc != TURBO_OK) goto done;
+  status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 0;
+  *result = dry_run;
   rc = TURBO_OK;
 
 done:

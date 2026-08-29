@@ -353,6 +353,85 @@ typedef struct flowie_control_policy_validation_s {
 #define FLOWIE_CONTROL_POLICY_VALIDATION_INIT                                                      \
   {sizeof(flowie_control_policy_validation_t), 0u, 0u, 0u}
 
+#define FLOWIE_CONTROL_POLICY_DRY_RUN_MAX_CHANGES 256u
+
+typedef enum flowie_control_policy_dry_run_operation_e {
+  FLOWIE_CONTROL_POLICY_DRY_RUN_PUT = 1,
+  FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE = 2
+} flowie_control_policy_dry_run_operation_t;
+
+typedef enum flowie_control_policy_diagnostic_code_e {
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_NONE = 0,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INVALID_DOCUMENT,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_SUBJECT_NOT_FOUND,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_SUBJECT_DISABLED,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_ORDINAL_CONFLICT,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DUPLICATE_CHANGE,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DELETE_TARGET_NOT_FOUND,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_EMPTY_POLICY
+} flowie_control_policy_diagnostic_code_t;
+
+typedef enum flowie_control_policy_diagnostic_field_e {
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_NONE = 0,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ORDINAL,
+  FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES
+} flowie_control_policy_diagnostic_field_t;
+
+typedef struct flowie_control_policy_dry_run_change_s {
+  size_t size;
+  flowie_control_policy_dry_run_operation_t operation;
+  uint32_t ordinal;
+  flowie_security_subject_kind_t subject_kind;
+  const char *subject_id;
+  const char *document;
+  size_t document_size;
+} flowie_control_policy_dry_run_change_t;
+
+#define FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT                                                  \
+  {sizeof(flowie_control_policy_dry_run_change_t),                                                 \
+   0,                                                                                              \
+   0u,                                                                                             \
+   FLOWIE_SECURITY_SUBJECT_ANY,                                                                    \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   0u}
+
+typedef struct flowie_control_policy_diagnostic_s {
+  size_t size;
+  flowie_control_policy_diagnostic_code_t code;
+  size_t change_index;
+  int has_change_index;
+  flowie_security_subject_kind_t subject_kind;
+  char subject_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  flowie_control_policy_diagnostic_field_t field;
+} flowie_control_policy_diagnostic_t;
+
+#define FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT                                                      \
+  {sizeof(flowie_control_policy_diagnostic_t),                                                     \
+   FLOWIE_CONTROL_POLICY_DIAGNOSTIC_NONE,                                                          \
+   0u,                                                                                             \
+   0,                                                                                              \
+   FLOWIE_SECURITY_SUBJECT_ANY,                                                                    \
+   "",                                                                                             \
+   FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_NONE}
+
+typedef struct flowie_control_policy_dry_run_result_s {
+  size_t size;
+  int valid;
+  uint64_t store_revision;
+  size_t rule_count;
+  size_t deny_rule_count;
+  flowie_control_policy_diagnostic_t *diagnostics;
+  size_t diagnostic_capacity;
+  size_t diagnostic_count;
+} flowie_control_policy_dry_run_result_t;
+
+#define FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT                                                  \
+  {sizeof(flowie_control_policy_dry_run_result_t), 0, 0u, 0u, 0u, NULL, 0u, 0u}
+
 typedef struct flowie_control_policy_publish_result_s {
   size_t size;
   uint64_t revision;
@@ -618,6 +697,12 @@ int flowie_control_store_effective_roles(flowie_control_store_t *store, const ch
 /** Validate the complete current draft without modifying state. */
 int flowie_control_store_policy_validate(flowie_control_store_t *store, const char *domain_id,
                                          flowie_control_policy_validation_t *out);
+
+/** Validate a bounded in-memory candidate overlay without modifying draft or audit state. */
+int flowie_control_store_policy_dry_run(flowie_control_store_t *store, const char *domain_id,
+                                        const flowie_control_policy_dry_run_change_t *changes,
+                                        size_t change_count,
+                                        flowie_control_policy_dry_run_result_t *result);
 
 /** Publish one validated immutable subject-scoped bundle and advance policy_version atomically. */
 int flowie_control_store_policy_publish(flowie_control_store_t *store,

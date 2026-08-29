@@ -1245,6 +1245,349 @@ spec("Flowie control TurboDB fact store") {
     control_store_close(store, path);
   }
 
+  it("dry-runs a replacement without changing draft revision or audit state") {
+    static const char current_rule[] = "user device-7 allow {\n"
+                                       "  read topic root-a/current/#\n"
+                                       "}";
+    static const char candidate_rule[] = "user device-7 allow {\n"
+                                         "  readwrite topic root-a/candidate/#\n"
+                                         "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t user = control_user_create_command("request-user", 1u);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_dry_run_change_t change = FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    flowie_control_policy_diagnostic_t diagnostics[4] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+    flowie_control_policy_subject_rule_view_t stored = FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+    uint64_t revision_before = 0u;
+    uint64_t revision_after = 0u;
+    size_t audit_before = 0u;
+    size_t audit_after = 0u;
+
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(
+        control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
+        TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision_before), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), TURBO_OK);
+
+    change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
+    change.ordinal = 10u;
+    change.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    change.subject_id = "device-7";
+    change.document = candidate_rule;
+    change.document_size = sizeof(candidate_rule) - 1u;
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = 4u;
+
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
+                TURBO_OK);
+    check_true(dry_run.valid);
+    check_equal(dry_run.store_revision, revision_before);
+    check_equal(dry_run.rule_count, 2u);
+    check_equal(dry_run.deny_rule_count, 0u);
+    check_equal(dry_run.diagnostic_count, 0u);
+
+    check_equal(flowie_control_store_revision(store, &revision_after), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), TURBO_OK);
+    check_equal(revision_after, revision_before);
+    check_equal(audit_after, audit_before);
+    check_equal(flowie_control_store_policy_subject_rule_get(
+                    store, "root-a", FLOWIE_SECURITY_SUBJECT_PRINCIPAL, "device-7", &stored),
+                TURBO_OK);
+    check_equal(stored.document.entries[0].topic, "root-a/current/#");
+
+    control_store_close(store, path);
+  }
+
+  it("returns a diagnostic for an invalid candidate without changing store state") {
+    static const char current_rule[] = "user device-7 allow {\n"
+                                       "  read topic root-a/current/#\n"
+                                       "}";
+    static const char missing_subject_rule[] = "user missing allow {\n"
+                                               "  read topic root-a/candidate/#\n"
+                                               "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t user = control_user_create_command("request-user", 1u);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_dry_run_change_t change = FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    flowie_control_policy_diagnostic_t diagnostics[2] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+    uint64_t revision_before = 0u;
+    uint64_t revision_after = 0u;
+    size_t audit_before = 0u;
+    size_t audit_after = 0u;
+
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(
+        control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
+        TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision_before), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), TURBO_OK);
+
+    change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
+    change.ordinal = 11u;
+    change.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    change.subject_id = "missing";
+    change.document = missing_subject_rule;
+    change.document_size = sizeof(missing_subject_rule) - 1u;
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = 2u;
+
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.store_revision, revision_before);
+    check_equal(dry_run.rule_count, 0u);
+    check_equal(dry_run.deny_rule_count, 0u);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_SUBJECT_NOT_FOUND);
+    check_true(diagnostics[0].has_change_index);
+    check_equal(diagnostics[0].change_index, 0u);
+    check_equal(diagnostics[0].subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
+    check_equal(diagnostics[0].subject_id, "missing");
+    check_equal(diagnostics[0].field, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
+
+    check_equal(flowie_control_store_revision(store, &revision_after), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), TURBO_OK);
+    check_equal(revision_after, revision_before);
+    check_equal(audit_after, audit_before);
+
+    control_store_close(store, path);
+  }
+
+  it("dry-runs a typed subject deletion without removing the stored rule") {
+    static const char first_rule[] = "user device-7 allow {\n"
+                                     "  read topic root-a/first/#\n"
+                                     "}";
+    static const char second_rule[] = "user device-8 allow {\n"
+                                      "  write topic root-a/second/#\n"
+                                      "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t first_user =
+        control_user_create_command("request-user-7", 1u);
+    flowie_control_user_create_command_t second_user =
+        control_user_create_command("request-user-8", 2u);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_dry_run_change_t change = FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    flowie_control_policy_diagnostic_t diagnostics[2] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+    flowie_control_policy_subject_rule_view_t stored = FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+
+    first_user.principal_id = "device-7";
+    second_user.principal_id = "device-8";
+    check_equal(flowie_control_store_user_create(store, &first_user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &second_user, &result), TURBO_OK);
+    check_equal(control_subject_rule_put(store, 10u, first_rule, "request-policy-7", 3u, &result),
+                TURBO_OK);
+    check_equal(control_subject_rule_put(store, 20u, second_rule, "request-policy-8", 4u, &result),
+                TURBO_OK);
+
+    change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
+    change.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    change.subject_id = "device-7";
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = 2u;
+
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
+                TURBO_OK);
+    check_true(dry_run.valid);
+    check_equal(dry_run.rule_count, 2u);
+    check_equal(dry_run.diagnostic_count, 0u);
+    check_equal(flowie_control_store_policy_subject_rule_get(
+                    store, "root-a", FLOWIE_SECURITY_SUBJECT_PRINCIPAL, "device-7", &stored),
+                TURBO_OK);
+    check_equal(stored.document.entries[0].topic, "root-a/first/#");
+
+    control_store_close(store, path);
+  }
+
+  it("reports missing deletes, ordinal conflicts, and an empty candidate policy") {
+    static const char first_rule[] = "user device-7 allow {\n"
+                                     "  read topic root-a/first/#\n"
+                                     "}";
+    static const char second_rule[] = "user device-8 allow {\n"
+                                      "  write topic root-a/second/#\n"
+                                      "}";
+    static const char conflicting_rule[] = "user device-8 allow {\n"
+                                           "  readwrite topic root-a/conflict/#\n"
+                                           "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t first_user =
+        control_user_create_command("request-user-7", 1u);
+    flowie_control_user_create_command_t second_user =
+        control_user_create_command("request-user-8", 2u);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_dry_run_change_t changes[2] = {FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT,
+                                                         FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT};
+    flowie_control_policy_diagnostic_t diagnostics[2] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT,
+                                                         FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+
+    first_user.principal_id = "device-7";
+    second_user.principal_id = "device-8";
+    check_equal(flowie_control_store_user_create(store, &first_user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &second_user, &result), TURBO_OK);
+    check_equal(control_subject_rule_put(store, 10u, first_rule, "request-first", 3u, &result),
+                TURBO_OK);
+    check_equal(control_subject_rule_put(store, 20u, second_rule, "request-second", 4u, &result),
+                TURBO_OK);
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = 2u;
+
+    changes[0].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
+    changes[0].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    changes[0].subject_id = "missing";
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 1u, &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DELETE_TARGET_NOT_FOUND);
+
+    changes[0] = (flowie_control_policy_dry_run_change_t)FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    changes[0].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
+    changes[0].ordinal = 10u;
+    changes[0].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    changes[0].subject_id = "device-8";
+    changes[0].document = conflicting_rule;
+    changes[0].document_size = sizeof(conflicting_rule) - 1u;
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 1u, &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_ORDINAL_CONFLICT);
+
+    changes[0] = (flowie_control_policy_dry_run_change_t)FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    changes[1] = (flowie_control_policy_dry_run_change_t)FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+    changes[0].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
+    changes[0].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    changes[0].subject_id = "device-7";
+    changes[1].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
+    changes[1].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+    changes[1].subject_id = "device-8";
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 2u, &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_EMPTY_POLICY);
+    check_false(diagnostics[0].has_change_index);
+
+    control_store_close(store, path);
+  }
+
+  it("rejects duplicate typed subject changes with a stable diagnostic") {
+    static const char current_rule[] = "user device-7 allow {\n"
+                                       "  read topic root-a/current/#\n"
+                                       "}";
+    static const char first_candidate[] = "user device-7 allow {\n"
+                                          "  read topic root-a/first/#\n"
+                                          "}";
+    static const char second_candidate[] = "user device-7 allow {\n"
+                                           "  write topic root-a/second/#\n"
+                                           "}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t user = control_user_create_command("request-user", 1u);
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_policy_dry_run_change_t changes[2] = {FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT,
+                                                         FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT};
+    flowie_control_policy_diagnostic_t diagnostics[2] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(
+        control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
+        TURBO_OK);
+    for (size_t index = 0u; index < 2u; ++index) {
+      changes[index].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
+      changes[index].ordinal = (uint32_t)(10u + index);
+      changes[index].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+      changes[index].subject_id = "device-7";
+    }
+    changes[0].document = first_candidate;
+    changes[0].document_size = sizeof(first_candidate) - 1u;
+    changes[1].document = second_candidate;
+    changes[1].document_size = sizeof(second_candidate) - 1u;
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = 2u;
+
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 2u, &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DUPLICATE_CHANGE);
+    check_equal(diagnostics[0].change_index, 1u);
+    check_equal(diagnostics[0].field, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES);
+
+    control_store_close(store, path);
+  }
+
+  it("reports a diagnostic when valid candidate documents exceed the aggregate rule limit") {
+    enum { candidate_count = 5, entries_per_candidate = 63 };
+    static const char alternatives[] = "{a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p}";
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_policy_dry_run_change_t changes[candidate_count] = {
+        FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT};
+    flowie_control_policy_diagnostic_t diagnostics[candidate_count] = {
+        FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
+    flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    char documents[candidate_count][FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u];
+    char subjects[candidate_count][32];
+    char requests[candidate_count][32];
+
+    for (size_t candidate = 0u; candidate < candidate_count; ++candidate) {
+      flowie_control_user_create_command_t user;
+      size_t document_size = 0u;
+      changes[candidate] =
+          (flowie_control_policy_dry_run_change_t)FLOWIE_CONTROL_POLICY_DRY_RUN_CHANGE_INIT;
+      (void)snprintf(subjects[candidate], sizeof(subjects[candidate]), "limit-device-%zu",
+                     candidate);
+      (void)snprintf(requests[candidate], sizeof(requests[candidate]), "request-limit-%zu",
+                     candidate);
+      user = control_user_create_command(requests[candidate], 1u + candidate);
+      user.principal_id = subjects[candidate];
+      check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+
+      document_size += (size_t)snprintf(documents[candidate] + document_size,
+                                       sizeof(documents[candidate]) - document_size,
+                                       "user %s allow {\n", subjects[candidate]);
+      for (size_t entry = 0u; entry < entries_per_candidate; ++entry) {
+        document_size += (size_t)snprintf(
+            documents[candidate] + document_size, sizeof(documents[candidate]) - document_size,
+            "  read topic root-a/limit-%zu-%zu/%s\n", candidate, entry, alternatives);
+      }
+      document_size += (size_t)snprintf(documents[candidate] + document_size,
+                                       sizeof(documents[candidate]) - document_size, "}");
+      check_less(document_size, sizeof(documents[candidate]));
+
+      changes[candidate].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
+      changes[candidate].ordinal = (uint32_t)candidate;
+      changes[candidate].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+      changes[candidate].subject_id = subjects[candidate];
+      changes[candidate].document = documents[candidate];
+      changes[candidate].document_size = document_size;
+    }
+    dry_run.diagnostics = diagnostics;
+    dry_run.diagnostic_capacity = candidate_count;
+
+    check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, candidate_count,
+                                                    &dry_run),
+                TURBO_OK);
+    check_false(dry_run.valid);
+    check_equal(dry_run.diagnostic_count, 1u);
+    check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT);
+    check_equal(diagnostics[0].change_index, candidate_count - 1u);
+    check_equal(diagnostics[0].field, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES);
+
+    control_store_close(store, path);
+  }
+
   it("validates typed subjects and replaces one rule by subject key") {
     static const char role_rule[] = "role shared allow {\n"
                                     "  read topic root-a/commands/#\n"
