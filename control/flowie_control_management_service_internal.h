@@ -219,20 +219,23 @@ int flowie_control_management_effective_roles(flowie_control_management_service_
                                               const char *principal_id,
                                               flowie_control_effective_roles_view_t *out);
 
-int flowie_control_management_policy_rule_put(
+int flowie_control_management_policy_subject_rule_put(
     flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
-    const flowie_control_policy_rule_put_command_t *command,
+    const flowie_control_policy_subject_rule_put_command_t *command,
     flowie_control_command_result_t *result);
-int flowie_control_management_policy_rule_delete(
+int flowie_control_management_policy_subject_rule_delete(
     flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
-    const flowie_control_policy_rule_delete_command_t *command,
+    const flowie_control_policy_subject_rule_delete_command_t *command,
     flowie_control_command_result_t *result);
-int flowie_control_management_policy_rule_list(flowie_control_management_service_t *service,
-                                               const flowie_control_management_caller_t *caller,
-                                               uint32_t after_ordinal, int has_after,
-                                               flowie_control_policy_rule_view_t *items,
-                                               size_t capacity, size_t *count_out,
-                                               int *has_more_out);
+int flowie_control_management_policy_subject_rule_get(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out);
+int flowie_control_management_policy_subject_rule_list(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t capacity, size_t *count_out,
+    int *has_more_out);
 int flowie_control_management_policy_validate(flowie_control_management_service_t *service,
                                               const flowie_control_management_caller_t *caller,
                                               flowie_control_policy_validation_t *out);

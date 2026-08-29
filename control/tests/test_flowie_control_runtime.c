@@ -1,5 +1,6 @@
-#include "flowie_control_runtime_internal.h"
 #include "flowie_control_bootstrap_internal.h"
+#include "flowie_control_runtime_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "flowie_test_socket.h"
 #include "tinytest.h"
@@ -27,8 +28,7 @@ static int runtime_test_set_env(const char *name, const char *value) {
 }
 
 static int runtime_domain_create(flowie_control_store_t *store, uint64_t revision) {
-  flowie_control_domain_create_command_t command =
-      FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
+  flowie_control_domain_create_command_t command = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   command.domain_id = "root-a";
   command.actor = "bootstrap";
@@ -81,17 +81,19 @@ static int runtime_role_add(flowie_control_store_t *store, const char *role, con
 static control_runtime_fixture_t runtime_fixture_open(void) {
   control_runtime_fixture_t fixture = {0};
   flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   fixture.path = tt_make_temp_file("flowie-control-runtime", ".sqlite3");
   check_not_null(fixture.path);
-  config.database_path = fixture.path;
+  check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
+  config.database = &test_database.config;
   check_equal(flowie_control_store_open(&config, &fixture.store), TURBO_OK);
   {
     flowie_control_config_t runtime_config = FLOWIE_CONTROL_CONFIG_INIT;
     check_equal(flowie_control_bootstrap_apply(
-                     flowie_control_store_repository(fixture.store), &runtime_config.bootstrap,
-                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
-                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 900u),
-                 TURBO_OK);
+                    flowie_control_store_repository(fixture.store), &runtime_config.bootstrap,
+                    FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
+                    sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 900u),
+                TURBO_OK);
   }
   check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), TURBO_OK);
   check_equal(runtime_domain_create(fixture.store, fixture.revision), TURBO_OK);
@@ -114,28 +116,27 @@ spec("Flowie controller runtime") {
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
 
     check_equal(flowie_control_management_identity_resolve_principal(
-                     flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
-                 TURBO_EPERM);
+                    flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
+                TURBO_EPERM);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
-                                     "role-viewer", fixture.revision),
-                 TURBO_OK);
-    check_equal(
-        runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER, "assign-viewer",
-                         fixture.revision + 1u),
-        TURBO_OK);
+                                    "role-viewer", fixture.revision),
+                TURBO_OK);
+    check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
+                                 "assign-viewer", fixture.revision + 1u),
+                TURBO_OK);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
-                                     "role-user-admin", fixture.revision + 2u),
-                 TURBO_OK);
+                                    "role-user-admin", fixture.revision + 2u),
+                TURBO_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
-                                  "assign-user-admin", fixture.revision + 3u),
-                 TURBO_OK);
+                                 "assign-user-admin", fixture.revision + 3u),
+                TURBO_OK);
     check_equal(flowie_control_management_identity_resolve_principal(
-                     flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
-                 TURBO_OK);
+                    flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
+                TURBO_OK);
     check_equal(caller.domain_id, "root-a");
     check_equal(caller.actor, "admin-a");
     check_equal(caller.permissions,
-                  FLOWIE_CONTROL_MANAGEMENT_VIEWER | FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN);
+                FLOWIE_CONTROL_MANAGEMENT_VIEWER | FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN);
     runtime_fixture_close(&fixture);
   }
 
@@ -143,10 +144,10 @@ spec("Flowie controller runtime") {
     control_runtime_fixture_t fixture = runtime_fixture_open();
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
 
-    check_equal(flowie_control_management_identity_resolve_principal(
-                     flowie_control_store_repository(fixture.store), "root-a", "missing-admin",
-                     &caller),
-                 TURBO_EPERM);
+    check_equal(
+        flowie_control_management_identity_resolve_principal(
+            flowie_control_store_repository(fixture.store), "root-a", "missing-admin", &caller),
+        TURBO_EPERM);
     check_null(caller.domain_id);
     check_null(caller.actor);
     runtime_fixture_close(&fixture);
@@ -154,6 +155,7 @@ spec("Flowie controller runtime") {
 
   it("fails closed when TLS identity files cannot be validated") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
+    check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     memcpy(config.listener.tls.cert_file, "missing-control-cert.pem",
            sizeof("missing-control-cert.pem"));
@@ -167,8 +169,7 @@ spec("Flowie controller runtime") {
 
   it("rejects RPC routes that collide with fixed Dashboard routes") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
-    memcpy(config.management.rpc_path, "/v2/control/dashboard",
-           sizeof("/v2/control/dashboard"));
+    memcpy(config.management.rpc_path, "/v2/control/dashboard", sizeof("/v2/control/dashboard"));
 
     check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
   }
@@ -200,50 +201,38 @@ spec("Flowie controller runtime") {
     check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
   }
 
-#if defined(FLOWIE_CONTROL_HAS_PGSQL)
-  it("validates PostgreSQL credentials before TLS or database startup") {
+  it("requires a configured TurboDB driver") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
-    config.store_provider = FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL;
-    (void)snprintf(config.postgresql.conninfo, sizeof(config.postgresql.conninfo), "%s",
-                   "host=db.internal dbname=flowie user=flowie password=literal "
-                   "sslmode=verify-full");
-    (void)snprintf(config.postgresql.password_ref, sizeof(config.postgresql.password_ref), "%s",
-                   "env://FLOWIE_RUNTIME_PG_PASSWORD");
-    check_equal(runtime_test_set_env("FLOWIE_RUNTIME_PG_PASSWORD", "secret"), 0);
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EPERM);
-
-    (void)snprintf(config.postgresql.conninfo, sizeof(config.postgresql.conninfo), "%s",
-                   "host=db.internal dbname=flowie user=flowie sslmode=verify-full");
-    check_equal(runtime_test_set_env("FLOWIE_RUNTIME_PG_PASSWORD", NULL), 0);
-    check_equal(flowie_control_runtime_validate(&config), TURBO_ENOENT);
-
-    check_equal(runtime_test_set_env("FLOWIE_RUNTIME_PG_PASSWORD", "secret"), 0);
-    (void)snprintf(config.listener.tls.cert_file, sizeof(config.listener.tls.cert_file), "%s",
-                   "missing-control-cert.pem");
-    (void)snprintf(config.listener.tls.key_file, sizeof(config.listener.tls.key_file), "%s",
-                   "missing-control-key.pem");
-    (void)snprintf(config.listener.tls.client_ca_file, sizeof(config.listener.tls.client_ca_file),
-                   "%s", "missing-control-ca.pem");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
-    check_equal(runtime_test_set_env("FLOWIE_RUNTIME_PG_PASSWORD", NULL), 0);
+    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
   }
-#else
-  it("rejects PostgreSQL selection when the provider is not built") {
+
+  it("rejects programmatic plaintext and malformed TurboDB secret options") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
+    check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
-    config.store_provider = FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL;
-    check_equal(flowie_control_runtime_validate(&config), TURBO_ENOTSUP);
+    (void)snprintf(config.turbodb.options[0].keyword,
+                   sizeof(config.turbodb.options[0].keyword), "%s", "conninfo");
+    (void)snprintf(config.turbodb.options[0].value,
+                   sizeof(config.turbodb.options[0].value), "%s",
+                   "host=db.example password=literal");
+    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+
+    (void)snprintf(config.turbodb.options[0].keyword,
+                   sizeof(config.turbodb.options[0].keyword), "%s", "sslpassword");
+    (void)snprintf(config.turbodb.options[0].value,
+                   sizeof(config.turbodb.options[0].value), "%s", "env://BAD-NAME");
+    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
   }
-#endif
 
   it("validates the configured external HTTPS identity and secrets before startup") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
 
+    check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     check_equal(
         tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
     check_equal(runtime_test_set_env("FLOWIE_RUNTIME_EXTERNAL_TOKEN", "service-token"), 0);
@@ -294,11 +283,11 @@ spec("Flowie controller runtime") {
     flowie_control_runtime_t *runtime = NULL;
 
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
-                                     "runtime-viewer", fixture.revision),
-                 TURBO_OK);
+                                    "runtime-viewer", fixture.revision),
+                TURBO_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
-                                  "runtime-viewer-add", fixture.revision + 1u),
-                 TURBO_OK);
+                                 "runtime-viewer-add", fixture.revision + 1u),
+                TURBO_OK);
     flowie_control_store_destroy(fixture.store);
     fixture.store = NULL;
     check_equal(
@@ -311,7 +300,7 @@ spec("Flowie controller runtime") {
                    cert_file);
     (void)snprintf(config.listener.tls.key_file, sizeof(config.listener.tls.key_file), "%s",
                    key_file);
-    (void)snprintf(config.sqlite_path, sizeof(config.sqlite_path), "%s", fixture.path);
+    check_equal(flowie_control_test_runtime_turbodb(&config, fixture.path), 0);
     config.auth.enabled = 1;
     (void)snprintf(config.auth.listener_id, sizeof(config.auth.listener_id), "%s",
                    "flowie-control-auth");
@@ -363,7 +352,7 @@ spec("Flowie controller runtime") {
                    key_file);
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
-    (void)snprintf(config.sqlite_path, sizeof(config.sqlite_path), "%s", fixture.path);
+    check_equal(flowie_control_test_runtime_turbodb(&config, fixture.path), 0);
 
     check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
     check_not_null(runtime);

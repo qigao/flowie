@@ -15,8 +15,10 @@ static const char valid_config[] = "version: 1\n"
                                    "    key_file: certs/control.key\n"
                                    "    key_password_ref: env://FLOWIE_CONTROL_KEY_PASSWORD\n"
                                    "storage:\n"
-                                   "  sqlite:\n"
-                                   "    path: data/flowie-control.db\n"
+                                   "  turbodb:\n"
+                                   "    driver: sqlite\n"
+                                   "    options:\n"
+                                   "      filename: data/flowie-control.db\n"
                                    "management:\n"
                                    "  session:\n"
                                    "    capacity: 512\n"
@@ -38,8 +40,10 @@ static const char valid_external_https_config[] =
     "    cert_file: cert.pem\n"
     "    key_file: key.pem\n"
     "storage:\n"
-    "  sqlite:\n"
-    "    path: control.db\n"
+    "  turbodb:\n"
+    "    driver: sqlite\n"
+    "    options:\n"
+    "      filename: control.db\n"
     "management:\n"
     "  session:\n"
     "    capacity: 1024\n"
@@ -61,45 +65,38 @@ static const char valid_external_https_config[] =
     "      client_key_file: flowie-client-key.pem\n"
     "      client_key_password_ref: env://FLOWIE_THIRD_PARTY_KEY_PASSWORD\n";
 
-static const char valid_postgresql_config[] =
-    "version: 1\n"
-    "listener:\n"
-    "  tls:\n"
-    "    cert_file: cert.pem\n"
-    "    key_file: key.pem\n"
-    "storage:\n"
-    "  control_store: postgresql\n"
-    "  postgresql:\n"
-    "    conninfo: host=db.internal dbname=flowie user=flowie sslmode=verify-full\n"
-    "    password_ref: env://FLOWIE_CONTROL_PG_PASSWORD\n"
-    "    schema_name: flowie_control\n"
-    "    connect_timeout_seconds: 3\n"
-    "    statement_timeout_ms: 4000\n"
-    "    lock_timeout_ms: 2000\n"
-    "    pool_capacity: 8\n"
-    "    acquire_timeout_ms: 1500\n"
-    "    schema_mode: migrate\n"
-    "management:\n"
-    "  session:\n"
-    "    capacity: 1024\n"
-    "    ttl_seconds: 3600\n";
+static const char valid_turbodb_config[] = "version: 1\n"
+                                           "listener:\n"
+                                           "  tls:\n"
+                                           "    cert_file: cert.pem\n"
+                                           "    key_file: key.pem\n"
+                                           "storage:\n"
+                                           "  turbodb:\n"
+                                           "    driver: sqlite\n"
+                                           "    options:\n"
+                                           "      filename: control.db\n"
+                                           "management:\n"
+                                           "  session:\n"
+                                           "    capacity: 1024\n"
+                                           "    ttl_seconds: 3600\n";
 
-static const char legacy_bootstrap_config[] =
-    "version: 1\n"
-    "listener:\n"
-    "  tls:\n"
-    "    cert_file: cert.pem\n"
-    "    key_file: key.pem\n"
-    "storage:\n"
-    "  sqlite:\n"
-    "    path: control.db\n"
-    "bootstrap:\n"
-    "  username: admin\n"
-    "  password_ref: env://FLOWIE_BOOTSTRAP_PASSWORD\n"
-    "management:\n"
-    "  session:\n"
-    "    capacity: 1024\n"
-    "    ttl_seconds: 3600\n";
+static const char legacy_bootstrap_config[] = "version: 1\n"
+                                              "listener:\n"
+                                              "  tls:\n"
+                                              "    cert_file: cert.pem\n"
+                                              "    key_file: key.pem\n"
+                                              "storage:\n"
+                                              "  turbodb:\n"
+                                              "    driver: sqlite\n"
+                                              "    options:\n"
+                                              "      filename: control.db\n"
+                                              "bootstrap:\n"
+                                              "  username: admin\n"
+                                              "  password_ref: env://FLOWIE_BOOTSTRAP_PASSWORD\n"
+                                              "management:\n"
+                                              "  session:\n"
+                                              "    capacity: 1024\n"
+                                              "    ttl_seconds: 3600\n";
 
 static int parse_config(const char *yaml, flowie_control_config_t *config,
                         flowie_control_config_error_t *error) {
@@ -118,8 +115,10 @@ static int parse_session_principal_limit(const char *limit, flowie_control_confi
                       "    cert_file: cert.pem\n"
                       "    key_file: key.pem\n"
                       "storage:\n"
-                      "  sqlite:\n"
-                      "    path: control.db\n"
+                      "  turbodb:\n"
+                      "    driver: sqlite\n"
+                      "    options:\n"
+                      "      filename: control.db\n"
                       "management:\n"
                       "  session:\n"
                       "    max_sessions_per_principal: %s\n",
@@ -139,8 +138,10 @@ static int parse_listener_stack_size(const char *stack_size, flowie_control_conf
                       "    cert_file: cert.pem\n"
                       "    key_file: key.pem\n"
                       "storage:\n"
-                      "  sqlite:\n"
-                      "    path: control.db\n",
+                      "  turbodb:\n"
+                      "    driver: sqlite\n"
+                      "    options:\n"
+                      "      filename: control.db\n",
                       stack_size);
   if (size <= 0 || (size_t)size >= sizeof(yaml)) return TURBO_ENOMEM;
   return flowie_control_config_parse_yaml(yaml, (size_t)size, config, error);
@@ -155,13 +156,107 @@ spec("Flowie controller configuration") {
     error = (flowie_control_config_error_t)FLOWIE_CONTROL_CONFIG_ERROR_INIT;
   }
 
+  it("accepts only the single TurboDB storage boundary") {
+    static const char yaml[] = "version: 1\n"
+                               "listener:\n"
+                               "  tls:\n"
+                               "    cert_file: cert.pem\n"
+                               "    key_file: key.pem\n"
+                               "storage:\n"
+                               "  turbodb:\n"
+                               "    driver: sqlite\n"
+                               "    options:\n"
+                               "      filename: control.db\n"
+                               "      busy_timeout_ms: '1000'\n"
+                               "management:\n"
+                               "  session:\n"
+                               "    capacity: 1024\n";
+    check_equal(parse_config(yaml, &config, &error), TURBO_OK);
+    check_equal(config.turbodb.driver, "sqlite");
+    check_equal(config.turbodb.option_count, 2u);
+    check_equal(config.turbodb.options[0].keyword, "filename");
+    check_equal(config.turbodb.options[0].value, "control.db");
+    check_equal(config.turbodb.options[1].keyword, "busy_timeout_ms");
+    check_equal(config.turbodb.options[1].value, "1000");
+  }
+
+  it("rejects the removed backend-specific storage format") {
+    static const char yaml[] = "version: 1\n"
+                               "listener:\n"
+                               "  tls:\n"
+                               "    cert_file: cert.pem\n"
+                               "    key_file: key.pem\n"
+                               "storage:\n"
+                               "  sqlite:\n"
+                               "    path: control.db\n";
+    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.storage.sqlite");
+  }
+
+  it("requires environment references for TurboDB passwords") {
+    static const char literal[] = "version: 1\n"
+                                  "listener:\n"
+                                  "  tls:\n"
+                                  "    cert_file: cert.pem\n"
+                                  "    key_file: key.pem\n"
+                                  "storage:\n"
+                                  "  turbodb:\n"
+                                  "    driver: postgres\n"
+                                  "    options:\n"
+                                  "      password: literal-secret\n"
+                                  "management: {}\n";
+    static const char reference[] = "version: 1\n"
+                                    "listener:\n"
+                                    "  tls:\n"
+                                    "    cert_file: cert.pem\n"
+                                    "    key_file: key.pem\n"
+                                    "storage:\n"
+                                    "  turbodb:\n"
+                                    "    driver: postgres\n"
+                                    "    options:\n"
+                                    "      password: env://FLOWIE_CONTROL_DB_PASSWORD\n"
+                                    "management: {}\n";
+
+    check_equal(parse_config(literal, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.storage.turbodb.options.password");
+    check_equal(parse_config(reference, &config, &error), TURBO_OK);
+    check_equal(config.turbodb.options[0].value, "env://FLOWIE_CONTROL_DB_PASSWORD");
+  }
+
+  it("rejects literals and malformed references for sensitive TurboDB options") {
+    static const char literal_sslpassword[] =
+        "version: 1\nlistener: {tls: {cert_file: cert.pem, key_file: key.pem}}\n"
+        "storage: {turbodb: {driver: postgres, options: {sslpassword: literal}}}\n";
+    static const char literal_conninfo[] =
+        "version: 1\nlistener: {tls: {cert_file: cert.pem, key_file: key.pem}}\n"
+        "storage: {turbodb: {driver: postgres, options: {conninfo: 'password=literal'}}}\n";
+    static const char malformed_reference[] =
+        "version: 1\nlistener: {tls: {cert_file: cert.pem, key_file: key.pem}}\n"
+        "storage: {turbodb: {driver: postgres, options: {password: 'env://BAD-NAME'}}}\n";
+    static const char valid_references[] =
+        "version: 1\nlistener: {tls: {cert_file: cert.pem, key_file: key.pem}}\n"
+        "storage: {turbodb: {driver: postgres, options: {"
+        "password: 'env://FLOWIE_DB_PASSWORD', "
+        "sslpassword: 'env://FLOWIE_DB_SSL_PASSWORD', "
+        "conninfo: 'env://FLOWIE_DB_CONNINFO'}}}\nmanagement: {}\n";
+
+    check_equal(parse_config(literal_sslpassword, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.storage.turbodb.options.sslpassword");
+    check_equal(parse_config(literal_conninfo, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.storage.turbodb.options.conninfo");
+    check_equal(parse_config(malformed_reference, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.storage.turbodb.options.password");
+    check_equal(parse_config(valid_references, &config, &error), TURBO_OK);
+    check_equal(config.turbodb.option_count, 3u);
+  }
+
 #ifdef FLOWIE_CONTROL_TEST_CONFIG_PATH
   it("keeps the shipped controller example inside the schema") {
     check_equal(flowie_control_config_load(FLOWIE_CONTROL_TEST_CONFIG_PATH, &config, &error),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.coroutine_stack_size,
-                  FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
+                FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
     check_equal(config.management.session_capacity, 1024u);
     check_equal(config.management.session_max_sessions_per_principal, 5u);
   }
@@ -172,7 +267,7 @@ spec("Flowie controller configuration") {
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.port, 8443);
     check_equal(config.listener.coroutine_stack_size,
-                  FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
+                FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
     check_equal(config.management.rpc_path, "/v2/control/rpc");
     check_equal(config.management.session_capacity, 512u);
     check_equal(config.management.session_max_sessions_per_principal, 7u);
@@ -183,7 +278,7 @@ spec("Flowie controller configuration") {
     check_equal(config.management.login_executor_deadline_ms, 8000u);
     check_true(config.dashboard_enabled);
     check_false(config.auth.enabled);
-    check_equal(config.store_provider, FLOWIE_CONTROL_CONFIG_STORE_SQLITE);
+    check_equal(config.turbodb.driver, "sqlite");
     check_false(config.auth.local_executor.configured);
     check_equal(config.auth.local_executor.workers, 4u);
     check_equal(config.auth.local_executor.queue_capacity, 128u);
@@ -195,7 +290,7 @@ spec("Flowie controller configuration") {
   }
 
   it("defaults each principal to five concurrent management sessions") {
-    check_equal(parse_config(valid_postgresql_config, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_turbodb_config, &config, &error), TURBO_OK);
     check_equal(config.management.session_max_sessions_per_principal, 5u);
   }
 
@@ -219,28 +314,12 @@ spec("Flowie controller configuration") {
     check_equal(error.path, "$.management.session.max_sessions_per_principal");
   }
 
-  it("loads an explicit PostgreSQL control store without a literal password") {
-    check_equal(parse_config(valid_postgresql_config, &config, &error), TURBO_OK);
-    check_equal(config.store_provider, FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL);
-    check_equal(config.postgresql.conninfo,
-                 "host=db.internal dbname=flowie user=flowie sslmode=verify-full");
-    check_equal(config.postgresql.password_ref, "env://FLOWIE_CONTROL_PG_PASSWORD");
-    check_equal(config.postgresql.schema_name, "flowie_control");
-    check_equal(config.postgresql.connect_timeout_seconds, 3);
-    check_equal(config.postgresql.statement_timeout_ms, 4000);
-    check_equal(config.postgresql.lock_timeout_ms, 2000);
-    check_equal(config.postgresql.pool_capacity, 8u);
-    check_equal(config.postgresql.acquire_timeout_ms, 1500);
-    check_equal(config.postgresql.schema_mode, FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_MIGRATE);
-    check_true(config.sqlite_path[0] == '\0');
-  }
-
   it("rejects the legacy configurable bootstrap block") {
     check_equal(parse_config(legacy_bootstrap_config, &config, &error), TURBO_EINVAL);
     check_equal(error.path, "$.bootstrap");
   }
 
-  it("rejects simultaneous SQLite and PostgreSQL control store configuration") {
+  it("rejects multiple removed backend-specific storage blocks") {
     static const char yaml[] =
         "version: 1\n"
         "listener:\n"
@@ -258,22 +337,7 @@ spec("Flowie controller configuration") {
         "  session:\n"
         "    capacity: 1024\n";
     check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
-    check_equal(error.path, "$.storage.sqlite");
-  }
-
-  it("rejects a literal PostgreSQL password") {
-    char yaml[sizeof(valid_postgresql_config)];
-    char *reference;
-
-    memcpy(yaml, valid_postgresql_config, sizeof(valid_postgresql_config));
-    reference = strstr(yaml, "env://FLOWIE_CONTROL_PG_PASSWORD");
-    check_not_null(reference);
-    memcpy(reference, "literal-password", sizeof("literal-password") - 1u);
-    memmove(reference + sizeof("literal-password") - 1u,
-            reference + sizeof("env://FLOWIE_CONTROL_PG_PASSWORD") - 1u,
-            strlen(reference + sizeof("env://FLOWIE_CONTROL_PG_PASSWORD") - 1u) + 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
-    check_equal(error.path, "$.storage.postgresql.password_ref");
+    check_equal(error.path, "$.storage.control_store");
   }
 
   it("rejects unknown fields") {
@@ -312,8 +376,10 @@ spec("Flowie controller configuration") {
                                "    cert_file: cert.pem\n"
                                "    key_file: key.pem\n"
                                "storage:\n"
-                               "  sqlite:\n"
-                               "    path: control.db\n"
+                               "  turbodb:\n"
+                               "    driver: sqlite\n"
+                               "    options:\n"
+                               "      filename: control.db\n"
                                "management:\n"
                                "  session:\n"
                                "    capacity: 1024\n"
@@ -338,8 +404,10 @@ spec("Flowie controller configuration") {
                                "  limits:\n"
                                "    max_request_body_size: 4096\n"
                                "storage:\n"
-                               "  sqlite:\n"
-                               "    path: control.db\n"
+                               "  turbodb:\n"
+                               "    driver: sqlite\n"
+                               "    options:\n"
+                               "      filename: control.db\n"
                                "management:\n"
                                "  rpc_max_request_size: 8192\n";
     check_equal(parse_config(yaml, &config, &error), TURBO_ERANGE);
@@ -353,8 +421,10 @@ spec("Flowie controller configuration") {
                                "    cert_file: cert.pem\n"
                                "    key_file: key.pem\n"
                                "storage:\n"
-                               "  sqlite:\n"
-                               "    path: control.db\n"
+                               "  turbodb:\n"
+                               "    driver: sqlite\n"
+                               "    options:\n"
+                               "      filename: control.db\n"
                                "management:\n"
                                "  session:\n"
                                "    capacity: 1024\n"
@@ -417,8 +487,10 @@ spec("Flowie controller configuration") {
                                "    cert_file: cert.pem\n"
                                "    key_file: key.pem\n"
                                "storage:\n"
-                               "  sqlite:\n"
-                               "    path: control.db\n"
+                               "  turbodb:\n"
+                               "    driver: sqlite\n"
+                               "    options:\n"
+                               "      filename: control.db\n"
                                "management:\n"
                                "  session:\n"
                                "    capacity: 1024\n"
@@ -437,7 +509,7 @@ spec("Flowie controller configuration") {
     check_true(config.auth.external_https.enabled);
     check_equal(config.auth.external_https.url, "https://auth.example/v1/assert");
     check_equal(config.auth.external_https.service_token_ref,
-                 "env://FLOWIE_THIRD_PARTY_AUTH_TOKEN");
+                "env://FLOWIE_THIRD_PARTY_AUTH_TOKEN");
     check_equal(config.auth.external_https.trusted_issuer, "https://identity.example");
     check_equal(config.auth.external_https.subject_type, "device");
     check_equal(config.auth.external_https.timeout_ms, 2500u);

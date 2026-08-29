@@ -116,7 +116,7 @@ static int control_config_fingerprint_valid(const char *value) {
   return 1;
 }
 
-static int control_config_secret_ref_valid(const char *value) {
+int flowie_control_config_secret_ref_valid(const char *value) {
   static const char prefix[] = "env://";
   const char *name;
   if (!value || strncmp(value, prefix, sizeof(prefix) - 1u) != 0) return 0;
@@ -129,18 +129,15 @@ static int control_config_secret_ref_valid(const char *value) {
   return 1;
 }
 
-static int control_config_schema_name_valid(const char *value) {
-  size_t length;
-  if (!value) return 0;
-  length = strnlen(value, FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_NAME_MAX + 1u);
-  if (length == 0u || length > FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_NAME_MAX ||
-      !((value[0] >= 'a' && value[0] <= 'z') || value[0] == '_'))
-    return 0;
-  for (size_t index = 1u; index < length; ++index) {
-    const char byte = value[index];
-    if (!((byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '_')) return 0;
+int flowie_control_config_turbodb_secret_option(const char *keyword) {
+  static const char *const secret_options[] = {
+      "conninfo", "password", "sslpassword", "uri", "url"};
+  size_t index;
+  if (!keyword) return 0;
+  for (index = 0u; index < sizeof(secret_options) / sizeof(secret_options[0]); ++index) {
+    if (strcmp(keyword, secret_options[index]) == 0) return 1;
   }
-  return 1;
+  return 0;
 }
 
 static int control_config_route_valid(const char *value) {
@@ -176,13 +173,13 @@ static int control_config_parse_tls(const json_value_t *tls, flowie_control_conf
                              config->listener.tls.key_password_ref,
                              sizeof(config->listener.tls.key_password_ref), 0, error);
   if (rc == TURBO_OK && config->listener.tls.key_password_ref[0] &&
-      !control_config_secret_ref_valid(config->listener.tls.key_password_ref))
+      !flowie_control_config_secret_ref_valid(config->listener.tls.key_password_ref))
     rc = control_config_error(error, TURBO_EINVAL, "$.listener.tls.key_password_ref",
                               "only env:// secret references are accepted");
   if (rc == TURBO_OK)
-    rc = control_config_text(turbo_json_object_get(tls, "client_auth"),
-                             "$.listener.tls.client_auth", client_auth, sizeof(client_auth), 0,
-                             error);
+    rc =
+        control_config_text(turbo_json_object_get(tls, "client_auth"), "$.listener.tls.client_auth",
+                            client_auth, sizeof(client_auth), 0, error);
   if (rc == TURBO_OK && (!client_auth[0] || strcmp(client_auth, "none") == 0))
     config->listener.tls.client_auth_required = 0;
   else if (rc == TURBO_OK && strcmp(client_auth, "required") == 0)
@@ -272,11 +269,10 @@ static int control_config_parse_listener(const json_value_t *listener,
     if (rc == TURBO_OK) config->listener.port = (uint16_t)port;
   }
   if (rc == TURBO_OK)
-    rc = control_config_limit(
-        listener, "coroutine_stack_size", "$.listener.coroutine_stack_size",
-        FLOWIE_CONTROL_CONFIG_LISTENER_MIN_COROUTINE_STACK_SIZE,
-        FLOWIE_CONTROL_CONFIG_LISTENER_MAX_COROUTINE_STACK_SIZE,
-        &config->listener.coroutine_stack_size, error);
+    rc = control_config_limit(listener, "coroutine_stack_size", "$.listener.coroutine_stack_size",
+                              FLOWIE_CONTROL_CONFIG_LISTENER_MIN_COROUTINE_STACK_SIZE,
+                              FLOWIE_CONTROL_CONFIG_LISTENER_MAX_COROUTINE_STACK_SIZE,
+                              &config->listener.coroutine_stack_size, error);
   if (rc == TURBO_OK)
     rc = control_config_parse_tls(turbo_json_object_get(listener, "tls"), config, error);
   if (rc == TURBO_OK && turbo_json_object_get(listener, "limits"))
@@ -287,115 +283,52 @@ static int control_config_parse_listener(const json_value_t *listener,
 static int control_config_parse_storage(const json_value_t *storage,
                                         flowie_control_config_t *config,
                                         flowie_control_config_error_t *error) {
-  static const char *const storage_keys[] = {"control_store", "sqlite", "postgresql"};
-  static const char *const sqlite_keys[] = {"path", "busy_timeout_ms"};
-  static const char *const postgresql_keys[] = {"conninfo",
-                                                "password_ref",
-                                                "schema_name",
-                                                "connect_timeout_seconds",
-                                                "statement_timeout_ms",
-                                                "lock_timeout_ms",
-                                                "pool_capacity",
-                                                "acquire_timeout_ms",
-                                                "schema_mode"};
-  char provider[16] = {0};
-  json_value_t *sqlite;
-  json_value_t *postgresql;
-  uint64_t timeout;
-  uint64_t value;
+  static const char *const storage_keys[] = {"turbodb"};
+  static const char *const turbodb_keys[] = {"driver", "options"};
+  json_value_t *turbodb;
+  json_value_t *options;
   int rc = control_config_object(storage, "$.storage", storage_keys,
                                  sizeof(storage_keys) / sizeof(storage_keys[0]), error);
-  if (rc == TURBO_OK && turbo_json_object_get(storage, "control_store"))
-    rc = control_config_text(turbo_json_object_get(storage, "control_store"),
-                             "$.storage.control_store", provider, sizeof(provider), 1, error);
-  if (rc == TURBO_OK && provider[0]) {
-    if (strcmp(provider, "sqlite") == 0)
-      config->store_provider = FLOWIE_CONTROL_CONFIG_STORE_SQLITE;
-    else if (strcmp(provider, "postgresql") == 0)
-      config->store_provider = FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL;
-    else
-      rc = control_config_error(error, TURBO_EINVAL, "$.storage.control_store",
-                                "expected sqlite or postgresql");
-  }
-  sqlite = storage ? turbo_json_object_get(storage, "sqlite") : NULL;
-  postgresql = storage ? turbo_json_object_get(storage, "postgresql") : NULL;
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_SQLITE && postgresql)
-    rc = control_config_error(error, TURBO_EINVAL, "$.storage.postgresql",
-                              "inactive control store configuration is not allowed");
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_SQLITE)
-    rc = control_config_object(sqlite, "$.storage.sqlite", sqlite_keys,
-                               sizeof(sqlite_keys) / sizeof(sqlite_keys[0]), error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_SQLITE)
-    rc = control_config_text(turbo_json_object_get(sqlite, "path"), "$.storage.sqlite.path",
-                             config->sqlite_path, sizeof(config->sqlite_path), 1, error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_SQLITE &&
-      turbo_json_object_get(sqlite, "busy_timeout_ms")) {
-    rc = control_config_integer(turbo_json_object_get(sqlite, "busy_timeout_ms"),
-                                "$.storage.sqlite.busy_timeout_ms", 1u, 60000u, &timeout, error);
-    if (rc == TURBO_OK) config->sqlite_busy_timeout_ms = (int)timeout;
-  }
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL && sqlite)
-    rc = control_config_error(error, TURBO_EINVAL, "$.storage.sqlite",
-                              "inactive control store configuration is not allowed");
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL)
-    rc = control_config_object(postgresql, "$.storage.postgresql", postgresql_keys,
-                               sizeof(postgresql_keys) / sizeof(postgresql_keys[0]), error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL)
-    rc = control_config_text(turbo_json_object_get(postgresql, "conninfo"),
-                             "$.storage.postgresql.conninfo", config->postgresql.conninfo,
-                             sizeof(config->postgresql.conninfo), 1, error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL)
-    rc = control_config_text(turbo_json_object_get(postgresql, "password_ref"),
-                             "$.storage.postgresql.password_ref", config->postgresql.password_ref,
-                             sizeof(config->postgresql.password_ref), 1, error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL &&
-      !control_config_secret_ref_valid(config->postgresql.password_ref))
-    rc = control_config_error(error, TURBO_EINVAL, "$.storage.postgresql.password_ref",
-                              "only env:// secret references are accepted");
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL &&
-      turbo_json_object_get(postgresql, "schema_name"))
-    rc = control_config_text(turbo_json_object_get(postgresql, "schema_name"),
-                             "$.storage.postgresql.schema_name", config->postgresql.schema_name,
-                             sizeof(config->postgresql.schema_name), 1, error);
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL &&
-      !control_config_schema_name_valid(config->postgresql.schema_name))
-    rc = control_config_error(error, TURBO_EINVAL, "$.storage.postgresql.schema_name",
-                              "invalid unquoted PostgreSQL schema name");
-#define FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER(key, minimum, maximum, target)                         \
-  do {                                                                                             \
-    if (rc == TURBO_OK && turbo_json_object_get(postgresql, (key))) {                              \
-      rc = control_config_integer(turbo_json_object_get(postgresql, (key)),                        \
-                                  "$.storage.postgresql." key, (minimum), (maximum), &value,       \
-                                  error);                                                          \
-      if (rc == TURBO_OK) (target) = value;                                                        \
-    }                                                                                              \
-  } while (0)
-  if (config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL) {
-    FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER("connect_timeout_seconds", 1u, 60u,
-                                        config->postgresql.connect_timeout_seconds);
-    FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER("statement_timeout_ms", 1u, 60000u,
-                                        config->postgresql.statement_timeout_ms);
-    FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER("lock_timeout_ms", 1u, 60000u,
-                                        config->postgresql.lock_timeout_ms);
-    FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER("pool_capacity", 1u,
-                                        FLOWIE_CONTROL_CONFIG_PGSQL_POOL_CAPACITY_MAX,
-                                        config->postgresql.pool_capacity);
-    FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER("acquire_timeout_ms", 1u, 60000u,
-                                        config->postgresql.acquire_timeout_ms);
-  }
-#undef FLOWIE_CONTROL_CONFIG_PGSQL_INTEGER
-  if (rc == TURBO_OK && config->store_provider == FLOWIE_CONTROL_CONFIG_STORE_POSTGRESQL &&
-      turbo_json_object_get(postgresql, "schema_mode")) {
-    char mode[16] = {0};
-    rc = control_config_text(turbo_json_object_get(postgresql, "schema_mode"),
-                             "$.storage.postgresql.schema_mode", mode, sizeof(mode), 1, error);
-    if (rc == TURBO_OK && strcmp(mode, "validate") == 0)
-      config->postgresql.schema_mode = FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_VALIDATE;
-    else if (rc == TURBO_OK && strcmp(mode, "migrate") == 0)
-      config->postgresql.schema_mode = FLOWIE_CONTROL_CONFIG_PGSQL_SCHEMA_MIGRATE;
-    else if (rc == TURBO_OK)
-      rc = control_config_error(error, TURBO_EINVAL, "$.storage.postgresql.schema_mode",
-                                "expected validate or migrate");
+  turbodb = storage ? turbo_json_object_get(storage, "turbodb") : NULL;
+  if (rc == TURBO_OK)
+    rc = control_config_object(turbodb, "$.storage.turbodb", turbodb_keys,
+                               sizeof(turbodb_keys) / sizeof(turbodb_keys[0]), error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(turbodb, "driver"), "$.storage.turbodb.driver",
+                             config->turbodb.driver, sizeof(config->turbodb.driver), 1, error);
+  options = turbodb ? turbo_json_object_get(turbodb, "options") : NULL;
+  if (rc == TURBO_OK && options && turbo_json_type(options) != TURBO_JSON_OBJECT)
+    rc = control_config_error(error, TURBO_EINVAL, "$.storage.turbodb.options", "expected mapping");
+  if (rc == TURBO_OK && options &&
+      turbo_json_object_size(options) > FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX)
+    rc = control_config_error(error, TURBO_ENOSPC, "$.storage.turbodb.options",
+                              "too many TurboDB options");
+  for (size_t index = 0u; rc == TURBO_OK && options && index < turbo_json_object_size(options);
+       ++index) {
+    const char *key = turbo_json_object_key(options, index);
+    char path[FLOWIE_CONTROL_CONFIG_ERROR_PATH_MAX + 1u];
+    if (!key || !key[0]) {
+      rc = control_config_error(error, TURBO_EINVAL, "$.storage.turbodb.options",
+                                "empty option keyword");
+      break;
+    }
+    (void)snprintf(path, sizeof(path), "$.storage.turbodb.options.%s", key);
+    if (strlen(key) > FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_KEY_MAX) {
+      rc = control_config_error(error, TURBO_ENAMETOOLONG, path, "option keyword exceeds limit");
+      break;
+    }
+    rc = control_config_text(turbo_json_object_get(options, key), path,
+                             config->turbodb.options[index].value,
+                             sizeof(config->turbodb.options[index].value), 1, error);
+    if (rc == TURBO_OK && flowie_control_config_turbodb_secret_option(key) &&
+        !flowie_control_config_secret_ref_valid(config->turbodb.options[index].value))
+      rc = control_config_error(error, TURBO_EINVAL, path,
+                                "sensitive database options require a valid env:// reference");
+    if (rc == TURBO_OK) {
+      (void)snprintf(config->turbodb.options[index].keyword,
+                     sizeof(config->turbodb.options[index].keyword), "%s", key);
+      config->turbodb.option_count = index + 1u;
+    }
   }
   return rc;
 }
@@ -440,12 +373,10 @@ static int control_config_parse_management(const json_value_t *management,
     if (rc == TURBO_OK) config->management.session_capacity = (size_t)value;
   }
   if (rc == TURBO_OK && session && turbo_json_object_get(session, "max_sessions_per_principal")) {
-    rc = control_config_integer(
-        turbo_json_object_get(session, "max_sessions_per_principal"),
-        "$.management.session.max_sessions_per_principal", 1u,
-        FLOWIE_CONTROL_CONFIG_SESSION_MAX_PER_PRINCIPAL, &value, error);
-    if (rc == TURBO_OK)
-      config->management.session_max_sessions_per_principal = (size_t)value;
+    rc = control_config_integer(turbo_json_object_get(session, "max_sessions_per_principal"),
+                                "$.management.session.max_sessions_per_principal", 1u,
+                                FLOWIE_CONTROL_CONFIG_SESSION_MAX_PER_PRINCIPAL, &value, error);
+    if (rc == TURBO_OK) config->management.session_max_sessions_per_principal = (size_t)value;
   }
   if (rc == TURBO_OK && session && turbo_json_object_get(session, "ttl_seconds")) {
     rc = control_config_integer(turbo_json_object_get(session, "ttl_seconds"),
@@ -460,17 +391,16 @@ static int control_config_parse_management(const json_value_t *management,
     if (rc == TURBO_OK) config->management.login_executor_configured = 1;
   }
   if (rc == TURBO_OK && executor && turbo_json_object_get(executor, executor_keys[0])) {
-    rc = control_config_integer(turbo_json_object_get(executor, executor_keys[0]),
-                                "$.management.login_executor.workers", 1u,
-                                FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS, &value,
-                                error);
+    rc = control_config_integer(
+        turbo_json_object_get(executor, executor_keys[0]), "$.management.login_executor.workers",
+        1u, FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS, &value, error);
     if (rc == TURBO_OK) config->management.login_executor_workers = (uint32_t)value;
   }
   if (rc == TURBO_OK && executor && turbo_json_object_get(executor, executor_keys[1])) {
     rc = control_config_integer(turbo_json_object_get(executor, executor_keys[1]),
                                 "$.management.login_executor.queue_capacity", 1u,
-                                FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY, &value,
-                                error);
+                                FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY,
+                                &value, error);
     if (rc == TURBO_OK) config->management.login_executor_queue_capacity = (size_t)value;
   }
   if (rc == TURBO_OK && executor && turbo_json_object_get(executor, executor_keys[2])) {
@@ -521,7 +451,7 @@ static int control_config_parse_external_https_tls(const json_value_t *tls,
                               "$.auth.external_https.tls.client_key_password_ref",
                               "client key password requires a client identity");
   if (rc == TURBO_OK && resolved->client_key_password_ref[0] &&
-      !control_config_secret_ref_valid(resolved->client_key_password_ref))
+      !flowie_control_config_secret_ref_valid(resolved->client_key_password_ref))
     rc = control_config_error(error, TURBO_EINVAL,
                               "$.auth.external_https.tls.client_key_password_ref",
                               "only env:// secret references are accepted");
@@ -548,7 +478,7 @@ static int control_config_parse_external_https(const json_value_t *external,
     rc = control_config_text(turbo_json_object_get(external, keys[1]),
                              "$.auth.external_https.service_token_ref", resolved->service_token_ref,
                              sizeof(resolved->service_token_ref), 1, error);
-  if (rc == TURBO_OK && !control_config_secret_ref_valid(resolved->service_token_ref))
+  if (rc == TURBO_OK && !flowie_control_config_secret_ref_valid(resolved->service_token_ref))
     rc = control_config_error(error, TURBO_EINVAL, "$.auth.external_https.service_token_ref",
                               "only env:// secret references are accepted");
   if (rc == TURBO_OK)
@@ -680,8 +610,8 @@ static int control_config_parse_auth(const json_value_t *auth, flowie_control_co
 int flowie_control_config_parse_yaml(const char *yaml, size_t yaml_size,
                                      flowie_control_config_t *out,
                                      flowie_control_config_error_t *error) {
-  static const char *const root_keys[] = {"version", "listener", "storage", "management",
-                                          "dashboard", "auth"};
+  static const char *const root_keys[] = {"version",    "listener",  "storage",
+                                          "management", "dashboard", "auth"};
   static const char *const dashboard_keys[] = {"enabled"};
   flowie_control_config_t resolved = FLOWIE_CONTROL_CONFIG_INIT;
   turbo_yaml_doc_t *yaml_document = NULL;

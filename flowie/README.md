@@ -1,6 +1,6 @@
 # Flowie 文档
 
-Flowie 是 MQTT 协议与业务处理层。standalone MQTT 协议事实通过 `TurboDB::ORM` 的 typed
+Flowie 是 MQTT 协议与业务处理层。standalone MQTT 协议事实通过 `Orm::C` 的 typed
 repository 管理；cluster 的数据与日志统一由 TurboRaft log/state-machine snapshot 管理；Graph 业务
 事实由产品自己的 sink/repository 管理。三者不得共享事实归属、连接、migration 或 fallback 路径。
 Flowie 内部 owner/route 容器只保存可由 committed Raft log 或 snapshot 重建的投影。
@@ -22,17 +22,18 @@ Repository 本地 Auth 或第三方 HTTPS Auth。第三方 credential、OIDC、L
 - [服务端使用指南](SERVER_GUIDE.md)：`flowie_server` 与 `flowie_supervisor` 部署、运行与 CLI 参数
 - [Flowie Control 部署与配置指南](CONTROL_GUIDE.md)：控制面 `flowie-control` 架构、部署与安全配置
 - [第三方系统接入指南](THIRD_PARTY_INTEGRATION.md)：Domain、管理 API、service credential、MQTT 客户端与 ACL 接入流程
-- [Flowie Control ACL 文法与使用](ACL_GRAMMAR.md)：用户 ACL、topic 树、wildcard 与发布流程
+- [Flowie Control ACL 文法与使用](ACL_GRAMMAR.md)：Role/Group/User ACL、通用 topic filter 与发布流程
 - [客户端开发指南](CLIENT_GUIDE.md)：Flowie MQTT 客户端 SDK 接口与集成
 - [发布门禁](RELEASE_GATE.md)：生产发布与质量门禁验收标准
 
 ### 2. 架构决策记录 (Architectural Decision Records - ADRs)
 
 - [HTTPS 认证服务设计](ADR_HTTPS_AUTH_SERVICE.md)：HTTPS Auth Provider 信任边界与 API 规范
+- [分层 ACL 主体与通用 MQTT Topic](ADR_SUBJECT_SCOPED_MQTT_ACL.md)：Role/Group/User 共享规则、deny veto、Domain 隔离与兼容决策
 - [动态 ACL Bundle 设计](ADR_DYNAMIC_ACL_BUNDLE.md)：版本化 ACL Bundle 格式、发布机制与同步
 - [控制面启动参数决策](ADR_CONTROL_STARTUP_OPTIONS.md)：`flowie-control` CLI / Environment / DotEnv 优先顺序与配置隔离
 - [控制面凭据管理与哈希](ADR_CONTROL_CREDENTIALS.md)：Argon2id 散列算法、参数与凭据存储规范
-- [控制面存储 Provider 抽象](ADR_CONTROL_STORE_PROVIDER.md)：SQLite 与 PostgreSQL 存储层接口与迁移控制
+- [控制面类型化规则存储](ADR_TYPED_SUBJECT_RULE_STORAGE_RPC.md)：TurboDB 唯一持久化边界与 Role/Group/User 规则 RPC
 - [协议数据与业务数据存储分层](ADR_PROTOCOL_BUSINESS_STORAGE.md)：ProtocolStore / TurboDB ORM 边界与迁移
 
 ### 3. 测试与运维手册 (Test & Ops Runbooks)

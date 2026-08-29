@@ -1,5 +1,6 @@
 #include "flowie_control_credential_internal.h"
 #include "flowie_control_service_credential_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -16,8 +17,8 @@ typedef struct service_credential_fixture_s {
   uint64_t revision;
 } service_credential_fixture_t;
 
-static void service_credential_add_role(service_credential_fixture_t *fixture,
-                                        const char *role_id, const char *request_suffix) {
+static void service_credential_add_role(service_credential_fixture_t *fixture, const char *role_id,
+                                        const char *request_suffix) {
   flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
   flowie_control_user_role_add_command_t assignment = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
@@ -25,9 +26,9 @@ static void service_credential_add_role(service_credential_fixture_t *fixture,
   char assignment_request[64];
 
   check_greater(snprintf(role_request, sizeof(role_request), "service-role-%s", request_suffix), 0);
-  check_greater(snprintf(assignment_request, sizeof(assignment_request),
-                        "service-assignment-%s", request_suffix),
-               0);
+  check_greater(snprintf(assignment_request, sizeof(assignment_request), "service-assignment-%s",
+                         request_suffix),
+                0);
   role.domain_id = "root-a";
   role.role_id = role_id;
   role.actor = "bootstrap";
@@ -51,6 +52,7 @@ static void service_credential_add_role(service_credential_fixture_t *fixture,
 static service_credential_fixture_t service_credential_fixture_open(uint32_t permissions) {
   service_credential_fixture_t fixture = {0};
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_service_credential_config_t resolver_config =
       FLOWIE_CONTROL_SERVICE_CREDENTIAL_CONFIG_INIT;
   flowie_control_domain_create_command_t domain = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
@@ -62,7 +64,8 @@ static service_credential_fixture_t service_credential_fixture_open(uint32_t per
       (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   fixture.database_path = tt_make_temp_file("flowie-service-credential", ".sqlite3");
   check_not_null(fixture.database_path);
-  store_config.database_path = fixture.database_path;
+  check_equal(flowie_control_test_turbodb_init(&test_database, fixture.database_path), 0);
+  store_config.database = &test_database.config;
   check_equal(flowie_control_store_open(&store_config, &fixture.store), TURBO_OK);
   check_not_null(fixture.store);
 
@@ -89,9 +92,8 @@ static service_credential_fixture_t service_credential_fixture_open(uint32_t per
   issue.request_id = "service-credential-broker-a";
   issue.expected_revision = fixture.revision;
   issue.occurred_at = 1002u;
-  check_equal(flowie_control_store_credential_generate(fixture.store, &issue,
-                                                        &fixture.credential),
-               TURBO_OK);
+  check_equal(flowie_control_store_credential_generate(fixture.store, &issue, &fixture.credential),
+              TURBO_OK);
   fixture.revision = fixture.credential.revision;
 
   if ((permissions & FLOWIE_CONTROL_SERVICE_AUTHENTICATE) != 0u)
@@ -101,9 +103,9 @@ static service_credential_fixture_t service_credential_fixture_open(uint32_t per
 
   resolver_config.listener_id = "flowie-control-auth";
   resolver_config.repository = flowie_control_store_repository(fixture.store);
-  check_equal(flowie_control_service_credential_resolver_create(&resolver_config,
-                                                                 &fixture.resolver),
-               TURBO_OK);
+  check_equal(
+      flowie_control_service_credential_resolver_create(&resolver_config, &fixture.resolver),
+      TURBO_OK);
   check_not_null(fixture.resolver);
   return fixture;
 }
@@ -122,9 +124,9 @@ static int service_credential_resolve(service_credential_fixture_t *fixture,
                                       const char *token, size_t token_size,
                                       uint32_t required_permission,
                                       flowie_control_verified_caller_t *caller) {
-  return flowie_control_service_credential_resolve(
-      fixture->resolver, service_domain, service_id, (const uint8_t *)token, token_size,
-      required_permission, caller);
+  return flowie_control_service_credential_resolve(fixture->resolver, service_domain, service_id,
+                                                   (const uint8_t *)token, token_size,
+                                                   required_permission, caller);
 }
 
 spec("Flowie repository-backed service credentials") {
@@ -133,18 +135,17 @@ spec("Flowie repository-backed service credentials") {
         FLOWIE_CONTROL_SERVICE_AUTHENTICATE | FLOWIE_CONTROL_SERVICE_ACL_CHECK);
     flowie_control_verified_caller_t caller = FLOWIE_CONTROL_VERIFIED_CALLER_INIT;
 
-    check_equal(service_credential_resolve(
-                     &fixture, "root-a", "broker-a", fixture.credential.token,
-                     fixture.credential.token_size,
-                     FLOWIE_CONTROL_SERVICE_AUTHENTICATE | FLOWIE_CONTROL_SERVICE_ACL_CHECK,
-                     &caller),
-                 TURBO_OK);
+    check_equal(
+        service_credential_resolve(
+            &fixture, "root-a", "broker-a", fixture.credential.token, fixture.credential.token_size,
+            FLOWIE_CONTROL_SERVICE_AUTHENTICATE | FLOWIE_CONTROL_SERVICE_ACL_CHECK, &caller),
+        TURBO_OK);
     check_equal(caller.listener_id, "flowie-control-auth");
     check_equal(caller.service_id, "broker-a");
     check_equal(caller.domain_id, "root-a");
     check_true(caller.authenticated);
-    check_bits(caller.permissions, FLOWIE_CONTROL_SERVICE_AUTHENTICATE |
-                                       FLOWIE_CONTROL_SERVICE_ACL_CHECK);
+    check_bits(caller.permissions,
+               FLOWIE_CONTROL_SERVICE_AUTHENTICATE | FLOWIE_CONTROL_SERVICE_ACL_CHECK);
 
     service_credential_fixture_close(&fixture);
   }
@@ -155,18 +156,18 @@ spec("Flowie repository-backed service credentials") {
     flowie_control_verified_caller_t caller = FLOWIE_CONTROL_VERIFIED_CALLER_INIT;
 
     check_equal(service_credential_resolve(&fixture, "root-a", "broker-a", "wrong-token",
-                                            sizeof("wrong-token") - 1u,
-                                            FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
-                 TURBO_EPERM);
+                                           sizeof("wrong-token") - 1u,
+                                           FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
+                TURBO_EPERM);
     check_false(caller.authenticated);
-    check_equal(service_credential_resolve(
-                     &fixture, "root-b", "broker-a", fixture.credential.token,
-                     fixture.credential.token_size, FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
-                 TURBO_EPERM);
-    check_equal(service_credential_resolve(
-                     &fixture, "root-a", "broker-b", fixture.credential.token,
-                     fixture.credential.token_size, FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
-                 TURBO_EPERM);
+    check_equal(service_credential_resolve(&fixture, "root-b", "broker-a", fixture.credential.token,
+                                           fixture.credential.token_size,
+                                           FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
+                TURBO_EPERM);
+    check_equal(service_credential_resolve(&fixture, "root-a", "broker-b", fixture.credential.token,
+                                           fixture.credential.token_size,
+                                           FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
+                TURBO_EPERM);
 
     service_credential_fixture_close(&fixture);
   }
@@ -176,15 +177,15 @@ spec("Flowie repository-backed service credentials") {
         service_credential_fixture_open(FLOWIE_CONTROL_SERVICE_AUTHENTICATE);
     flowie_control_verified_caller_t caller = FLOWIE_CONTROL_VERIFIED_CALLER_INIT;
 
-    check_equal(service_credential_resolve(
-                     &fixture, "root-a", "broker-a", fixture.credential.token,
-                     fixture.credential.token_size, FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
-                 TURBO_OK);
+    check_equal(service_credential_resolve(&fixture, "root-a", "broker-a", fixture.credential.token,
+                                           fixture.credential.token_size,
+                                           FLOWIE_CONTROL_SERVICE_AUTHENTICATE, &caller),
+                TURBO_OK);
     caller = (flowie_control_verified_caller_t)FLOWIE_CONTROL_VERIFIED_CALLER_INIT;
-    check_equal(service_credential_resolve(
-                     &fixture, "root-a", "broker-a", fixture.credential.token,
-                     fixture.credential.token_size, FLOWIE_CONTROL_SERVICE_ACL_CHECK, &caller),
-                 TURBO_EPERM);
+    check_equal(service_credential_resolve(&fixture, "root-a", "broker-a", fixture.credential.token,
+                                           fixture.credential.token_size,
+                                           FLOWIE_CONTROL_SERVICE_ACL_CHECK, &caller),
+                TURBO_EPERM);
     check_false(caller.authenticated);
 
     service_credential_fixture_close(&fixture);
@@ -205,10 +206,10 @@ spec("Flowie repository-backed service credentials") {
     revoke.expected_revision = fixture.revision;
     revoke.occurred_at = 4000u;
     check_equal(flowie_control_store_credential_revoke(fixture.store, &revoke, &result), TURBO_OK);
-    check_equal(service_credential_resolve(
-                     &fixture, "root-a", "broker-a", fixture.credential.token,
-                     fixture.credential.token_size, FLOWIE_CONTROL_SERVICE_ACL_CHECK, &caller),
-                 TURBO_EPERM);
+    check_equal(service_credential_resolve(&fixture, "root-a", "broker-a", fixture.credential.token,
+                                           fixture.credential.token_size,
+                                           FLOWIE_CONTROL_SERVICE_ACL_CHECK, &caller),
+                TURBO_EPERM);
     check_false(caller.authenticated);
 
     service_credential_fixture_close(&fixture);

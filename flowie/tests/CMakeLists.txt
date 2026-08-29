@@ -33,10 +33,22 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_protocol_repository
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository.c
-  LIBS Flowie::App TurboUtils::TinyTest
+  LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest
   FOLDER "flowie/tests")
 
 set_tests_properties(test_flowie_protocol_repository PROPERTIES LABELS "flowie;flowie-release;storage")
+
+if(FLOWIE_TURBODB_LIVE_TESTS)
+  cmake_add_test(
+    test_flowie_protocol_repository_turbodb_live
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_protocol_repository_turbodb_live.c
+    LIBS Flowie::App flowie_orm_flow TurboUtils::TinyTest
+    FOLDER "flowie/tests")
+  set_tests_properties(
+    test_flowie_protocol_repository_turbodb_live
+    PROPERTIES LABELS "flowie;live;turbodb;postgresql;storage"
+               TIMEOUT 120)
+endif()
 
 cmake_add_test(
   test_flowie_cluster

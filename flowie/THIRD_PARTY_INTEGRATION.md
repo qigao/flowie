@@ -61,6 +61,44 @@ MQTT 客户端
 Role 不隐式包含 `viewer`。需要写入和查询的集成必须同时分配相应写 Role 与 `viewer`。不要把
 `system/admin` 或 `system_admin` 账号交给业务系统。
 
+### 平台管理员通过 Dashboard 开通
+
+平台管理员登录 `https://<control-host>/v2/control/dashboard` 后，按以下顺序操作：
+
+1. 如果当前仍是空库 bootstrap 登录，先修改 `system/admin` 的公开初始密码并重新登录。
+2. 在 Overview 选择 **Add domain**，创建第三方专属 Domain，然后在页面顶部切换到该 Domain。
+3. 在 Users 选择 **Add user**，创建 Type 为 `human` 的专用管理账号。不要复用个人账号，也不要选择
+   `service`；service principal 的 token 用于受信后端 endpoint，不是 Control 管理登录密码。
+4. 对该 human 用户选择 **Set password**，首次设置必须选择 `create`，输入并确认至少 16 bytes 的
+   密码。Control 不生成或回显人类密码；已有密码的轮换必须明确选择 `replace`，系统不会在
+   `create` 冲突时自动改为覆盖。
+5. 在 Roles 创建所需的保留 Role，再分配给该用户。只读集成为 `viewer`；用户/Group 管理通常为
+   `viewer` + `user_admin`；策略管理通常为 `viewer` + `policy_admin`；只有第三方确实拥有整个 Domain
+   管理权时才分配 `security_admin`。
+6. 退出 `system/admin`，使用新 Domain、principal 和密码做一次独立登录验收，并确认看不到其他
+   Domain。
+
+普通第三方账号不会继承 bootstrap 账号的固定密码或自动改密状态。初始密码应由密码管理器生成，
+通过与 Domain/principal 不同的受控通道交付，并在接入方完成保存后删除临时副本。
+
+### 交付给第三方的接入资料
+
+| 项目 | 示例/要求 |
+| --- | --- |
+| Control base URL | `https://control.example.com`；不得包含凭据、query 或 fragment |
+| Management RPC URL | 默认 `/v2/control/rpc`；若部署修改了 `management.rpc_path`，交付完整实际 URL |
+| Domain | `warehouse` |
+| Principal | `warehouse-control`；不要交付 `system/admin` |
+| 初始密码 | 单独安全交付，不写入邮件正文、工单日志或客户端配置仓库 |
+| TLS trust | 受信 CA chain 与预期 hostname；客户端必须验证二者 |
+| Role 范围 | 明确列出 `viewer`、`user_admin`、`policy_admin` 或 `security_admin` |
+| Session 策略 | 当前 TTL、重新登录条件以及停用/撤权联系人 |
+
+不要交付 Broker 的 service token。它只供 Broker 调用 `/v4/authenticate` 和 `/v4/acl/check`，不能
+登录 Dashboard 或 Management RPC。
+
+### 第三方后端登录验收
+
 管理后端通过同源 HTTPS 登录：
 
 ```http
@@ -83,9 +121,15 @@ Content-Type: application/json
 {"jsonrpc":"2.0","method":"control.system.status","params":{},"id":"status-1"}
 ```
 
-Management session 有容量和 TTL 限制，Flowie 重启后也必须重新登录。账号 disabled、Role 被移除、
-session 过期或被淘汰后，请求立即失效。浏览器跨域应用应通过自己的后端调用 Flowie，不能把管理
+Management session 有容量和 TTL 限制，并持久化在 Control 配置选择的 TurboDB Repository 中；Flowie
+重启后，尚未过期且未撤销的 session 仍然有效。账号 disabled、Role 被移除、session 过期或被淘汰后，
+请求立即失效。浏览器跨域应用应通过自己的后端调用 Flowie，不能把管理
 密码或 session token 放到前端。
+
+后端必须把 `303` 作为登录成功，并从 `Set-Cookie` 中提取名为 `flowie_session` 的 64 字符不透明值；
+不要跟随跳转后再猜测登录结果，也不要解析 token。RPC 通常返回 HTTP `200`，调用方仍必须检查 JSON-RPC
+响应中是 `result` 还是 `error`。收到 `-32001` 时重新登录；收到 `-32003` 时停止重试并检查 Domain 与
+Role；写操作传输结果不确定时，以相同 `request_id` 重试，不得换 ID 猜测提交状态。
 
 完整 method、参数、分页、幂等和错误码见
 [MANAGEMENT_RPC_API.md](MANAGEMENT_RPC_API.md)。
@@ -132,24 +176,46 @@ MQTT 登录时：
 - 当前全局 username 解析要求一个 username 只对应一个 enabled Domain；跨 Domain 重名会 fail
   closed，因此接入方应使用全局唯一 username，例如 `warehouse-device-202`。
 
-## 3. 创建 Group 与 ACL
+## 3. 创建 Role/Group 与 ACL
 
-Group 可以有多层父子关系，最大深度为 16。topic 中必须写出完整父链：
+ACL 可以归属于 Role、Group 或单个 User。Role 规则供 Domain 内所有有效拥有该 Role 的用户使用，
+Group 规则供有效 Group 成员使用，User 规则用于个体覆盖。topic 是受限 MQTT filter；其中的
+`groups`、`devices` 等 segment 只是业务资源名称，不引用 Control Group。
+
+例如，设备可以发布：
 
 ```text
-warehouse/groups/china/east/operators/devices/warehouse-device-202/event
+warehouse/telemetry/warehouse-device-202/event
 ```
 
-为用户保存一份 canonical ACL 文档：
+先创建业务 Role 并分配给用户（若已存在/已分配，则使用各查询接口确认状态，不要以新 request ID
+重复写入）：
+
+```json
+{"jsonrpc":"2.0","method":"control.role.create","params":{"role_id":"device-publisher","request_id":"device-publisher-create"},"id":"role-create-1"}
+```
+
+```json
+{"jsonrpc":"2.0","method":"control.role.assign","params":{"principal_id":"warehouse-device-202","role_id":"device-publisher","request_id":"warehouse-device-202-publisher-assign"},"id":"role-assign-1"}
+```
+
+再为业务 Role 保存一份结构化 ACL：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "control.policy.rule.put",
+  "method": "control.policy.subject_rule.put",
   "params": {
+    "subject_kind": "role",
+    "subject_id": "device-publisher",
     "ordinal": 10,
-    "rule_line": "user warehouse-device-202 allow {\n  write topic warehouse/groups/china/east/operators/devices/%u/{event,heartbeat}\n  read topic warehouse/groups/china/east/operators/devices/%c/command\n  deny readwrite topic warehouse/groups/china/east/operators/devices/%u/private\n}",
-    "request_id": "warehouse-device-202-acl-v1"
+    "connection": "allow",
+    "entries": [
+      {"effect": "allow", "access": "write", "topic": "warehouse/telemetry/%u/{event,heartbeat}"},
+      {"effect": "allow", "access": "read", "topic": "warehouse/commands/%c/+"},
+      {"effect": "deny", "access": "readwrite", "topic": "warehouse/telemetry/%u/private"}
+    ],
+    "request_id": "warehouse-device-publisher-acl-v1"
   },
   "id": "acl-put-1"
 }
@@ -170,10 +236,10 @@ warehouse/groups/china/east/operators/devices/warehouse-device-202/event
 }
 ```
 
-同一 subject 在同一 Domain 只能保存一份 ACL 文档。更新时替换该文档，删除时删除整份文档；只有
-成功 `publish` 后才改变 Broker 使用的 active policy。`read` 是 SUBSCRIBE，`write` 是 PUBLISH，
-`deny` 只拒绝匹配的操作，不表示拒绝 MQTT 连接。`%u` 匹配 MQTT username，`%c` 匹配 MQTT
-client ID。
+同一 `(subject type, subject ID)` 在同一 Domain 只能保存一份 ACL 文档；不同类型可以使用同名 ID。
+更新时替换该文档，删除时删除整份文档；只有成功 `publish` 后才改变 Broker 使用的 active policy。
+所有适用的 Role、Group、User 规则共同求值，任一匹配 deny 优先。`read` 是 SUBSCRIBE，`write` 是
+PUBLISH；`%u` 匹配 MQTT username，`%c` 匹配 MQTT client ID。
 
 完整 grammar、canonical 格式、wildcard 和容量限制见 [ACL_GRAMMAR.md](ACL_GRAMMAR.md)。
 
@@ -347,7 +413,12 @@ Control 记录；客户端应用只负责对配置中的 topic 收发消息。
 
 ## 接入验收清单
 
+- Dashboard 已使用 `create` 为 human 管理账号设置首个密码，并以该账号独立登录成功。
+- 交付资料不包含 `system/admin`、`system_admin` 或 Broker service token。
 - 第三方管理账号只能访问自己的 Domain，且只有所需 Management Role。
+- 后端验证 Control 证书链与 hostname，并把登录 `303` 和 JSON-RPC `result`/`error` 分别处理。
+- Management session 过期、撤销、容量淘汰或收到 `-32001` 后会重新登录；普通进程重启不应使有效 session
+  失效，`-32003` 不做无界重试。
 - username 在所有 enabled Domain 中唯一。
 - ACL topic 的首段与用户 Domain 一致，Group path 与数据库父链一致。
 - ACL 已 validate 并 publish，而不只是保存到 draft。

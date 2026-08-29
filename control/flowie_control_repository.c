@@ -2,261 +2,296 @@
 
 #include "turbo_error.h"
 
-static int sqlite_domain_create(void *ctx,
-                                    const flowie_control_domain_create_command_t *command,
-                                    flowie_control_command_result_t *result) {
+static int turbodb_domain_create(void *ctx, const flowie_control_domain_create_command_t *command,
+                                 flowie_control_command_result_t *result) {
   return flowie_control_store_domain_create((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_domain_get(void *ctx, const char *domain_id,
-                                 flowie_control_domain_view_t *out) {
+static int turbodb_domain_get(void *ctx, const char *domain_id, flowie_control_domain_view_t *out) {
   return flowie_control_store_domain_get((flowie_control_store_t *)ctx, domain_id, out);
 }
 
-static int sqlite_domain_list(void *ctx, const char *after_domain_id,
-                                  flowie_control_domain_view_t *items, size_t item_capacity,
-                                  size_t *count_out, int *has_more_out) {
-  return flowie_control_store_domain_list((flowie_control_store_t *)ctx, after_domain_id,
-                                              items, item_capacity, count_out, has_more_out);
+static int turbodb_domain_list(void *ctx, const char *after_domain_id,
+                               flowie_control_domain_view_t *items, size_t item_capacity,
+                               size_t *count_out, int *has_more_out) {
+  return flowie_control_store_domain_list((flowie_control_store_t *)ctx, after_domain_id, items,
+                                          item_capacity, count_out, has_more_out);
 }
 
-static int sqlite_user_create(void *ctx, const flowie_control_user_create_command_t *command,
-                              flowie_control_command_result_t *result) {
+static int turbodb_user_create(void *ctx, const flowie_control_user_create_command_t *command,
+                               flowie_control_command_result_t *result) {
   return flowie_control_store_user_create((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_user_disable(void *ctx, const flowie_control_user_disable_command_t *command,
-                               flowie_control_command_result_t *result) {
+static int turbodb_user_disable(void *ctx, const flowie_control_user_disable_command_t *command,
+                                flowie_control_command_result_t *result) {
   return flowie_control_store_user_disable((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_user_get(void *ctx, const char *domain_id, const char *principal_id,
-                           flowie_control_user_view_t *out) {
-  return flowie_control_store_user_get((flowie_control_store_t *)ctx, domain_id, principal_id,
-                                       out);
+static int turbodb_user_get(void *ctx, const char *domain_id, const char *principal_id,
+                            flowie_control_user_view_t *out) {
+  return flowie_control_store_user_get((flowie_control_store_t *)ctx, domain_id, principal_id, out);
 }
 
-static int sqlite_user_list(void *ctx, const char *domain_id, const char *after_principal_id,
-                            flowie_control_user_view_t *items, size_t item_capacity,
-                            size_t *count_out, int *has_more_out) {
+static int turbodb_user_list(void *ctx, const char *domain_id, const char *after_principal_id,
+                             flowie_control_user_view_t *items, size_t item_capacity,
+                             size_t *count_out, int *has_more_out) {
   return flowie_control_store_user_list((flowie_control_store_t *)ctx, domain_id,
                                         after_principal_id, items, item_capacity, count_out,
                                         has_more_out);
 }
 
-static int sqlite_credential_verify(void *ctx, const char *domain_id, const char *principal_id,
-                                    const void *secret, size_t secret_size,
-                                    flowie_control_credential_verify_result_t *result) {
+static int turbodb_credential_verify(void *ctx, const char *domain_id, const char *principal_id,
+                                     const void *secret, size_t secret_size,
+                                     flowie_control_credential_verify_result_t *result) {
   return flowie_control_store_credential_verify((flowie_control_store_t *)ctx, domain_id,
                                                 principal_id, secret, secret_size, result);
 }
 
-static int sqlite_credential_state(void *ctx, const char *domain_id, const char *principal_id,
-                                   flowie_control_credential_verify_result_t *result) {
+static int turbodb_credential_state(void *ctx, const char *domain_id, const char *principal_id,
+                                    flowie_control_credential_verify_result_t *result) {
   return flowie_control_store_credential_state((flowie_control_store_t *)ctx, domain_id,
                                                principal_id, result);
 }
 
-static int sqlite_credential_resolve(void *ctx, const char *principal_id, const void *secret,
-                                     size_t secret_size,
-                                     flowie_control_credential_resolution_t *result) {
+static int turbodb_credential_resolve(void *ctx, const char *principal_id, const void *secret,
+                                      size_t secret_size,
+                                      flowie_control_credential_resolution_t *result) {
   return flowie_control_store_credential_resolve((flowie_control_store_t *)ctx, principal_id,
                                                  secret, secret_size, result);
 }
 
-static int sqlite_current_revision(void *ctx, uint64_t *revision_out) {
+static int turbodb_current_revision(void *ctx, uint64_t *revision_out) {
   return flowie_control_store_current_revision((flowie_control_store_t *)ctx, revision_out);
 }
 
-static int sqlite_principal_snapshot(void *ctx, const char *domain_id, const char *principal_id,
-                                     const flowie_control_credential_verify_result_t *expected,
-                                     flowie_control_principal_snapshot_t *out) {
+static int turbodb_principal_snapshot(void *ctx, const char *domain_id, const char *principal_id,
+                                      const flowie_control_credential_verify_result_t *expected,
+                                      flowie_control_principal_snapshot_t *out) {
   return flowie_control_store_principal_snapshot((flowie_control_store_t *)ctx, domain_id,
                                                  principal_id, expected, out);
 }
 
-static int sqlite_external_principal_snapshot(void *ctx, const char *domain_id,
-                                              const char *principal_id, uint64_t assertion_revision,
-                                              flowie_control_principal_snapshot_t *out) {
-  return flowie_control_store_external_principal_snapshot(
-      (flowie_control_store_t *)ctx, domain_id, principal_id, assertion_revision, out);
+static int turbodb_external_principal_snapshot(void *ctx, const char *domain_id,
+                                               const char *principal_id,
+                                               uint64_t assertion_revision,
+                                               flowie_control_principal_snapshot_t *out) {
+  return flowie_control_store_external_principal_snapshot((flowie_control_store_t *)ctx, domain_id,
+                                                          principal_id, assertion_revision, out);
 }
 
-static int sqlite_credential_generate(void *ctx,
-                                      const flowie_control_credential_issue_command_t *command,
-                                      flowie_control_generated_credential_t *result) {
+static int turbodb_credential_generate(void *ctx,
+                                       const flowie_control_credential_issue_command_t *command,
+                                       flowie_control_generated_credential_t *result) {
   return flowie_control_store_credential_generate((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_credential_rotate(void *ctx,
-                                    const flowie_control_credential_issue_command_t *command,
-                                    flowie_control_generated_credential_t *result) {
+static int turbodb_credential_rotate(void *ctx,
+                                     const flowie_control_credential_issue_command_t *command,
+                                     flowie_control_generated_credential_t *result) {
   return flowie_control_store_credential_rotate((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_credential_revoke(void *ctx,
-                                    const flowie_control_credential_revoke_command_t *command,
-                                    flowie_control_command_result_t *result) {
+static int turbodb_credential_revoke(void *ctx,
+                                     const flowie_control_credential_revoke_command_t *command,
+                                     flowie_control_command_result_t *result) {
   return flowie_control_store_credential_revoke((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_group_create(void *ctx, const flowie_control_group_create_command_t *command,
-                               flowie_control_command_result_t *result) {
+static int turbodb_group_create(void *ctx, const flowie_control_group_create_command_t *command,
+                                flowie_control_command_result_t *result) {
   return flowie_control_store_group_create((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_group_delete(void *ctx, const flowie_control_group_delete_command_t *command,
-                               flowie_control_command_result_t *result) {
+static int turbodb_group_delete(void *ctx, const flowie_control_group_delete_command_t *command,
+                                flowie_control_command_result_t *result) {
   return flowie_control_store_group_delete((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_membership_add(void *ctx, const flowie_control_membership_add_command_t *command,
-                                 flowie_control_command_result_t *result) {
+static int turbodb_membership_add(void *ctx, const flowie_control_membership_add_command_t *command,
+                                  flowie_control_command_result_t *result) {
   return flowie_control_store_membership_add((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_membership_remove(void *ctx,
-                                    const flowie_control_membership_remove_command_t *command,
-                                    flowie_control_command_result_t *result) {
+static int turbodb_membership_remove(void *ctx,
+                                     const flowie_control_membership_remove_command_t *command,
+                                     flowie_control_command_result_t *result) {
   return flowie_control_store_membership_remove((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_effective_groups(void *ctx, const char *domain_id, const char *principal_id,
-                                   flowie_control_effective_groups_view_t *out) {
+static int turbodb_effective_groups(void *ctx, const char *domain_id, const char *principal_id,
+                                    flowie_control_effective_groups_view_t *out) {
   return flowie_control_store_effective_groups((flowie_control_store_t *)ctx, domain_id,
                                                principal_id, out);
 }
 
-static int sqlite_group_list(void *ctx, const char *domain_id, const char *after_group_id,
-                             flowie_control_group_view_t *items, size_t item_capacity,
-                             size_t *count_out, int *has_more_out) {
-  return flowie_control_store_group_list((flowie_control_store_t *)ctx, domain_id,
-                                         after_group_id, items, item_capacity, count_out,
-                                         has_more_out);
+static int turbodb_group_list(void *ctx, const char *domain_id, const char *after_group_id,
+                              flowie_control_group_view_t *items, size_t item_capacity,
+                              size_t *count_out, int *has_more_out) {
+  return flowie_control_store_group_list((flowie_control_store_t *)ctx, domain_id, after_group_id,
+                                         items, item_capacity, count_out, has_more_out);
 }
 
-static int sqlite_role_create(void *ctx, const flowie_control_role_create_command_t *command,
-                              flowie_control_command_result_t *result) {
+static int turbodb_role_create(void *ctx, const flowie_control_role_create_command_t *command,
+                               flowie_control_command_result_t *result) {
   return flowie_control_store_role_create((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_role_disable(void *ctx, const flowie_control_role_disable_command_t *command,
-                               flowie_control_command_result_t *result) {
+static int turbodb_role_disable(void *ctx, const flowie_control_role_disable_command_t *command,
+                                flowie_control_command_result_t *result) {
   return flowie_control_store_role_disable((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_role_assignment_add(void *ctx,
-                                      const flowie_control_user_role_add_command_t *command,
-                                      flowie_control_command_result_t *result) {
+static int turbodb_role_assignment_add(void *ctx,
+                                       const flowie_control_user_role_add_command_t *command,
+                                       flowie_control_command_result_t *result) {
   return flowie_control_store_user_role_add((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_role_assignment_remove(void *ctx,
-                                         const flowie_control_user_role_remove_command_t *command,
-                                         flowie_control_command_result_t *result) {
+static int turbodb_role_assignment_remove(void *ctx,
+                                          const flowie_control_user_role_remove_command_t *command,
+                                          flowie_control_command_result_t *result) {
   return flowie_control_store_user_role_remove((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_effective_roles(void *ctx, const char *domain_id, const char *principal_id,
-                                  flowie_control_effective_roles_view_t *out) {
+static int turbodb_effective_roles(void *ctx, const char *domain_id, const char *principal_id,
+                                   flowie_control_effective_roles_view_t *out) {
   return flowie_control_store_effective_roles((flowie_control_store_t *)ctx, domain_id,
                                               principal_id, out);
 }
 
-static int sqlite_role_list(void *ctx, const char *domain_id, const char *after_role_id,
-                            flowie_control_role_view_t *items, size_t item_capacity,
-                            size_t *count_out, int *has_more_out) {
+static int turbodb_role_list(void *ctx, const char *domain_id, const char *after_role_id,
+                             flowie_control_role_view_t *items, size_t item_capacity,
+                             size_t *count_out, int *has_more_out) {
   return flowie_control_store_role_list((flowie_control_store_t *)ctx, domain_id, after_role_id,
                                         items, item_capacity, count_out, has_more_out);
 }
 
-static int sqlite_policy_rule_put(void *ctx,
-                                  const flowie_control_policy_rule_put_command_t *command,
-                                  flowie_control_command_result_t *result) {
-  return flowie_control_store_policy_rule_put((flowie_control_store_t *)ctx, command, result);
-}
-
-static int sqlite_policy_rule_delete(void *ctx,
-                                     const flowie_control_policy_rule_delete_command_t *command,
-                                     flowie_control_command_result_t *result) {
-  return flowie_control_store_policy_rule_delete((flowie_control_store_t *)ctx, command, result);
-}
-
-static int sqlite_policy_validate(void *ctx, const char *domain_id,
-                                  flowie_control_policy_validation_t *out) {
+static int turbodb_policy_validate(void *ctx, const char *domain_id,
+                                   flowie_control_policy_validation_t *out) {
   return flowie_control_store_policy_validate((flowie_control_store_t *)ctx, domain_id, out);
 }
 
-static int sqlite_policy_publish(void *ctx, const flowie_control_policy_publish_command_t *command,
-                                 flowie_control_policy_publish_result_t *result) {
+static int turbodb_policy_publish(void *ctx, const flowie_control_policy_publish_command_t *command,
+                                  flowie_control_policy_publish_result_t *result) {
   return flowie_control_store_policy_publish((flowie_control_store_t *)ctx, command, result);
 }
 
-static int sqlite_policy_rule_list(void *ctx, const char *domain_id, uint32_t after_ordinal,
-                                   int has_after, flowie_control_policy_rule_view_t *items,
-                                   size_t item_capacity, size_t *count_out, int *has_more_out) {
-  return flowie_control_store_policy_rule_list((flowie_control_store_t *)ctx, domain_id,
-                                               after_ordinal, has_after, items, item_capacity,
-                                               count_out, has_more_out);
-}
-
-static int sqlite_policy_status(void *ctx, const char *domain_id,
-                                flowie_control_policy_status_t *out) {
+static int turbodb_policy_status(void *ctx, const char *domain_id,
+                                 flowie_control_policy_status_t *out) {
   return flowie_control_store_policy_status((flowie_control_store_t *)ctx, domain_id, out);
 }
 
-static int sqlite_policy_bundle_load(void *ctx, const char *domain_id,
-                                     uint64_t required_version,
-                                     flowie_security_policy_bundle_t *bundle_out) {
+static int turbodb_policy_bundle_load(void *ctx, const char *domain_id, uint64_t required_version,
+                                      flowie_security_policy_bundle_t *bundle_out) {
   return flowie_control_store_policy_bundle_load((flowie_control_store_t *)ctx, domain_id,
                                                  required_version, bundle_out);
 }
 
-static void sqlite_policy_bundle_release(void *ctx,
-                                         flowie_security_policy_bundle_t *bundle) {
+static void turbodb_policy_bundle_release(void *ctx, flowie_security_policy_bundle_t *bundle) {
   (void)ctx;
   flowie_control_store_policy_bundle_release(bundle);
 }
 
-static int sqlite_audit_revision(void *ctx, uint64_t *revision_out) {
+static int
+turbodb_policy_subject_rule_put(void *ctx,
+                                const flowie_control_policy_subject_rule_put_command_t *command,
+                                flowie_control_command_result_t *result) {
+  return flowie_control_store_policy_subject_rule_put((flowie_control_store_t *)ctx, command,
+                                                      result);
+}
+
+static int turbodb_policy_subject_rule_delete(
+    void *ctx, const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result) {
+  return flowie_control_store_policy_subject_rule_delete((flowie_control_store_t *)ctx, command,
+                                                         result);
+}
+
+static int turbodb_policy_subject_rule_get(void *ctx, const char *domain_id,
+                                           flowie_security_subject_kind_t subject_kind,
+                                           const char *subject_id,
+                                           flowie_control_policy_subject_rule_view_t *out) {
+  return flowie_control_store_policy_subject_rule_get((flowie_control_store_t *)ctx, domain_id,
+                                                      subject_kind, subject_id, out);
+}
+
+static int turbodb_policy_subject_rule_list(void *ctx, const char *domain_id,
+                                            flowie_security_subject_kind_t subject_kind,
+                                            uint32_t after_ordinal, int has_after,
+                                            flowie_control_policy_subject_rule_view_t *items,
+                                            size_t item_capacity, size_t *count_out,
+                                            int *has_more_out) {
+  return flowie_control_store_policy_subject_rule_list(
+      (flowie_control_store_t *)ctx, domain_id, subject_kind, after_ordinal, has_after, items,
+      item_capacity, count_out, has_more_out);
+}
+
+static int turbodb_audit_revision(void *ctx, uint64_t *revision_out) {
   return flowie_control_store_revision((flowie_control_store_t *)ctx, revision_out);
 }
 
-static int sqlite_audit_list(void *ctx, const char *domain_id, uint64_t after_revision,
-                             flowie_control_audit_view_t *items, size_t item_capacity,
-                             size_t *count_out, int *has_more_out) {
-  return flowie_control_store_audit_list((flowie_control_store_t *)ctx, domain_id,
-                                         after_revision, items, item_capacity, count_out,
-                                         has_more_out);
+static int turbodb_audit_list(void *ctx, const char *domain_id, uint64_t after_revision,
+                              flowie_control_audit_view_t *items, size_t item_capacity,
+                              size_t *count_out, int *has_more_out) {
+  return flowie_control_store_audit_list((flowie_control_store_t *)ctx, domain_id, after_revision,
+                                         items, item_capacity, count_out, has_more_out);
 }
 
-static int sqlite_audit_count(void *ctx, size_t *count_out) {
+static int turbodb_audit_count(void *ctx, size_t *count_out) {
   return flowie_control_store_audit_count((flowie_control_store_t *)ctx, count_out);
 }
 
-static const flowie_control_repository_user_ops_t SQLITE_USER_OPS = {
-    sqlite_domain_create, sqlite_domain_get, sqlite_domain_list,
-    sqlite_user_create,       sqlite_user_disable,  sqlite_user_get,
-    sqlite_user_list};
-static const flowie_control_repository_auth_ops_t SQLITE_AUTH_OPS = {
-    sqlite_credential_verify, sqlite_credential_state, sqlite_credential_resolve,
-    sqlite_current_revision,
-    sqlite_principal_snapshot, sqlite_external_principal_snapshot};
-static const flowie_control_repository_credential_ops_t SQLITE_CREDENTIAL_OPS = {
-    sqlite_credential_generate, sqlite_credential_rotate, sqlite_credential_revoke};
-static const flowie_control_repository_group_ops_t SQLITE_GROUP_OPS = {
-    sqlite_group_create,      sqlite_group_delete,     sqlite_membership_add,
-    sqlite_membership_remove, sqlite_effective_groups, sqlite_group_list};
-static const flowie_control_repository_role_ops_t SQLITE_ROLE_OPS = {
-    sqlite_role_create,         sqlite_role_disable,
-    sqlite_role_assignment_add, sqlite_role_assignment_remove,
-    sqlite_effective_roles,     sqlite_role_list};
-static const flowie_control_repository_policy_ops_t SQLITE_POLICY_OPS = {
-    sqlite_policy_rule_put, sqlite_policy_rule_delete, sqlite_policy_validate,
-    sqlite_policy_publish,  sqlite_policy_rule_list,   sqlite_policy_status,
-    sqlite_policy_bundle_load, sqlite_policy_bundle_release};
-static const flowie_control_repository_audit_ops_t SQLITE_AUDIT_OPS = {
-    sqlite_audit_revision, sqlite_audit_list, sqlite_audit_count};
+static int turbodb_management_session_issue(
+    void *ctx, const flowie_control_management_session_record_t *record, size_t capacity,
+    size_t max_sessions_per_principal, uint64_t now) {
+  return flowie_control_store_management_session_issue(
+      (flowie_control_store_t *)ctx, record, capacity, max_sessions_per_principal, now);
+}
+
+static int turbodb_management_session_resolve(
+    void *ctx, const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE],
+    uint64_t now, flowie_control_management_session_record_t *out) {
+  return flowie_control_store_management_session_resolve((flowie_control_store_t *)ctx,
+                                                         token_digest, now, out);
+}
+
+static int turbodb_management_session_revoke(
+    void *ctx, const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]) {
+  return flowie_control_store_management_session_revoke((flowie_control_store_t *)ctx,
+                                                        token_digest);
+}
+
+static const flowie_control_repository_user_ops_t TURBODB_USER_OPS = {
+    turbodb_domain_create, turbodb_domain_get, turbodb_domain_list, turbodb_user_create,
+    turbodb_user_disable,  turbodb_user_get,   turbodb_user_list};
+static const flowie_control_repository_auth_ops_t TURBODB_AUTH_OPS = {
+    turbodb_credential_verify, turbodb_credential_state,   turbodb_credential_resolve,
+    turbodb_current_revision,  turbodb_principal_snapshot, turbodb_external_principal_snapshot};
+static const flowie_control_repository_credential_ops_t TURBODB_CREDENTIAL_OPS = {
+    turbodb_credential_generate, turbodb_credential_rotate, turbodb_credential_revoke};
+static const flowie_control_repository_group_ops_t TURBODB_GROUP_OPS = {
+    turbodb_group_create,      turbodb_group_delete,     turbodb_membership_add,
+    turbodb_membership_remove, turbodb_effective_groups, turbodb_group_list};
+static const flowie_control_repository_role_ops_t TURBODB_ROLE_OPS = {
+    turbodb_role_create,         turbodb_role_disable,
+    turbodb_role_assignment_add, turbodb_role_assignment_remove,
+    turbodb_effective_roles,     turbodb_role_list};
+static const flowie_control_repository_policy_ops_t TURBODB_POLICY_OPS = {
+    .validate = turbodb_policy_validate,
+    .publish = turbodb_policy_publish,
+    .status = turbodb_policy_status,
+    .bundle_load = turbodb_policy_bundle_load,
+    .bundle_release = turbodb_policy_bundle_release,
+    .subject_rule_put = turbodb_policy_subject_rule_put,
+    .subject_rule_delete = turbodb_policy_subject_rule_delete,
+    .subject_rule_get = turbodb_policy_subject_rule_get,
+    .subject_rule_list = turbodb_policy_subject_rule_list};
+static const flowie_control_repository_audit_ops_t TURBODB_AUDIT_OPS = {
+    turbodb_audit_revision, turbodb_audit_list, turbodb_audit_count};
+static const flowie_control_repository_session_ops_t TURBODB_SESSION_OPS = {
+    turbodb_management_session_issue, turbodb_management_session_resolve,
+    turbodb_management_session_revoke};
 
 int flowie_control_repository_validate(const flowie_control_repository_t *repository) {
   if (!repository || repository->size < sizeof(*repository) ||
@@ -264,13 +299,13 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       (repository->capabilities & FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES) !=
           FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES ||
       !repository->ctx || !repository->user || !repository->auth || !repository->credential ||
-      !repository->group || !repository->role || !repository->policy || !repository->audit)
+      !repository->group || !repository->role || !repository->policy || !repository->session ||
+      !repository->audit)
     return TURBO_EINVAL;
   if (!repository->user->domain_create || !repository->user->domain_get ||
-      !repository->user->domain_list || !repository->user->create ||
-      !repository->user->disable || !repository->user->get || !repository->user->list ||
-      !repository->auth->credential_verify || !repository->auth->credential_state ||
-      !repository->auth->credential_resolve ||
+      !repository->user->domain_list || !repository->user->create || !repository->user->disable ||
+      !repository->user->get || !repository->user->list || !repository->auth->credential_verify ||
+      !repository->auth->credential_state || !repository->auth->credential_resolve ||
       !repository->auth->current_revision || !repository->auth->principal_snapshot ||
       !repository->auth->external_principal_snapshot || !repository->credential->generate ||
       !repository->credential->rotate || !repository->credential->revoke ||
@@ -279,29 +314,32 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->group->effective || !repository->group->list || !repository->role->create ||
       !repository->role->disable || !repository->role->assignment_add ||
       !repository->role->assignment_remove || !repository->role->effective ||
-      !repository->role->list || !repository->policy->rule_put ||
-      !repository->policy->rule_delete || !repository->policy->validate ||
-      !repository->policy->publish || !repository->policy->rule_list ||
+      !repository->role->list || !repository->policy->validate || !repository->policy->publish ||
       !repository->policy->status || !repository->policy->bundle_load ||
-      !repository->policy->bundle_release || !repository->audit->revision ||
+      !repository->policy->bundle_release || !repository->policy->subject_rule_put ||
+      !repository->policy->subject_rule_delete || !repository->policy->subject_rule_get ||
+      !repository->policy->subject_rule_list || !repository->session->issue ||
+      !repository->session->resolve || !repository->session->revoke ||
+      !repository->audit->revision ||
       !repository->audit->list || !repository->audit->count)
     return TURBO_EINVAL;
   return TURBO_OK;
 }
 
-int flowie_control_repository_bind_sqlite(flowie_control_store_t *store,
-                                          flowie_control_repository_t *repository) {
+int flowie_control_repository_bind_turbodb(flowie_control_store_t *store,
+                                           flowie_control_repository_t *repository) {
   flowie_control_repository_t bound = FLOWIE_CONTROL_REPOSITORY_INIT;
   if (!store || !repository || repository->size < sizeof(*repository)) return TURBO_EINVAL;
   bound.capabilities = FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES;
   bound.ctx = store;
-  bound.user = &SQLITE_USER_OPS;
-  bound.auth = &SQLITE_AUTH_OPS;
-  bound.credential = &SQLITE_CREDENTIAL_OPS;
-  bound.group = &SQLITE_GROUP_OPS;
-  bound.role = &SQLITE_ROLE_OPS;
-  bound.policy = &SQLITE_POLICY_OPS;
-  bound.audit = &SQLITE_AUDIT_OPS;
+  bound.user = &TURBODB_USER_OPS;
+  bound.auth = &TURBODB_AUTH_OPS;
+  bound.credential = &TURBODB_CREDENTIAL_OPS;
+  bound.group = &TURBODB_GROUP_OPS;
+  bound.role = &TURBODB_ROLE_OPS;
+  bound.policy = &TURBODB_POLICY_OPS;
+  bound.session = &TURBODB_SESSION_OPS;
+  bound.audit = &TURBODB_AUDIT_OPS;
   *repository = bound;
   return TURBO_OK;
 }

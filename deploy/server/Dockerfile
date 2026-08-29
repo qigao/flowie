@@ -74,6 +74,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbonet/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DTURBONET_ENABLE_LSQUIC=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -96,6 +97,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbodb/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -237,6 +239,8 @@ COPY --from=builder /opt/flowie-runtime/flowie-control.ldd /usr/share/doc/flowie
 COPY --chmod=0755 deploy/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --chmod=0755 deploy/server/flowie-control-entrypoint.sh \
   /usr/local/bin/flowie-control-entrypoint
+COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh \
+  /usr/local/bin/flowie-combined-entrypoint
 COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
 
 RUN ldconfig \
@@ -254,6 +258,8 @@ ENV FLOWIE_HOST=127.0.0.1 \
     FLOWIE_PORT=18883 \
     FLOWIE_TRANSPORT=tcp \
     FLOWIE_PATH=/mqtt \
+    FLOWIE_PROTOCOL_STORE_DRIVER=sqlite \
+    FLOWIE_PROTOCOL_STORE_OPTIONS='{"filename":"/var/lib/flowie/flowie-protocol.sqlite3"}' \
     FLOWIE_MAX_CONNECTIONS=1024 \
     FLOWIE_MAX_INFLIGHT_PER_SESSION=64 \
     FLOWIE_LOG_LEVEL=INFO \

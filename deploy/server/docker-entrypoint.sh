@@ -19,6 +19,11 @@ flowie_validate_bool() {
 : "${FLOWIE_PORT:=18883}"
 : "${FLOWIE_TRANSPORT:=tcp}"
 : "${FLOWIE_PATH:=/mqtt}"
+: "${FLOWIE_PROTOCOL_STORE_DRIVER:=sqlite}"
+if [ "${FLOWIE_PROTOCOL_STORE_OPTIONS+x}" != x ]; then
+  FLOWIE_PROTOCOL_STORE_OPTIONS='{"filename":"/var/lib/flowie/flowie-protocol.sqlite3"}'
+fi
+export FLOWIE_PROTOCOL_STORE_DRIVER FLOWIE_PROTOCOL_STORE_OPTIONS
 : "${FLOWIE_MAX_PACKET_SIZE:=1048576}"
 : "${FLOWIE_MAX_CONNECTIONS:=1024}"
 : "${FLOWIE_MAX_SESSIONS:=$FLOWIE_MAX_CONNECTIONS}"
@@ -38,12 +43,17 @@ flowie_validate_bool() {
 : "${FLOWIE_LOG_LEVEL:=INFO}"
 : "${FLOWIE_TCP_KEEPALIVE:=0}"
 : "${FLOWIE_REUSE_PORT:=0}"
+: "${FLOWIE_CHECK:=0}"
 
 flowie_validate_bool FLOWIE_TCP_KEEPALIVE "$FLOWIE_TCP_KEEPALIVE"
 flowie_validate_bool FLOWIE_REUSE_PORT "$FLOWIE_REUSE_PORT"
+flowie_validate_bool FLOWIE_CHECK "$FLOWIE_CHECK"
 
-set -- \
-  flowie_server \
+set -- flowie_server
+case "$FLOWIE_CHECK" in
+  1|true|yes|on) set -- "$@" --check ;;
+esac
+set -- "$@" \
   --host "$FLOWIE_HOST" \
   --port "$FLOWIE_PORT" \
   --transport "$FLOWIE_TRANSPORT" \

@@ -410,12 +410,14 @@ FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_user_role_add,
 FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_user_role_remove,
                                 FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN,
                                 flowie_control_user_role_remove_command_t, role, assignment_remove)
-FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_policy_rule_put,
+FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_policy_subject_rule_put,
                                 FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN,
-                                flowie_control_policy_rule_put_command_t, policy, rule_put)
-FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_policy_rule_delete,
+                                flowie_control_policy_subject_rule_put_command_t, policy,
+                                subject_rule_put)
+FLOWIE_CONTROL_MANAGEMENT_WRITE(flowie_control_management_policy_subject_rule_delete,
                                 FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN,
-                                flowie_control_policy_rule_delete_command_t, policy, rule_delete)
+                                flowie_control_policy_subject_rule_delete_command_t, policy,
+                                subject_rule_delete)
 
 #undef FLOWIE_CONTROL_MANAGEMENT_WRITE
 
@@ -491,17 +493,27 @@ int flowie_control_management_effective_roles(flowie_control_management_service_
                         : rc;
 }
 
-int flowie_control_management_policy_rule_list(flowie_control_management_service_t *service,
-                                               const flowie_control_management_caller_t *caller,
-                                               uint32_t after_ordinal, int has_after,
-                                               flowie_control_policy_rule_view_t *items,
-                                               size_t capacity, size_t *count_out,
-                                               int *has_more_out) {
+int flowie_control_management_policy_subject_rule_get(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    flowie_security_subject_kind_t subject_kind, const char *subject_id,
+    flowie_control_policy_subject_rule_view_t *out) {
   int rc = flowie_control_management_read(service, caller, FLOWIE_CONTROL_MANAGEMENT_VIEWER);
   return rc == TURBO_OK
-             ? service->repository.policy->rule_list(service->repository.ctx, caller->domain_id,
-                                                     after_ordinal, has_after, items, capacity,
-                                                     count_out, has_more_out)
+             ? service->repository.policy->subject_rule_get(
+                   service->repository.ctx, caller->domain_id, subject_kind, subject_id, out)
+             : rc;
+}
+
+int flowie_control_management_policy_subject_rule_list(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    flowie_security_subject_kind_t subject_kind, uint32_t after_ordinal, int has_after,
+    flowie_control_policy_subject_rule_view_t *items, size_t capacity, size_t *count_out,
+    int *has_more_out) {
+  int rc = flowie_control_management_read(service, caller, FLOWIE_CONTROL_MANAGEMENT_VIEWER);
+  return rc == TURBO_OK
+             ? service->repository.policy->subject_rule_list(
+                   service->repository.ctx, caller->domain_id, subject_kind, after_ordinal,
+                   has_after, items, capacity, count_out, has_more_out)
              : rc;
 }
 

@@ -35,7 +35,9 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
   flowie_control_user_role_add_command_t assignment = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
   flowie_control_credential_issue_command_t issue = FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
-  flowie_control_policy_rule_put_command_t rule = FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT;
+  flowie_control_acl_document_t policy_document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_policy_subject_rule_put_command_t rule =
+      FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
   flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
   flowie_control_generated_credential_t credential = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   flowie_control_credential_verify_result_t verified = FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
@@ -148,12 +150,14 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
 
   rule.domain_id = "root-a";
   rule.ordinal = 10u;
-  rule.rule_line = policy_rule;
+  check_equal(flowie_control_acl_parse(policy_rule, sizeof(policy_rule) - 1u, &policy_document),
+              TURBO_OK);
+  rule.document = &policy_document;
   rule.actor = "bootstrap";
   rule.request_id = "contract-rule";
   rule.expected_revision = 7u;
   rule.occurred_at = 1008u;
-  check_equal(repository->policy->rule_put(repository->ctx, &rule, &result), TURBO_OK);
+  check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &result), TURBO_OK);
   check_equal(repository->policy->validate(repository->ctx, "root-a", &validation), TURBO_OK);
   check_equal(validation.store_revision, 8u);
   check_equal(validation.rule_count, 2u);

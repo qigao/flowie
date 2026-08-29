@@ -1,8 +1,10 @@
 #include "flowie_protocol_repository.h"
 
+#include "orm.h"
 #include "tinytest.h"
 #include "turbo_error.h"
 
+#include <stdint.h>
 #include <string.h>
 
 static flowie_mqtt_span_t repository_span(const void *data, size_t size) {
@@ -11,11 +13,16 @@ static flowie_mqtt_span_t repository_span(const void *data, size_t size) {
 }
 
 static flowie_protocol_repository_config_t repository_config(int create_schema) {
-  static const flowie_protocol_repository_option_t options[] = {{"filename", ":memory:"}};
+  static orm_config_t database;
+  static orm_option_t option;
   flowie_protocol_repository_config_t config = FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT;
-  config.driver = "sqlite";
-  config.options = options;
-  config.option_count = 1u;
+  orm_config(&database);
+  option.keyword = orm_view("filename");
+  option.value = orm_view(":memory:");
+  database.driver = orm_view("sqlite");
+  database.options = &option;
+  database.option_count = 1u;
+  config.database = &database;
   config.namespace_name = "flowie_test";
   config.create_schema = create_schema;
   config.limits.max_sessions = 8u;
@@ -43,8 +50,7 @@ static int visit_session(void *context, const flowie_protocol_session_row_t *row
   check_equal(row->inflight_count, 1u);
   check_equal(row->delivery_count, 1u);
   check_equal(row->deliveries[0].packet.size, sizeof(expected_packet));
-  check_equal(memcmp(row->deliveries[0].packet.data, expected_packet,
-                      sizeof(expected_packet)), 0);
+  check_equal(memcmp(row->deliveries[0].packet.data, expected_packet, sizeof(expected_packet)), 0);
   check_equal(row->will.present, 1);
   check_equal(row->principal.role_count, 1u);
   check_equal(row->principal.roles[0], "operator");
@@ -61,7 +67,56 @@ static int visit_retained(void *context, const flowie_protocol_retained_row_t *r
   return TURBO_OK;
 }
 
+static int count_retained(void *context, const flowie_protocol_retained_row_t *row) {
+  repository_visit_t *visit = (repository_visit_t *)context;
+  (void)row;
+  ++visit->retained;
+  return TURBO_OK;
+}
+
+static int repository_execute_sqlite(const char *path, const char *sql) {
+  orm_error_t error;
+  orm_option_t filename;
+  orm_config_t config;
+  orm_connection_t *connection = NULL;
+  orm_query_t *query = NULL;
+  orm_result_t *result = NULL;
+  orm_status_t status;
+  orm_error_init(&error);
+  orm_config(&config);
+  filename.keyword = orm_view("filename");
+  filename.value = orm_view(path);
+  config.driver = orm_view("sqlite");
+  config.options = &filename;
+  config.option_count = 1u;
+  status = orm_connect(&config, &connection, &error);
+  if (status == ORM_STATUS_OK) status = orm_raw(connection, orm_view(sql), &query, &error);
+  if (status == ORM_STATUS_OK) status = orm_query_execute(query, &result, &error);
+  orm_result_destroy(result);
+  orm_query_destroy(query);
+  orm_disconnect(connection);
+  return status == ORM_STATUS_OK ? TURBO_OK : TURBO_EIO;
+}
+
 spec("flowie typed protocol repository") {
+  it("rejects mismatched TurboDB configuration ABIs") {
+    flowie_protocol_repository_config_t config = repository_config(1);
+    orm_config_t database = *config.database;
+    flowie_protocol_repository_t *repository = NULL;
+    config.database = &database;
+
+    database.struct_size = sizeof(database) - 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    database.struct_size = sizeof(database) + 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    database.struct_size = sizeof(database);
+    ++database.abi_version;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+  }
+
   it("rejects a database without the current typed schema") {
     flowie_protocol_repository_config_t config = repository_config(0);
     flowie_protocol_repository_t *repository = NULL;
@@ -78,11 +133,11 @@ spec("flowie typed protocol repository") {
     static const uint8_t payload[] = {'o', 'n'};
     flowie_protocol_repository_config_t config = repository_config(1);
     flowie_protocol_repository_t *repository = NULL;
-    flowie_protocol_subscription_row_t subscription = {repository_span(filter, strlen(filter)),
-                                                        1u, 0u, 1u, 0u, 17u};
+    flowie_protocol_subscription_row_t subscription = {
+        repository_span(filter, strlen(filter)), 1u, 0u, 1u, 0u, 17u};
     flowie_protocol_inflight_row_t inflight = {22u, 2u};
-    flowie_protocol_delivery_row_t delivery = {
-        23u, 1u, 1u, 900u, repository_span(packet, sizeof(packet))};
+    flowie_protocol_delivery_row_t delivery = {23u, 1u, 1u, 900u,
+                                               repository_span(packet, sizeof(packet))};
     flowie_protocol_session_row_t session = FLOWIE_PROTOCOL_SESSION_ROW_INIT;
     flowie_protocol_retained_row_t retained = FLOWIE_PROTOCOL_RETAINED_ROW_INIT;
     repository_visit_t visit = {0u, 0u};
@@ -118,7 +173,7 @@ spec("flowie typed protocol repository") {
     check_equal(flowie_protocol_repository_session_save(repository, &session), TURBO_OK);
     check_equal(flowie_protocol_repository_session_save(repository, &session), TURBO_EBUSY);
     check_equal(flowie_protocol_repository_session_visit(repository, visit_session, &visit),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(visit.sessions, 1u);
 
     retained.topic = repository_span(filter, strlen(filter));
@@ -131,13 +186,68 @@ spec("flowie typed protocol repository") {
     check_equal(flowie_protocol_repository_retained_save(repository, &retained), TURBO_OK);
     check_equal(flowie_protocol_repository_retained_save(repository, &retained), TURBO_EBUSY);
     check_equal(flowie_protocol_repository_retained_visit(repository, visit_retained, &visit),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(visit.retained, 1u);
     check_equal(flowie_protocol_repository_retained_delete(repository, retained.topic, 1u),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(flowie_protocol_repository_session_delete(repository, session.client_id, 1u),
-                 TURBO_OK);
+                TURBO_OK);
     flowie_protocol_repository_close(repository);
   }
 
+  it("reports retained rows beyond the configured limit as capacity exhaustion") {
+    orm_config_t database;
+    orm_option_t option;
+    static const char first_row_sql[] =
+        "INSERT INTO flowie_test_retained VALUES('topic-1',1,1,0,5,1,X'',X'01')";
+    static const char second_row_sql[] =
+        "INSERT INTO flowie_test_retained VALUES('topic-2',1,1,0,5,1,X'',X'02')";
+    char *path = tt_make_temp_file("flowie-protocol-limit", ".sqlite3");
+    flowie_protocol_repository_config_t config = repository_config(1);
+    flowie_protocol_repository_t *repository = NULL;
+    repository_visit_t visit = {0u, 0u};
+
+    check_not_null(path);
+    database = *config.database;
+    option.keyword = orm_view("filename");
+    option.value = orm_view(path);
+    database.options = &option;
+    config.database = &database;
+    config.limits.max_sessions = 1u;
+    config.limits.max_retained_messages = 1u;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_OK);
+    check_equal(repository_execute_sqlite(path, first_row_sql), TURBO_OK);
+    check_equal(flowie_protocol_repository_retained_visit(repository, count_retained, &visit),
+                TURBO_OK);
+    check_equal(visit.retained, 1u);
+    check_equal(repository_execute_sqlite(path, second_row_sql), TURBO_OK);
+    visit.retained = 0u;
+    check_equal(flowie_protocol_repository_retained_visit(repository, count_retained, &visit),
+                TURBO_ENOSPC);
+    check_equal(visit.retained, 1u);
+
+    flowie_protocol_repository_close(repository);
+    check_equal(tt_remove_file(path), 0);
+  }
+
+  it("rejects unrepresentable result row budgets") {
+    flowie_protocol_repository_config_t config = repository_config(1);
+    flowie_protocol_repository_t *repository = NULL;
+
+    config.limits.max_sessions = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_retained_messages = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_subscriptions_per_session = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+    config = repository_config(1);
+    config.limits.max_inflight_per_session = SIZE_MAX;
+    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_EINVAL);
+    check_null(repository);
+  }
 }

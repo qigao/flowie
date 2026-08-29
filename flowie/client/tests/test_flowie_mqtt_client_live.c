@@ -81,80 +81,118 @@ static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_HIVEMQ_WS_5 = {
     "HiveMQ WebSocket MQTT 5",       "broker.hivemq.com",  8000, "/mqtt", NULL,
     FLOWIE_MQTT_CLIENT_TRANSPORT_WS, FLOWIE_MQTT_VERSION_5};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TCP_3 = {
-    "EMQX TCP MQTT 3.1.1", "broker.emqx.io", 1883, NULL, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+    "EMQX TCP MQTT 3.1.1",    "broker.emqx.io", 1883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
     FLOWIE_MQTT_VERSION_3_1_1};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TLS_5 = {
-    "EMQX TLS MQTT 5", "broker.emqx.io", 8883, NULL, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+    "EMQX TLS MQTT 5",    "broker.emqx.io", 8883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
     FLOWIE_MQTT_VERSION_5};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_WS_5 = {
     "EMQX WebSocket MQTT 5",         "broker.emqx.io",     8083, "/mqtt", NULL,
     FLOWIE_MQTT_CLIENT_TRANSPORT_WS, FLOWIE_MQTT_VERSION_5};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_WSS_5 = {
-    "EMQX secure WebSocket MQTT 5", "broker.emqx.io", 8084, "/mqtt", NULL,
+    "EMQX secure WebSocket MQTT 5",   "broker.emqx.io",     8084, "/mqtt", NULL,
     FLOWIE_MQTT_CLIENT_TRANSPORT_WSS, FLOWIE_MQTT_VERSION_5};
 #else
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_4 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TCP MQTT 3.1.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TCP_PORT, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
-    FLOWIE_MQTT_VERSION_3_1_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_5 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TCP MQTT 5", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TCP_PORT, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
-    FLOWIE_MQTT_VERSION_5};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_4 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TLS MQTT 3.1.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TLS_PORT, NULL, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
-    FLOWIE_MQTT_VERSION_3_1_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_5 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TLS MQTT 5", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TLS_PORT, NULL, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TLS, FLOWIE_MQTT_VERSION_5};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_4 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WS MQTT 3.1.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
-    FLOWIE_MQTT_VERSION_3_1_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_5 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WS MQTT 5", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
-    FLOWIE_MQTT_VERSION_5};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_4 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WSS MQTT 3.1.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WSS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
-    FLOWIE_MQTT_VERSION_3_1_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_5 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WSS MQTT 5", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WSS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
-    FLOWIE_MQTT_VERSION_5};
-#if FLOWIE_MQTT_FIXED_SUPPORT_31
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_3 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TCP MQTT 3.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TCP_PORT, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
-    FLOWIE_MQTT_VERSION_3_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_3 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " TLS MQTT 3.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_TLS_PORT, NULL, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
-    FLOWIE_MQTT_VERSION_3_1};
-#endif
-#if FLOWIE_MQTT_FIXED_SUPPORT_31_WS
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_3 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WS MQTT 3.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
-    FLOWIE_MQTT_VERSION_3_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_3 = {
-    FLOWIE_MQTT_FIXED_BROKER_NAME " WSS MQTT 3.1", FLOWIE_MQTT_FIXED_HOST,
-    FLOWIE_MQTT_FIXED_WSS_PORT, FLOWIE_MQTT_FIXED_WS_PATH, FLOWIE_MQTT_FIXED_CA_FILE,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
-    FLOWIE_MQTT_VERSION_3_1};
-#endif
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_4 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TCP MQTT 3.1.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TCP_PORT,
+                                                                NULL,
+                                                                NULL,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                                                FLOWIE_MQTT_VERSION_3_1_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_5 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TCP MQTT 5",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TCP_PORT,
+                                                                NULL,
+                                                                NULL,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                                                FLOWIE_MQTT_VERSION_5};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_4 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TLS MQTT 3.1.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TLS_PORT,
+                                                                NULL,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+                                                                FLOWIE_MQTT_VERSION_3_1_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_5 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TLS MQTT 5",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TLS_PORT,
+                                                                NULL,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+                                                                FLOWIE_MQTT_VERSION_5};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_4 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                               " WS MQTT 3.1.1",
+                                                               FLOWIE_MQTT_FIXED_HOST,
+                                                               FLOWIE_MQTT_FIXED_WS_PORT,
+                                                               FLOWIE_MQTT_FIXED_WS_PATH,
+                                                               NULL,
+                                                               FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
+                                                               FLOWIE_MQTT_VERSION_3_1_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_5 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                               " WS MQTT 5",
+                                                               FLOWIE_MQTT_FIXED_HOST,
+                                                               FLOWIE_MQTT_FIXED_WS_PORT,
+                                                               FLOWIE_MQTT_FIXED_WS_PATH,
+                                                               NULL,
+                                                               FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
+                                                               FLOWIE_MQTT_VERSION_5};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_4 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " WSS MQTT 3.1.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_WSS_PORT,
+                                                                FLOWIE_MQTT_FIXED_WS_PATH,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
+                                                                FLOWIE_MQTT_VERSION_3_1_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_5 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " WSS MQTT 5",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_WSS_PORT,
+                                                                FLOWIE_MQTT_FIXED_WS_PATH,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
+                                                                FLOWIE_MQTT_VERSION_5};
+  #if FLOWIE_MQTT_FIXED_SUPPORT_31
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TCP_3 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TCP MQTT 3.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TCP_PORT,
+                                                                NULL,
+                                                                NULL,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                                                FLOWIE_MQTT_VERSION_3_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_TLS_3 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " TLS MQTT 3.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_TLS_PORT,
+                                                                NULL,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+                                                                FLOWIE_MQTT_VERSION_3_1};
+  #endif
+  #if FLOWIE_MQTT_FIXED_SUPPORT_31_WS
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WS_3 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                               " WS MQTT 3.1",
+                                                               FLOWIE_MQTT_FIXED_HOST,
+                                                               FLOWIE_MQTT_FIXED_WS_PORT,
+                                                               FLOWIE_MQTT_FIXED_WS_PATH,
+                                                               NULL,
+                                                               FLOWIE_MQTT_CLIENT_TRANSPORT_WS,
+                                                               FLOWIE_MQTT_VERSION_3_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_FIXED_WSS_3 = {FLOWIE_MQTT_FIXED_BROKER_NAME
+                                                                " WSS MQTT 3.1",
+                                                                FLOWIE_MQTT_FIXED_HOST,
+                                                                FLOWIE_MQTT_FIXED_WSS_PORT,
+                                                                FLOWIE_MQTT_FIXED_WS_PATH,
+                                                                FLOWIE_MQTT_FIXED_CA_FILE,
+                                                                FLOWIE_MQTT_CLIENT_TRANSPORT_WSS,
+                                                                FLOWIE_MQTT_VERSION_3_1};
+  #endif
 #endif
 
 static int flowie_mqtt_live_span_equals(flowie_mqtt_span_t span, const char *text) {
@@ -340,7 +378,7 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   state->test_case = test_case;
   atomic_init(&state->result, TURBO_EBUSY);
   atomic_init(&state->done, 0);
-  if (snprintf(state->client_id, sizeof(state->client_id), "flowie-%llu",
+  if (snprintf(state->client_id, sizeof(state->client_id), "flowie-%llx",
                (unsigned long long)unique) < 0 ||
       snprintf(state->topic, sizeof(state->topic), "flowie/live/%llu", (unsigned long long)unique) <
           0)
@@ -356,11 +394,9 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   config.tls.ca_file = test_case->ca_file;
   config.transport = test_case->transport;
   config.timeout_ms = FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS;
-  topic_handler.filter =
-      (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
+  topic_handler.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
   topic_handler.on_message = flowie_mqtt_live_on_publish;
-  config.topic_handlers =
-      (flowie_mqtt_client_topic_handler_map_t){&topic_handler, 1u};
+  config.topic_handlers = (flowie_mqtt_client_topic_handler_map_t){&topic_handler, 1u};
   config.on_connect = flowie_mqtt_live_connect_completion;
   config.on_publish = flowie_mqtt_live_publish_completion;
   config.on_subscribe = flowie_mqtt_live_subscribe_completion;
@@ -654,14 +690,13 @@ static int flowie_mqtt_live_reqrep_run(const flowie_mqtt_live_case_t *test_case,
   config.tls.ca_file = test_case->ca_file;
   config.transport = test_case->transport;
   config.timeout_ms = FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS;
-  topic_handlers[0].filter = (flowie_mqtt_span_t){(const uint8_t *)state->request_topic,
-                                                  strlen(state->request_topic)};
+  topic_handlers[0].filter =
+      (flowie_mqtt_span_t){(const uint8_t *)state->request_topic, strlen(state->request_topic)};
   topic_handlers[0].on_message = flowie_mqtt_live_reqrep_on_publish;
-  topic_handlers[1].filter = (flowie_mqtt_span_t){(const uint8_t *)state->response_topic,
-                                                  strlen(state->response_topic)};
+  topic_handlers[1].filter =
+      (flowie_mqtt_span_t){(const uint8_t *)state->response_topic, strlen(state->response_topic)};
   topic_handlers[1].on_message = flowie_mqtt_live_reqrep_on_publish;
-  config.topic_handlers =
-      (flowie_mqtt_client_topic_handler_map_t){topic_handlers, 2u};
+  config.topic_handlers = (flowie_mqtt_client_topic_handler_map_t){topic_handlers, 2u};
   config.on_connect = flowie_mqtt_live_reqrep_connect_completion;
   config.on_publish = flowie_mqtt_live_reqrep_publish_completion;
   config.on_subscribe = flowie_mqtt_live_reqrep_subscribe_completion;
@@ -726,8 +761,7 @@ static int flowie_mqtt_live_alias_submit(flowie_mqtt_live_alias_state_t *state, 
   publish.count = 1u;
   topic.qos = 1u;
   if (!reuse_alias)
-    topic.topic =
-        (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
+    topic.topic = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
   topic.properties = (flowie_mqtt_span_t){alias_property, sizeof(alias_property)};
   topic.payload = (flowie_mqtt_span_t){(const uint8_t *)payload, strlen(payload)};
   return flowie_mqtt_client_publish(state->client, &publish);
@@ -764,18 +798,20 @@ static int flowie_mqtt_live_alias_on_publish(flowie_mqtt_client_t *client,
   return flowie_mqtt_live_alias_advance(state);
 }
 
-static void flowie_mqtt_live_alias_disconnect_completion(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_live_alias_disconnect_completion(flowie_mqtt_client_t *client, int status,
+                                             const flowie_mqtt_control_packet_view_t *response,
+                                             void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
   if (status == TURBO_OK && response) status = TURBO_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_live_alias_publish_completion(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_live_alias_publish_completion(flowie_mqtt_client_t *client, int status,
+                                          const flowie_mqtt_control_packet_view_t *response,
+                                          void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
   if (status == TURBO_OK &&
@@ -786,9 +822,10 @@ static void flowie_mqtt_live_alias_publish_completion(
   if (status != TURBO_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_live_alias_subscribe_completion(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_live_alias_subscribe_completion(flowie_mqtt_client_t *client, int status,
+                                            const flowie_mqtt_control_packet_view_t *response,
+                                            void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
   if (status == TURBO_OK &&
@@ -799,11 +836,12 @@ static void flowie_mqtt_live_alias_subscribe_completion(
   if (status != TURBO_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_live_alias_connect_completion(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
-  static const uint8_t subscription_identifier[] = {
-      FLOWIE_MQTT_PROPERTY_SUBSCRIPTION_IDENTIFIER, 42u};
+static void
+flowie_mqtt_live_alias_connect_completion(flowie_mqtt_client_t *client, int status,
+                                          const flowie_mqtt_control_packet_view_t *response,
+                                          void *user_data) {
+  static const uint8_t subscription_identifier[] = {FLOWIE_MQTT_PROPERTY_SUBSCRIPTION_IDENTIFIER,
+                                                    42u};
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   flowie_mqtt_subscription_t subscription = {0};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
@@ -811,8 +849,7 @@ static void flowie_mqtt_live_alias_connect_completion(
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u))
     status = TURBO_ECONNREFUSED;
   if (status == TURBO_OK) {
-    subscription.filter =
-        (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
+    subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     subscription.qos = 1u;
     subscribe.version = FLOWIE_MQTT_VERSION_5;
     subscribe.properties =
@@ -888,9 +925,9 @@ static void flowie_mqtt_live_alias_check(const flowie_mqtt_live_case_t *test_cas
 }
 
 #if defined(FLOWIE_MQTT_FIXED_INTEROP)
-#define FLOWIE_MQTT_FIXED_SESSION_EXPIRY_SECONDS 60u
-#define FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_SECONDS 1u
-#define FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS 2500u
+  #define FLOWIE_MQTT_FIXED_SESSION_EXPIRY_SECONDS 60u
+  #define FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_SECONDS 1u
+  #define FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS 2500u
 
 typedef struct flowie_mqtt_fixed_publisher_s {
   const flowie_mqtt_live_case_t *test_case;
@@ -948,8 +985,7 @@ static void flowie_mqtt_fixed_apply_config(const flowie_mqtt_live_case_t *test_c
   config->timeout_ms = FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS;
 }
 
-static int flowie_mqtt_fixed_wait_ready(atomic_int *result, atomic_int *done,
-                                        atomic_int *ready) {
+static int flowie_mqtt_fixed_wait_ready(atomic_int *result, atomic_int *done, atomic_int *ready) {
   uint64_t deadline = turbo_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(ready, memory_order_acquire) &&
          !atomic_load_explicit(done, memory_order_acquire) && turbo_monotonic_ms() < deadline)
@@ -966,33 +1002,33 @@ static void flowie_mqtt_fixed_publisher_error(flowie_mqtt_client_t *client, int 
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_fixed_publisher_disconnect(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_fixed_publisher_disconnect(flowie_mqtt_client_t *client, int status,
+                                       const flowie_mqtt_control_packet_view_t *response,
+                                       void *user_data) {
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
   (void)client;
   if (status == TURBO_OK && response) status = TURBO_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_fixed_publisher_publish(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void flowie_mqtt_fixed_publisher_publish(flowie_mqtt_client_t *client, int status,
+                                                const flowie_mqtt_control_packet_view_t *response,
+                                                void *user_data) {
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
   if (status == TURBO_OK &&
       ((state->qos == 0u && response) ||
-       (state->qos == 1u &&
-        (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK ||
-         response->reason_code >= 0x80u))))
+       (state->qos == 1u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK ||
+                             response->reason_code >= 0x80u))))
     status = TURBO_EPROTO;
   if (status == TURBO_OK)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
   if (status != TURBO_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_fixed_publisher_connect(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void flowie_mqtt_fixed_publisher_connect(flowie_mqtt_client_t *client, int status,
+                                                const flowie_mqtt_control_packet_view_t *response,
+                                                void *user_data) {
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
   flowie_mqtt_client_publish_topic_t topic = {0};
   flowie_mqtt_client_publish_topic_vec_t publish = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
@@ -1009,11 +1045,9 @@ static void flowie_mqtt_fixed_publisher_connect(
     publish.count = 1u;
     topic.qos = state->qos;
     topic.retain = state->retain;
-    topic.topic =
-        (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
+    topic.topic = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     topic.properties = state->publish_properties;
-    topic.payload =
-        (flowie_mqtt_span_t){(const uint8_t *)state->payload, strlen(state->payload)};
+    topic.payload = (flowie_mqtt_span_t){(const uint8_t *)state->payload, strlen(state->payload)};
     status = flowie_mqtt_client_publish(client, &publish);
   }
   if (status != TURBO_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
@@ -1046,10 +1080,10 @@ static int flowie_mqtt_fixed_publisher_start(flowie_mqtt_fixed_publisher_t *stat
   connect.has_will = state->has_will;
   connect.will_qos = state->will_qos;
   if (state->has_will) {
-    connect.will_topic = (flowie_mqtt_span_t){(const uint8_t *)state->will_topic,
-                                             strlen(state->will_topic)};
-    connect.will_payload = (flowie_mqtt_span_t){(const uint8_t *)state->will_payload,
-                                               strlen(state->will_payload)};
+    connect.will_topic =
+        (flowie_mqtt_span_t){(const uint8_t *)state->will_topic, strlen(state->will_topic)};
+    connect.will_payload =
+        (flowie_mqtt_span_t){(const uint8_t *)state->will_payload, strlen(state->will_payload)};
   }
   rc = flowie_mqtt_client_connect(state->client, &connect);
   if (rc != TURBO_OK) {
@@ -1074,9 +1108,10 @@ static void flowie_mqtt_fixed_subscriber_error(flowie_mqtt_client_t *client, int
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_fixed_subscriber_disconnect(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_fixed_subscriber_disconnect(flowie_mqtt_client_t *client, int status,
+                                        const flowie_mqtt_control_packet_view_t *response,
+                                        void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   (void)client;
   if (status == TURBO_OK && response) status = TURBO_EPROTO;
@@ -1101,9 +1136,10 @@ static int flowie_mqtt_fixed_subscriber_message(flowie_mqtt_client_t *client,
   return status;
 }
 
-static void flowie_mqtt_fixed_subscriber_subscribe(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void
+flowie_mqtt_fixed_subscriber_subscribe(flowie_mqtt_client_t *client, int status,
+                                       const flowie_mqtt_control_packet_view_t *response,
+                                       void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   if (status == TURBO_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
@@ -1111,14 +1147,13 @@ static void flowie_mqtt_fixed_subscriber_subscribe(
     status = TURBO_EPROTO;
   if (status == TURBO_OK && state->disconnect_after_subscribe)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  else if (status == TURBO_OK)
-    atomic_store_explicit(&state->ready, 1, memory_order_release);
+  else if (status == TURBO_OK) atomic_store_explicit(&state->ready, 1, memory_order_release);
   if (status != TURBO_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
-static void flowie_mqtt_fixed_subscriber_connect(
-    flowie_mqtt_client_t *client, int status,
-    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+static void flowie_mqtt_fixed_subscriber_connect(flowie_mqtt_client_t *client, int status,
+                                                 const flowie_mqtt_control_packet_view_t *response,
+                                                 void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   flowie_mqtt_subscription_t subscription = {0};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
@@ -1128,8 +1163,7 @@ static void flowie_mqtt_fixed_subscriber_connect(
         response->session_present != (uint8_t)state->expected_session_present)))
     status = TURBO_ECONNREFUSED;
   if (status == TURBO_OK && state->subscribe) {
-    subscription.filter =
-        (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
+    subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     subscription.qos = 1u;
     subscribe.version = FLOWIE_MQTT_VERSION_5;
     subscribe.subscriptions = &subscription;
@@ -1198,8 +1232,7 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
                (unsigned long long)unique) < 0 ||
       snprintf(clear_id, sizeof(clear_id), "flowie-fixed-retained-clear-%llu",
                (unsigned long long)unique) < 0 ||
-      snprintf(topic, sizeof(topic), "flowie/fixed/retained/%llu",
-               (unsigned long long)unique) < 0)
+      snprintf(topic, sizeof(topic), "flowie/fixed/retained/%llu", (unsigned long long)unique) < 0)
     return TURBO_EIO;
   publisher.test_case = test_case;
   publisher.client_id = publisher_id;
@@ -1223,8 +1256,7 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   if (rc == TURBO_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
   if (rc != TURBO_OK) return rc;
-  if (atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 1u)
-    return TURBO_EPROTO;
+  if (atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 1u) return TURBO_EPROTO;
 
   memset(&publisher, 0, sizeof(publisher));
   publisher.test_case = test_case;
@@ -1236,18 +1268,17 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   return flowie_mqtt_fixed_publisher_run(&publisher);
 }
 
-static int flowie_mqtt_fixed_create_offline_session(
-    const flowie_mqtt_live_case_t *test_case, const char *client_id, const char *topic,
-    const char *payload) {
+static int flowie_mqtt_fixed_create_offline_session(const flowie_mqtt_live_case_t *test_case,
+                                                    const char *client_id, const char *topic,
+                                                    const char *payload) {
   flowie_mqtt_fixed_subscriber_t subscriber = {0};
   int rc;
   subscriber.test_case = test_case;
   subscriber.client_id = client_id;
   subscriber.topic = topic;
   subscriber.payload = payload;
-  subscriber.connect_properties =
-      (flowie_mqtt_span_t){FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY,
-                           sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
+  subscriber.connect_properties = (flowie_mqtt_span_t){
+      FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY, sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
   subscriber.expected_session_present = 0;
   subscriber.expected_retain = 0;
   subscriber.clean_start = 1u;
@@ -1259,9 +1290,9 @@ static int flowie_mqtt_fixed_create_offline_session(
   return rc;
 }
 
-static int flowie_mqtt_fixed_publish_offline(
-    const flowie_mqtt_live_case_t *test_case, const char *client_id, const char *topic,
-    const char *payload, flowie_mqtt_span_t properties) {
+static int flowie_mqtt_fixed_publish_offline(const flowie_mqtt_live_case_t *test_case,
+                                             const char *client_id, const char *topic,
+                                             const char *payload, flowie_mqtt_span_t properties) {
   flowie_mqtt_fixed_publisher_t publisher = {0};
   publisher.test_case = test_case;
   publisher.client_id = client_id;
@@ -1284,8 +1315,7 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
                (unsigned long long)unique) < 0 ||
       snprintf(publisher_id, sizeof(publisher_id), "flowie-fixed-offline-pub-%llu",
                (unsigned long long)unique) < 0 ||
-      snprintf(topic, sizeof(topic), "flowie/fixed/offline/%llu",
-               (unsigned long long)unique) < 0)
+      snprintf(topic, sizeof(topic), "flowie/fixed/offline/%llu", (unsigned long long)unique) < 0)
     return TURBO_EIO;
   rc = flowie_mqtt_fixed_create_offline_session(test_case, subscriber_id, topic, payload);
   if (rc != TURBO_OK) return rc;
@@ -1297,9 +1327,8 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
   subscriber.client_id = subscriber_id;
   subscriber.topic = topic;
   subscriber.payload = payload;
-  subscriber.connect_properties =
-      (flowie_mqtt_span_t){FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY,
-                           sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
+  subscriber.connect_properties = (flowie_mqtt_span_t){
+      FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY, sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
   subscriber.expected_session_present = 1;
   subscriber.expected_retain = 0;
   subscriber.clean_start = 0u;
@@ -1309,7 +1338,7 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
   if (rc != TURBO_OK) return rc;
   return atomic_load_explicit(&subscriber.received, memory_order_relaxed) == 1u ? TURBO_OK
-                                                                               : TURBO_EPROTO;
+                                                                                : TURBO_EPROTO;
 }
 
 static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *test_case) {
@@ -1324,8 +1353,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
                (unsigned long long)unique) < 0 ||
       snprintf(publisher_id, sizeof(publisher_id), "flowie-fixed-expiry-pub-%llu",
                (unsigned long long)unique) < 0 ||
-      snprintf(topic, sizeof(topic), "flowie/fixed/expiry/%llu",
-               (unsigned long long)unique) < 0)
+      snprintf(topic, sizeof(topic), "flowie/fixed/expiry/%llu", (unsigned long long)unique) < 0)
     return TURBO_EIO;
   rc = flowie_mqtt_fixed_create_offline_session(test_case, subscriber_id, topic, payload);
   if (rc != TURBO_OK) return rc;
@@ -1340,9 +1368,8 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   subscriber.client_id = subscriber_id;
   subscriber.topic = topic;
   subscriber.payload = payload;
-  subscriber.connect_properties =
-      (flowie_mqtt_span_t){FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY,
-                           sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
+  subscriber.connect_properties = (flowie_mqtt_span_t){
+      FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY, sizeof(FLOWIE_MQTT_FIXED_SESSION_EXPIRY_PROPERTY)};
   subscriber.expected_session_present = 1;
   subscriber.expected_retain = 0;
   subscriber.clean_start = 0u;
@@ -1350,8 +1377,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   if (rc == TURBO_OK)
     rc = flowie_mqtt_fixed_wait_ready(&subscriber.result, &subscriber.done, &subscriber.ready);
   if (rc == TURBO_OK) turbo_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
-  if (rc == TURBO_OK &&
-      atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 0u)
+  if (rc == TURBO_OK && atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 0u)
     rc = TURBO_EPROTO;
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
   return rc;
@@ -1370,8 +1396,7 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
                (unsigned long long)unique) < 0 ||
       snprintf(will_id, sizeof(will_id), "flowie-fixed-will-owner-%llu",
                (unsigned long long)unique) < 0 ||
-      snprintf(topic, sizeof(topic), "flowie/fixed/will/%llu",
-               (unsigned long long)unique) < 0)
+      snprintf(topic, sizeof(topic), "flowie/fixed/will/%llu", (unsigned long long)unique) < 0)
     return TURBO_EIO;
   watcher.test_case = test_case;
   watcher.client_id = watcher_id;
@@ -1406,7 +1431,7 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
   flowie_mqtt_fixed_subscriber_destroy(&watcher);
   if (rc != TURBO_OK) return rc;
   return atomic_load_explicit(&watcher.received, memory_order_relaxed) == 1u ? TURBO_OK
-                                                                            : TURBO_EPROTO;
+                                                                             : TURBO_EPROTO;
 }
 #endif
 
@@ -1443,7 +1468,6 @@ spec("flowie mqtt public broker integration") {
   it("round-trips MQTT 5 request-response properties through EMQX") {
     flowie_mqtt_live_reqrep_check(&FLOWIE_MQTT_LIVE_EMQX_TLS_5);
   }
-
 }
 #else
 spec("Flowie MQTT fixed-version broker interoperability") {
@@ -1493,17 +1517,17 @@ spec("Flowie MQTT fixed-version broker interoperability") {
     check_equal(flowie_mqtt_fixed_will_run(&FLOWIE_MQTT_FIXED_TCP_5), TURBO_OK);
   }
 
-#if FLOWIE_MQTT_FIXED_SUPPORT_31
+  #if FLOWIE_MQTT_FIXED_SUPPORT_31
   it("MQTT-INTEROP-005 runs supported MQTT 3.1 TCP and TLS without protocol fallback") {
     flowie_mqtt_live_check(&FLOWIE_MQTT_FIXED_TCP_3);
     flowie_mqtt_live_check(&FLOWIE_MQTT_FIXED_TLS_3);
   }
-#endif
-#if FLOWIE_MQTT_FIXED_SUPPORT_31_WS
+  #endif
+  #if FLOWIE_MQTT_FIXED_SUPPORT_31_WS
   it("MQTT-INTEROP-005 runs declared MQTT 3.1 WS and WSS with the mqtt subprotocol") {
     flowie_mqtt_live_check(&FLOWIE_MQTT_FIXED_WS_3);
     flowie_mqtt_live_check(&FLOWIE_MQTT_FIXED_WSS_3);
   }
-#endif
+  #endif
 }
 #endif

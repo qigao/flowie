@@ -32,7 +32,7 @@ data source、data sink、持久化和业务处理拓扑。
 
 | 产品模式 | MQTT session / retained | Cluster 业务数据 | 日志与快照 | MQTT ACK 边界 |
 |---|---|---|---|---|
-| standalone | `TurboDB::ORM` SQLite `:memory:` repository | 不适用 | 不适用 | 配置的 received/accepted/processed 边界 |
+| standalone | `Orm::C` SQLite `:memory:` repository | 不适用 | 不适用 | 配置的 received/accepted/processed 边界 |
 | cluster | TurboRaft committed state machine | TurboRaft committed owner/PUBLISH 数据 | `TurboRaft::WalStorage` | quorum commit 后的 owner settlement |
 
 standalone 用于开发和单机运行，repository 是该进程代际的唯一协议事实源。cluster 不创建独立
@@ -111,7 +111,7 @@ HTTP request view、Redis entry view 等短生命周期对象不能直接跨异�
 ### TurboDB ORM
 
 TurboDB ORM 独立于 Flowie。standalone 的 `flowie_protocol_repository` 直接依赖
-`TurboDB::ORM`，用类型化 schema、serializable transaction 和 revision CAS 保存 session、
+`Orm::C`，用类型化 schema、serializable transaction 和 revision CAS 保存 session、
 subscription、inflight、delivery、retained 与 Will 事实。当前 bundled server 只接受 SQLite
 `:memory:`，打开、建表或事务失败即停止启动，不选择其他 backend 作为 fallback。该 repository
 不参与 cluster；cluster 的业务数据、Raft log 和 snapshot 全部由 TurboRaft 拥有。

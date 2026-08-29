@@ -30,9 +30,16 @@ static int flowie_control_acl_copy_token(char *output, size_t capacity,
 }
 
 void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
+                                     flowie_security_subject_kind_t subject_kind,
                                      flowie_control_acl_token_t subject,
                                      flowie_security_effect_t connection_effect) {
   if (!ctx || ctx->status != TURBO_OK) return;
+  if (subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
+      subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
+      subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP) {
+    flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+    return;
+  }
   if (connection_effect == FLOWIE_SECURITY_DENY && ctx->document.entry_count != 0u) {
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
     return;
@@ -42,118 +49,146 @@ void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
     return;
   }
+  ctx->document.subject_kind = subject_kind;
   ctx->document.connection_effect = connection_effect;
   ctx->accepted = 1;
 }
 
-flowie_control_acl_group_path_t
-flowie_control_acl_group_path_start(flowie_control_acl_parse_ctx_t *ctx,
-                                    flowie_control_acl_token_t group) {
-  flowie_control_acl_group_path_t path;
-  memset(&path, 0, sizeof(path));
-  if (!ctx || ctx->status != TURBO_OK || !group.value || group.length == 0u) {
+static int flowie_control_acl_topic_static_char(unsigned char value, int allow_dollar) {
+  return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') ||
+         (value >= '0' && value <= '9') || value == '_' || value == '.' || value == ':' ||
+         value == '@' || value == '~' || value == '-' || (allow_dollar && value == '$');
+}
+
+static int flowie_control_acl_topic_static(const char *value, size_t length,
+                                           int allow_dollar) {
+  if (!value || length == 0u) return 0;
+  for (size_t index = 0u; index < length; ++index) {
+    if (!flowie_control_acl_topic_static_char((unsigned char)value[index], allow_dollar))
+      return 0;
+  }
+  return 1;
+}
+
+static size_t flowie_control_acl_topic_alternatives(flowie_control_acl_parse_ctx_t *ctx,
+                                                    const char *value, size_t length) {
+  const char *items[FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES];
+  size_t item_lengths[FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES];
+  const char *cursor;
+  const char *close;
+  size_t count = 0u;
+  if (!ctx || ctx->status != TURBO_OK || !value || length < sizeof("{a,b}") - 1u ||
+      value[0] != '{' || value[length - 1u] != '}') {
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-    return path;
+    return 0u;
   }
-  path.items[path.count++] = group;
-  return path;
-}
-
-flowie_control_acl_group_path_t
-flowie_control_acl_group_path_append(flowie_control_acl_parse_ctx_t *ctx,
-                                     flowie_control_acl_group_path_t path,
-                                     flowie_control_acl_token_t group) {
-  if (!ctx || ctx->status != TURBO_OK || !group.value || group.length == 0u) return path;
-  if (path.count >= FLOWIE_SECURITY_MAX_GROUPS) {
-    flowie_control_acl_set_error(ctx, TURBO_ENOSPC);
-    return path;
-  }
-  path.items[path.count++] = group;
-  return path;
-}
-
-flowie_control_acl_token_list_t
-flowie_control_acl_token_list_start(flowie_control_acl_parse_ctx_t *ctx,
-                                    flowie_control_acl_token_t item) {
-  flowie_control_acl_token_list_t list;
-  memset(&list, 0, sizeof(list));
-  if (!ctx || ctx->status != TURBO_OK || !item.value || item.length == 0u) {
-    flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-    return list;
-  }
-  list.items[list.count++] = item;
-  return list;
-}
-
-flowie_control_acl_token_list_t
-flowie_control_acl_token_list_append(flowie_control_acl_parse_ctx_t *ctx,
-                                     flowie_control_acl_token_list_t list,
-                                     flowie_control_acl_token_t item) {
-  if (!ctx || ctx->status != TURBO_OK || !item.value || item.length == 0u) return list;
-  if (list.count >= FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES) {
-    flowie_control_acl_set_error(ctx, TURBO_ENOSPC);
-    return list;
-  }
-  for (size_t index = 0u; index < list.count; ++index) {
-    if (list.items[index].length == item.length &&
-        memcmp(list.items[index].value, item.value, item.length) == 0) {
+  cursor = value + 1u;
+  close = value + length - 1u;
+  while (cursor < close) {
+    const char *comma = memchr(cursor, ',', (size_t)(close - cursor));
+    const char *end = comma ? comma : close;
+    size_t item_length = (size_t)(end - cursor);
+    if (!flowie_control_acl_topic_static(cursor, item_length, 1)) {
       flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-      return list;
+      return 0u;
+    }
+    if (count >= FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES) {
+      flowie_control_acl_set_error(ctx, TURBO_ENOSPC);
+      return 0u;
+    }
+    for (size_t index = 0u; index < count; ++index) {
+      if (item_lengths[index] == item_length &&
+          memcmp(items[index], cursor, item_length) == 0) {
+        flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+        return 0u;
+      }
+    }
+    items[count] = cursor;
+    item_lengths[count] = item_length;
+    ++count;
+    if (!comma) break;
+    cursor = comma + 1u;
+    if (cursor == close) {
+      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+      return 0u;
     }
   }
-  list.items[list.count++] = item;
-  return list;
+  if (count < 2u) {
+    flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+    return 0u;
+  }
+  return count;
 }
 
-static flowie_control_acl_topic_parse_t
-flowie_control_acl_topic_finish(flowie_control_acl_parse_ctx_t *ctx,
-                                flowie_control_acl_token_t domain,
-                                flowie_control_acl_group_path_t groups,
-                                flowie_control_acl_token_t device, const char *end,
-                                size_t alternative_count) {
+flowie_control_acl_topic_parse_t
+flowie_control_acl_topic_parse(flowie_control_acl_parse_ctx_t *ctx,
+                               flowie_control_acl_token_t pattern) {
   flowie_control_acl_topic_parse_t topic;
+  const char *cursor;
+  const char *end;
+  size_t level = 0u;
   memset(&topic, 0, sizeof(topic));
-  if (!ctx || ctx->status != TURBO_OK || !domain.value || domain.length == 0u ||
-      groups.count == 0u || !device.value || device.length == 0u || !end || end <= domain.value) {
+  if (!ctx || ctx->status != TURBO_OK || !pattern.value || pattern.length == 0u) {
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
     return topic;
   }
-  topic.domain = domain;
-  topic.groups = groups;
-  topic.device = device;
-  topic.complete.value = domain.value;
-  topic.complete.length = (size_t)(end - domain.value);
-  topic.complete.line = domain.line;
-  topic.complete.column = domain.column;
-  topic.alternative_count = alternative_count;
-  topic.uses_username = device.length == 2u && memcmp(device.value, "%u", 2u) == 0;
-  topic.uses_client_id = device.length == 2u && memcmp(device.value, "%c", 2u) == 0;
-  return topic;
-}
-
-flowie_control_acl_topic_parse_t
-flowie_control_acl_topic_build(flowie_control_acl_parse_ctx_t *ctx,
-                               flowie_control_acl_token_t domain,
-                               flowie_control_acl_group_path_t groups,
-                               flowie_control_acl_token_t device,
-                               flowie_control_acl_token_t leaf) {
-  return flowie_control_acl_topic_finish(ctx, domain, groups, device, leaf.value + leaf.length, 1u);
-}
-
-flowie_control_acl_topic_parse_t
-flowie_control_acl_topic_build_alternatives(flowie_control_acl_parse_ctx_t *ctx,
-                                            flowie_control_acl_token_t domain,
-                                            flowie_control_acl_group_path_t groups,
-                                            flowie_control_acl_token_t device,
-                                            flowie_control_acl_token_t open,
-                                            flowie_control_acl_token_list_t alternatives,
-                                            flowie_control_acl_token_t close) {
-  if (!open.value || open.length != 1u || alternatives.count < 2u || !close.value ||
-      close.length != 1u)
+  if (pattern.length > FLOWIE_SECURITY_PATTERN_MAX) {
+    flowie_control_acl_set_error(ctx, TURBO_ENOSPC);
+    return topic;
+  }
+  cursor = pattern.value;
+  end = pattern.value + pattern.length;
+  while (cursor < end) {
+    const char *slash = memchr(cursor, '/', (size_t)(end - cursor));
+    const char *segment_end = slash ? slash : end;
+    size_t segment_length = (size_t)(segment_end - cursor);
+    int final_segment = segment_end == end;
+    if (segment_length == 0u) {
+      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+      return topic;
+    }
+    if (level == 0u) {
+      if (!flowie_control_acl_topic_static(cursor, segment_length, 0)) {
+        flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+        return topic;
+      }
+    } else if (segment_length == 1u && cursor[0] == '#') {
+      if (!final_segment) {
+        flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+        return topic;
+      }
+    } else if (segment_length == 2u && memcmp(cursor, "%u", 2u) == 0) {
+      topic.uses_username = 1;
+    } else if (segment_length == 2u && memcmp(cursor, "%c", 2u) == 0) {
+      topic.uses_client_id = 1;
+    } else if (cursor[0] == '{') {
+      if (!final_segment) {
+        flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+        return topic;
+      }
+      topic.alternative_count =
+          flowie_control_acl_topic_alternatives(ctx, cursor, segment_length);
+      if (ctx->status != TURBO_OK) return topic;
+    } else if (!(segment_length == 1u && cursor[0] == '+') &&
+               !flowie_control_acl_topic_static(cursor, segment_length, 1)) {
+      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+      return topic;
+    }
+    ++level;
+    if (!slash) break;
+    cursor = slash + 1u;
+    if (cursor == end) {
+      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
+      return topic;
+    }
+  }
+  if (level < 2u) {
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-  return flowie_control_acl_topic_finish(ctx, domain, groups, device,
-                                         close.value ? close.value + close.length : NULL,
-                                         alternatives.count);
+    return topic;
+  }
+  topic.complete = pattern;
+  if (topic.alternative_count == 0u) topic.alternative_count = 1u;
+  return topic;
 }
 
 void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
@@ -166,8 +201,7 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
     return;
   }
   if (!topic.complete.value || topic.complete.length == 0u ||
-      topic.complete.length > FLOWIE_SECURITY_PATTERN_MAX || topic.groups.count == 0u ||
-      topic.groups.count > FLOWIE_SECURITY_MAX_GROUPS || topic.alternative_count == 0u ||
+      topic.complete.length > FLOWIE_SECURITY_PATTERN_MAX || topic.alternative_count == 0u ||
       topic.alternative_count > FLOWIE_CONTROL_ACL_MAX_ALTERNATIVES) {
     flowie_control_acl_set_error(ctx, TURBO_EPROTO);
     return;
@@ -178,28 +212,9 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
   entry->action_mask = action_mask;
   memcpy(entry->topic, topic.complete.value, topic.complete.length);
   entry->topic[topic.complete.length] = '\0';
-  entry->group_count = (uint8_t)topic.groups.count;
   entry->alternative_count = (uint8_t)topic.alternative_count;
   entry->uses_username = topic.uses_username;
   entry->uses_client_id = topic.uses_client_id;
-  for (size_t index = 0u; index < topic.groups.count; ++index) {
-    size_t offset = (size_t)(topic.groups.items[index].value - topic.complete.value);
-    if (offset > UINT16_MAX || topic.groups.items[index].length > UINT16_MAX) {
-      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-      return;
-    }
-    entry->group_offsets[index] = (uint16_t)offset;
-    entry->group_lengths[index] = (uint16_t)topic.groups.items[index].length;
-  }
-  {
-    size_t device_offset = (size_t)(topic.device.value - topic.complete.value);
-    if (device_offset > UINT16_MAX || topic.device.length > UINT16_MAX) {
-      flowie_control_acl_set_error(ctx, TURBO_EPROTO);
-      return;
-    }
-    entry->device_offset = (uint16_t)device_offset;
-    entry->device_length = (uint16_t)topic.device.length;
-  }
   ++ctx->document.entry_count;
 }
 
@@ -246,6 +261,20 @@ static const char *flowie_control_acl_access_name(uint32_t action_mask) {
   return NULL;
 }
 
+static const char *
+flowie_control_acl_subject_kind_name(flowie_security_subject_kind_t subject_kind) {
+  switch (subject_kind) {
+  case FLOWIE_SECURITY_SUBJECT_PRINCIPAL:
+    return "user";
+  case FLOWIE_SECURITY_SUBJECT_ROLE:
+    return "role";
+  case FLOWIE_SECURITY_SUBJECT_GROUP:
+    return "group";
+  default:
+    return NULL;
+  }
+}
+
 static int flowie_control_acl_append(char *output, size_t capacity, size_t *offset,
                                      const char *text, size_t text_size) {
   if (!output || !offset || !text || *offset > capacity || text_size > capacity - *offset)
@@ -258,15 +287,20 @@ static int flowie_control_acl_append(char *output, size_t capacity, size_t *offs
 int flowie_control_acl_format(const flowie_control_acl_document_t *document, char *text_out,
                               size_t text_capacity, size_t *text_size_out) {
   size_t offset = 0u;
+  const char *subject_kind;
   int rc = TURBO_OK;
   if (text_size_out) *text_size_out = 0u;
-  if (!document || document->size < sizeof(*document) || !document->subject[0] ||
+  if (!document || document->size < sizeof(*document) ||
+      !(subject_kind = flowie_control_acl_subject_kind_name(document->subject_kind)) ||
+      !document->subject[0] ||
       document->entry_count > FLOWIE_CONTROL_ACL_MAX_ENTRIES || !text_out ||
       text_capacity == 0u || !text_size_out)
     return TURBO_EINVAL;
 #define FLOWIE_ACL_APPEND_LITERAL(value)                                                           \
   flowie_control_acl_append(text_out, text_capacity - 1u, &offset, value, sizeof(value) - 1u)
-  rc = FLOWIE_ACL_APPEND_LITERAL("user ");
+  rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, subject_kind,
+                                 strlen(subject_kind));
+  if (rc == TURBO_OK) rc = FLOWIE_ACL_APPEND_LITERAL(" ");
   if (rc == TURBO_OK)
     rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, document->subject,
                                    strlen(document->subject));
@@ -313,11 +347,12 @@ static int flowie_control_acl_rule_base(const flowie_control_acl_document_t *doc
   if (!document || !domain_id || !rule) return TURBO_EINVAL;
   subject_size = strnlen(document->subject, sizeof(document->subject));
   domain_size = strnlen(domain_id, FLOWIE_SECURITY_ID_MAX + 1u);
-  if (subject_size == 0u || subject_size >= sizeof(document->subject) || domain_size == 0u ||
+  if (!flowie_control_acl_subject_kind_name(document->subject_kind) || subject_size == 0u ||
+      subject_size >= sizeof(document->subject) || domain_size == 0u ||
       domain_size > FLOWIE_SECURITY_ID_MAX)
     return TURBO_EINVAL;
   *rule = (flowie_security_rule_t)FLOWIE_SECURITY_RULE_INIT;
-  rule->subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
+  rule->subject_kind = document->subject_kind;
   memcpy(rule->subject, document->subject, subject_size + 1u);
   memcpy(rule->domain_id, domain_id, domain_size + 1u);
   return TURBO_OK;

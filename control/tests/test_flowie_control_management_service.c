@@ -1,5 +1,6 @@
 #include "flowie_control_management_repository_contract.h"
 #include "flowie_control_management_service_internal.h"
+#include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
 #include "turbo_error.h"
@@ -10,6 +11,7 @@
 static flowie_control_management_service_t *management_open(char **path_out,
                                                             flowie_control_store_t **store_out) {
   flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+  flowie_control_test_turbodb_t test_database;
   flowie_control_management_service_config_t service_config =
       FLOWIE_CONTROL_MANAGEMENT_SERVICE_CONFIG_INIT;
   flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
@@ -18,7 +20,8 @@ static flowie_control_management_service_t *management_open(char **path_out,
 
   *path_out = tt_make_temp_file("flowie-management", ".sqlite3");
   check_not_null(*path_out);
-  store_config.database_path = *path_out;
+  check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
+  store_config.database = &test_database.config;
   check_equal(flowie_control_store_open(&store_config, store_out), TURBO_OK);
   root.domain_id = "root-a";
   root.actor = "bootstrap";
@@ -42,11 +45,13 @@ static void management_close(flowie_control_management_service_t *service,
 spec("Flowie ACL management service") {
   it("uses the provider-neutral Repository for account and ACL management") {
     flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
     flowie_control_store_t *store = NULL;
     char *path = tt_make_temp_file("flowie-management-contract", ".sqlite3");
 
     check_not_null(path);
-    store_config.database_path = path;
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    store_config.database = &test_database.config;
     check_equal(flowie_control_store_open(&store_config, &store), TURBO_OK);
     flowie_control_management_repository_contract_run(flowie_control_store_repository(store));
     flowie_control_store_destroy(store);
@@ -88,9 +93,9 @@ spec("Flowie ACL management service") {
     user.expected_revision = 1u;
     user.occurred_at = 2000u;
     check_equal(flowie_control_management_user_create(service, &viewer, &user, &result),
-                 TURBO_EPERM);
+                TURBO_EPERM);
     check_equal(flowie_control_management_user_create(service, &user_admin, &user, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 2u);
 
     user.principal_id = "device-2";
@@ -98,7 +103,7 @@ spec("Flowie ACL management service") {
     user.request_id = "request-cross-root";
     user.expected_revision = 2u;
     check_equal(flowie_control_management_user_create(service, &user_admin, &user, &result),
-                 TURBO_EPERM);
+                TURBO_EPERM);
 
     role.domain_id = "root-a";
     role.role_id = "operator";
@@ -107,11 +112,11 @@ spec("Flowie ACL management service") {
     role.expected_revision = 2u;
     role.occurred_at = 3000u;
     check_equal(flowie_control_management_role_create(service, &user_admin, &role, &result),
-                 TURBO_EPERM);
+                TURBO_EPERM);
     role.actor = "security-admin-1";
     role.request_id = "request-role-security-admin";
     check_equal(flowie_control_management_role_create(service, &security_admin, &role, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 3u);
 
     management_close(service, store, path);
@@ -155,8 +160,8 @@ spec("Flowie ACL management service") {
     check_equal(users[0].principal_id, "device-a");
     users[0] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
     check_equal(flowie_control_management_user_list(service, &admin, "device-a", users, 1u, &count,
-                                                     &has_more),
-                 TURBO_OK);
+                                                    &has_more),
+                TURBO_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(users[0].principal_id, "device-b");
@@ -202,7 +207,7 @@ spec("Flowie ACL management service") {
     user.expected_revision = 1u;
     user.occurred_at = 2000u;
     check_equal(flowie_control_management_user_create(service, &security_admin, &user, &result),
-                 TURBO_OK);
+                TURBO_OK);
 
     issue.domain_id = user_admin.domain_id;
     issue.principal_id = user.principal_id;
@@ -283,7 +288,7 @@ spec("Flowie ACL management service") {
     root.expected_revision = 1u;
     root.occurred_at = 2000u;
     check_equal(flowie_control_management_domain_create(service, &system_admin, &root, &result),
-                 TURBO_OK);
+                TURBO_OK);
     user.domain_id = "root-b";
     user.principal_id = "admin-b";
     user.principal_type = "human";
@@ -292,7 +297,7 @@ spec("Flowie ACL management service") {
     user.expected_revision = 2u;
     user.occurred_at = 2001u;
     check_equal(flowie_control_management_user_create(service, &system_admin, &user, &result),
-                 TURBO_OK);
+                TURBO_OK);
 
     password.domain_id = "root-b";
     password.principal_id = "admin-b";
@@ -304,14 +309,13 @@ spec("Flowie ACL management service") {
     password.expected_revision = 3u;
     password.occurred_at = 2002u;
     check_equal(flowie_control_management_password_set(service, &root_admin, &password, &result),
-                 TURBO_EPERM);
+                TURBO_EPERM);
     check_equal(flowie_control_management_password_set(service, &system_admin, &password, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 4u);
-    check_equal(flowie_control_store_credential_verify(
-                     store, "root-b", "admin-b", initial_password, sizeof(initial_password) - 1u,
-                     &verified),
-                 TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, "root-b", "admin-b", initial_password,
+                                                       sizeof(initial_password) - 1u, &verified),
+                TURBO_OK);
     check_equal(verified.credential_revision, 4u);
 
     password.new_password = replacement_password;
@@ -321,14 +325,14 @@ spec("Flowie ACL management service") {
     password.expected_revision = 4u;
     password.occurred_at = 2003u;
     check_equal(flowie_control_management_password_set(service, &system_admin, &password, &result),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(result.revision, 5u);
-    verified = (flowie_control_credential_verify_result_t)
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
-    check_equal(flowie_control_store_credential_verify(
-                     store, "root-b", "admin-b", replacement_password,
-                     sizeof(replacement_password) - 1u, &verified),
-                 TURBO_OK);
+    verified =
+        (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    check_equal(
+        flowie_control_store_credential_verify(store, "root-b", "admin-b", replacement_password,
+                                               sizeof(replacement_password) - 1u, &verified),
+        TURBO_OK);
     check_equal(verified.credential_revision, 5u);
 
     management_close(service, store, path);
@@ -344,11 +348,11 @@ spec("Flowie ACL management service") {
     flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    flowie_control_user_view_t users[2] = {
-        FLOWIE_CONTROL_USER_VIEW_INIT, FLOWIE_CONTROL_USER_VIEW_INIT};
-    flowie_control_domain_view_t roots[3] = {
-        FLOWIE_CONTROL_DOMAIN_VIEW_INIT, FLOWIE_CONTROL_DOMAIN_VIEW_INIT,
-        FLOWIE_CONTROL_DOMAIN_VIEW_INIT};
+    flowie_control_user_view_t users[2] = {FLOWIE_CONTROL_USER_VIEW_INIT,
+                                           FLOWIE_CONTROL_USER_VIEW_INIT};
+    flowie_control_domain_view_t roots[3] = {FLOWIE_CONTROL_DOMAIN_VIEW_INIT,
+                                             FLOWIE_CONTROL_DOMAIN_VIEW_INIT,
+                                             FLOWIE_CONTROL_DOMAIN_VIEW_INIT};
     size_t count = 0u;
     int has_more = 0;
 
@@ -371,7 +375,7 @@ spec("Flowie ACL management service") {
     root.expected_revision = 2u;
     root.occurred_at = 2001u;
     check_equal(flowie_control_management_domain_create(service, &system_admin, &root, &result),
-                 TURBO_OK);
+                TURBO_OK);
     user.domain_id = "root-b";
     user.principal_id = "admin-b";
     user.principal_type = "human";
@@ -380,34 +384,33 @@ spec("Flowie ACL management service") {
     user.expected_revision = 3u;
     user.occurred_at = 2002u;
     check_equal(flowie_control_management_user_create(service, &system_admin, &user, &result),
-                 TURBO_OK);
+                TURBO_OK);
 
     check_equal(flowie_control_management_scope_caller(service, &system_admin, "root-b", &scoped),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(scoped.domain_id, "root-b");
-    check_equal(flowie_control_management_user_list(service, &scoped, NULL, users, 2u, &count,
-                                                     &has_more),
-                 TURBO_OK);
+    check_equal(
+        flowie_control_management_user_list(service, &scoped, NULL, users, 2u, &count, &has_more),
+        TURBO_OK);
     check_equal(count, 1u);
     check_equal(users[0].principal_id, "admin-b");
     check_false(has_more);
     check_equal(flowie_control_management_scope_caller(service, &root_admin, "root-b", &scoped),
-                 TURBO_EPERM);
-    check_equal(
-        flowie_control_management_scope_caller(service, &system_admin, "missing", &scoped),
-        TURBO_ENOENT);
+                TURBO_EPERM);
+    check_equal(flowie_control_management_scope_caller(service, &system_admin, "missing", &scoped),
+                TURBO_ENOENT);
 
-    check_equal(flowie_control_management_domain_list(
-                     service, &system_admin, NULL, roots, 3u, &count, &has_more),
-                 TURBO_OK);
+    check_equal(flowie_control_management_domain_list(service, &system_admin, NULL, roots, 3u,
+                                                      &count, &has_more),
+                TURBO_OK);
     check_equal(count, 3u);
     check_equal(roots[0].domain_id, "root-a");
     check_equal(roots[1].domain_id, "root-b");
     check_equal(roots[2].domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN);
     check_false(has_more);
-    check_equal(flowie_control_management_domain_list(
-                     service, &root_admin, NULL, roots, 3u, &count, &has_more),
-                 TURBO_EPERM);
+    check_equal(flowie_control_management_domain_list(service, &root_admin, NULL, roots, 3u, &count,
+                                                      &has_more),
+                TURBO_EPERM);
 
     management_close(service, store, path);
   }

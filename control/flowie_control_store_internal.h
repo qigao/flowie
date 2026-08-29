@@ -1,8 +1,9 @@
 #ifndef FLOWIE_CONTROL_STORE_INTERNAL_H
 #define FLOWIE_CONTROL_STORE_INTERNAL_H
 
-#include "flowie_security.h"
 #include "flowie_control_acl_internal.h"
+#include "flowie_security.h"
+#include "orm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -16,27 +17,31 @@ extern "C" {
 #define FLOWIE_CONTROL_GROUP_MAX_DEPTH 15
 #define FLOWIE_CONTROL_CREDENTIAL_ENTROPY_SIZE 32u
 #define FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX "flw_mqtt_v1_"
-#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX_SIZE                                               \
+#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX_SIZE                                                \
   (sizeof(FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX) - 1u)
-#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE                                              \
+#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE                                               \
   ((FLOWIE_CONTROL_CREDENTIAL_ENTROPY_SIZE * 8u + 5u) / 6u)
-#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE                                                      \
+#define FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE                                                       \
   (FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX_SIZE + FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE)
 #define FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY (FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE + 1u)
 #define FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX 4096u
 #define FLOWIE_CONTROL_PAGE_MAX 100u
 #define FLOWIE_CONTROL_OPERATION_NAME_MAX 31u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE 32
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE 64
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_CAPACITY 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_TTL_SECONDS 86400u
 
 typedef struct flowie_control_store_s flowie_control_store_t;
 typedef struct flowie_control_repository_s flowie_control_repository_t;
 
 typedef struct flowie_control_store_config_s {
   size_t size;
-  const char *database_path;
-  int busy_timeout_ms;
+  const orm_config_t *database;
 } flowie_control_store_config_t;
 
-#define FLOWIE_CONTROL_STORE_CONFIG_INIT {sizeof(flowie_control_store_config_t), NULL, 1000}
+#define FLOWIE_CONTROL_STORE_CONFIG_INIT {sizeof(flowie_control_store_config_t), NULL}
 
 typedef struct flowie_control_user_create_command_s {
   size_t size;
@@ -128,8 +133,23 @@ typedef struct flowie_control_credential_resolution_s {
 } flowie_control_credential_resolution_t;
 
 #define FLOWIE_CONTROL_CREDENTIAL_RESOLUTION_INIT                                                  \
-  {sizeof(flowie_control_credential_resolution_t), {0},                                            \
+  {sizeof(flowie_control_credential_resolution_t),                                                 \
+   {0},                                                                                            \
    FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT}
+
+typedef struct flowie_control_management_session_record_s {
+  size_t size;
+  uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE];
+  char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char csrf[FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE + 1u];
+  uint64_t expires_at;
+  uint64_t issued_sequence;
+  uint64_t last_used;
+} flowie_control_management_session_record_t;
+
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT                                              \
+  {sizeof(flowie_control_management_session_record_t), {0}, {0}, {0}, {0}, 0u, 0u, 0u}
 
 typedef struct flowie_control_credential_revoke_command_s {
   size_t size;
@@ -153,7 +173,7 @@ typedef struct flowie_control_domain_create_command_s {
   uint64_t occurred_at;
 } flowie_control_domain_create_command_t;
 
-#define FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT                                              \
+#define FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT                                                  \
   {sizeof(flowie_control_domain_create_command_t), NULL, NULL, NULL, 0u, 0u}
 
 typedef struct flowie_control_domain_view_s {
@@ -310,33 +330,6 @@ typedef struct flowie_control_principal_snapshot_s {
    FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT,                                                      \
    FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT}
 
-typedef struct flowie_control_policy_rule_put_command_s {
-  size_t size;
-  const char *domain_id;
-  uint32_t ordinal;
-  const char *rule_line;
-  const char *actor;
-  const char *request_id;
-  uint64_t expected_revision;
-  uint64_t occurred_at;
-} flowie_control_policy_rule_put_command_t;
-
-#define FLOWIE_CONTROL_POLICY_RULE_PUT_COMMAND_INIT                                                \
-  {sizeof(flowie_control_policy_rule_put_command_t), NULL, 0u, NULL, NULL, NULL, 0u, 0u}
-
-typedef struct flowie_control_policy_rule_delete_command_s {
-  size_t size;
-  const char *domain_id;
-  uint32_t ordinal;
-  const char *actor;
-  const char *request_id;
-  uint64_t expected_revision;
-  uint64_t occurred_at;
-} flowie_control_policy_rule_delete_command_t;
-
-#define FLOWIE_CONTROL_POLICY_RULE_DELETE_COMMAND_INIT                                             \
-  {sizeof(flowie_control_policy_rule_delete_command_t), NULL, 0u, NULL, NULL, 0u, 0u}
-
 typedef struct flowie_control_policy_publish_command_s {
   size_t size;
   const char *domain_id;
@@ -382,16 +375,51 @@ typedef struct flowie_control_policy_status_s {
 #define FLOWIE_CONTROL_POLICY_STATUS_INIT                                                          \
   {sizeof(flowie_control_policy_status_t), 0u, 0u, 0u, 0u, 0u}
 
-typedef struct flowie_control_policy_rule_view_s {
+typedef struct flowie_control_policy_subject_rule_put_command_s {
+  size_t size;
+  const char *domain_id;
+  uint32_t ordinal;
+  const flowie_control_acl_document_t *document;
+  const char *actor;
+  const char *request_id;
+  uint64_t expected_revision;
+  uint64_t occurred_at;
+} flowie_control_policy_subject_rule_put_command_t;
+
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT                                        \
+  {sizeof(flowie_control_policy_subject_rule_put_command_t), NULL, 0u, NULL, NULL, NULL, 0u, 0u}
+
+typedef struct flowie_control_policy_subject_rule_delete_command_s {
+  size_t size;
+  const char *domain_id;
+  flowie_security_subject_kind_t subject_kind;
+  const char *subject_id;
+  const char *actor;
+  const char *request_id;
+  uint64_t expected_revision;
+  uint64_t occurred_at;
+} flowie_control_policy_subject_rule_delete_command_t;
+
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT                                     \
+  {sizeof(flowie_control_policy_subject_rule_delete_command_t),                                    \
+   NULL,                                                                                           \
+   FLOWIE_SECURITY_SUBJECT_ANY,                                                                    \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   NULL,                                                                                           \
+   0u,                                                                                             \
+   0u}
+
+typedef struct flowie_control_policy_subject_rule_view_s {
   size_t size;
   uint32_t ordinal;
-  char rule_line[FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u];
+  flowie_control_acl_document_t document;
   uint64_t revision;
   uint64_t updated_at;
-} flowie_control_policy_rule_view_t;
+} flowie_control_policy_subject_rule_view_t;
 
-#define FLOWIE_CONTROL_POLICY_RULE_VIEW_INIT                                                       \
-  {sizeof(flowie_control_policy_rule_view_t), 0u, "", 0u, 0u}
+#define FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT                                               \
+  {sizeof(flowie_control_policy_subject_rule_view_t), 0u, FLOWIE_CONTROL_ACL_DOCUMENT_INIT, 0u, 0u}
 
 typedef struct flowie_control_group_view_s {
   size_t size;
@@ -439,11 +467,22 @@ int flowie_control_store_open(const flowie_control_store_config_t *config,
 void flowie_control_store_destroy(flowie_control_store_t *store);
 
 /**
- * Return the borrowed repository adapter owned by this SQLite store.
+ * Return the borrowed repository adapter owned by this TurboDB-backed store.
  *
  * The returned interface becomes invalid when `store` is destroyed.
  */
 const flowie_control_repository_t *flowie_control_store_repository(flowie_control_store_t *store);
+
+int flowie_control_store_management_session_issue(
+    flowie_control_store_t *store, const flowie_control_management_session_record_t *record,
+    size_t capacity, size_t max_sessions_per_principal, uint64_t now);
+int flowie_control_store_management_session_resolve(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE], uint64_t now,
+    flowie_control_management_session_record_t *out);
+int flowie_control_store_management_session_revoke(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]);
 
 /** One transaction: validate revision, create user, advance revision, append audit, commit. */
 int flowie_control_store_user_create(flowie_control_store_t *store,
@@ -481,9 +520,9 @@ int flowie_control_store_credential_verify(flowie_control_store_t *store, const 
                                            flowie_control_credential_verify_result_t *result);
 
 /** Resolve one globally unique enabled principal ID and verify its credential. */
-int flowie_control_store_credential_resolve(
-    flowie_control_store_t *store, const char *principal_id, const void *secret,
-    size_t secret_size, flowie_control_credential_resolution_t *result);
+int flowie_control_store_credential_resolve(flowie_control_store_t *store, const char *principal_id,
+                                            const void *secret, size_t secret_size,
+                                            flowie_control_credential_resolution_t *result);
 
 /** Read active user and credential revisions without evaluating the credential KDF. */
 int flowie_control_store_credential_state(flowie_control_store_t *store, const char *domain_id,
@@ -494,7 +533,7 @@ int flowie_control_store_credential_state(flowie_control_store_t *store, const c
 int flowie_control_store_current_revision(flowie_control_store_t *store, uint64_t *revision_out);
 
 /**
- * Read one revision-checked authentication snapshot in a single SQLite read transaction.
+ * Read one revision-checked authentication snapshot in a single database read transaction.
  *
  * The expected revisions must come from a successful credential verification. Any disable,
  * rotation, revoke, role change, or membership change committed before this transaction is
@@ -522,9 +561,9 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
 void flowie_control_generated_credential_wipe(flowie_control_generated_credential_t *credential);
 
 /** Create the immutable root of one security tree. */
-int flowie_control_store_domain_create(
-    flowie_control_store_t *store, const flowie_control_domain_create_command_t *command,
-    flowie_control_command_result_t *result);
+int flowie_control_store_domain_create(flowie_control_store_t *store,
+                                       const flowie_control_domain_create_command_t *command,
+                                       flowie_control_command_result_t *result);
 
 /** Create one child under an existing node; tree depth is bounded and nodes have one parent. */
 int flowie_control_store_group_create(flowie_control_store_t *store,
@@ -576,31 +615,34 @@ int flowie_control_store_effective_roles(flowie_control_store_t *store, const ch
                                          const char *principal_id,
                                          flowie_control_effective_roles_view_t *out);
 
-/** Insert or replace one canonical draft rule under an explicit stable ordinal. */
-int flowie_control_store_policy_rule_put(flowie_control_store_t *store,
-                                         const flowie_control_policy_rule_put_command_t *command,
-                                         flowie_control_command_result_t *result);
-
-/** Remove one draft rule without renumbering the remaining draft. */
-int flowie_control_store_policy_rule_delete(
-    flowie_control_store_t *store, const flowie_control_policy_rule_delete_command_t *command,
-    flowie_control_command_result_t *result);
-
 /** Validate the complete current draft without modifying state. */
 int flowie_control_store_policy_validate(flowie_control_store_t *store, const char *domain_id,
                                          flowie_control_policy_validation_t *out);
 
-/** Publish one validated immutable v3 bundle and advance policy_version atomically. */
+/** Publish one validated immutable subject-scoped bundle and advance policy_version atomically. */
 int flowie_control_store_policy_publish(flowie_control_store_t *store,
                                         const flowie_control_policy_publish_command_t *command,
                                         flowie_control_policy_publish_result_t *result);
 
-/** Return bounded draft rows ordered by ordinal; after_ordinal is exclusive. */
-int flowie_control_store_policy_rule_list(flowie_control_store_t *store, const char *domain_id,
-                                          uint32_t after_ordinal, int has_after,
-                                          flowie_control_policy_rule_view_t *items,
-                                          size_t item_capacity, size_t *count_out,
-                                          int *has_more_out);
+int flowie_control_store_policy_subject_rule_put(
+    flowie_control_store_t *store, const flowie_control_policy_subject_rule_put_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_store_policy_subject_rule_delete(
+    flowie_control_store_t *store,
+    const flowie_control_policy_subject_rule_delete_command_t *command,
+    flowie_control_command_result_t *result);
+int flowie_control_store_policy_subject_rule_get(flowie_control_store_t *store,
+                                                 const char *domain_id,
+                                                 flowie_security_subject_kind_t subject_kind,
+                                                 const char *subject_id,
+                                                 flowie_control_policy_subject_rule_view_t *out);
+int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
+                                                  const char *domain_id,
+                                                  flowie_security_subject_kind_t subject_kind,
+                                                  uint32_t after_ordinal, int has_after,
+                                                  flowie_control_policy_subject_rule_view_t *items,
+                                                  size_t item_capacity, size_t *count_out,
+                                                  int *has_more_out);
 
 /** Return current draft and published bundle metadata. */
 int flowie_control_store_policy_status(flowie_control_store_t *store, const char *domain_id,
@@ -611,19 +653,17 @@ int flowie_control_store_policy_status(flowie_control_store_t *store, const char
  * generation; a positive value requires an exact match. The returned rules are owned by the
  * bundle and remain valid until flowie_control_store_policy_bundle_release().
  */
-int flowie_control_store_policy_bundle_load(flowie_control_store_t *store,
-                                            const char *domain_id, uint64_t required_version,
+int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const char *domain_id,
+                                            uint64_t required_version,
                                             flowie_security_policy_bundle_t *bundle_out);
 void flowie_control_store_policy_bundle_release(flowie_security_policy_bundle_t *bundle);
 
 /** Root-scoped keyset pages. Cursor values are exclusive and all results are caller-owned. */
 int flowie_control_store_domain_get(flowie_control_store_t *store, const char *domain_id,
-                                        flowie_control_domain_view_t *out);
-int flowie_control_store_domain_list(flowie_control_store_t *store,
-                                         const char *after_domain_id,
-                                         flowie_control_domain_view_t *items,
-                                         size_t item_capacity, size_t *count_out,
-                                         int *has_more_out);
+                                    flowie_control_domain_view_t *out);
+int flowie_control_store_domain_list(flowie_control_store_t *store, const char *after_domain_id,
+                                     flowie_control_domain_view_t *items, size_t item_capacity,
+                                     size_t *count_out, int *has_more_out);
 int flowie_control_store_user_list(flowie_control_store_t *store, const char *domain_id,
                                    const char *after_principal_id,
                                    flowie_control_user_view_t *items, size_t item_capacity,
