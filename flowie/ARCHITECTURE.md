@@ -44,7 +44,7 @@ dispatch sink into that Core and exposes graph operations without duplicating st
 protocol-neutral CoroNet execution/runtime and connection snapshot helpers in `io/common`.
 
 In standalone mode MQTT protocol facts have one source of truth: Flowie's typed protocol repository
-over `TurboDB::ORM`. Session, subscription, inflight, retained, and Will mutations commit to that
+over `Orm::C`. Session, subscription, inflight, retained, and Will mutations commit to that
 repository before Flowie swaps its owner/cache state. The in-process vectors, maps, and topic
 trie are rebuildable indexes and scheduling caches only; they must never advance independently or
 serve as a fallback fact source. Standalone composition binds a process-local SQLite `:memory:` ORM
@@ -76,7 +76,7 @@ persistence remain internal owner behavior rather than invented graph operations
 | session owner (internal) | Flowie session owner | bounded cache reconstructed from session facts | independent public resource identity or queue/sink state advancement |
 | subscription index | Flowie subscription owner | rebuildable filter/member query index | graph-owned subscriber membership |
 | application graph | TurboFlow | private message attempt and settlement result | direct MQTT ACK, reconnect, or socket access |
-| standalone protocol repository | Flowie typed repository over `TurboDB::ORM` | session/subscription/inflight/delivery/retained/Will facts | cluster state, Graph sink writes, backend fallback, or a second fact source |
+| standalone protocol repository | Flowie typed repository over `Orm::C` | session/subscription/inflight/delivery/retained/Will facts | cluster state, Graph sink writes, backend fallback, or a second fact source |
 | cluster Raft state machine | `TurboRaft::Service` with WalStorage snapshots/log | committed owner and publish data; in-memory owner directory is derived | ORM/Redis/PostgreSQL storage, independent route writes, or apply before commit |
 
 Parser output is a zero-copy borrowed view. The connection owner must either finish all use
@@ -553,7 +553,7 @@ be changed to a non-zero value. The live timer remains process-local, while its 
 absolute wall-clock expiry. TurboRaft's committed log and snapshot preserve that bound in cluster
 mode; standalone SQLite `:memory:` discards the record at process exit. The typed standalone
 repository provides bounded namespace scan, per-record revision CAS, and serializable atomic commit
-through `TurboDB::ORM`. The internal session codec emits canonical versioned LTV and deliberately excludes
+through `Orm::C`. The internal session codec emits canonical versioned LTV and deliberately excludes
 live routes, credentials, reserved outbound identifiers, and unsettled graph attempts. Decode
 always creates an inactive owner under the new endpoint instance. The additive
 `flowie_endpoint_bindings_t` injects a borrowed store without extending endpoint config ABI;
@@ -599,7 +599,7 @@ resolves one Flowie profile as the allowed product boundary, preflights all adap
 native resource creation, parses the separate TurboFlow DSL graph, then creates only optional
 RuleSet resources, the endpoint, and injected data source/sink adapters referenced by that Graph.
 The bundled composition root injects socket and optional Graph-facing network/data adapters.
-Standalone protocol persistence is constructed directly through `TurboDB::ORM`; cluster
+Standalone protocol persistence is constructed directly through `Orm::C`; cluster
 composition constructs `TurboRaft::Service` and `TurboRaft::WalStorage` instead and never opens
 the standalone repository. Repository owner creation, schema validation, transactions, and teardown
 stay in the standalone owner lifecycle; Flowie does not expose database handles to endpoint logic.
@@ -639,7 +639,7 @@ all transport, certificate, status, content-type, version, or principal-validati
 authentication without a database or anonymous fallback. The returned principal is then evaluated
 by the local SecurityRealm; publish/subscribe ACL checks never perform an HTTP or database call.
 Managed sessions, retained publications, and pending Wills use the standalone SQLite `:memory:`
-protocol repository over `TurboDB::ORM`. Open or schema failure aborts startup; application restart
+protocol repository over `Orm::C`. Open or schema failure aborts startup; application restart
 intentionally begins with empty protocol state, so clients reconnect and resubscribe. Graph-facing
 data sinks never restore protocol state.
 See [ADR_HTTPS_AUTH_SERVICE.md](ADR_HTTPS_AUTH_SERVICE.md) for the trust boundary and deployment

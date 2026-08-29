@@ -1,6 +1,6 @@
 # Flowie 文档
 
-Flowie 是 MQTT 协议与业务处理层。standalone MQTT 协议事实通过 `TurboDB::ORM` 的 typed
+Flowie 是 MQTT 协议与业务处理层。standalone MQTT 协议事实通过 `Orm::C` 的 typed
 repository 管理；cluster 的数据与日志统一由 TurboRaft log/state-machine snapshot 管理；Graph 业务
 事实由产品自己的 sink/repository 管理。三者不得共享事实归属、连接、migration 或 fallback 路径。
 Flowie 内部 owner/route 容器只保存可由 committed Raft log 或 snapshot 重建的投影。

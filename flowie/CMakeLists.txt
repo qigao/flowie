@@ -7,7 +7,7 @@ add_library(flowie_orm_flow STATIC src/flowie_orm_flow.c)
 set_target_properties(flowie_orm_flow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 cmake_config_target(flowie_orm_flow NO_INSTALL FOLDER "flowie/internal")
 target_include_directories(flowie_orm_flow PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
-target_link_libraries(flowie_orm_flow PUBLIC TurboDB::ORM PRIVATE TurboUtils::CFlow TurboUtils::Core)
+target_link_libraries(flowie_orm_flow PUBLIC Orm::C PRIVATE TurboUtils::CFlow TurboUtils::Core)
 set(FLOWIE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie.h)
@@ -54,7 +54,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Flowie::Protocol TurboDB::ORM TurboNet::CoroNet TurboUtils::Core
+  PUBLIC Flowie::Protocol Orm::C TurboNet::CoroNet TurboUtils::Core
   PRIVATE TurboUtils::STL roaring::roaring xxHash::xxhash)
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)

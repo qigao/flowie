@@ -69,7 +69,7 @@ flowie_server: configuration and graph are valid
 provider、`security_realm` 与 HTTPS ACL policy provider；任一环节缺失或初始化失败都会拒绝启动。省略该
 开关只用于兼容仓库内现有开发与匿名测试 profile，不应作为生产部署方式。
 
-持久化 owner 也在该预检边界装配。standalone 通过 `TurboDB::ORM` 创建 SQLite `:memory:`
+持久化 owner 也在该预检边界装配。standalone 通过 `Orm::C` 创建 SQLite `:memory:`
 `flowie_protocol_repository`；cluster 则创建 `TurboRaft::Service` 与
 `TurboRaft::WalStorage`，并拒绝同时绑定 endpoint-local repository。YAML 与 Flow 是实例的唯一
 组合来源：只有被 profile、channel、adapter 或 Graph 引用的 provider 才会创建连接和运行时状态。
@@ -278,7 +278,7 @@ MQTT 3.1/3.1.1 没有 MQTT 5 AUTH exchange，使用普通认证结果和各自�
 ## 9. Session、retained 与持久化
 
 `manage_sessions: true` 启用受限 session/retained 状态。standalone 模式通过
-`flowie_protocol_repository` 使用 `TurboDB::ORM`；未配置 `protocol_store` 时，宿主创建独占的
+`flowie_protocol_repository` 使用 `Orm::C`；未配置 `protocol_store` 时，宿主创建独占的
 SQLite `:memory:` repository。打开连接、建表、schema 校验、CAS 或容量检查失败都会在 listener
 启动前直接报错。显式 `orm_repository` channel 当前同样要求 `driver: sqlite` 和
 `connection: ':memory:'`，只允许调整 table、key 和容量。

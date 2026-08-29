@@ -7,7 +7,7 @@ Accepted. This is an intentionally incompatible standalone-storage migration.
 ## Decision
 
 Standalone Flowie protocol facts use a product-owned typed repository implemented with
-`TurboDB::ORM`. The repository schema contains sessions, subscriptions, inbound QoS state,
+`Orm::C`. The repository schema contains sessions, subscriptions, inbound QoS state,
 outbound deliveries, Will data, principals and retained publications. It does not contain cluster
 ownership, route, binding, Raft log or snapshot tables.
 
@@ -40,7 +40,7 @@ its state-machine snapshots and committed-log replay rebuild the in-memory clust
 ## Consequences
 
 - The V1 ActiveRecord/record-store facade and binary record codecs are removed.
-- `TurboDB::ORM` is the only standalone protocol repository dependency.
+- `Orm::C` is the only standalone protocol repository dependency.
 - Cluster and standalone persistence cannot be enabled on the same endpoint.
 - Repository CAS, rollback, restart, capacity and malformed-row tests are release gates.
 

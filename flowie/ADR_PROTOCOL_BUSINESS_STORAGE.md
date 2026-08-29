@@ -9,7 +9,7 @@
 Flowie 明确区分三个事实源：
 
 ```text
-standalone MQTT protocol facts -> flowie_protocol_repository -> TurboDB::ORM
+standalone MQTT protocol facts -> flowie_protocol_repository -> Orm::C
 cluster replicated data + log  -> TurboRaft log + state-machine snapshot
 Graph/business facts           -> product-owned sink/repository
 ```

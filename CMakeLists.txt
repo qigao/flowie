@@ -58,7 +58,7 @@ find_package(OpenSSL REQUIRED)
 find_package(TurboNet CONFIG REQUIRED
              PATHS "$ENV{TURBONET_ROOT}" NO_DEFAULT_PATH)
 find_package(xxHash CONFIG REQUIRED)
-find_package(TurboDB CONFIG REQUIRED COMPONENTS ORM
+find_package(Orm CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 if(TARGET TurboParser::DataBind AND NOT TARGET TurboUtils::DataBind)
   add_library(TurboUtils::DataBind ALIAS TurboParser::DataBind)

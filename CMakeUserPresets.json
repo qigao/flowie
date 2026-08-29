@@ -22,7 +22,8 @@
         "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
         "PKG_CONFIG_EXECUTABLE": "$env{VCPKG_INSTALLED_DIR}/x64-windows/tools/pkgconf/pkgconf.exe",
         "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "VCPKG_MANIFEST_MODE": "ON"
+        "VCPKG_MANIFEST_MODE": "ON",
+        "OPENSSL_ROOT_DIR": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
       },
       "architecture": {"value": "x64", "strategy": "external"},
       "toolset": {"value": "host=x64", "strategy": "external"}
