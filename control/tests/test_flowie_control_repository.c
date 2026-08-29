@@ -73,6 +73,11 @@ spec("Flowie control repository provider contract") {
     policy.bundle_release = NULL;
     candidate.policy = &policy;
     check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    candidate = *fixture.repository;
+    policy = *candidate.policy;
+    policy.dry_run = NULL;
+    candidate.policy = &policy;
+    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
 
     repository_fixture_close(&fixture);
   }

@@ -172,6 +172,14 @@ static int turbodb_policy_validate(void *ctx, const char *domain_id,
   return flowie_control_store_policy_validate((flowie_control_store_t *)ctx, domain_id, out);
 }
 
+static int turbodb_policy_dry_run(void *ctx, const char *domain_id,
+                                  const flowie_control_policy_dry_run_change_t *changes,
+                                  size_t change_count,
+                                  flowie_control_policy_dry_run_result_t *result) {
+  return flowie_control_store_policy_dry_run((flowie_control_store_t *)ctx, domain_id, changes,
+                                             change_count, result);
+}
+
 static int turbodb_policy_publish(void *ctx, const flowie_control_policy_publish_command_t *command,
                                   flowie_control_policy_publish_result_t *result) {
   return flowie_control_store_policy_publish((flowie_control_store_t *)ctx, command, result);
@@ -242,11 +250,12 @@ static int turbodb_audit_count(void *ctx, size_t *count_out) {
   return flowie_control_store_audit_count((flowie_control_store_t *)ctx, count_out);
 }
 
-static int turbodb_management_session_issue(
-    void *ctx, const flowie_control_management_session_record_t *record, size_t capacity,
-    size_t max_sessions_per_principal, uint64_t now) {
-  return flowie_control_store_management_session_issue(
-      (flowie_control_store_t *)ctx, record, capacity, max_sessions_per_principal, now);
+static int
+turbodb_management_session_issue(void *ctx,
+                                 const flowie_control_management_session_record_t *record,
+                                 size_t capacity, size_t max_sessions_per_principal, uint64_t now) {
+  return flowie_control_store_management_session_issue((flowie_control_store_t *)ctx, record,
+                                                       capacity, max_sessions_per_principal, now);
 }
 
 static int turbodb_management_session_resolve(
@@ -279,6 +288,7 @@ static const flowie_control_repository_role_ops_t TURBODB_ROLE_OPS = {
     turbodb_effective_roles,     turbodb_role_list};
 static const flowie_control_repository_policy_ops_t TURBODB_POLICY_OPS = {
     .validate = turbodb_policy_validate,
+    .dry_run = turbodb_policy_dry_run,
     .publish = turbodb_policy_publish,
     .status = turbodb_policy_status,
     .bundle_load = turbodb_policy_bundle_load,
@@ -314,14 +324,14 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->group->effective || !repository->group->list || !repository->role->create ||
       !repository->role->disable || !repository->role->assignment_add ||
       !repository->role->assignment_remove || !repository->role->effective ||
-      !repository->role->list || !repository->policy->validate || !repository->policy->publish ||
-      !repository->policy->status || !repository->policy->bundle_load ||
-      !repository->policy->bundle_release || !repository->policy->subject_rule_put ||
-      !repository->policy->subject_rule_delete || !repository->policy->subject_rule_get ||
-      !repository->policy->subject_rule_list || !repository->session->issue ||
-      !repository->session->resolve || !repository->session->revoke ||
-      !repository->audit->revision ||
-      !repository->audit->list || !repository->audit->count)
+      !repository->role->list || !repository->policy->validate || !repository->policy->dry_run ||
+      !repository->policy->publish || !repository->policy->status ||
+      !repository->policy->bundle_load || !repository->policy->bundle_release ||
+      !repository->policy->subject_rule_put || !repository->policy->subject_rule_delete ||
+      !repository->policy->subject_rule_get || !repository->policy->subject_rule_list ||
+      !repository->session->issue || !repository->session->resolve ||
+      !repository->session->revoke || !repository->audit->revision || !repository->audit->list ||
+      !repository->audit->count)
     return TURBO_EINVAL;
   return TURBO_OK;
 }

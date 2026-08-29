@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define FLOWIE_CONTROL_REPOSITORY_VERSION 4u
+#define FLOWIE_CONTROL_REPOSITORY_VERSION 5u
 
 typedef enum flowie_control_repository_capability_e {
   FLOWIE_CONTROL_REPOSITORY_DURABLE = 1u << 0,
@@ -22,7 +22,7 @@ typedef enum flowie_control_repository_capability_e {
   (FLOWIE_CONTROL_REPOSITORY_DURABLE | FLOWIE_CONTROL_REPOSITORY_ATOMIC_COMMANDS |                 \
    FLOWIE_CONTROL_REPOSITORY_CONSISTENT_AUTH_SNAPSHOT |                                            \
    FLOWIE_CONTROL_REPOSITORY_KEYSET_PAGINATION |                                                   \
-   FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT |                                         \
+   FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT |                                          \
    FLOWIE_CONTROL_REPOSITORY_DURABLE_MANAGEMENT_SESSIONS)
 
 typedef struct flowie_control_repository_user_ops_s {
@@ -102,6 +102,9 @@ typedef struct flowie_control_repository_role_ops_s {
 
 typedef struct flowie_control_repository_policy_ops_s {
   int (*validate)(void *ctx, const char *domain_id, flowie_control_policy_validation_t *out);
+  int (*dry_run)(void *ctx, const char *domain_id,
+                 const flowie_control_policy_dry_run_change_t *changes, size_t change_count,
+                 flowie_control_policy_dry_run_result_t *result);
   int (*publish)(void *ctx, const flowie_control_policy_publish_command_t *command,
                  flowie_control_policy_publish_result_t *result);
   int (*status)(void *ctx, const char *domain_id, flowie_control_policy_status_t *out);
@@ -132,8 +135,8 @@ typedef struct flowie_control_repository_audit_ops_s {
 } flowie_control_repository_audit_ops_t;
 
 typedef struct flowie_control_repository_session_ops_s {
-  int (*issue)(void *ctx, const flowie_control_management_session_record_t *record,
-               size_t capacity, size_t max_sessions_per_principal, uint64_t now);
+  int (*issue)(void *ctx, const flowie_control_management_session_record_t *record, size_t capacity,
+               size_t max_sessions_per_principal, uint64_t now);
   int (*resolve)(void *ctx,
                  const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE],
                  uint64_t now, flowie_control_management_session_record_t *out);
