@@ -7,6 +7,12 @@ Flowie 服务端支持 MQTT 3.1、3.1.1 与 5，监听 transport 支持 TCP、TL
 网络与用户态 buffer 参数见
 [CoroNet Buffer Tuning Contract](../io/common/CORONET_BUFFER_TUNING.md)。
 
+> 当前主线 CMake 中的 `flowie_server` 是 direct-listener 可执行文件，只接受 listener、容量、日志和
+> `--protocol-store-driver` / `--protocol-store-options` 参数，不读取 YAML、`.flow` 或 embedded Control
+> 配置。其实际运行契约以
+> [容器部署文档](../deploy/server/README.md)和 `flowie_server --help` 为准。下文关于配置式 broker、Graph
+> 和 supervisor 的章节描述应用层组合设计，不应直接当作当前可执行文件的 CLI。
+
 ## 1. 服务端的两个输入
 
 Flowie 将部署事实与数据流拓扑分开：
@@ -69,10 +75,11 @@ flowie_server: configuration and graph are valid
 provider、`security_realm` 与 HTTPS ACL policy provider；任一环节缺失或初始化失败都会拒绝启动。省略该
 开关只用于兼容仓库内现有开发与匿名测试 profile，不应作为生产部署方式。
 
-持久化 owner 也在该预检边界装配。standalone 通过 `Orm::C` 创建 SQLite `:memory:`
-`flowie_protocol_repository`；cluster 则创建 `TurboRaft::Service` 与
-`TurboRaft::WalStorage`，并拒绝同时绑定 endpoint-local repository。YAML 与 Flow 是实例的唯一
-组合来源：只有被 profile、channel、adapter 或 Graph 引用的 provider 才会创建连接和运行时状态。
+当前 direct-listener 可执行文件的 `--check` 会按 `--protocol-store-driver` 和 JSON
+`--protocol-store-options` 打开 TurboDB repository、创建或校验 V2 schema，并装配 endpoint persistence
+binding；默认值为 SQLite 与 `{"filename":"flowie-protocol.sqlite3"}`。配置式 standalone/cluster
+应用仍需分别装配 endpoint-local repository 或
+`TurboRaft::Service`，不得同时维护两个协议事实源。
 
 ## 4. 启动与监管
 
@@ -277,16 +284,24 @@ MQTT 3.1/3.1.1 没有 MQTT 5 AUTH exchange，使用普通认证结果和各自�
 
 ## 9. Session、retained 与持久化
 
-`manage_sessions: true` 启用受限 session/retained 状态。standalone 模式通过
-`flowie_protocol_repository` 使用 `Orm::C`；未配置 `protocol_store` 时，宿主创建独占的
-SQLite `:memory:` repository。打开连接、建表、schema 校验、CAS 或容量检查失败都会在 listener
-启动前直接报错。显式 `orm_repository` channel 当前同样要求 `driver: sqlite` 和
-`connection: ':memory:'`，只允许调整 table、key 和容量。
+当前直接 listener 版 `flowie_server` 固定启用受限 session/retained 管理，并始终通过
+`flowie_protocol_repository` 使用 TurboDB 的 `Orm::C` 接口。数据库由
+`--protocol-store-driver DRIVER` 与 `--protocol-store-options JSON` 共同选择；对应环境变量是
+`FLOWIE_PROTOCOL_STORE_DRIVER` 与 `FLOWIE_PROTOCOL_STORE_OPTIONS`，CLI 优先于环境变量。原生默认仍是
+SQLite 与当前工作目录的 `flowie-protocol.sqlite3`；容器镜像默认是 SQLite 持久卷路径，Compose 示例则
+显式选择 PostgreSQL。SQLite 无文件预检应使用
+`--protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}'`。
 
-standalone repository 是该进程代际的唯一协议事实源。重启后 Client 必须重新连接和订阅，
-Session Present 不从 Graph sink 或其他数据库恢复；显式 repository 失败时也不回退到其他 backend。
-旧配置字段 `session_store` 仅作为与 `protocol_store` 互斥的解析别名，部署配置应迁移到
-`protocol_store`。
+Broker 与 Control 可以连接同一个 PostgreSQL database，无需为每个模块创建不同 PostgreSQL schema：
+当前 direct Server 表固定使用 `flowie_server_` namespace，Control 表使用 `flowie_control_` 前缀，且各自维护独立
+schema version。若运维隔离、权限或独立备份是硬要求，也可以配置为不同 database；两边都必须显式提供
+各自的 driver/options，应用不会按数据库类型硬编码选择，也不会在连接失败时回退到 SQLite。
+
+repository 是 standalone 进程中 session、subscription、inflight、Will、retained 和 principal snapshot
+的唯一协议事实源。server 在 endpoint 创建前打开连接并创建或校验 V2 schema，把 caller-owned repository
+注入 endpoint；停止时先销毁 endpoint，再关闭 repository。连接、schema、CAS 或容量检查失败时直接报错，
+不会回退到 endpoint 内存或其他 backend。`--check` 也会实际打开 repository 并验证这一边界，但不会启动
+listener。普通 PUBLISH 业务正文不属于该 repository，仍需 Graph 或应用显式写入业务 sink。
 
 cluster 模式不创建 endpoint-local ORM repository，也不使用 Redis、PostgreSQL 或 FlowStore 保存
 cluster 状态。连接 owner、session/PUBLISH 等业务命令先进入 `TurboRaft::Service` 的一致性日志，

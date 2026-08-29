@@ -121,8 +121,9 @@ Content-Type: application/json
 {"jsonrpc":"2.0","method":"control.system.status","params":{},"id":"status-1"}
 ```
 
-Management session 有容量和 TTL 限制，Flowie 重启后也必须重新登录。账号 disabled、Role 被移除、
-session 过期或被淘汰后，请求立即失效。浏览器跨域应用应通过自己的后端调用 Flowie，不能把管理
+Management session 有容量和 TTL 限制，并持久化在 Control 配置选择的 TurboDB Repository 中；Flowie
+重启后，尚未过期且未撤销的 session 仍然有效。账号 disabled、Role 被移除、session 过期或被淘汰后，
+请求立即失效。浏览器跨域应用应通过自己的后端调用 Flowie，不能把管理
 密码或 session token 放到前端。
 
 后端必须把 `303` 作为登录成功，并从 `Set-Cookie` 中提取名为 `flowie_session` 的 64 字符不透明值；
@@ -416,7 +417,8 @@ Control 记录；客户端应用只负责对配置中的 topic 收发消息。
 - 交付资料不包含 `system/admin`、`system_admin` 或 Broker service token。
 - 第三方管理账号只能访问自己的 Domain，且只有所需 Management Role。
 - 后端验证 Control 证书链与 hostname，并把登录 `303` 和 JSON-RPC `result`/`error` 分别处理。
-- Management session 过期、重启或 `-32001` 后会重新登录，`-32003` 不做无界重试。
+- Management session 过期、撤销、容量淘汰或收到 `-32001` 后会重新登录；普通进程重启不应使有效 session
+  失效，`-32003` 不做无界重试。
 - username 在所有 enabled Domain 中唯一。
 - ACL topic 的首段与用户 Domain 一致，Group path 与数据库父链一致。
 - ACL 已 validate 并 publish，而不只是保存到 draft。

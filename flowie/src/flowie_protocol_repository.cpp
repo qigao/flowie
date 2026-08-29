@@ -230,7 +230,7 @@ int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *c
   orm_settings.max_result_rows = repo_max_result_rows(&config->limits);
   orm_settings.max_parameter_bytes = config->limits.max_packet_size;
   orm_error_init(&error);
-  status = orm_connect(&orm_settings, &repository->connection, &error);
+  status = flowie_orm_connect(&orm_settings, &repository->connection, &error);
   if (status != ORM_STATUS_OK) {
     rc = repo_status(status);
     goto done;

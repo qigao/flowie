@@ -27,6 +27,11 @@ extern "C" {
 #define FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX 4096u
 #define FLOWIE_CONTROL_PAGE_MAX 100u
 #define FLOWIE_CONTROL_OPERATION_NAME_MAX 31u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE 32
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE 64
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_CAPACITY 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_TTL_SECONDS 86400u
 
 typedef struct flowie_control_store_s flowie_control_store_t;
 typedef struct flowie_control_repository_s flowie_control_repository_t;
@@ -131,6 +136,20 @@ typedef struct flowie_control_credential_resolution_s {
   {sizeof(flowie_control_credential_resolution_t),                                                 \
    {0},                                                                                            \
    FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT}
+
+typedef struct flowie_control_management_session_record_s {
+  size_t size;
+  uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE];
+  char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char csrf[FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE + 1u];
+  uint64_t expires_at;
+  uint64_t issued_sequence;
+  uint64_t last_used;
+} flowie_control_management_session_record_t;
+
+#define FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT                                              \
+  {sizeof(flowie_control_management_session_record_t), {0}, {0}, {0}, {0}, 0u, 0u, 0u}
 
 typedef struct flowie_control_credential_revoke_command_s {
   size_t size;
@@ -453,6 +472,17 @@ void flowie_control_store_destroy(flowie_control_store_t *store);
  * The returned interface becomes invalid when `store` is destroyed.
  */
 const flowie_control_repository_t *flowie_control_store_repository(flowie_control_store_t *store);
+
+int flowie_control_store_management_session_issue(
+    flowie_control_store_t *store, const flowie_control_management_session_record_t *record,
+    size_t capacity, size_t max_sessions_per_principal, uint64_t now);
+int flowie_control_store_management_session_resolve(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE], uint64_t now,
+    flowie_control_management_session_record_t *out);
+int flowie_control_store_management_session_revoke(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]);
 
 /** One transaction: validate revision, create user, advance revision, append audit, commit. */
 int flowie_control_store_user_create(flowie_control_store_t *store,

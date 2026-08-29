@@ -6,6 +6,9 @@ services:
       - /usr/local/bin/flowie-combined-entrypoint
     network_mode: host
     restart: unless-stopped
+    depends_on:
+      flowie-postgres:
+        condition: service_healthy
     stop_grace_period: 30s
     read_only: true
     init: true
@@ -22,6 +25,9 @@ services:
       FLOWIE_PORT: ${FLOWIE_PORT:-18883}
       FLOWIE_TRANSPORT: ${FLOWIE_TRANSPORT:-tcp}
       FLOWIE_PATH: ${FLOWIE_PATH:-/mqtt}
+      FLOWIE_PROTOCOL_STORE_DRIVER: ${FLOWIE_PROTOCOL_STORE_DRIVER:-postgresql}
+      FLOWIE_PROTOCOL_STORE_OPTIONS: ${FLOWIE_PROTOCOL_STORE_OPTIONS:?set FLOWIE_PROTOCOL_STORE_OPTIONS}
+      FLOWIE_CONTROL_DB_CONNINFO: ${FLOWIE_CONTROL_DB_CONNINFO:?set FLOWIE_CONTROL_DB_CONNINFO}
       FLOWIE_MAX_PACKET_SIZE: ${FLOWIE_MAX_PACKET_SIZE:-1048576}
       FLOWIE_MAX_CONNECTIONS: ${FLOWIE_MAX_CONNECTIONS:-1024}
       FLOWIE_MAX_SESSIONS: ${FLOWIE_MAX_SESSIONS:-${FLOWIE_MAX_CONNECTIONS:-1024}}
@@ -67,11 +73,41 @@ services:
       start_period: 15s
       retries: 3
 
+  flowie-postgres:
+    image: ${FLOWIE_POSTGRES_IMAGE:-postgres:17-bookworm}
+    container_name: flowie-postgres
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      POSTGRES_DB: flowie
+      POSTGRES_USER: flowie
+      POSTGRES_PASSWORD: ${FLOWIE_POSTGRES_PASSWORD:?set FLOWIE_POSTGRES_PASSWORD}
+      PGPORT: ${FLOWIE_POSTGRES_PORT:-55432}
+    command:
+      [
+        "postgres",
+        "-p",
+        "${FLOWIE_POSTGRES_PORT:-55432}",
+        "-c",
+        "listen_addresses=127.0.0.1",
+      ]
+    volumes:
+      - flowie-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p $${PGPORT} -U flowie -d flowie"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+
 volumes:
   flowie-data:
     name: ${FLOWIE_DATA_VOLUME:-flowie-data}
   flowie-control-data:
     name: ${FLOWIE_CONTROL_DATA_VOLUME:-flowie-control-data}
+  flowie-postgres-data:
+    name: ${FLOWIE_POSTGRES_DATA_VOLUME:-flowie-postgres-data}
 
 secrets:
   flowie-control-key-password:

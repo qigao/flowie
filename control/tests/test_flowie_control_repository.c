@@ -52,6 +52,9 @@ spec("Flowie control repository provider contract") {
     candidate.policy = NULL;
     check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
     candidate = *fixture.repository;
+    candidate.session = NULL;
+    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    candidate = *fixture.repository;
     auth.principal_snapshot = NULL;
     candidate.auth = &auth;
     check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);

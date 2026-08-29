@@ -1,52 +1,24 @@
 #include "flowie_control_management_session_internal.h"
 
-#include "flowie_stl_error_internal.h"
-
-#include <turbostl/deque.h>
-#include <turbostl/hash_map.h>
-#include <turbostl/hash_set.h>
-#include <turbostl/vec.h>
-
 #include "flowie_control_credential_internal.h"
 
 #include "monocypher.h"
 #include "platform.h"
 #include "turbo_error.h"
-#include <turbostl/hash_map.h>
-#include "turbo_thread.h"
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE 32u
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_KEY_SIZE 32u
 #define FLOWIE_CONTROL_MANAGEMENT_SESSION_RANDOM_SIZE 32u
 #define FLOWIE_CONTROL_MANAGEMENT_SESSION_SCOPE "management-session"
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_CAPACITY 65536u
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL 65536u
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_TTL_SECONDS 86400u
-
-typedef struct flowie_control_management_session_entry_s {
-  char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
-  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
-  char csrf[FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE + 1u];
-  uint64_t expires_at;
-  uint64_t issued_sequence;
-  uint64_t last_used;
-} flowie_control_management_session_entry_t;
 
 struct flowie_control_management_session_store_s {
   flowie_control_repository_t repository;
   flowie_control_auth_service_t *auth_service;
-  hash_map_t sessions;
-  turbo_mutex_t lock;
-  uint8_t digest_key[FLOWIE_CONTROL_MANAGEMENT_SESSION_KEY_SIZE];
   char method[FLOWIE_SECURITY_TYPE_MAX + 1u];
   size_t capacity;
   size_t max_sessions_per_principal;
   uint64_t ttl_seconds;
-  uint64_t access_sequence;
   flowie_control_management_session_clock_fn clock;
   void *clock_ctx;
 };
@@ -93,124 +65,16 @@ static int flowie_control_management_session_token_valid(const char *token) {
 }
 
 static void flowie_control_management_session_digest(
-    const flowie_control_management_session_store_t *store, const char *token,
+    const char *token,
     uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]) {
-  crypto_blake2b_keyed(digest, FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE, store->digest_key,
-                       sizeof(store->digest_key), (const uint8_t *)token,
-                       FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE);
-}
-
-static uint64_t
-flowie_control_management_session_next_sequence(flowie_control_management_session_store_t *store) {
-  if (store->access_sequence == UINT64_MAX) {
-    uint64_t minimum = UINT64_MAX;
-    size_t capacity = hash_map_capacity(&store->sessions);
-    for (size_t slot = 0u; slot < capacity; ++slot) {
-      flowie_control_management_session_entry_t *entry =
-          (flowie_control_management_session_entry_t *)hash_map_value_at(&store->sessions,
-                                                                               slot);
-      if (entry && entry->issued_sequence < minimum) minimum = entry->issued_sequence;
-    }
-    if (minimum == UINT64_MAX) {
-      store->access_sequence = 0u;
-    } else {
-      for (size_t slot = 0u; slot < capacity; ++slot) {
-        flowie_control_management_session_entry_t *entry =
-            (flowie_control_management_session_entry_t *)hash_map_value_at(&store->sessions,
-                                                                                 slot);
-        if (entry) {
-          entry->issued_sequence -= minimum;
-          entry->last_used -= minimum;
-        }
-      }
-      store->access_sequence -= minimum;
-    }
-  }
-  return ++store->access_sequence;
-}
-
-static void flowie_control_management_session_remove_locked(
-    flowie_control_management_session_store_t *store,
-    const uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]) {
-  flowie_control_management_session_entry_t removed = {0};
-  if (flowie_stl_error(hash_map_remove(&store->sessions, digest, &removed)) == TURBO_OK)
-    flowie_control_credential_wipe(&removed, sizeof(removed));
-}
-
-static void flowie_control_management_session_prune_locked(
-    flowie_control_management_session_store_t *store, uint64_t now) {
-  size_t slot = 0u;
-  while (slot < hash_map_capacity(&store->sessions)) {
-    const uint8_t *key = (const uint8_t *)hash_map_key_at(&store->sessions, slot);
-    const flowie_control_management_session_entry_t *entry =
-        (const flowie_control_management_session_entry_t *)hash_map_value_at_const(
-            &store->sessions, slot);
-    if (key && entry && now >= entry->expires_at) {
-      uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE];
-      memcpy(digest, key, sizeof(digest));
-      flowie_control_management_session_remove_locked(store, digest);
-      flowie_control_credential_wipe(digest, sizeof(digest));
-      continue;
-    }
-    ++slot;
-  }
-}
-
-static int flowie_control_management_session_evict_locked(
-    flowie_control_management_session_store_t *store) {
-  uint8_t oldest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
-  uint64_t sequence = UINT64_MAX;
-  int found = 0;
-  size_t capacity = hash_map_capacity(&store->sessions);
-  for (size_t slot = 0u; slot < capacity; ++slot) {
-    const uint8_t *key = (const uint8_t *)hash_map_key_at(&store->sessions, slot);
-    const flowie_control_management_session_entry_t *entry =
-        (const flowie_control_management_session_entry_t *)hash_map_value_at_const(
-            &store->sessions, slot);
-    if (key && entry && (!found || entry->last_used < sequence)) {
-      memcpy(oldest, key, sizeof(oldest));
-      sequence = entry->last_used;
-      found = 1;
-    }
-  }
-  if (found) flowie_control_management_session_remove_locked(store, oldest);
-  flowie_control_credential_wipe(oldest, sizeof(oldest));
-  return found;
-}
-
-static void flowie_control_management_session_evict_principal_locked(
-    flowie_control_management_session_store_t *store, const char *domain_id,
-    const char *principal_id) {
-  uint8_t oldest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
-  uint64_t sequence = UINT64_MAX;
-  size_t matching = 0u;
-  int found = 0;
-  size_t capacity = hash_map_capacity(&store->sessions);
-  for (size_t slot = 0u; slot < capacity; ++slot) {
-    const uint8_t *key = (const uint8_t *)hash_map_key_at(&store->sessions, slot);
-    const flowie_control_management_session_entry_t *entry =
-        (const flowie_control_management_session_entry_t *)hash_map_value_at_const(
-            &store->sessions, slot);
-    if (!key || !entry || strcmp(entry->domain_id, domain_id) != 0 ||
-        strcmp(entry->principal_id, principal_id) != 0)
-      continue;
-    ++matching;
-    if (!found || entry->issued_sequence < sequence) {
-      memcpy(oldest, key, sizeof(oldest));
-      sequence = entry->issued_sequence;
-      found = 1;
-    }
-  }
-  if (matching >= store->max_sessions_per_principal && found)
-    flowie_control_management_session_remove_locked(store, oldest);
-  flowie_control_credential_wipe(oldest, sizeof(oldest));
+  crypto_blake2b(digest, FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE,
+                 (const uint8_t *)token, FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE);
 }
 
 int flowie_control_management_session_store_create(
     const flowie_control_management_session_config_t *config,
     flowie_control_management_session_store_t **out) {
   flowie_control_management_session_store_t *store = NULL;
-  int rc;
   if (out) *out = NULL;
   if (!config || config->size < sizeof(*config) ||
       flowie_control_repository_validate(config->repository) != TURBO_OK ||
@@ -235,41 +99,13 @@ int flowie_control_management_session_store_create(
       config->clock ? config->clock : flowie_control_management_session_default_clock;
   store->clock_ctx = config->clock_ctx;
   memcpy(store->method, config->method, strlen(config->method) + 1u);
-  rc = turbo_secure_random(store->digest_key, sizeof(store->digest_key));
-  if (rc != TURBO_OK) goto fail;
-  rc = flowie_stl_error(hash_map_init_bytes(
-      &store->sessions, FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE,
-      _Alignof(unsigned char), sizeof(flowie_control_management_session_entry_t),
-      _Alignof(flowie_control_management_session_entry_t), store->capacity, hash_bytes,
-      hash_key_equal, NULL));
-  if (rc != TURBO_OK) goto fail;
-  rc = flowie_stl_error(hash_map_reserve(&store->sessions, store->capacity));
-  if (rc != TURBO_OK) goto fail;
-  turbo_mutex_init(&store->lock);
   *out = store;
   return TURBO_OK;
-
-fail:
-  hash_map_destroy(&store->sessions);
-  flowie_control_credential_wipe(store, sizeof(*store));
-  free(store);
-  return rc;
 }
 
 void flowie_control_management_session_store_destroy(
-    flowie_control_management_session_store_t *store) {
+  flowie_control_management_session_store_t *store) {
   if (!store) return;
-  turbo_mutex_lock(&store->lock);
-  for (size_t slot = 0u; slot < hash_map_capacity(&store->sessions); ++slot) {
-    flowie_control_management_session_entry_t *entry =
-        (flowie_control_management_session_entry_t *)hash_map_value_at(&store->sessions,
-                                                                             slot);
-    if (entry) flowie_control_credential_wipe(entry, sizeof(*entry));
-  }
-  hash_map_clear(&store->sessions);
-  turbo_mutex_unlock(&store->lock);
-  turbo_mutex_destroy(&store->lock);
-  hash_map_destroy(&store->sessions);
   flowie_control_credential_wipe(store, sizeof(*store));
   free(store);
 }
@@ -329,10 +165,10 @@ static int flowie_control_management_session_issue(
     flowie_control_management_session_store_t *store,
     const flowie_control_management_caller_t *caller, uint64_t principal_expires_at,
     char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u]) {
-  flowie_control_management_session_entry_t entry = {0};
+  flowie_control_management_session_record_t record =
+      FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
   uint8_t token_random[FLOWIE_CONTROL_MANAGEMENT_SESSION_RANDOM_SIZE] = {0};
   uint8_t csrf_random[FLOWIE_CONTROL_MANAGEMENT_SESSION_RANDOM_SIZE] = {0};
-  uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
   uint64_t now;
   int rc;
   if (token_out) token_out[0] = '\0';
@@ -356,32 +192,20 @@ static int flowie_control_management_session_issue(
   if (rc == TURBO_OK) rc = turbo_secure_random(csrf_random, sizeof(csrf_random));
   if (rc != TURBO_OK) goto done;
   flowie_control_management_session_hex(token_random, token_out);
-  flowie_control_management_session_hex(csrf_random, entry.csrf);
-  memcpy(entry.domain_id, caller->domain_id, strlen(caller->domain_id) + 1u);
-  memcpy(entry.principal_id, caller->actor, strlen(caller->actor) + 1u);
-  entry.expires_at = now + store->ttl_seconds;
-  if (principal_expires_at < entry.expires_at) entry.expires_at = principal_expires_at;
-  flowie_control_management_session_digest(store, token_out, digest);
-  turbo_mutex_lock(&store->lock);
-  flowie_control_management_session_prune_locked(store, now);
-  flowie_control_management_session_evict_principal_locked(
-      store, entry.domain_id, entry.principal_id);
-  if (hash_map_size(&store->sessions) >= store->capacity &&
-      !flowie_control_management_session_evict_locked(store))
-    rc = TURBO_EBUSY;
-  if (rc == TURBO_OK) {
-    entry.issued_sequence = flowie_control_management_session_next_sequence(store);
-    entry.last_used = entry.issued_sequence;
-    rc = flowie_stl_error(hash_map_put(&store->sessions, digest, &entry));
-  }
-  turbo_mutex_unlock(&store->lock);
+  flowie_control_management_session_hex(csrf_random, record.csrf);
+  memcpy(record.domain_id, caller->domain_id, strlen(caller->domain_id) + 1u);
+  memcpy(record.principal_id, caller->actor, strlen(caller->actor) + 1u);
+  record.expires_at = now + store->ttl_seconds;
+  if (principal_expires_at < record.expires_at) record.expires_at = principal_expires_at;
+  flowie_control_management_session_digest(token_out, record.token_digest);
+  rc = store->repository.session->issue(store->repository.ctx, &record, store->capacity,
+                                        store->max_sessions_per_principal, now);
 
 done:
   if (rc != TURBO_OK && token_out) token_out[0] = '\0';
-  flowie_control_credential_wipe(&entry, sizeof(entry));
+  flowie_control_credential_wipe(&record, sizeof(record));
   flowie_control_credential_wipe(token_random, sizeof(token_random));
   flowie_control_credential_wipe(csrf_random, sizeof(csrf_random));
-  flowie_control_credential_wipe(digest, sizeof(digest));
   return rc;
 }
 
@@ -419,13 +243,13 @@ int flowie_control_management_session_login(
 int flowie_control_management_session_resolve(
     flowie_control_management_session_store_t *store, const char *token,
     flowie_control_management_session_identity_t *identity_out) {
-  flowie_control_management_session_entry_t entry = {0};
+  flowie_control_management_session_record_t record =
+      FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
   flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
   flowie_control_management_session_identity_t identity =
       FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
   uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
   uint64_t now;
-  int found = 0;
   int rc;
   if (identity_out && identity_out->size >= sizeof(*identity_out)) *identity_out = identity;
   if (!store || !flowie_control_management_session_token_valid(token) || !identity_out ||
@@ -433,24 +257,12 @@ int flowie_control_management_session_resolve(
     return TURBO_EPERM;
   now = store->clock(store->clock_ctx);
   if (now == 0u) return TURBO_EIO;
-  flowie_control_management_session_digest(store, token, digest);
-  turbo_mutex_lock(&store->lock);
-  flowie_control_management_session_entry_t *stored =
-      (flowie_control_management_session_entry_t *)hash_map_get(&store->sessions, digest);
-  if (stored && now < stored->expires_at) {
-    stored->last_used = flowie_control_management_session_next_sequence(store);
-    entry = *stored;
-    found = 1;
-  } else if (stored) {
-    flowie_control_management_session_remove_locked(store, digest);
-  }
-  turbo_mutex_unlock(&store->lock);
-  if (!found) {
-    rc = TURBO_EPERM;
-    goto done;
-  }
+  flowie_control_management_session_digest(token, digest);
+  rc = store->repository.session->resolve(store->repository.ctx, digest, now, &record);
+  if (rc == TURBO_ENOENT) rc = TURBO_EPERM;
+  if (rc != TURBO_OK) goto done;
   rc = flowie_control_management_identity_resolve_principal(
-      &store->repository, entry.domain_id, entry.principal_id, &caller);
+      &store->repository, record.domain_id, record.principal_id, &caller);
   if (rc != TURBO_OK) {
     (void)flowie_control_management_session_revoke(store, token);
     goto done;
@@ -458,11 +270,11 @@ int flowie_control_management_session_resolve(
   memcpy(identity.domain_id, caller.domain_id, strlen(caller.domain_id) + 1u);
   memcpy(identity.principal_id, caller.actor, strlen(caller.actor) + 1u);
   identity.permissions = caller.permissions;
-  memcpy(identity.csrf, entry.csrf, sizeof(entry.csrf));
+  memcpy(identity.csrf, record.csrf, sizeof(record.csrf));
   *identity_out = identity;
 
 done:
-  flowie_control_credential_wipe(&entry, sizeof(entry));
+  flowie_control_credential_wipe(&record, sizeof(record));
   flowie_control_credential_wipe(digest, sizeof(digest));
   return rc;
 }
@@ -472,13 +284,8 @@ int flowie_control_management_session_revoke(
   uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
   int rc = TURBO_ENOENT;
   if (!store || !flowie_control_management_session_token_valid(token)) return TURBO_EPERM;
-  flowie_control_management_session_digest(store, token, digest);
-  turbo_mutex_lock(&store->lock);
-  if (hash_map_get(&store->sessions, digest)) {
-    flowie_control_management_session_remove_locked(store, digest);
-    rc = TURBO_OK;
-  }
-  turbo_mutex_unlock(&store->lock);
+  flowie_control_management_session_digest(token, digest);
+  rc = store->repository.session->revoke(store->repository.ctx, digest);
   flowie_control_credential_wipe(digest, sizeof(digest));
   return rc;
 }

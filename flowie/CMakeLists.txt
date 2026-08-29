@@ -8,6 +8,10 @@ set_target_properties(flowie_orm_flow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 cmake_config_target(flowie_orm_flow NO_INSTALL FOLDER "flowie/internal")
 target_include_directories(flowie_orm_flow PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
 target_link_libraries(flowie_orm_flow PUBLIC Orm::C PRIVATE TurboUtils::CFlow TurboUtils::Core)
+if(TARGET Orm::PostgreSQL)
+  target_compile_definitions(flowie_orm_flow PRIVATE FLOWIE_ORM_WITH_POSTGRESQL)
+  target_link_libraries(flowie_orm_flow PUBLIC Orm::PostgreSQL)
+endif()
 set(FLOWIE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie.h)

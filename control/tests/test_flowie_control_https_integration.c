@@ -52,6 +52,7 @@
 #define CONTROL_INTEGRATION_SERVICE_TOKEN "integration-service-token"
 #define CONTROL_INTEGRATION_SERVICE_TOKEN_ENV "FLOWIE_AUTH_SERVICE_TOKEN"
 #define CONTROL_INTEGRATION_ADMIN_PASSWORD "integration-admin-password"
+#define CONTROL_INTEGRATION_ROTATED_ADMIN_PASSWORD "integration-rotated-admin-password"
 #define CONTROL_INTEGRATION_POLICY_EXPIRES_AT UINT64_C(4102444800)
 #define CONTROL_INTEGRATION_SECRET_BASE64_CAPACITY 64u
 #define CONTROL_INTEGRATION_FORM_CAPACITY 1024u
@@ -92,6 +93,12 @@ typedef struct control_http_state_s {
   int dashboard_write_ok;
   int dashboard_logout_ok;
   int dashboard_role_revocation_ok;
+  int bootstrap_password_page_ok;
+  int bootstrap_password_change_ok;
+  int bootstrap_session_revoked;
+  int bootstrap_old_password_rejected;
+  int bootstrap_new_password_ok;
+  int bootstrap_logout_revoked;
   int local_auth_ok;
   int local_auth_bad_secret_forbidden;
   int acl_decision_allowed;
@@ -698,25 +705,42 @@ static int control_test_hidden_value(const char *html, const char *name, char *v
   return 1;
 }
 
+static http_response_t *control_test_management_login_request(const control_http_state_t *state,
+                                                              http_client_t *client,
+                                                              const char *domain_id,
+                                                              const char *principal_id,
+                                                              const char *password) {
+  http_response_t *response = NULL;
+  char origin[160];
+  char form[512];
+  const char *headers[2];
+  int form_size;
+  if (!state || !client || !domain_id || !principal_id || !password ||
+      snprintf(origin, sizeof(origin), "Origin: %s", state->base_url) <= 0)
+    goto done;
+  form_size = snprintf(form, sizeof(form), "domain=%s&principal=%s&password=%s", domain_id,
+                       principal_id, password);
+  if (form_size <= 0 || (size_t)form_size >= sizeof(form)) goto done;
+  headers[0] = "Content-Type: application/x-www-form-urlencoded";
+  headers[1] = origin;
+  response = http_request(client, HTTP_POST, "/v2/control/login", headers, 2, form, strlen(form));
+
+done:
+  memset(form, 0, sizeof(form));
+  return response;
+}
+
 static int
 control_test_management_login(const control_http_state_t *state, http_client_t *client,
                               http_cookie_jar_t *jar,
                               char token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u]) {
   http_response_t *response = NULL;
-  char origin[160];
-  char form[512];
-  const char *headers[2];
   const char *token;
   int result = 0;
   if (token_out) token_out[0] = '\0';
-  if (!state || !client || !jar || !token_out ||
-      snprintf(origin, sizeof(origin), "Origin: %s", state->base_url) <= 0 ||
-      snprintf(form, sizeof(form), "domain=root-a&principal=admin-a&password=%s",
-               CONTROL_INTEGRATION_ADMIN_PASSWORD) <= 0)
-    goto done;
-  headers[0] = "Content-Type: application/x-www-form-urlencoded";
-  headers[1] = origin;
-  response = http_request(client, HTTP_POST, "/v2/control/login", headers, 2, form, strlen(form));
+  if (!state || !client || !jar || !token_out) goto done;
+  response = control_test_management_login_request(state, client, "root-a", "admin-a",
+                                                   CONTROL_INTEGRATION_ADMIN_PASSWORD);
   token = http_cookie_jar_get(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE);
   if (response && response->status_code == 303 && response->error_code == HTTP_ERROR_NONE &&
       token &&
@@ -728,8 +752,20 @@ control_test_management_login(const control_http_state_t *state, http_client_t *
 
 done:
   http_response_free(response);
-  memset(form, 0, sizeof(form));
   return result;
+}
+
+static http_response_t *
+control_test_management_rpc_with_token(http_client_t *client, const char *token, const char *body) {
+  const char *headers[2];
+  char cookie_header[128];
+  if (!client || !token || !body ||
+      snprintf(cookie_header, sizeof(cookie_header), "Cookie: %s=%s",
+               FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE, token) <= 0)
+    return NULL;
+  headers[0] = "Content-Type: application/json";
+  headers[1] = cookie_header;
+  return http_request(client, HTTP_POST, "/v2/control/rpc", headers, 2, body, strlen(body));
 }
 
 static http_response_t *control_test_dashboard_content(http_client_t *client) {
@@ -893,6 +929,160 @@ done:
   return result;
 }
 
+static int control_test_bootstrap_password_rotation(control_http_state_t *state) {
+  http_client_t *client = NULL;
+  http_cookie_jar_t *jar = NULL;
+  http_response_t *response = NULL;
+  turbo_tls_client_config_t tls = {0};
+  char initial_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
+  char rotated_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
+  char csrf[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u] = {0};
+  char origin[160];
+  char cookie_header[128];
+  char form[CONTROL_INTEGRATION_FORM_CAPACITY];
+  const char *headers[3];
+  const char *token;
+  char *location = NULL;
+  char *set_cookie = NULL;
+  int form_size;
+  int result = 0;
+  if (!state || snprintf(origin, sizeof(origin), "Origin: %s", state->base_url) <= 0) goto done;
+  client = http_client_create(state->base_url);
+  jar = http_cookie_jar_create();
+  if (!client || !jar) goto done;
+  http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
+  http_client_follow_redirects(client, 0);
+  http_client_set_cookie_jar(client, jar);
+  tls.verify_peer = 1;
+  tls.ca_file = state->ca_path;
+  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+
+  response = control_test_management_login_request(
+      state, client, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN,
+      FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME, FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD);
+  token = http_cookie_jar_get(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE);
+  if (!response || response->status_code != 303 || response->error_code != HTTP_ERROR_NONE ||
+      !token ||
+      strnlen(token, sizeof(initial_token)) != FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE)
+    goto done;
+  memcpy(initial_token, token, sizeof(initial_token));
+  http_response_free(response);
+  response =
+      http_request(client, HTTP_GET, FLOWIE_CONTROL_DASHBOARD_PASSWORD_PATH, NULL, 0, NULL, 0u);
+  state->bootstrap_password_page_ok =
+      response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
+      response->body && control_test_hidden_value(response->body, "csrf", csrf, sizeof(csrf)) &&
+      strlen(csrf) == FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE &&
+      strstr(response->body, "name=\"new_password\"") != NULL &&
+      strstr(response->body, "name=\"confirm_password\"") != NULL;
+  http_response_free(response);
+  response = NULL;
+  if (!state->bootstrap_password_page_ok) goto done;
+
+  form_size = snprintf(form, sizeof(form), "csrf=%s&new_password=%s&confirm_password=%s", csrf,
+                       CONTROL_INTEGRATION_ROTATED_ADMIN_PASSWORD,
+                       CONTROL_INTEGRATION_ROTATED_ADMIN_PASSWORD);
+  if (form_size <= 0 || (size_t)form_size >= sizeof(form) ||
+      snprintf(cookie_header, sizeof(cookie_header), "Cookie: %s=%s",
+               FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE, initial_token) <= 0)
+    goto done;
+  http_client_set_cookie_jar(client, NULL);
+  headers[0] = "Content-Type: application/x-www-form-urlencoded";
+  headers[1] = origin;
+  headers[2] = cookie_header;
+  response = http_request(client, HTTP_POST, FLOWIE_CONTROL_DASHBOARD_PASSWORD_PATH, headers, 3,
+                          form, (size_t)form_size);
+  location = response ? http_response_get_header(response, "Location") : NULL;
+  set_cookie = response ? http_response_get_header(response, "Set-Cookie") : NULL;
+  state->bootstrap_password_change_ok =
+      response && response->status_code == 303 && response->error_code == HTTP_ERROR_NONE &&
+      location && strcmp(location, FLOWIE_CONTROL_DASHBOARD_LOGIN_PATH) == 0 && set_cookie &&
+      strstr(set_cookie, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE "=") != NULL &&
+      strstr(set_cookie, "Max-Age=0") != NULL;
+  free(location);
+  location = NULL;
+  free(set_cookie);
+  set_cookie = NULL;
+  http_response_free(response);
+  response = NULL;
+  if (!state->bootstrap_password_change_ok) goto done;
+
+  response = control_test_management_rpc_with_token(client, initial_token,
+                                                    CONTROL_INTEGRATION_STATUS_RPC_BODY);
+  state->bootstrap_session_revoked = response && response->status_code == 200 &&
+                                     response->error_code == HTTP_ERROR_NONE && response->body &&
+                                     strstr(response->body, "\"code\":-32001") != NULL &&
+                                     strstr(response->body, "Authentication required") != NULL;
+  http_response_free(response);
+  response = NULL;
+  if (!state->bootstrap_session_revoked) goto done;
+
+  http_cookie_jar_remove(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE);
+  http_client_set_cookie_jar(client, jar);
+  response = control_test_management_login_request(
+      state, client, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN,
+      FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME, FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD);
+  state->bootstrap_old_password_rejected =
+      response && response->status_code == 401 && response->error_code == HTTP_ERROR_NONE &&
+      http_cookie_jar_get(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE) == NULL;
+  http_response_free(response);
+  response = NULL;
+  if (!state->bootstrap_old_password_rejected) goto done;
+
+  response = control_test_management_login_request(
+      state, client, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN,
+      FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME, CONTROL_INTEGRATION_ROTATED_ADMIN_PASSWORD);
+  token = http_cookie_jar_get(jar, FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE);
+  if (!response || response->status_code != 303 || response->error_code != HTTP_ERROR_NONE ||
+      !token ||
+      strnlen(token, sizeof(rotated_token)) != FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE)
+    goto done;
+  memcpy(rotated_token, token, sizeof(rotated_token));
+  http_response_free(response);
+  response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_STATUS_RPC_BODY);
+  state->bootstrap_new_password_ok = response && response->status_code == 200 &&
+                                     response->error_code == HTTP_ERROR_NONE && response->body &&
+                                     strstr(response->body, "\"result\"") != NULL;
+  http_response_free(response);
+  response = NULL;
+  if (!state->bootstrap_new_password_ok) goto done;
+
+  http_client_set_cookie_jar(client, NULL);
+  if (snprintf(form, sizeof(form), "Cookie: %s=%s", FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE,
+               rotated_token) <= 0)
+    goto done;
+  headers[0] = origin;
+  headers[1] = form;
+  response =
+      http_request(client, HTTP_POST, FLOWIE_CONTROL_DASHBOARD_LOGOUT_PATH, headers, 2, NULL, 0u);
+  if (!response || response->status_code != 303 || response->error_code != HTTP_ERROR_NONE)
+    goto done;
+  http_response_free(response);
+  response = control_test_management_rpc_with_token(client, rotated_token,
+                                                    CONTROL_INTEGRATION_STATUS_RPC_BODY);
+  state->bootstrap_logout_revoked = response && response->status_code == 200 &&
+                                    response->error_code == HTTP_ERROR_NONE && response->body &&
+                                    strstr(response->body, "\"code\":-32001") != NULL &&
+                                    strstr(response->body, "Authentication required") != NULL;
+  result = state->bootstrap_logout_revoked;
+
+done:
+  free(location);
+  free(set_cookie);
+  http_response_free(response);
+  if (client) {
+    http_client_set_cookie_jar(client, NULL);
+    http_client_destroy(client);
+  }
+  http_cookie_jar_destroy(jar);
+  memset(initial_token, 0, sizeof(initial_token));
+  memset(rotated_token, 0, sizeof(rotated_token));
+  memset(csrf, 0, sizeof(csrf));
+  memset(cookie_header, 0, sizeof(cookie_header));
+  memset(form, 0, sizeof(form));
+  return result;
+}
+
 static void control_test_http_task(coro_t *coroutine, void *arg) {
   control_http_state_t *state = (control_http_state_t *)arg;
   uint64_t deadline;
@@ -918,6 +1108,7 @@ static void control_test_http_task(coro_t *coroutine, void *arg) {
   if (!state->ready) return;
 
   (void)control_test_management_workflow(state);
+  (void)control_test_bootstrap_password_rotation(state);
 
   response = control_test_request(state, NULL, NULL, CONTROL_INTEGRATION_STATUS_RPC_BODY);
   state->unauthenticated_rpc_forbidden =
@@ -1033,7 +1224,10 @@ static int control_test_run_network_gate(void) {
   if (http_state.ready && http_state.unauthenticated_rpc_forbidden && http_state.session_rpc_ok &&
       http_state.dashboard_htmx_ok && http_state.dashboard_csrf_rejected &&
       http_state.dashboard_write_ok && http_state.dashboard_logout_ok &&
-      http_state.dashboard_role_revocation_ok && http_state.local_auth_ok &&
+      http_state.dashboard_role_revocation_ok && http_state.bootstrap_password_page_ok &&
+      http_state.bootstrap_password_change_ok && http_state.bootstrap_session_revoked &&
+      http_state.bootstrap_old_password_rejected && http_state.bootstrap_new_password_ok &&
+      http_state.bootstrap_logout_revoked && http_state.local_auth_ok &&
       http_state.local_auth_bad_secret_forbidden && http_state.acl_decision_allowed &&
       http_state.acl_subscription_filter_allowed && http_state.acl_version_mismatch_denied &&
       http_state.acl_bad_token_forbidden && http_state.client_certificate_does_not_authenticate_rpc)
@@ -1045,12 +1239,18 @@ cleanup:
                   "flowie-control integration failed at %s: ready=%d rpc-denied=%d session=%d "
                   "dashboard-htmx=%d dashboard-csrf=%d dashboard-write=%d "
                   "dashboard-logout=%d dashboard-role-revoke=%d "
+                  "bootstrap-password-page=%d bootstrap-password-change=%d "
+                  "bootstrap-session-revoke=%d bootstrap-old-password=%d "
+                  "bootstrap-new-password=%d bootstrap-logout-revoke=%d "
                   "local-auth=%d local-auth-bad=%d "
                   "acl=%d acl-filter=%d acl-miss=%d acl-token=%d client-cert-rpc=%d\n",
                   failure_stage, http_state.ready, http_state.unauthenticated_rpc_forbidden,
                   http_state.session_rpc_ok, http_state.dashboard_htmx_ok,
                   http_state.dashboard_csrf_rejected, http_state.dashboard_write_ok,
                   http_state.dashboard_logout_ok, http_state.dashboard_role_revocation_ok,
+                  http_state.bootstrap_password_page_ok, http_state.bootstrap_password_change_ok,
+                  http_state.bootstrap_session_revoked, http_state.bootstrap_old_password_rejected,
+                  http_state.bootstrap_new_password_ok, http_state.bootstrap_logout_revoked,
                   http_state.local_auth_ok, http_state.local_auth_bad_secret_forbidden,
                   http_state.acl_decision_allowed, http_state.acl_subscription_filter_allowed,
                   http_state.acl_version_mismatch_denied, http_state.acl_bad_token_forbidden,
@@ -1102,7 +1302,7 @@ cleanup:
 }
 
 spec("Flowie controller HTTPS integration") {
-  it("serves scoped Broker Auth and ACL over TLS without authenticating RPC by certificate") {
+  it("serves scoped APIs and rotates the fixed bootstrap administrator password over TLS") {
     check_equal(control_test_run_network_gate(), TURBO_OK);
   }
 }

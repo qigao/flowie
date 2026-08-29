@@ -23,11 +23,9 @@ listener:
 
 storage:
   turbodb:
-    driver: sqlite
+    driver: postgresql
     options:
-      filename: /var/lib/flowie/control/flowie-control.sqlite3
-      open_mode: read_write_create
-      busy_timeout_ms: "1000"
+      conninfo: env://FLOWIE_CONTROL_DB_CONNINFO
 
 management:
   rpc_path: /v2/control/rpc

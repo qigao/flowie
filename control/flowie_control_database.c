@@ -1,4 +1,5 @@
 #include "flowie_control_database_internal.h"
+#include "flowie_orm_flow_internal.h"
 
 #include <orm.h>
 #include <turbo_str.h>
@@ -73,7 +74,7 @@ int flowie_control_database_open(const orm_config_t *config, flowie_control_data
   database = (flowie_control_database_t *)calloc(1u, sizeof(*database));
   if (database == NULL) return FLOWIE_CONTROL_DB_NOMEM;
   orm_error_init(&database->error);
-  status = orm_connect(config, &database->connection, &database->error);
+  status = flowie_orm_connect(config, &database->connection, &database->error);
   if (status != ORM_STATUS_OK) {
     const int mapped = flowie_control_database_record(database, status);
     free(database);

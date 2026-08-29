@@ -104,10 +104,10 @@ principal 映射；ACL 始终只来自 control Repository。
 | `listener.tls.client_auth` | `none`（默认）或 `required`；Dashboard 启用时只能为 `none` |
 | `listener.tls.client_ca_file` | 仅 `client_auth: required` 时必填；`none` 时禁止配置 |
 | `listener.limits.*` | Iris header、URL、JSON、body 与 header count 的有界配额 |
-| `storage.turbodb.driver` | 必填的 TurboDB driver 名称；Flowie 不注册或选择数据库 provider |
+| `storage.turbodb.driver` | 必填的 TurboDB driver 名称；运行时按该值选择已构建的 TurboDB provider，缺少对应 component 时启动失败且不回退 |
 | `storage.turbodb.options` | 最多 16 个字符串键值；`conninfo`、`password`、`sslpassword`、`uri`、`url` 必须使用 `env://UPPER_CASE_NAME`，其他值原样交给 TurboDB |
 | `management.rpc_path` | 静态绝对 path，默认 `/v2/control/rpc` |
-| `management.session.capacity` | 有界登录会话数，默认 `1024`，最大 `65536` |
+| `management.session.capacity` | 同一 Repository 中的有界登录会话数，默认 `1024`，最大 `65536`；超过容量时按持久化 LRU 撤销 |
 | `management.session.max_sessions_per_principal` | 每个 `(domain, principal)` 最多保留的会话数，默认 `5`，最大 `65536`；新登录撤销该主体最早签发的会话 |
 | `management.session.ttl_seconds` | 会话上限，默认 `3600`，最大 `86400`；不会超过认证 principal expiry |
 | `management.login_executor.*` | 本地管理登录的 `workers/queue_capacity/deadline_ms`，默认 `4/128/10000`；外部 HTTPS Auth 时禁止显式配置 |
@@ -156,6 +156,12 @@ storage:
 
 旧 `storage.control_store`、`storage.sqlite` 与 `storage.postgresql` 会作为未知字段拒绝；没有兼容 parser、
 provider fallback 或双写路径。driver 与 option 的具体契约由所安装的 TurboDB package 定义。
+
+Control 当前 Repository schema 为 V7。V7 新增持久化 management session、签发序列与过期/LRU 索引；
+session 原始 Bearer token 不入库，只保存 32-byte digest、CSRF、主体、过期时间和访问顺序。进程重启后，
+未过期且未撤销的 session 仍可解析；每次请求仍从 Repository 重新读取用户与角色，因此禁用主体或撤销角色
+会立即生效。V6 及更早 schema 会 fail fast，不在启动时隐式迁移；升级前必须停止写入、备份，并通过显式
+离线迁移或重建 Repository 完成 V7 切换。
 
 ## 首位管理员 bootstrap
 
@@ -228,8 +234,8 @@ service credential。
 generated credential 只保护 Broker 到 `/v4/authenticate`、`/v4/acl/check` 的调用；MQTT principal 的
 generated credential 可作为 MQTT password。两者都不能作为 `/v2/control/rpc` 的 Bearer token，
 也不得相互复用。
-session 在过期或 Flowie 重启后由第三方后端重新登录获取；禁用 principal 或撤销管理角色会使现有
-session 的后续请求立即失去权限。
+session 在过期、显式撤销或容量淘汰后由第三方后端重新登录获取；Flowie 重启不会撤销尚未过期的
+持久 session。禁用 principal 或撤销管理角色会使现有 session 的后续请求立即失去权限。
 
 机器凭据 RPC 返回 `{"token":"flw_mqtt_v1_..."}`。MQTT CONNECT 的三个字段必须按规范分开配置：
 `FLOWIE_MQTT_USERNAME` 是 Control `principal_id` 对应的 User Name，用于认证和授权；

@@ -22,6 +22,60 @@ PostgreSQL、Redis 或 Nginx 属于外部基础设施，本 runbook 不修改、
 - Flowie server 镜像必须由本次解包的八个源码目录构建；不得复用宿主机 SDK、预编译二进制或浮动镜像。
   发布证据失败时保留本次 run 目录和日志。
 
+### 1.1 EU 交互式连接：tssh QUIC/UDP 漫游模式
+
+交互式运维默认使用 [trzsz-ssh/tssh](https://github.com/trzsz/trzsz-ssh/blob/main/README.cn.md) 的
+QUIC/UDP 模式；批量打包、上传、下载命令仍使用 OpenSSH `ssh`/`scp` 的 TCP 路径。`tssh` 会先通过
+TCP/22 完成认证，再为当前会话临时启动一个 `tsshd` 进程；EU 不运行常驻 `tsshd` 服务。
+
+EU 当前约定如下：
+
+- 服务端版本：`tsshd 0.1.9`
+- 服务端路径：`/usr/local/bin/tsshd`
+- 传输协议：QUIC/UDP
+- UDP 端口范围：`61000-61010`
+- 网络前置：客户端到 EU 的 TCP/22 与 UDP/61000-61010 均须可达。2026-08-29 启用此模式时，
+  EU 主机侧防火墙已允许 UDP，因此未修改主机防火墙规则；不要据此扩大新的防火墙或安全组规则。
+
+Windows 工作站的 `~/.ssh/config` 中，保留既有 `HostName`、`User` 和 `IdentityFile`，并在同一个
+`Host eu` 块中加入：
+
+```sshconfig
+Host eu
+    # Existing HostName, User and IdentityFile remain unchanged.
+    #!! UdpMode QUIC
+    #!! TsshdPort 61000-61010
+    #!! TsshdPath /usr/local/bin/tsshd
+```
+
+`#!!` 配置由 `tssh` 读取、被 OpenSSH 当作注释忽略。首次准备或恢复服务端二进制时，从已能通过
+TCP 登录的工作站执行固定版本安装：
+
+```powershell
+tssh --tcp --install-tsshd --tsshd-version 0.1.9 --install-path /usr/local/bin eu
+if ($LASTEXITCODE -ne 0) { throw 'EU tsshd installation failed' }
+```
+
+安装或配置变更后必须同时验证服务端版本和实际 UDP 会话：
+
+```powershell
+tssh --tcp -T -n -- eu /usr/local/bin/tsshd --version
+if ($LASTEXITCODE -ne 0) { throw 'EU tsshd version check failed' }
+tssh -T -n eu hostname
+if ($LASTEXITCODE -ne 0) { throw 'EU QUIC/UDP login failed' }
+```
+
+第一条命令应输出 `trzsz sshd 0.1.9`，第二条命令应返回 EU 主机名。UDP 连接异常时，使用
+`tssh --tcp eu` 强制走传统 SSH 进行诊断；不要把 TCP 成功当作 UDP 验证成功。
+
+需要停用此模式时：
+
+1. 从本机 `Host eu` 块删除上述三个 `#!!` 配置项，或临时使用 `tssh --tcp eu`。
+2. 确认所有 `tssh` UDP 会话已退出，并通过 `tssh --tcp -T -n -- eu pgrep -af tsshd` 确认没有
+   `tsshd` 进程。
+3. 若不再需要服务端能力，精确删除 `/usr/local/bin/tsshd`；若曾为此模式单独增加
+   UDP/61000-61010 网络放行规则，同时删除该精确规则。当前 EU 启用过程没有新增主机防火墙规则。
+
 ## 2. Windows：打包并上传当前源码
 
 在 PowerShell 中执行。八个源码目录应分别为：
@@ -120,13 +174,14 @@ Write-Host "uploaded=$bundleName sha256=$hash"
 ## 3. Linux：进入持久会话并准备 run 目录
 
 ```bash
-ssh root@eu
+tssh eu
 cd /root/dev
 tmux new-session -s flowie-eu
 ```
 
-后续命令在同一个 `tmux` shell 中执行。需要断开 SSH 时按 `Ctrl-b d`；重新进入使用
-`tmux attach-session -t flowie-eu`。
+后续命令在同一个 `tmux` shell 中执行。需要离开远端时先按 `Ctrl-b d` 脱离 `tmux`，然后退出
+`tssh`；重新连接后使用 `tmux attach-session -t flowie-eu`。网络切换或短时中断由 UDP 漫游会话处理，
+但 `tmux` 仍是长时间构建和测试的持久状态边界。
 
 Debian/Ubuntu 主机先准备基线工具；`/opt/vcpkg` 必须由运维预装并固定到团队批准的 revision：
 
@@ -284,6 +339,8 @@ docker run --detach \
   --tmpfs /run:size=16m,mode=0755 \
   --env FLOWIE_PORT="$FLOWIE_RUNTIME_PORT" \
   --env FLOWIE_HEALTH_PORT="$FLOWIE_RUNTIME_PORT" \
+  --env FLOWIE_PROTOCOL_STORE_DRIVER=sqlite \
+  --env 'FLOWIE_PROTOCOL_STORE_OPTIONS={"filename":":memory:"}' \
   "$FLOWIE_SERVER_IMAGE"
 
 for attempt in $(seq 1 60); do

@@ -5,6 +5,8 @@ endif()
 execute_process(
   COMMAND "${FLOWIE_SERVER_EXECUTABLE}"
           --check
+          --protocol-store-driver sqlite
+          --protocol-store-options "{\"filename\":\":memory:\"}"
           --log-level DEBUG
           --max-packet-size 262144
           --max-connections 32

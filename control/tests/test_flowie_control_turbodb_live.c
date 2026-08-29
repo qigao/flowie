@@ -46,8 +46,13 @@ spec("Flowie Control TurboDB live contract") {
         FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     flowie_security_policy_bundle_t bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
+    flowie_control_management_session_record_t session =
+        FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
+    flowie_control_management_session_record_t restored_session =
+        FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
     uint64_t revision = 0u;
     uint64_t occurred_at = UINT64_C(4102440000);
+    uint64_t session_nonce;
 
     if (!conninfo || !conninfo[0]) {
       check_true(0 && "FLOWIE_TURBODB_TEST_CONNINFO is required");
@@ -160,6 +165,31 @@ spec("Flowie Control TurboDB live contract") {
     check_equal(bundle.policy_version, 1u);
     check_equal(bundle.rule_count, 2u);
     flowie_control_store_policy_bundle_release(&bundle);
+
+    session_nonce = turbo_hrtime();
+    for (size_t index = 0u; index < sizeof(session.token_digest); ++index)
+      session.token_digest[index] =
+          (uint8_t)((session_nonce >> ((index % sizeof(session_nonce)) * 8u)) ^ index);
+    (void)snprintf(session.domain_id, sizeof(session.domain_id), "%s", domain_id);
+    (void)snprintf(session.principal_id, sizeof(session.principal_id), "%s", "device");
+    memset(session.csrf, 'c', FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE);
+    session.csrf[FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE] = '\0';
+    session.expires_at = occurred_at + 600u;
+    check_equal(flowie_control_store_management_session_issue(store, &session, 8u, 2u,
+                                                              occurred_at),
+                TURBO_OK);
+    flowie_control_store_destroy(store);
+    store = NULL;
+
+    check_equal(flowie_control_store_open(&store_config, &store), TURBO_OK);
+    check_equal(flowie_control_store_management_session_resolve(
+                    store, session.token_digest, occurred_at + 1u, &restored_session),
+                TURBO_OK);
+    check_equal(restored_session.domain_id, domain_id);
+    check_equal(restored_session.principal_id, "device");
+    check_equal(restored_session.csrf, session.csrf);
+    check_equal(flowie_control_store_management_session_revoke(store, session.token_digest),
+                TURBO_OK);
     flowie_control_store_destroy(store);
   }
 }

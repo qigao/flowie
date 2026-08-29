@@ -1,4 +1,5 @@
 #include "flowie_protocol_repository.h"
+#include "flowie_orm_flow_internal.h"
 
 #include "orm.h"
 #include "tinytest.h"
@@ -28,7 +29,7 @@ static int live_drop_tables(const orm_config_t *database, const char *prefix) {
                                prefix, prefix, prefix, prefix);
   if (written <= 0 || (size_t)written >= sizeof(sql)) return TURBO_ERANGE;
   orm_error_init(&error);
-  status = orm_connect(database, &connection, &error);
+  status = flowie_orm_connect(database, &connection, &error);
   if (status == ORM_STATUS_OK) status = orm_raw(connection, orm_view(sql), &query, &error);
   if (status == ORM_STATUS_OK) status = orm_query_execute(query, &result, &error);
   orm_result_destroy(result);

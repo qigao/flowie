@@ -242,6 +242,26 @@ static int turbodb_audit_count(void *ctx, size_t *count_out) {
   return flowie_control_store_audit_count((flowie_control_store_t *)ctx, count_out);
 }
 
+static int turbodb_management_session_issue(
+    void *ctx, const flowie_control_management_session_record_t *record, size_t capacity,
+    size_t max_sessions_per_principal, uint64_t now) {
+  return flowie_control_store_management_session_issue(
+      (flowie_control_store_t *)ctx, record, capacity, max_sessions_per_principal, now);
+}
+
+static int turbodb_management_session_resolve(
+    void *ctx, const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE],
+    uint64_t now, flowie_control_management_session_record_t *out) {
+  return flowie_control_store_management_session_resolve((flowie_control_store_t *)ctx,
+                                                         token_digest, now, out);
+}
+
+static int turbodb_management_session_revoke(
+    void *ctx, const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]) {
+  return flowie_control_store_management_session_revoke((flowie_control_store_t *)ctx,
+                                                        token_digest);
+}
+
 static const flowie_control_repository_user_ops_t TURBODB_USER_OPS = {
     turbodb_domain_create, turbodb_domain_get, turbodb_domain_list, turbodb_user_create,
     turbodb_user_disable,  turbodb_user_get,   turbodb_user_list};
@@ -269,6 +289,9 @@ static const flowie_control_repository_policy_ops_t TURBODB_POLICY_OPS = {
     .subject_rule_list = turbodb_policy_subject_rule_list};
 static const flowie_control_repository_audit_ops_t TURBODB_AUDIT_OPS = {
     turbodb_audit_revision, turbodb_audit_list, turbodb_audit_count};
+static const flowie_control_repository_session_ops_t TURBODB_SESSION_OPS = {
+    turbodb_management_session_issue, turbodb_management_session_resolve,
+    turbodb_management_session_revoke};
 
 int flowie_control_repository_validate(const flowie_control_repository_t *repository) {
   if (!repository || repository->size < sizeof(*repository) ||
@@ -276,7 +299,8 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       (repository->capabilities & FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES) !=
           FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES ||
       !repository->ctx || !repository->user || !repository->auth || !repository->credential ||
-      !repository->group || !repository->role || !repository->policy || !repository->audit)
+      !repository->group || !repository->role || !repository->policy || !repository->session ||
+      !repository->audit)
     return TURBO_EINVAL;
   if (!repository->user->domain_create || !repository->user->domain_get ||
       !repository->user->domain_list || !repository->user->create || !repository->user->disable ||
@@ -294,7 +318,9 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->policy->status || !repository->policy->bundle_load ||
       !repository->policy->bundle_release || !repository->policy->subject_rule_put ||
       !repository->policy->subject_rule_delete || !repository->policy->subject_rule_get ||
-      !repository->policy->subject_rule_list || !repository->audit->revision ||
+      !repository->policy->subject_rule_list || !repository->session->issue ||
+      !repository->session->resolve || !repository->session->revoke ||
+      !repository->audit->revision ||
       !repository->audit->list || !repository->audit->count)
     return TURBO_EINVAL;
   return TURBO_OK;
@@ -312,6 +338,7 @@ int flowie_control_repository_bind_turbodb(flowie_control_store_t *store,
   bound.group = &TURBODB_GROUP_OPS;
   bound.role = &TURBODB_ROLE_OPS;
   bound.policy = &TURBODB_POLICY_OPS;
+  bound.session = &TURBODB_SESSION_OPS;
   bound.audit = &TURBODB_AUDIT_OPS;
   *repository = bound;
   return TURBO_OK;

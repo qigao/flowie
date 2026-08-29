@@ -1,5 +1,9 @@
 #include "flowie_orm_flow_internal.h"
 
+#if defined(FLOWIE_ORM_WITH_POSTGRESQL)
+#include "orm_postgresql.h"
+#endif
+
 #include "turbo_cmeta_data.h"
 #include "turbo_cmeta_fixed_width.h"
 #include "turbo_error.h"
@@ -56,6 +60,24 @@ static const cmeta_data_desc flowie_orm_blob_data = {
     .shape = &flowie_orm_owned_buffer_shape,
     .buffer_ops = &turbo_tstr_cmeta_buffer_ops,
 };
+
+static int flowie_orm_driver_is(orm_string_view_t driver, const char *name) {
+  const size_t name_size = name ? strlen(name) : 0u;
+  return name_size != 0u && driver.len == name_size && driver.data != NULL &&
+         memcmp(driver.data, name, name_size) == 0;
+}
+
+orm_status_t flowie_orm_connect(const orm_config_t *config,
+                                orm_connection_t **out_connection,
+                                orm_error_t *error) {
+#if defined(FLOWIE_ORM_WITH_POSTGRESQL)
+  if (config != NULL &&
+      (flowie_orm_driver_is(config->driver, "postgres") ||
+       flowie_orm_driver_is(config->driver, "postgresql")))
+    return orm_postgresql_connect(config, out_connection, error);
+#endif
+  return orm_connect(config, out_connection, error);
+}
 
 int flowie_orm_status_to_turbo(orm_status_t status) {
   switch (status) {

@@ -195,6 +195,17 @@ static turbo_json_doc_t *management_rpc_call(flowie_control_management_rpc_serve
   return document;
 }
 
+static turbo_json_doc_t *management_rpc_request(
+    flowie_control_management_rpc_server_t *server, iris_app_t *app,
+    iris_security_context_t *security, const char *body, int *status_out) {
+  turbo_json_doc_t *document;
+  mem_pool_t arena;
+  check_equal(mem_init(&arena, 0u), 0);
+  document = management_rpc_call(server, app, &arena, security, body, status_out);
+  mem_destroy(&arena);
+  return document;
+}
+
 static int management_rpc_error_code(turbo_json_doc_t *document) {
   json_value_t *error = turbo_json_object_get(document, "error");
   return error ? (int)turbo_json_number(turbo_json_object_get(error, "code")) : 0;
@@ -793,6 +804,102 @@ spec("Flowie management JSON-RPC") {
     flowie_control_credential_wipe(rotated_token, sizeof(rotated_token));
     management_rpc_close(server, rpc, app, service, store, path);
     mem_destroy(&arena);
+  }
+
+  it("syncs a 93-byte service principal with a role and credential") {
+    enum { PRINCIPAL_SIZE = 93u, REQUEST_CAPACITY = 1024u };
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    iris_security_context_t security = {0};
+    turbo_json_doc_t *document = NULL;
+    json_value_t *result = NULL;
+    flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
+    flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
+    flowie_control_credential_verify_result_t verified =
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    static const char principal_id[] =
+        "tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
+        "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a";
+    char request[REQUEST_CAPACITY];
+    char token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY] = {0};
+    const char *generated_token = NULL;
+    int written = 0;
+    int status = 0;
+
+    check_equal(strlen(principal_id), PRINCIPAL_SIZE);
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "security-admin-1";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    security.authenticated = true;
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+
+    written = snprintf(request, sizeof(request),
+                       "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
+                       "\"principal_id\":\"%s\",\"principal_type\":\"service\","
+                       "\"request_id\":\"long-principal-create\"},\"id\":1}",
+                       principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    document = management_rpc_request(
+        server, app, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
+        "\"role_id\":\"tenant-admin\",\"request_id\":\"tenant-admin-create\"},\"id\":2}",
+        &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    written = snprintf(request, sizeof(request),
+                       "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.assign\",\"params\":{"
+                       "\"principal_id\":\"%s\",\"role_id\":\"tenant-admin\","
+                       "\"request_id\":\"long-principal-role\"},\"id\":3}",
+                       principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    written = snprintf(
+        request, sizeof(request),
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.credential.generate\",\"params\":{"
+        "\"principal_id\":\"%s\",\"request_id\":\"long-principal-credential\"},\"id\":4}",
+        principal_id);
+    check_true(written > 0 && (size_t)written < sizeof(request));
+    document = management_rpc_request(server, app, &security, request, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    result = turbo_json_object_get(document, "result");
+    check_not_null(result);
+    generated_token = turbo_json_string(turbo_json_object_get(result, "token"));
+    check_not_null(generated_token);
+    check_equal(strlen(generated_token), FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
+    memcpy(token, generated_token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE + 1u);
+    turbo_free_json(&document);
+
+    check_equal(flowie_control_store_user_get(store, "root-a", principal_id, &user), TURBO_OK);
+    check_equal(user.principal_id, principal_id);
+    check_equal(user.principal_type, "service");
+    check_equal(flowie_control_store_effective_roles(store, "root-a", principal_id, &roles),
+                TURBO_OK);
+    check_equal(roles.role_count, 1u);
+    check_equal(roles.roles[0], "tenant-admin");
+    check_equal(flowie_control_store_credential_verify(store, "root-a", principal_id, token,
+                                                       FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
+                                                       &verified),
+                TURBO_OK);
+
+    flowie_control_credential_wipe(token, sizeof(token));
+    management_rpc_close(server, rpc, app, service, store, path);
   }
 
   it("lets only the system administrator provision a root administrator") {

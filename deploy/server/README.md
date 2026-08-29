@@ -1,10 +1,10 @@
-# Flowie server and Control 单容器
+# Flowie Server、Control 与 PostgreSQL
 
-该目录构建一个同时包含 `flowie_server` 与 `flowie-control` 的运行镜像。Compose 只创建一个
-`flowie-server` service，由 `flowie-combined-entrypoint` 在同一容器内监督两个独立进程；任一进程退出都会
-终止另一进程并让容器重启。当前 server 仍直接接收 listener 参数，不读取 Flowie config、graph 或
-embedded Control 配置。两个进程都以 UID/GID `10001` 运行，默认只监听 host loopback。直接运行镜像而
-不覆盖 entrypoint 时仍保持 Broker-only，避免破坏既有 `docker run` 使用方式。
+该目录构建一个同时包含 `flowie_server` 与 `flowie-control` 的运行镜像。Compose 创建
+`flowie-server` 和 `flowie-postgres` 两个 service；前者由 `flowie-combined-entrypoint` 在同一容器内监督
+Server 与 Control 两个独立进程，后者为二者提供同一个 PostgreSQL database。Server 或 Control 任一进程
+退出都会终止另一进程并让应用容器重启。两个应用进程都以 UID/GID `10001` 运行，默认只监听 host
+loopback。直接运行镜像而不覆盖 entrypoint 时仍保持 Broker-only，并默认使用 SQLite。
 
 ## 运行契约
 
@@ -16,6 +16,8 @@ embedded Control 配置。两个进程都以 UID/GID `10001` 运行，默认只�
 | `FLOWIE_PORT` | `18883` | `--port` |
 | `FLOWIE_TRANSPORT` | `tcp` | `--transport` |
 | `FLOWIE_PATH` | `/mqtt` | `--path` |
+| `FLOWIE_PROTOCOL_STORE_DRIVER` | `sqlite` | `--protocol-store-driver` |
+| `FLOWIE_PROTOCOL_STORE_OPTIONS` | `{"filename":"/var/lib/flowie/flowie-protocol.sqlite3"}` | `--protocol-store-options`（JSON object） |
 | `FLOWIE_MAX_PACKET_SIZE` | `1048576` | `--max-packet-size` |
 | `FLOWIE_MAX_CONNECTIONS` | `1024` | `--max-connections` |
 | `FLOWIE_MAX_SESSIONS` | 跟随 `FLOWIE_MAX_CONNECTIONS` | `--max-sessions` |
@@ -55,16 +57,25 @@ pool 容量上界为 `2 × max_connections + 32`，每个 coroutine 都有独立
 
 `reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数；多
 worker/supervisor 拓扑属于完整的 Flowie YAML runtime，不在这个容器入口的职责范围内。建议先用
-`flowie_server --check --log-level DEBUG ...` 校验参数，并保存三条不含 MQTT 身份或内容的
+`flowie_server --check --protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}' --log-level DEBUG ...`
+校验参数和 TurboDB schema，
+并保存三条不含 MQTT 身份或内容的
 `effective-config` DEBUG 记录。
 `64` 是库级 session inflight 默认值，不是客户端 MQTT 5 Receive Maximum。高并发诊断可显式设置
 `FLOWIE_MAX_INFLIGHT_PER_SESSION=1024`；容量仍需按单 session 的待发送 QoS 消息峰值评估。
 
-当前独立 broker 的 session、subscription、inflight、retained 和 pending Will 都是进程内状态；容器重启
-后不会恢复。`flowie-data` 保留为以后扩展的数据边界，但当前 broker 不把 MQTT 状态写入其中。
-`flowie-control-data` 不同：它嵌套挂载到 `/var/lib/flowie/control`，保存 Control SQLite Repository，包含
-Domain、用户、credential verifier、Role、Group、ACL 与审计，必须纳入备份。两个卷保持独立事实与恢复
-边界，即使它们由同一个容器挂载。
+当前独立 broker 以 `FLOWIE_PROTOCOL_STORE_DRIVER` 与 `FLOWIE_PROTOCOL_STORE_OPTIONS` 指定的
+TurboDB/Orm repository 作为 session、subscription、inflight、retained、pending Will 和 principal
+snapshot 的唯一协议事实源。镜像默认写入 SQLite；Compose 则显式配置 PostgreSQL。启动时打开连接、创建
+或校验 Broker V2 schema，任一步失败都会拒绝启动，不回退到进程内存或 SQLite。普通 PUBLISH 业务正文只有
+进入显式业务 sink 时才会持久化，不能把 protocol store 当作业务消息库。
+
+Control 使用 `control.yml` 中的 `storage.turbodb.driver/options` 连接数据库。其 V7 Repository 保存 Domain、
+用户、credential verifier、Role、Group、ACL、审计以及 management session；原始 session Bearer token
+不入库。Compose 示例让 Broker 和 Control 连接同一个 PostgreSQL database，但表名空间独立：Broker 使用
+`flowie_server_`，Control 使用 `flowie_control_`。因此无需按模块创建不同 PostgreSQL schema；如需独立
+权限、备份或故障域，可将两组连接配置指向不同 database。无论采用哪种部署，升级与备份都必须覆盖两套
+逻辑 schema。
 
 ## Control 运行契约
 
@@ -147,8 +158,8 @@ topic 或 payload。
 
 ## Compose 部署
 
-`compose.yml` 只定义一个 `flowie-server` service，并使用 host network，适合作为同机 Nginx/HAProxy
-后端。MQTT 默认绑定
+`compose.yml` 定义 `flowie-server` 与 `flowie-postgres`，均使用 host network，适合作为同机
+Nginx/HAProxy 后端。MQTT 默认绑定
 `127.0.0.1:18883`，Control 默认绑定 `127.0.0.1:8443`。需要对外监听时必须修改对应配置，并在外部代理
 或防火墙处配置访问边界。
 
@@ -200,17 +211,19 @@ chmod 0600 deploy/server/certs/flowie-control-server-key.pem
 chmod 0440 deploy/server/secrets/control-key-password
 ```
 
-先验证 Server 参数与 Control 配置，不打开 listener 或 SQLite：
+先启动 PostgreSQL，再验证 Server 参数、数据库连接/schema 与 Control 配置；不打开应用 listener：
 
 ```sh
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
 docker compose --env-file deploy/server/.env -f deploy/server/compose.yml config
 docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
+  up -d --no-build flowie-postgres
+docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
   run --rm --no-deps \
   -e FLOWIE_COMBINED_CHECK=1 flowie-server
 ```
 
-然后启动唯一 service：
+然后启动应用 service：
 
 ```sh
 docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
@@ -229,9 +242,9 @@ session，需要重新登录。不得把该公开密码作为生产 secret 或�
 容器健康检查同时探测 MQTT 与 Control TCP listener；任一 listener 不可达都会标记容器 unhealthy。运行态
 验收还应执行 MQTT 5 CONNECT/CONNACK、QoS 1 publish/subscribe、Control 管理登录，以及
 `/v4/authenticate` 与 `/v4/acl/check` 的 allow/deny 路径。升级或迁移前应停止 Control 写入，并备份
-`flowie-control-data`；恢复时必须保持 Repository、配置和证书版本的一致性。单容器升级会同时中断 MQTT
-与 Control。若需回滚，使用旧镜像和旧版 Compose 重新创建两个 service，并复用原 `flowie-data` 与
-`flowie-control-data`；本改动不迁移数据库格式。
+`flowie-postgres-data`；恢复时必须保持 Broker V2、Control V7、配置和证书版本的一致性。应用容器升级会
+同时中断 MQTT 与 Control。V6 及更早 Control Repository 不会被隐式迁移；切换到本版本前必须执行显式
+离线迁移或在确认可丢弃旧 Control 数据后重建数据库。回滚必须使用与备份 schema 匹配的旧镜像。
 
 ## 验证与运维
 
@@ -247,5 +260,7 @@ docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
 docker inspect --format '{{.State.Health.Status}}' flowie-server
 ```
 
-`flowie_server --check` 校验 listener 参数并退出，不启动服务。TLS/WSS 虽是 CLI 可选 transport，但投入生产
+`flowie_server --check` 校验 listener 参数、打开 protocol store 并创建或校验 schema 后退出，不启动 listener。
+若只做无文件预检，应显式传入 `--protocol-store-driver sqlite --protocol-store-options
+'{"filename":":memory:"}'`。TLS/WSS 虽是 CLI 可选 transport，但投入生产
 前仍需完成证书配置路径和握手验收；当前已验证的容器默认契约是 TCP。

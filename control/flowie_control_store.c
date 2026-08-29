@@ -16,8 +16,9 @@
 
 enum { FLOWIE_CONTROL_OPERATION_MAX = 31 };
 
-#define FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION 6
-#define FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT "flowie-control-subject-policy-schema-v6-20260829"
+#define FLOWIE_CONTROL_TURBODB_SCHEMA_VERSION 7
+#define FLOWIE_CONTROL_TURBODB_SCHEMA_FINGERPRINT                                                \
+  "flowie-control-persistent-session-schema-v7-20260829"
 
 #define FLOWIE_CONTROL_STRINGIFY_VALUE(value) #value
 #define FLOWIE_CONTROL_STRINGIFY(value) FLOWIE_CONTROL_STRINGIFY_VALUE(value)
@@ -173,6 +174,33 @@ static const char
                                                                                                                                                                                                                                                                                                                                "flowie_control_user(domain_id,principal_id),"
                                                                                                                                                                                                                                                                                                                                "FOREIGN KEY(domain_id,role_id) REFERENCES "
                                                                                                                                                                                                                                                                                                                                "flowie_control_role(domain_id,role_id));"
+                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_sequence("
+                                                                                                                                                                                                                                                                                                                               "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                                                                                                                                                                                                                                                                                                                               "value BIGINT NOT NULL CHECK(value>=0));"
+                                                                                                                                                                                                                                                                                                                               "INSERT INTO flowie_control_management_session_sequence("
+                                                                                                                                                                                                                                                                                                                               "singleton,value) SELECT 1,0 WHERE NOT EXISTS(SELECT 1 "
+                                                                                                                                                                                                                                                                                                                               "FROM flowie_control_management_session_sequence WHERE singleton=1);"
+                                                                                                                                                                                                                                                                                                                               "CREATE TABLE IF NOT EXISTS flowie_control_management_session("
+                                                                                                                                                                                                                                                                                                                               "token_digest BYTEA PRIMARY KEY CHECK(length(token_digest)="
+                                                                                                                                                                                                                                                                                                                               FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE) "),"
+                                                                                                                                                                                                                                                                                                                               "domain_id TEXT NOT NULL,principal_id TEXT NOT NULL,"
+                                                                                                                                                                                                                                                                                                                               "csrf TEXT NOT NULL CHECK(length(csrf)="
+                                                                                                                                                                                                                                                                                                                               FLOWIE_CONTROL_STRINGIFY(FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE) "),"
+                                                                                                                                                                                                                                                                                                                               "expires_at BIGINT NOT NULL CHECK(expires_at>0),"
+                                                                                                                                                                                                                                                                                                                               "issued_sequence BIGINT NOT NULL CHECK(issued_sequence>0),"
+                                                                                                                                                                                                                                                                                                                               "last_used BIGINT NOT NULL CHECK(last_used>0),"
+                                                                                                                                                                                                                                                                                                                               "FOREIGN KEY(domain_id,principal_id) REFERENCES "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_user(domain_id,principal_id) ON DELETE CASCADE);"
+                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_principal_idx ON "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(domain_id,principal_id,issued_sequence);"
+                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_lru_idx ON "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(last_used);"
+                                                                                                                                                                                                                                                                                                                               "CREATE INDEX IF NOT EXISTS "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session_expiry_idx ON "
+                                                                                                                                                                                                                                                                                                                               "flowie_control_management_session(expires_at);"
                                                                                                                                                                                                                                                                                                                                "CREATE TABLE IF NOT EXISTS flowie_control_audit("
                                                                                                                                                                                                                                                                                                                                "request_id TEXT PRIMARY KEY,actor TEXT NOT NULL,operation "
                                                                                                                                                                                                                                                                                                                                "TEXT NOT NULL,"
@@ -254,6 +282,8 @@ static int flowie_control_schema_preflight(flowie_control_database_t *database) 
       "SELECT domain_id FROM flowie_control_membership WHERE 1=0",
       "SELECT domain_id FROM flowie_control_role WHERE 1=0",
       "SELECT domain_id FROM flowie_control_user_role WHERE 1=0",
+      "SELECT singleton FROM flowie_control_management_session_sequence WHERE 1=0",
+      "SELECT token_digest FROM flowie_control_management_session WHERE 1=0",
       "SELECT request_id FROM flowie_control_audit WHERE 1=0",
       "SELECT domain_id FROM flowie_control_policy_draft WHERE 1=0",
       "SELECT namespace_name FROM flowie_control_published_bundle WHERE 1=0",
@@ -1205,6 +1235,381 @@ void flowie_control_store_destroy(flowie_control_store_t *store) {
 const flowie_control_repository_t *flowie_control_store_repository(flowie_control_store_t *store) {
   if (!store || flowie_control_repository_validate(&store->repository) != TURBO_OK) return NULL;
   return &store->repository;
+}
+
+static int flowie_control_management_session_record_valid(
+    const flowie_control_management_session_record_t *record, uint64_t now) {
+  return record && record->size >= sizeof(*record) && now > 0u && now <= (uint64_t)INT64_MAX &&
+         record->expires_at > now && record->expires_at <= (uint64_t)INT64_MAX &&
+         flowie_control_text_valid(record->domain_id, FLOWIE_SECURITY_ID_MAX) &&
+         flowie_control_text_valid(record->principal_id, FLOWIE_SECURITY_ID_MAX) &&
+         flowie_control_text_valid(record->csrf, FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE) &&
+         strlen(record->csrf) == FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE;
+}
+
+static int flowie_control_management_session_next_sequence(
+    flowie_control_database_t *database, uint64_t *sequence_out) {
+  static const char update[] =
+      "UPDATE flowie_control_management_session_sequence SET value=value+1 "
+      "WHERE singleton=1 AND value<9223372036854775807";
+  flowie_control_statement_t *statement = NULL;
+  int64_t sequence;
+  int status;
+  int rc;
+  if (sequence_out) *sequence_out = 0u;
+  if (!database || !sequence_out) return TURBO_EINVAL;
+  status = flowie_control_database_exec(database, update, NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
+  if (flowie_control_database_changes(database) != 1) return TURBO_ERANGE;
+  status = flowie_control_database_prepare(
+      database, "SELECT value FROM flowie_control_management_session_sequence WHERE singleton=1",
+      -1, &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
+  status = flowie_control_database_step(statement);
+  sequence = status == FLOWIE_CONTROL_DB_ROW
+                 ? flowie_control_database_column_int64(statement, 0)
+                 : 0;
+  rc = status == FLOWIE_CONTROL_DB_ROW && sequence > 0 ? TURBO_OK : TURBO_EIO;
+  (void)flowie_control_database_finalize(statement);
+  if (rc == TURBO_OK) *sequence_out = (uint64_t)sequence;
+  return rc;
+}
+
+static int flowie_control_management_session_delete_expired(
+    flowie_control_database_t *database, uint64_t now) {
+  flowie_control_statement_t *statement = NULL;
+  int status;
+  int rc;
+  status = flowie_control_database_prepare(
+      database, "DELETE FROM flowie_control_management_session WHERE expires_at<=?1", -1,
+      &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
+  status = flowie_control_database_bind_int64(statement, 1, (int64_t)now);
+  rc = status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : flowie_control_database_status(status);
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_step(statement);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? TURBO_OK : flowie_control_database_status(status);
+  }
+  (void)flowie_control_database_finalize(statement);
+  return rc;
+}
+
+static int flowie_control_management_session_count(
+    flowie_control_database_t *database, const char *domain_id, const char *principal_id,
+    size_t *count_out) {
+  flowie_control_statement_t *statement = NULL;
+  int64_t count;
+  int status;
+  int rc;
+  if (count_out) *count_out = 0u;
+  if (!database || !count_out || (domain_id && !principal_id) || (!domain_id && principal_id))
+    return TURBO_EINVAL;
+  status = flowie_control_database_prepare(
+      database,
+      domain_id ? "SELECT COUNT(*) FROM flowie_control_management_session WHERE domain_id=?1 "
+                  "AND principal_id=?2"
+                : "SELECT COUNT(*) FROM flowie_control_management_session",
+      -1, &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
+  rc = TURBO_OK;
+  if (domain_id) {
+    rc = flowie_control_bind_text(statement, 1, domain_id);
+    if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  }
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_step(statement);
+    count = status == FLOWIE_CONTROL_DB_ROW
+                ? flowie_control_database_column_int64(statement, 0)
+                : -1;
+    rc = status == FLOWIE_CONTROL_DB_ROW && count >= 0 && (uint64_t)count <= (uint64_t)SIZE_MAX
+             ? TURBO_OK
+             : TURBO_EIO;
+    if (rc == TURBO_OK) *count_out = (size_t)count;
+  }
+  (void)flowie_control_database_finalize(statement);
+  return rc;
+}
+
+static int flowie_control_management_session_evict(
+    flowie_control_database_t *database, const char *domain_id, const char *principal_id,
+    size_t remove_count) {
+  static const char principal_sql[] =
+      "DELETE FROM flowie_control_management_session WHERE token_digest IN(SELECT token_digest "
+      "FROM flowie_control_management_session WHERE domain_id=?1 AND principal_id=?2 "
+      "ORDER BY issued_sequence,token_digest LIMIT ?3)";
+  static const char global_sql[] =
+      "DELETE FROM flowie_control_management_session WHERE token_digest IN(SELECT token_digest "
+      "FROM flowie_control_management_session ORDER BY last_used,token_digest LIMIT ?1)";
+  flowie_control_statement_t *statement = NULL;
+  int status;
+  int rc;
+  if (!database || remove_count == 0u || remove_count > (size_t)INT64_MAX ||
+      (domain_id && !principal_id) || (!domain_id && principal_id))
+    return TURBO_EINVAL;
+  status = flowie_control_database_prepare(database, domain_id ? principal_sql : global_sql, -1,
+                                           &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
+  rc = TURBO_OK;
+  if (domain_id) {
+    rc = flowie_control_bind_text(statement, 1, domain_id);
+    if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  }
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_bind_int64(statement, domain_id ? 3 : 1,
+                                                (int64_t)remove_count);
+    rc = status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : flowie_control_database_status(status);
+  }
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_step(statement);
+    rc = status == FLOWIE_CONTROL_DB_DONE &&
+                 flowie_control_database_changes(database) == (int)remove_count
+             ? TURBO_OK
+             : TURBO_EIO;
+  }
+  (void)flowie_control_database_finalize(statement);
+  return rc;
+}
+
+int flowie_control_store_management_session_issue(
+    flowie_control_store_t *store, const flowie_control_management_session_record_t *record,
+    size_t capacity, size_t max_sessions_per_principal, uint64_t now) {
+  flowie_control_database_t *database = NULL;
+  flowie_control_statement_t *statement = NULL;
+  size_t count = 0u;
+  uint64_t sequence = 0u;
+  int transaction_started = 0;
+  int status;
+  int rc;
+  if (!store || !flowie_control_management_session_record_valid(record, now) || capacity == 0u ||
+      capacity > FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_CAPACITY ||
+      max_sessions_per_principal == 0u ||
+      max_sessions_per_principal > FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL)
+    return TURBO_EINVAL;
+  rc = flowie_control_open_database(store, &database);
+  if (rc != TURBO_OK) return rc;
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 1;
+  rc = flowie_control_management_session_delete_expired(database, now);
+  if (rc != TURBO_OK) goto done;
+  rc = flowie_control_management_session_count(database, record->domain_id, record->principal_id,
+                                               &count);
+  if (rc != TURBO_OK) goto done;
+  if (count >= max_sessions_per_principal) {
+    rc = flowie_control_management_session_evict(
+        database, record->domain_id, record->principal_id,
+        count - max_sessions_per_principal + 1u);
+    if (rc != TURBO_OK) goto done;
+  }
+  rc = flowie_control_management_session_count(database, NULL, NULL, &count);
+  if (rc != TURBO_OK) goto done;
+  if (count >= capacity) {
+    rc = flowie_control_management_session_evict(database, NULL, NULL, count - capacity + 1u);
+    if (rc != TURBO_OK) goto done;
+  }
+  rc = flowie_control_management_session_next_sequence(database, &sequence);
+  if (rc != TURBO_OK) goto done;
+  status = flowie_control_database_prepare(
+      database,
+      "INSERT INTO flowie_control_management_session(token_digest,domain_id,principal_id,csrf,"
+      "expires_at,issued_sequence,last_used) VALUES(?1,?2,?3,?4,?5,?6,?6)",
+      -1, &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  rc = flowie_control_bind_blob(statement, 1, record->token_digest,
+                                sizeof(record->token_digest));
+  if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 2, record->domain_id);
+  if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 3, record->principal_id);
+  if (rc == TURBO_OK) rc = flowie_control_bind_text(statement, 4, record->csrf);
+  if (rc == TURBO_OK && flowie_control_database_bind_int64(
+                            statement, 5, (int64_t)record->expires_at) != FLOWIE_CONTROL_DB_OK)
+    rc = flowie_control_database_status(flowie_control_database_errcode(database));
+  if (rc == TURBO_OK && flowie_control_database_bind_int64(statement, 6, (int64_t)sequence) !=
+                            FLOWIE_CONTROL_DB_OK)
+    rc = flowie_control_database_status(flowie_control_database_errcode(database));
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_step(statement);
+    rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
+             ? TURBO_OK
+             : flowie_control_database_status(status);
+  }
+  if (rc != TURBO_OK) goto done;
+  (void)flowie_control_database_finalize(statement);
+  statement = NULL;
+  status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 0;
+  rc = TURBO_OK;
+
+done:
+  (void)flowie_control_database_finalize(statement);
+  if (transaction_started)
+    (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
+  (void)flowie_control_database_close(database);
+  return rc;
+}
+
+int flowie_control_store_management_session_resolve(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE], uint64_t now,
+    flowie_control_management_session_record_t *out) {
+  flowie_control_management_session_record_t record =
+      FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
+  flowie_control_database_t *database = NULL;
+  flowie_control_statement_t *statement = NULL;
+  uint64_t sequence = 0u;
+  int transaction_started = 0;
+  int status;
+  int rc;
+  if (out && out->size >= sizeof(*out))
+    *out = (flowie_control_management_session_record_t)
+        FLOWIE_CONTROL_MANAGEMENT_SESSION_RECORD_INIT;
+  if (!store || !token_digest || now == 0u || now > (uint64_t)INT64_MAX || !out ||
+      out->size < sizeof(*out))
+    return TURBO_EINVAL;
+  memcpy(record.token_digest, token_digest, sizeof(record.token_digest));
+  rc = flowie_control_open_database(store, &database);
+  if (rc != TURBO_OK) return rc;
+  status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 1;
+  status = flowie_control_database_prepare(
+      database,
+      "SELECT domain_id,principal_id,csrf,expires_at,issued_sequence,last_used FROM "
+      "flowie_control_management_session WHERE token_digest=?1",
+      -1, &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  rc = flowie_control_bind_blob(statement, 1, token_digest, sizeof(record.token_digest));
+  if (rc != TURBO_OK) goto done;
+  status = flowie_control_database_step(statement);
+  if (status == FLOWIE_CONTROL_DB_DONE) {
+    rc = TURBO_ENOENT;
+    goto done;
+  }
+  if (status != FLOWIE_CONTROL_DB_ROW ||
+      flowie_control_copy_column(statement, 0, record.domain_id, sizeof(record.domain_id)) !=
+          TURBO_OK ||
+      flowie_control_copy_column(statement, 1, record.principal_id, sizeof(record.principal_id)) !=
+          TURBO_OK ||
+      flowie_control_copy_column(statement, 2, record.csrf, sizeof(record.csrf)) != TURBO_OK) {
+    rc = TURBO_EIO;
+    goto done;
+  }
+  record.expires_at = (uint64_t)flowie_control_database_column_int64(statement, 3);
+  record.issued_sequence = (uint64_t)flowie_control_database_column_int64(statement, 4);
+  record.last_used = (uint64_t)flowie_control_database_column_int64(statement, 5);
+  (void)flowie_control_database_finalize(statement);
+  statement = NULL;
+  if (!flowie_control_text_valid(record.domain_id, FLOWIE_SECURITY_ID_MAX) ||
+      !flowie_control_text_valid(record.principal_id, FLOWIE_SECURITY_ID_MAX) ||
+      !flowie_control_text_valid(record.csrf, FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE) ||
+      strlen(record.csrf) != FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE ||
+      record.expires_at == 0u || record.expires_at > (uint64_t)INT64_MAX ||
+      record.issued_sequence == 0u || record.last_used == 0u) {
+    rc = TURBO_EIO;
+    goto done;
+  }
+  if (now >= record.expires_at) {
+    status = flowie_control_database_prepare(
+        database, "DELETE FROM flowie_control_management_session WHERE token_digest=?1", -1,
+        &statement, NULL);
+    if (status != FLOWIE_CONTROL_DB_OK) {
+      rc = flowie_control_database_status(status);
+      goto done;
+    }
+    rc = flowie_control_bind_blob(statement, 1, token_digest, sizeof(record.token_digest));
+    if (rc == TURBO_OK) {
+      status = flowie_control_database_step(statement);
+      rc = status == FLOWIE_CONTROL_DB_DONE ? TURBO_ENOENT
+                                            : flowie_control_database_status(status);
+    }
+  } else {
+    rc = flowie_control_management_session_next_sequence(database, &sequence);
+    if (rc != TURBO_OK) goto done;
+    status = flowie_control_database_prepare(
+        database,
+        "UPDATE flowie_control_management_session SET last_used=?1 WHERE token_digest=?2", -1,
+        &statement, NULL);
+    if (status != FLOWIE_CONTROL_DB_OK) {
+      rc = flowie_control_database_status(status);
+      goto done;
+    }
+    status = flowie_control_database_bind_int64(statement, 1, (int64_t)sequence);
+    rc = status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : flowie_control_database_status(status);
+    if (rc == TURBO_OK)
+      rc = flowie_control_bind_blob(statement, 2, token_digest, sizeof(record.token_digest));
+    if (rc == TURBO_OK) {
+      status = flowie_control_database_step(statement);
+      rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
+               ? TURBO_OK
+               : TURBO_EIO;
+    }
+    record.last_used = sequence;
+  }
+  if (rc != TURBO_OK && rc != TURBO_ENOENT) goto done;
+  (void)flowie_control_database_finalize(statement);
+  statement = NULL;
+  status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  transaction_started = 0;
+  if (rc == TURBO_OK) *out = record;
+
+done:
+  (void)flowie_control_database_finalize(statement);
+  if (transaction_started)
+    (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
+  (void)flowie_control_database_close(database);
+  return rc;
+}
+
+int flowie_control_store_management_session_revoke(
+    flowie_control_store_t *store,
+    const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]) {
+  flowie_control_database_t *database = NULL;
+  flowie_control_statement_t *statement = NULL;
+  int status;
+  int rc;
+  if (!store || !token_digest) return TURBO_EINVAL;
+  rc = flowie_control_open_database(store, &database);
+  if (rc != TURBO_OK) return rc;
+  status = flowie_control_database_prepare(
+      database, "DELETE FROM flowie_control_management_session WHERE token_digest=?1", -1,
+      &statement, NULL);
+  if (status != FLOWIE_CONTROL_DB_OK) {
+    rc = flowie_control_database_status(status);
+    goto done;
+  }
+  rc = flowie_control_bind_blob(statement, 1, token_digest,
+                                FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE);
+  if (rc == TURBO_OK) {
+    status = flowie_control_database_step(statement);
+    if (status != FLOWIE_CONTROL_DB_DONE)
+      rc = flowie_control_database_status(status);
+    else
+      rc = flowie_control_database_changes(database) == 1 ? TURBO_OK : TURBO_ENOENT;
+  }
+
+done:
+  (void)flowie_control_database_finalize(statement);
+  (void)flowie_control_database_close(database);
+  return rc;
 }
 
 int flowie_control_store_domain_create(flowie_control_store_t *store,

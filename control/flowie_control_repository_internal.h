@@ -7,21 +7,23 @@
 extern "C" {
 #endif
 
-#define FLOWIE_CONTROL_REPOSITORY_VERSION 3u
+#define FLOWIE_CONTROL_REPOSITORY_VERSION 4u
 
 typedef enum flowie_control_repository_capability_e {
   FLOWIE_CONTROL_REPOSITORY_DURABLE = 1u << 0,
   FLOWIE_CONTROL_REPOSITORY_ATOMIC_COMMANDS = 1u << 1,
   FLOWIE_CONTROL_REPOSITORY_CONSISTENT_AUTH_SNAPSHOT = 1u << 2,
   FLOWIE_CONTROL_REPOSITORY_KEYSET_PAGINATION = 1u << 3,
-  FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT = 1u << 4
+  FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT = 1u << 4,
+  FLOWIE_CONTROL_REPOSITORY_DURABLE_MANAGEMENT_SESSIONS = 1u << 5
 } flowie_control_repository_capability_t;
 
 #define FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES                                            \
   (FLOWIE_CONTROL_REPOSITORY_DURABLE | FLOWIE_CONTROL_REPOSITORY_ATOMIC_COMMANDS |                 \
    FLOWIE_CONTROL_REPOSITORY_CONSISTENT_AUTH_SNAPSHOT |                                            \
    FLOWIE_CONTROL_REPOSITORY_KEYSET_PAGINATION |                                                   \
-   FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT)
+   FLOWIE_CONTROL_REPOSITORY_EXTERNAL_IDENTITY_SNAPSHOT |                                         \
+   FLOWIE_CONTROL_REPOSITORY_DURABLE_MANAGEMENT_SESSIONS)
 
 typedef struct flowie_control_repository_user_ops_s {
   int (*domain_create)(void *ctx, const flowie_control_domain_create_command_t *command,
@@ -129,6 +131,16 @@ typedef struct flowie_control_repository_audit_ops_s {
   int (*count)(void *ctx, size_t *count_out);
 } flowie_control_repository_audit_ops_t;
 
+typedef struct flowie_control_repository_session_ops_s {
+  int (*issue)(void *ctx, const flowie_control_management_session_record_t *record,
+               size_t capacity, size_t max_sessions_per_principal, uint64_t now);
+  int (*resolve)(void *ctx,
+                 const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE],
+                 uint64_t now, flowie_control_management_session_record_t *out);
+  int (*revoke)(void *ctx,
+                const uint8_t token_digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE]);
+} flowie_control_repository_session_ops_t;
+
 /**
  * Internal control-plane persistence port.
  *
@@ -147,6 +159,7 @@ struct flowie_control_repository_s {
   const flowie_control_repository_group_ops_t *group;
   const flowie_control_repository_role_ops_t *role;
   const flowie_control_repository_policy_ops_t *policy;
+  const flowie_control_repository_session_ops_t *session;
   const flowie_control_repository_audit_ops_t *audit;
 };
 
@@ -154,6 +167,7 @@ struct flowie_control_repository_s {
   {sizeof(flowie_control_repository_t),                                                            \
    FLOWIE_CONTROL_REPOSITORY_VERSION,                                                              \
    0u,                                                                                             \
+   NULL,                                                                                           \
    NULL,                                                                                           \
    NULL,                                                                                           \
    NULL,                                                                                           \

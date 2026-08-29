@@ -9,7 +9,6 @@ extern "C" {
 #endif
 
 #define FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE 64u
-#define FLOWIE_CONTROL_MANAGEMENT_SESSION_CSRF_SIZE 64u
 #define FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE "flowie_session"
 
 typedef struct flowie_control_management_session_store_s
