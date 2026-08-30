@@ -33,11 +33,32 @@ include(CTest)
 include(Sanitizers)
 include(CmakeUtils)
 
+if(FLOWIE_BUILD_TESTS)
+  add_test(
+    NAME flowie_default_no_cluster_configure
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DFLOWIE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+      -DFLOWIE_BINARY_DIR=${CMAKE_BINARY_DIR}/default-no-cluster-configure
+      -DFLOWIE_GENERATOR=${CMAKE_GENERATOR}
+      -DFLOWIE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+      -DFLOWIE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+      -DFLOWIE_VCPKG_INSTALLED_DIR=${VCPKG_INSTALLED_DIR}
+      -DFLOWIE_VCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}
+      -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyDefaultNoCluster.cmake)
+  set_tests_properties(
+    flowie_default_no_cluster_configure
+    PROPERTIES LABELS "flowie;build-contract;cluster" TIMEOUT 300)
+endif()
+
 # Flowie is an independent MQTT product. Its broker depends only on CoroNet and
 # foundational libraries; product orchestration belongs to downstream adapters.
-foreach(_flowie_dependency_root IN ITEMS
-        TURBOUTILS_ROOT TURBOPARSER_ROOT TURBONET_ROOT TURBODB_ROOT
-        TURBOHTTP_ROOT TURBORAFT_ROOT FLOWMQ_ROOT)
+set(_flowie_dependency_roots
+    TURBOUTILS_ROOT TURBOPARSER_ROOT TURBONET_ROOT TURBODB_ROOT TURBOHTTP_ROOT)
+if(FLOWIE_BUILD_CLUSTER)
+  list(APPEND _flowie_dependency_roots TURBORAFT_ROOT FLOWMQ_ROOT)
+endif()
+foreach(_flowie_dependency_root IN LISTS _flowie_dependency_roots)
   if(NOT DEFINED ENV{${_flowie_dependency_root}} OR
      "$ENV{${_flowie_dependency_root}}" STREQUAL "")
     message(FATAL_ERROR
@@ -63,18 +84,23 @@ find_package(Orm CONFIG REQUIRED
 if(TARGET TurboParser::DataBind AND NOT TARGET TurboUtils::DataBind)
   add_library(TurboUtils::DataBind ALIAS TurboParser::DataBind)
 endif()
-find_package(FlowMQ CONFIG REQUIRED
-             PATHS "$ENV{FLOWMQ_ROOT}" NO_DEFAULT_PATH)
-find_package(TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwner DataStream FlowMQ
-             PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
 find_package(TurboHttp CONFIG REQUIRED
              PATHS "$ENV{TURBOHTTP_ROOT}" NO_DEFAULT_PATH)
+if(FLOWIE_BUILD_CLUSTER)
+  find_package(FlowMQ CONFIG REQUIRED
+               PATHS "$ENV{FLOWMQ_ROOT}" NO_DEFAULT_PATH)
+  find_package(
+    TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwner DataStream FlowMQ
+    PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
+endif()
 add_subdirectory(tools)
 include(FindTools)
 add_subdirectory(vendor)
 add_subdirectory(flowie/runtime)
 add_subdirectory(flowie)
-add_subdirectory(cluster)
+if(FLOWIE_BUILD_CLUSTER)
+  add_subdirectory(cluster)
+endif()
 add_subdirectory(server)
 if(FLOWIE_BUILD_CONTROL)
   add_subdirectory(control)

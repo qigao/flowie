@@ -29,6 +29,12 @@ spec("Flowie Control TurboDB live contract") {
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     flowie_control_domain_create_command_t domain = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
+    flowie_control_credential_issue_command_t credential_issue =
+        FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
+    flowie_control_generated_credential_t credential =
+        FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
+    flowie_control_credential_verify_result_t credential_verified =
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
     flowie_control_group_create_command_t group = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
     flowie_control_membership_add_command_t membership =
         FLOWIE_CONTROL_MEMBERSHIP_ADD_COMMAND_INIT;
@@ -88,6 +94,22 @@ spec("Flowie Control TurboDB live contract") {
     user.expected_revision = result.revision;
     user.occurred_at = occurred_at++;
     check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+
+    live_request(request_id, sizeof(request_id), domain_id, "credential");
+    credential_issue.domain_id = domain_id;
+    credential_issue.principal_id = "device";
+    credential_issue.actor = "live-test";
+    credential_issue.request_id = request_id;
+    credential_issue.expected_revision = result.revision;
+    credential_issue.occurred_at = occurred_at++;
+    check_equal(flowie_control_store_credential_generate(store, &credential_issue, &credential),
+                TURBO_OK);
+    check_equal(flowie_control_store_credential_verify(store, domain_id, "device",
+                                                       credential.token, credential.token_size,
+                                                       &credential_verified),
+                TURBO_OK);
+    result.revision = credential.revision;
+    flowie_control_generated_credential_wipe(&credential);
 
     live_request(request_id, sizeof(request_id), domain_id, "group");
     group.domain_id = domain_id;
