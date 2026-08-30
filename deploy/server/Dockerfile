@@ -58,6 +58,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turboparser/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DTURBO_ENABLE_CAPTURE=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"; \
     LD_LIBRARY_PATH="/opt/turboparser/$FLOWIE_PROFILE/lib:/opt/turboutils/$FLOWIE_PROFILE/lib" \
@@ -98,6 +99,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       -DCMAKE_INSTALL_PREFIX="/opt/turbodb/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
       -DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON \
+      -DTURBODB_BUILD_REDIS=OFF -DTURBODB_BUILD_DBTOOLS=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
@@ -115,37 +117,6 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
-FROM build_toolchain AS flowmq_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
-COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
-COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
-COPY --from=flow_mq . /src/flowmq
-RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/flowmq; \
-    cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
-      -DCMAKE_INSTALL_PREFIX="/opt/flowmq/$FLOWIE_PROFILE" \
-      -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DENABLE_ASAN="$FLOWIE_ENABLE_ASAN" \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
-    cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
-
-FROM build_toolchain AS turboraft_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
-COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
-COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
-COPY --from=turbohttp_builder /opt/turbohttp/ /opt/turbohttp/
-COPY --from=flowmq_builder /opt/flowmq/ /opt/flowmq/
-COPY --from=turbo_raft . /src/turboraft
-RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/turboraft; \
-    cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
-      -DCMAKE_INSTALL_PREFIX="/opt/turboraft/$FLOWIE_PROFILE" \
-      -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
-    cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
-
 FROM build_toolchain AS builder
 ARG SOURCE_REVISION=unknown
 COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
@@ -153,21 +124,18 @@ COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
 COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
 COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
 COPY --from=turbohttp_builder /opt/turbohttp/ /opt/turbohttp/
-COPY --from=flowmq_builder /opt/flowmq/ /opt/flowmq/
-COPY --from=turboraft_builder /opt/turboraft/ /opt/turboraft/
 COPY --from=turboutils_builder /src/turbo-utils/vcpkg_installed/ /src/turbo-utils/vcpkg_installed/
 COPY --from=turboparser_builder /src/turbo-parser/vcpkg_installed/ /src/turbo-parser/vcpkg_installed/
 COPY --from=turbonet_builder /src/turbonet/vcpkg_installed/ /src/turbonet/vcpkg_installed/
 COPY --from=turbodb_builder /src/turbodb/vcpkg_installed/ /src/turbodb/vcpkg_installed/
 COPY --from=turbohttp_builder /src/TurboHTTP/vcpkg_installed/ /src/TurboHTTP/vcpkg_installed/
-COPY --from=flowmq_builder /src/flowmq/vcpkg_installed/ /src/flowmq/vcpkg_installed/
-COPY --from=turboraft_builder /src/turboraft/vcpkg_installed/ /src/turboraft/vcpkg_installed/
 COPY . /src/flowie
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     set -eux; parallel="$(nproc)"; cd /src/flowie; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/flowie/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DFLOWIE_BUILD_CLUSTER=OFF \
       -DFLOWIE_BUILD_TESTS=OFF \
       -DBUILD_TESTING=OFF -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF \
       -DBUILD_EXAMPLES=OFF \
@@ -184,8 +152,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     for libdir in \
       "/opt/turboutils/$FLOWIE_PROFILE/lib" "/opt/turboparser/$FLOWIE_PROFILE/lib" \
       "/opt/turbonet/$FLOWIE_PROFILE/lib" "/opt/turbodb/$FLOWIE_PROFILE/lib" \
-      "/opt/turbohttp/$FLOWIE_PROFILE/lib" "/opt/flowmq/$FLOWIE_PROFILE/lib" \
-      "/opt/turboraft/$FLOWIE_PROFILE/lib" "/opt/flowie/$FLOWIE_PROFILE/lib" \
+      "/opt/turbohttp/$FLOWIE_PROFILE/lib" "/opt/flowie/$FLOWIE_PROFILE/lib" \
       /src/turbo-utils/vcpkg_installed/x64-linux/debug/lib \
       /src/turbo-utils/vcpkg_installed/x64-linux/lib \
       /src/turbo-parser/vcpkg_installed/x64-linux/debug/lib \
@@ -196,10 +163,6 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       /src/turbodb/vcpkg_installed/x64-linux/lib \
       /src/TurboHTTP/vcpkg_installed/x64-linux/debug/lib \
       /src/TurboHTTP/vcpkg_installed/x64-linux/lib \
-      /src/flowmq/vcpkg_installed/x64-linux/debug/lib \
-      /src/flowmq/vcpkg_installed/x64-linux/lib \
-      /src/turboraft/vcpkg_installed/x64-linux/debug/lib \
-      /src/turboraft/vcpkg_installed/x64-linux/lib \
       /src/flowie/vcpkg_installed/x64-linux/debug/lib \
       /src/flowie/vcpkg_installed/x64-linux/lib; do \
       if [ -d "$libdir" ]; then \

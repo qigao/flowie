@@ -98,14 +98,12 @@ credential 与对应 Role。
 
 ## 构建
 
-默认源码布局是八个同级仓库：
+默认源码布局包含 Flowie 和五个依赖仓库：
 
 ```text
 cpp/
   TurboHTTP/
-  flowmq/
   turbodb/
-  turboraft/
   turbonet/
     turbo-utils/
     turbo-parser/
@@ -126,18 +124,17 @@ docker buildx build \
   --build-context turbo_net=../turbonet \
   --build-context turbo_db=../../turbodb \
   --build-context turbo_http=../../TurboHTTP \
-  --build-context flow_mq=../../flowmq \
-  --build-context turbo_raft=../../turboraft \
   --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
   --tag "${FLOWIE_SERVER_IMAGE}" \
   --load \
   .
 ```
 
-Dockerfile 分别构建并安装七个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server` 和
-`flowie-control`。构建层与最终运行层分别对两个 executable 执行 `ldd`，任一动态库缺失都会使镜像构建
-失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest 或不可变
-tag 部署。
+Dockerfile 分别构建并安装五个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server`、
+`flowie-control` 和 `flowie-control-data`。Standalone 镜像固定使用 `FLOWIE_BUILD_CLUSTER=OFF`，构建图和
+运行层均不引用 FlowMQ/TurboRaft。构建层与最终运行层分别对三个 executable 执行 `ldd`，任一动态库缺失
+都会使镜像构建失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest
+或不可变 tag 部署。
 
 需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
 
@@ -247,6 +244,37 @@ session，需要重新登录。不得把该公开密码作为生产 secret 或�
 离线迁移或在确认可丢弃旧 Control 数据后重建数据库。回滚必须使用与备份 schema 匹配的旧镜像。
 
 ## 验证与运维
+
+Control 管理 RPC 的最小相关回归为：
+
+```sh
+cmake --build --preset linux-dev-user --target \
+  test_flowie_control_acl \
+  test_flowie_control_store \
+  test_flowie_control_management_service \
+  test_flowie_control_management_rpc
+ctest --preset linux-dev-user --output-on-failure \
+  -R '^test_flowie_control_(acl|store|management_service|management_rpc)$'
+```
+
+`test_flowie_control_management_rpc` 会在真实 CoroNet coroutine 内提交包含四个 topic entry 的
+`control.policy.subject_rule.put`，用于约束 Control 请求路径的 stack budget。该测试必须与普通同步 RPC 测试
+同时保留；只在进程主栈上调用 repository 不能覆盖容器内的 coroutine stack 回归。
+
+PostgreSQL live 验收应在不输出密码、Bearer token 或 credential 的前提下完成以下检查：
+
+1. 记录 Flowie 应用容器的 `RestartCount`。
+2. 使用已认证的 Management 客户端提交一条业务期望的 `control.policy.subject_rule.put`；要求 HTTP 200、
+   JSON-RPC result 含 revision，并能按 request ID 查询到对应审计记录。
+3. 再次读取 `RestartCount`，要求与步骤 1 相同；随后冷启动调用方两次，每次都要求 principal reconcile、
+   `/v4/authenticate`、`/v4/acl/check` 和 MQTT CONNECT 成功，且计数不变。
+4. 失败时先保存 core、容器时间戳日志与 request ID；未满足重启计数不变时不得把健康检查恢复视为通过。
+
+重启计数只需读取，不应为了测试而重置容器：
+
+```sh
+docker inspect --format '{{.RestartCount}}' flowie-server
+```
 
 ```sh
 sh deploy/server/tests/test-docker-entrypoint.sh

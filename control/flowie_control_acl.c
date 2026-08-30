@@ -220,36 +220,43 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
 
 int flowie_control_acl_parse(const char *text, size_t text_size,
                              flowie_control_acl_document_t *out) {
-  flowie_control_acl_parse_ctx_t ctx;
+  flowie_control_acl_parse_ctx_t *ctx = NULL;
   flowie_control_acl_lexer_t lexer;
   flowie_control_acl_token_t token;
-  void *parser;
+  void *parser = NULL;
   int token_id = FLOWIE_CONTROL_ACL_LEX_END;
+  int rc = TURBO_OK;
   if (out && out->size >= sizeof(*out))
     *out = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
   if (!text || text_size == 0u || text_size > FLOWIE_CONTROL_ACL_DOCUMENT_MAX ||
       memchr(text, '\0', text_size) || !out || out->size < sizeof(*out))
     return TURBO_EINVAL;
-  memset(&ctx, 0, sizeof(ctx));
-  ctx.document = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  ctx = (flowie_control_acl_parse_ctx_t *)calloc(1u, sizeof(*ctx));
+  if (!ctx) return TURBO_ENOMEM;
+  ctx->document = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
   parser = FlowieControlAclParseAlloc(malloc);
-  if (!parser) return TURBO_ENOMEM;
+  if (!parser) {
+    free(ctx);
+    return TURBO_ENOMEM;
+  }
   flowie_control_acl_lexer_init(&lexer, text, text_size);
   while ((token_id = flowie_control_acl_lexer_next(&lexer, &token)) > 0) {
-    FlowieControlAclParse(parser, token_id, token, &ctx);
-    if (ctx.status != TURBO_OK) break;
+    FlowieControlAclParse(parser, token_id, token, ctx);
+    if (ctx->status != TURBO_OK) break;
   }
-  if (token_id < 0 && ctx.status == TURBO_OK) ctx.status = TURBO_EPROTO;
-  if (ctx.status == TURBO_OK) {
+  if (token_id < 0 && ctx->status == TURBO_OK) ctx->status = TURBO_EPROTO;
+  if (ctx->status == TURBO_OK) {
     memset(&token, 0, sizeof(token));
     token.line = lexer.line;
     token.column = lexer.column;
-    FlowieControlAclParse(parser, 0, token, &ctx);
+    FlowieControlAclParse(parser, 0, token, ctx);
   }
   FlowieControlAclParseFree(parser, free);
-  if (ctx.status != TURBO_OK || !ctx.accepted) return ctx.status ? ctx.status : TURBO_EPROTO;
-  *out = ctx.document;
-  return TURBO_OK;
+  rc = ctx->status != TURBO_OK || !ctx->accepted ? (ctx->status ? ctx->status : TURBO_EPROTO)
+                                                  : TURBO_OK;
+  if (rc == TURBO_OK) *out = ctx->document;
+  free(ctx);
+  return rc;
 }
 
 static const char *flowie_control_acl_access_name(uint32_t action_mask) {

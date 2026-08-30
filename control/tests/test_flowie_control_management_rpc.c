@@ -344,6 +344,65 @@ static void management_rpc_run_responsiveness_scenario(management_rpc_policy_ope
 }
 
 spec("Flowie management JSON-RPC") {
+  it("writes structured subject rules within a CoroNet coroutine stack") {
+    static const char create_user[] =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
+        "\"principal_id\":\"tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
+        "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a\",\"principal_type\":\"user\","
+        "\"request_id\":\"create-coro-policy-user\"},\"id\":1}";
+    static const char put_rule[] =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.policy.subject_rule.put\","
+        "\"params\":{\"subject_kind\":\"user\","
+        "\"subject_id\":\"tenant-0cddbf38-d8ee-48c1-9165-6fc552c44fb4-tenant-admin-"
+        "fdf4f7d0-aec6-448b-9fe6-f0708d253f8a\",\"ordinal\":1025,"
+        "\"connection\":\"allow\",\"entries\":["
+        "{\"effect\":\"allow\",\"access\":\"write\","
+        "\"topic\":\"root-a/groups/beijing/mty/devices/+/camera/command\"},"
+        "{\"effect\":\"allow\",\"access\":\"write\","
+        "\"topic\":\"root-a/groups/beijing/mty/devices/+/trident/command\"},"
+        "{\"effect\":\"allow\",\"access\":\"read\","
+        "\"topic\":\"root-a/groups/beijing/mty/devices/+/camera/event\"},"
+        "{\"effect\":\"allow\",\"access\":\"read\","
+        "\"topic\":\"root-a/groups/beijing/mty/devices/+/trident/event\"}],"
+        "\"request_id\":\"put-coro-policy-rule\"},\"id\":2}";
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_rpc_server_t *server = NULL;
+    rpc_context_t *rpc = NULL;
+    iris_app_t *app = NULL;
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, TURBO_OK};
+    management_rpc_responsiveness_scenario_t scenario;
+    iris_security_context_t security = {0};
+    turbo_json_doc_t *document = NULL;
+    coro_context_t *context = NULL;
+    int status = TURBO_EIO;
+
+    memset(&scenario, 0, sizeof(scenario));
+    fixture.caller.domain_id = "root-a";
+    fixture.caller.actor = "security-admin";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    security.authenticated = true;
+    server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
+    document = management_rpc_request(server, app, &security, create_user, &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
+    context = coro_context_create(NULL);
+    check_not_null(context);
+    scenario.server = server;
+    scenario.app = app;
+    scenario.security = security;
+    scenario.policy_body = put_rule;
+    check_equal(coro_context_spawn(context, management_rpc_policy_task, &scenario), TURBO_OK);
+    check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
+    check_true(scenario.policy_ok);
+
+    coro_context_destroy(context);
+    management_rpc_close(server, rpc, app, service, store, path);
+  }
+
   it("round-trips structured subject rules and removes every legacy rule method") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
