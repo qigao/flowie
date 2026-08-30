@@ -35,6 +35,16 @@ include(CmakeUtils)
 
 if(FLOWIE_BUILD_TESTS)
   add_test(
+    NAME flowie_standalone_dockerfile_contract
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DFLOWIE_DOCKERFILE=${CMAKE_SOURCE_DIR}/deploy/server/Dockerfile
+      -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyStandaloneDockerfile.cmake)
+  set_tests_properties(
+    flowie_standalone_dockerfile_contract
+    PROPERTIES LABELS "flowie;build-contract;cluster;docker" TIMEOUT 30)
+
+  add_test(
     NAME flowie_default_no_cluster_configure
     COMMAND
       ${CMAKE_COMMAND}
