@@ -98,14 +98,12 @@ credential 与对应 Role。
 
 ## 构建
 
-默认源码布局是八个同级仓库：
+默认源码布局包含 Flowie 和五个依赖仓库：
 
 ```text
 cpp/
   TurboHTTP/
-  flowmq/
   turbodb/
-  turboraft/
   turbonet/
     turbo-utils/
     turbo-parser/
