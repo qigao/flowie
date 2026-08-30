@@ -18,6 +18,12 @@ if(NOT _dockerfile MATCHES "-DTURBO_ENABLE_CAPTURE=OFF")
           "Standalone Docker build must explicitly disable TurboParser capture")
 endif()
 
+if(NOT _dockerfile MATCHES "-DTURBODB_BUILD_REDIS=OFF" OR
+   NOT _dockerfile MATCHES "-DTURBODB_BUILD_DBTOOLS=OFF")
+  message(FATAL_ERROR
+          "Standalone Docker build must disable unused TurboDB products")
+endif()
+
 foreach(_cluster_reference IN ITEMS flow_mq turbo_raft flowmq turboraft)
   if(_dockerfile_lower MATCHES "${_cluster_reference}")
     message(FATAL_ERROR
