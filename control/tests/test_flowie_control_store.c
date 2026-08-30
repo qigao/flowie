@@ -327,6 +327,26 @@ spec("Flowie control TurboDB fact store") {
     free(path);
   }
 
+  it("reopens an initialized generated schema without replaying seed statements") {
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_store_t *store = NULL;
+    char *path = tt_make_temp_file("flowie-control-reopen", ".sqlite3");
+
+    check_not_null(path);
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    flowie_control_store_destroy(store);
+    store = NULL;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    check_not_null(store);
+
+    flowie_control_store_destroy(store);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
   it("rejects the removed v4 policy schema without migrating it") {
     static const char old_schema[] =
         "CREATE TABLE flowie_control_schema_version("
@@ -431,6 +451,32 @@ spec("Flowie control TurboDB fact store") {
     check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
     database = NULL;
 
+    check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
+    config.database = &test_database.config;
+    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_null(store);
+
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
+  it("rejects a partial current schema instead of treating its fingerprint as complete") {
+    static const char partial_schema[] =
+        "CREATE TABLE flowie_control_schema_version("
+        "singleton INTEGER PRIMARY KEY,version INTEGER NOT NULL,fingerprint TEXT NOT NULL);"
+        "INSERT INTO flowie_control_schema_version(singleton,version,fingerprint) "
+        "VALUES(1,7,'flowie-control-persistent-session-schema-v7-20260829');";
+    flowie_control_store_config_t config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
+    flowie_control_test_turbodb_t test_database;
+    flowie_control_database_t *database = NULL;
+    flowie_control_store_t *store = NULL;
+    char *path = tt_make_temp_file("flowie-control-partial-v7", ".sqlite3");
+
+    check_not_null(path);
+    check_equal(flowie_control_test_database_open(path, &database), FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_exec(database, partial_schema, NULL, NULL, NULL),
+                FLOWIE_CONTROL_DB_OK);
+    check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
     check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
@@ -1830,6 +1876,110 @@ spec("Flowie control TurboDB fact store") {
     check_equal(status.policy_version, 1u);
     check_equal(status.draft_rule_count, 2u);
     check_equal(status.published_rule_count, 4u);
+
+    control_store_close(store, path);
+  }
+
+  it("lists only direct memberships and role assignments with tuple cursors") {
+    char *path = NULL;
+    flowie_control_store_t *store = control_store_open(&path);
+    flowie_control_user_create_command_t user =
+        control_user_create_command("request-direct-user-7", 1u);
+    flowie_control_membership_add_command_t membership =
+        FLOWIE_CONTROL_MEMBERSHIP_ADD_COMMAND_INIT;
+    flowie_control_user_role_add_command_t assignment =
+        FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_membership_view_t memberships[1] = {FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT};
+    flowie_control_user_role_view_t assignments[1] = {FLOWIE_CONTROL_USER_ROLE_VIEW_INIT};
+    flowie_control_effective_groups_view_t effective_groups =
+        FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
+    size_t count = 0u;
+    int has_more = 0;
+
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    user.principal_id = "device-8";
+    user.request_id = "request-direct-user-8";
+    user.expected_revision = 2u;
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(control_group_create(store, "root-a", "engineering", NULL,
+                                     "request-direct-engineering", 3u, &result),
+                TURBO_OK);
+    check_equal(control_group_create(store, "root-a", "backend", "engineering",
+                                     "request-direct-backend", 4u, &result),
+                TURBO_OK);
+
+    membership.domain_id = "root-a";
+    membership.principal_id = "device-7";
+    membership.group_id = "backend";
+    membership.actor = "admin-1";
+    membership.request_id = "request-direct-membership-7";
+    membership.expected_revision = 5u;
+    membership.occurred_at = 7005u;
+    check_equal(flowie_control_store_membership_add(store, &membership, &result), TURBO_OK);
+    membership.principal_id = "device-8";
+    membership.group_id = "engineering";
+    membership.request_id = "request-direct-membership-8";
+    membership.expected_revision = 6u;
+    membership.occurred_at = 7006u;
+    check_equal(flowie_control_store_membership_add(store, &membership, &result), TURBO_OK);
+    check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7",
+                                                       &effective_groups),
+                TURBO_OK);
+    check_equal(effective_groups.group_count, 2u);
+
+    check_equal(flowie_control_store_membership_list(store, "root-a", NULL, NULL, memberships,
+                                                      1u, &count, &has_more),
+                TURBO_OK);
+    check_equal(count, 1u);
+    check_true(has_more);
+    check_equal(memberships[0].principal_id, "device-7");
+    check_equal(memberships[0].group_id, "backend");
+    memberships[0] = (flowie_control_membership_view_t)FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT;
+    check_equal(flowie_control_store_membership_list(store, "root-a", "device-7", "backend",
+                                                      memberships, 1u, &count, &has_more),
+                TURBO_OK);
+    check_equal(count, 1u);
+    check_false(has_more);
+    check_equal(memberships[0].principal_id, "device-8");
+    check_equal(memberships[0].group_id, "engineering");
+
+    check_equal(control_role_create(store, "root-a", "writer", "request-direct-writer", 7u,
+                                    &result),
+                TURBO_OK);
+    check_equal(control_role_create(store, "root-a", "reader", "request-direct-reader", 8u,
+                                    &result),
+                TURBO_OK);
+    assignment.domain_id = "root-a";
+    assignment.principal_id = "device-7";
+    assignment.role_id = "writer";
+    assignment.actor = "admin-1";
+    assignment.request_id = "request-direct-assignment-7";
+    assignment.expected_revision = 9u;
+    assignment.occurred_at = 8009u;
+    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), TURBO_OK);
+    assignment.principal_id = "device-8";
+    assignment.role_id = "reader";
+    assignment.request_id = "request-direct-assignment-8";
+    assignment.expected_revision = 10u;
+    assignment.occurred_at = 8010u;
+    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), TURBO_OK);
+
+    check_equal(flowie_control_store_user_role_list(store, "root-a", NULL, NULL, assignments, 1u,
+                                                     &count, &has_more),
+                TURBO_OK);
+    check_equal(count, 1u);
+    check_true(has_more);
+    check_equal(assignments[0].principal_id, "device-7");
+    check_equal(assignments[0].role_id, "writer");
+    assignments[0] = (flowie_control_user_role_view_t)FLOWIE_CONTROL_USER_ROLE_VIEW_INIT;
+    check_equal(flowie_control_store_user_role_list(store, "root-a", "device-7", "writer",
+                                                     assignments, 1u, &count, &has_more),
+                TURBO_OK);
+    check_equal(count, 1u);
+    check_false(has_more);
+    check_equal(assignments[0].principal_id, "device-8");
+    check_equal(assignments[0].role_id, "reader");
 
     control_store_close(store, path);
   }

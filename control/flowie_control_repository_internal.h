@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define FLOWIE_CONTROL_REPOSITORY_VERSION 5u
+#define FLOWIE_CONTROL_REPOSITORY_VERSION 6u
 
 typedef enum flowie_control_repository_capability_e {
   FLOWIE_CONTROL_REPOSITORY_DURABLE = 1u << 0,
@@ -82,6 +82,9 @@ typedef struct flowie_control_repository_group_ops_s {
   int (*list)(void *ctx, const char *domain_id, const char *after_group_id,
               flowie_control_group_view_t *items, size_t item_capacity, size_t *count_out,
               int *has_more_out);
+  int (*membership_list)(void *ctx, const char *domain_id, const char *after_principal_id,
+                         const char *after_group_id, flowie_control_membership_view_t *items,
+                         size_t item_capacity, size_t *count_out, int *has_more_out);
 } flowie_control_repository_group_ops_t;
 
 typedef struct flowie_control_repository_role_ops_s {
@@ -98,6 +101,9 @@ typedef struct flowie_control_repository_role_ops_s {
   int (*list)(void *ctx, const char *domain_id, const char *after_role_id,
               flowie_control_role_view_t *items, size_t item_capacity, size_t *count_out,
               int *has_more_out);
+  int (*assignment_list)(void *ctx, const char *domain_id, const char *after_principal_id,
+                         const char *after_role_id, flowie_control_user_role_view_t *items,
+                         size_t item_capacity, size_t *count_out, int *has_more_out);
 } flowie_control_repository_role_ops_t;
 
 typedef struct flowie_control_repository_policy_ops_s {

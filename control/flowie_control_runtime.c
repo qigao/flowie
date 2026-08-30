@@ -1,5 +1,6 @@
 #include "flowie_control_http_request_internal.h"
 #include "flowie_control_runtime_internal.h"
+#include "flowie_control_database_config_internal.h"
 
 #include "platform.h"
 #include "CoroNet/turbo_coro_context.h"
@@ -188,32 +189,7 @@ flowie_control_runtime_listener_context_create(const flowie_control_config_t *co
 static int flowie_control_runtime_turbodb_config(
     const flowie_control_config_t *config, orm_config_t *database,
     orm_option_t options[FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX]) {
-  if (!config || config->size < sizeof(*config) || config->version != FLOWIE_CONTROL_CONFIG_VERSION)
-    return TURBO_EINVAL;
-  if (!database || !options || !config->turbodb.driver[0] ||
-      config->turbodb.option_count > FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX)
-    return TURBO_EINVAL;
-  orm_config(database);
-  database->driver = orm_view(config->turbodb.driver);
-  database->options = options;
-  database->option_count = (uint32_t)config->turbodb.option_count;
-  for (size_t index = 0u; index < config->turbodb.option_count; ++index) {
-    const flowie_control_config_turbodb_option_t *input = &config->turbodb.options[index];
-    const char *value = input->value;
-    int rc;
-    if (!input->keyword[0] || !value[0]) return TURBO_EINVAL;
-    if (flowie_control_config_turbodb_secret_option(input->keyword) &&
-        !flowie_control_config_secret_ref_valid(value))
-      return TURBO_EINVAL;
-    if (strncmp(value, "env://", sizeof("env://") - 1u) == 0) {
-      rc = flowie_control_runtime_env_secret(value, &value);
-      if (rc != TURBO_OK) return rc;
-      if (!value || !value[0]) return TURBO_EINVAL;
-    }
-    options[index].keyword = orm_view(input->keyword);
-    options[index].value = orm_view(value);
-  }
-  return TURBO_OK;
+  return flowie_control_database_config_resolve(config, database, options);
 }
 
 static int flowie_control_runtime_validate_store(const flowie_control_config_t *config) {

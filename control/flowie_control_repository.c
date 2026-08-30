@@ -132,6 +132,15 @@ static int turbodb_group_list(void *ctx, const char *domain_id, const char *afte
                                          items, item_capacity, count_out, has_more_out);
 }
 
+static int turbodb_membership_list(
+    void *ctx, const char *domain_id, const char *after_principal_id, const char *after_group_id,
+    flowie_control_membership_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out) {
+  return flowie_control_store_membership_list((flowie_control_store_t *)ctx, domain_id,
+                                               after_principal_id, after_group_id, items,
+                                               item_capacity, count_out, has_more_out);
+}
+
 static int turbodb_role_create(void *ctx, const flowie_control_role_create_command_t *command,
                                flowie_control_command_result_t *result) {
   return flowie_control_store_role_create((flowie_control_store_t *)ctx, command, result);
@@ -165,6 +174,15 @@ static int turbodb_role_list(void *ctx, const char *domain_id, const char *after
                              size_t *count_out, int *has_more_out) {
   return flowie_control_store_role_list((flowie_control_store_t *)ctx, domain_id, after_role_id,
                                         items, item_capacity, count_out, has_more_out);
+}
+
+static int turbodb_role_assignment_list(
+    void *ctx, const char *domain_id, const char *after_principal_id, const char *after_role_id,
+    flowie_control_user_role_view_t *items, size_t item_capacity, size_t *count_out,
+    int *has_more_out) {
+  return flowie_control_store_user_role_list((flowie_control_store_t *)ctx, domain_id,
+                                              after_principal_id, after_role_id, items,
+                                              item_capacity, count_out, has_more_out);
 }
 
 static int turbodb_policy_validate(void *ctx, const char *domain_id,
@@ -280,12 +298,21 @@ static const flowie_control_repository_auth_ops_t TURBODB_AUTH_OPS = {
 static const flowie_control_repository_credential_ops_t TURBODB_CREDENTIAL_OPS = {
     turbodb_credential_generate, turbodb_credential_rotate, turbodb_credential_revoke};
 static const flowie_control_repository_group_ops_t TURBODB_GROUP_OPS = {
-    turbodb_group_create,      turbodb_group_delete,     turbodb_membership_add,
-    turbodb_membership_remove, turbodb_effective_groups, turbodb_group_list};
+    .create = turbodb_group_create,
+    .delete_group = turbodb_group_delete,
+    .membership_add = turbodb_membership_add,
+    .membership_remove = turbodb_membership_remove,
+    .effective = turbodb_effective_groups,
+    .list = turbodb_group_list,
+    .membership_list = turbodb_membership_list};
 static const flowie_control_repository_role_ops_t TURBODB_ROLE_OPS = {
-    turbodb_role_create,         turbodb_role_disable,
-    turbodb_role_assignment_add, turbodb_role_assignment_remove,
-    turbodb_effective_roles,     turbodb_role_list};
+    .create = turbodb_role_create,
+    .disable = turbodb_role_disable,
+    .assignment_add = turbodb_role_assignment_add,
+    .assignment_remove = turbodb_role_assignment_remove,
+    .effective = turbodb_effective_roles,
+    .list = turbodb_role_list,
+    .assignment_list = turbodb_role_assignment_list};
 static const flowie_control_repository_policy_ops_t TURBODB_POLICY_OPS = {
     .validate = turbodb_policy_validate,
     .dry_run = turbodb_policy_dry_run,
@@ -321,10 +348,12 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->credential->rotate || !repository->credential->revoke ||
       !repository->group->create || !repository->group->delete_group ||
       !repository->group->membership_add || !repository->group->membership_remove ||
-      !repository->group->effective || !repository->group->list || !repository->role->create ||
+      !repository->group->effective || !repository->group->list ||
+      !repository->group->membership_list || !repository->role->create ||
       !repository->role->disable || !repository->role->assignment_add ||
       !repository->role->assignment_remove || !repository->role->effective ||
-      !repository->role->list || !repository->policy->validate || !repository->policy->dry_run ||
+      !repository->role->list || !repository->role->assignment_list ||
+      !repository->policy->validate || !repository->policy->dry_run ||
       !repository->policy->publish || !repository->policy->status ||
       !repository->policy->bundle_load || !repository->policy->bundle_release ||
       !repository->policy->subject_rule_put || !repository->policy->subject_rule_delete ||

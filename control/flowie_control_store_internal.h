@@ -514,6 +514,15 @@ typedef struct flowie_control_group_view_s {
 
 #define FLOWIE_CONTROL_GROUP_VIEW_INIT {sizeof(flowie_control_group_view_t)}
 
+typedef struct flowie_control_membership_view_s {
+  size_t size;
+  char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char group_id[FLOWIE_SECURITY_ID_MAX + 1u];
+} flowie_control_membership_view_t;
+
+#define FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT {sizeof(flowie_control_membership_view_t)}
+
 typedef struct flowie_control_role_view_s {
   size_t size;
   char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
@@ -525,6 +534,15 @@ typedef struct flowie_control_role_view_s {
 } flowie_control_role_view_t;
 
 #define FLOWIE_CONTROL_ROLE_VIEW_INIT {sizeof(flowie_control_role_view_t)}
+
+typedef struct flowie_control_user_role_view_s {
+  size_t size;
+  char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char role_id[FLOWIE_SECURITY_ID_MAX + 1u];
+} flowie_control_user_role_view_t;
+
+#define FLOWIE_CONTROL_USER_ROLE_VIEW_INIT {sizeof(flowie_control_user_role_view_t)}
 
 typedef struct flowie_control_audit_view_s {
   size_t size;
@@ -756,9 +774,17 @@ int flowie_control_store_user_list(flowie_control_store_t *store, const char *do
 int flowie_control_store_group_list(flowie_control_store_t *store, const char *domain_id,
                                     const char *after_group_id, flowie_control_group_view_t *items,
                                     size_t item_capacity, size_t *count_out, int *has_more_out);
+int flowie_control_store_membership_list(
+    flowie_control_store_t *store, const char *domain_id, const char *after_principal_id,
+    const char *after_group_id, flowie_control_membership_view_t *items, size_t item_capacity,
+    size_t *count_out, int *has_more_out);
 int flowie_control_store_role_list(flowie_control_store_t *store, const char *domain_id,
                                    const char *after_role_id, flowie_control_role_view_t *items,
                                    size_t item_capacity, size_t *count_out, int *has_more_out);
+int flowie_control_store_user_role_list(
+    flowie_control_store_t *store, const char *domain_id, const char *after_principal_id,
+    const char *after_role_id, flowie_control_user_role_view_t *items, size_t item_capacity,
+    size_t *count_out, int *has_more_out);
 int flowie_control_store_audit_list(flowie_control_store_t *store, const char *domain_id,
                                     uint64_t after_revision, flowie_control_audit_view_t *items,
                                     size_t item_capacity, size_t *count_out, int *has_more_out);

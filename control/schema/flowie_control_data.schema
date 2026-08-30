@@ -1,0 +1,119 @@
+schema FlowieControlData [
+  id(1),
+  version(1),
+  byte_order(little),
+  db_init(sqlite, "INSERT INTO flowie_control_data_metadata(singleton, format_version) VALUES (1, 1)"),
+  db_init(postgresql, "INSERT INTO flowie_control_data_metadata(singleton, format_version) VALUES (1, 1)")
+];
+
+[db_table(flowie_control_data_metadata),
+ db_check(ck_flowie_control_data_metadata_singleton_sqlite, sqlite, "singleton = 1"),
+ db_check(ck_flowie_control_data_metadata_singleton_postgresql, postgresql, "singleton = 1"),
+ db_check(ck_flowie_control_data_metadata_version_sqlite, sqlite, "format_version = 1"),
+ db_check(ck_flowie_control_data_metadata_version_postgresql, postgresql, "format_version = 1")]
+message FlowieControlDataMetadata {
+  [db_primary_key(1)] int32 singleton;
+  int32 format_version;
+}
+
+[db_table(flowie_control_data_domain),
+ db_check(ck_flowie_control_data_domain_id_sqlite, sqlite, "length(domain_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_domain_id_postgresql, postgresql, "length(domain_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_domain_revision_sqlite, sqlite, "source_revision > 0"),
+ db_check(ck_flowie_control_data_domain_revision_postgresql, postgresql, "source_revision > 0")]
+message FlowieControlDataDomain {
+  [db_primary_key(1)] string domain_id;
+  int64 source_revision;
+}
+
+[db_table(flowie_control_data_user),
+ db_foreign_key(fk_flowie_control_data_user_domain, FlowieControlDataDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_data_user_id_sqlite, sqlite, "length(principal_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_user_id_postgresql, postgresql, "length(principal_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_user_type_sqlite, sqlite, "length(principal_type) BETWEEN 1 AND 31"),
+ db_check(ck_flowie_control_data_user_type_postgresql, postgresql, "length(principal_type) BETWEEN 1 AND 31"),
+ db_check(ck_flowie_control_data_user_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_data_user_enabled_postgresql, postgresql, "enabled IN (0, 1)")]
+message FlowieControlDataUser {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  string principal_type;
+  int32 enabled;
+}
+
+[db_table(flowie_control_data_group),
+ db_foreign_key(fk_flowie_control_data_group_domain, FlowieControlDataDomain, domain_id, domain_id),
+ db_foreign_key(fk_flowie_control_data_group_parent, FlowieControlDataGroup, domain_id, domain_id, parent_group_id, group_id),
+ db_check(ck_flowie_control_data_group_id_sqlite, sqlite, "length(group_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_group_id_postgresql, postgresql, "length(group_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_group_depth_sqlite, sqlite, "depth BETWEEN 0 AND 15"),
+ db_check(ck_flowie_control_data_group_depth_postgresql, postgresql, "depth BETWEEN 0 AND 15"),
+ db_check(ck_flowie_control_data_group_parent_depth_sqlite, sqlite, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)"),
+ db_check(ck_flowie_control_data_group_parent_depth_postgresql, postgresql, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)")]
+message FlowieControlDataGroup {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string group_id;
+  optional string parent_group_id;
+  int32 depth;
+}
+
+[db_table(flowie_control_data_membership),
+ db_foreign_key(fk_flowie_control_data_membership_user, FlowieControlDataUser, domain_id, domain_id, principal_id, principal_id),
+ db_foreign_key(fk_flowie_control_data_membership_group, FlowieControlDataGroup, domain_id, domain_id, group_id, group_id)]
+message FlowieControlDataMembership {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  [db_primary_key(3)] string group_id;
+}
+
+[db_table(flowie_control_data_role),
+ db_foreign_key(fk_flowie_control_data_role_domain, FlowieControlDataDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_data_role_id_sqlite, sqlite, "length(role_id) BETWEEN 1 AND 63"),
+ db_check(ck_flowie_control_data_role_id_postgresql, postgresql, "length(role_id) BETWEEN 1 AND 63"),
+ db_check(ck_flowie_control_data_role_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_data_role_enabled_postgresql, postgresql, "enabled IN (0, 1)")]
+message FlowieControlDataRole {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string role_id;
+  int32 enabled;
+}
+
+[db_table(flowie_control_data_user_role),
+ db_foreign_key(fk_flowie_control_data_user_role_user, FlowieControlDataUser, domain_id, domain_id, principal_id, principal_id),
+ db_foreign_key(fk_flowie_control_data_user_role_role, FlowieControlDataRole, domain_id, domain_id, role_id, role_id)]
+message FlowieControlDataUserRole {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  [db_primary_key(3)] string role_id;
+}
+
+[db_table(flowie_control_data_policy_rule),
+ db_foreign_key(fk_flowie_control_data_policy_rule_domain, FlowieControlDataDomain, domain_id, domain_id),
+ db_unique_index(flowie_control_data_policy_ordinal_idx, domain_id, ordinal),
+ db_check(ck_flowie_control_data_policy_subject_kind_sqlite, sqlite, "subject_kind IN (1, 2, 3)"),
+ db_check(ck_flowie_control_data_policy_subject_kind_postgresql, postgresql, "subject_kind IN (1, 2, 3)"),
+ db_check(ck_flowie_control_data_policy_subject_id_sqlite, sqlite, "length(subject_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_policy_subject_id_postgresql, postgresql, "length(subject_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_data_policy_ordinal_sqlite, sqlite, "ordinal BETWEEN 0 AND 4095"),
+ db_check(ck_flowie_control_data_policy_ordinal_postgresql, postgresql, "ordinal BETWEEN 0 AND 4095"),
+ db_check(ck_flowie_control_data_policy_document_sqlite, sqlite, "length(rule_document) BETWEEN 1 AND 16383"),
+ db_check(ck_flowie_control_data_policy_document_postgresql, postgresql, "length(rule_document) BETWEEN 1 AND 16383")]
+message FlowieControlDataPolicyRule {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] int32 subject_kind;
+  [db_primary_key(3)] string subject_id;
+  int32 ordinal;
+  string rule_document;
+}
+
+[db_table(flowie_control_data_policy_status),
+ db_foreign_key(fk_flowie_control_data_policy_status_domain, FlowieControlDataDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_data_policy_published_sqlite, sqlite, "published IN (0, 1)"),
+ db_check(ck_flowie_control_data_policy_published_postgresql, postgresql, "published IN (0, 1)"),
+ db_check(ck_flowie_control_data_policy_expiry_sqlite, sqlite, "expires_at >= 0"),
+ db_check(ck_flowie_control_data_policy_expiry_postgresql, postgresql, "expires_at >= 0")]
+message FlowieControlDataPolicyStatus {
+  [db_primary_key(1)] string domain_id;
+  int32 published;
+  int64 expires_at;
+}

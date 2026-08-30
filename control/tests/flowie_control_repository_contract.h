@@ -48,7 +48,12 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
   flowie_control_policy_status_t status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
   flowie_security_policy_bundle_t bundle = FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
+  flowie_control_membership_view_t direct_memberships[1] = {
+      FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT};
+  flowie_control_user_role_view_t direct_assignments[1] = {FLOWIE_CONTROL_USER_ROLE_VIEW_INIT};
   size_t audit_count = 0u;
+  size_t direct_count = 0u;
+  int direct_has_more = 0;
   uint64_t revision = 0u;
 
   check_not_null(repository);
@@ -113,6 +118,23 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   assignment.expected_revision = 5u;
   assignment.occurred_at = 1006u;
   check_equal(repository->role->assignment_add(repository->ctx, &assignment, &result), TURBO_OK);
+
+  check_equal(repository->group->membership_list(repository->ctx, "root-a", NULL, NULL,
+                                                  direct_memberships, 1u, &direct_count,
+                                                  &direct_has_more),
+              TURBO_OK);
+  check_equal(direct_count, 1u);
+  check_false(direct_has_more);
+  check_equal(direct_memberships[0].principal_id, "device-a");
+  check_equal(direct_memberships[0].group_id, "operators");
+  check_equal(repository->role->assignment_list(repository->ctx, "root-a", NULL, NULL,
+                                                 direct_assignments, 1u, &direct_count,
+                                                 &direct_has_more),
+              TURBO_OK);
+  check_equal(direct_count, 1u);
+  check_false(direct_has_more);
+  check_equal(direct_assignments[0].principal_id, "device-a");
+  check_equal(direct_assignments[0].role_id, "reader");
 
   check_equal(repository->auth->external_principal_snapshot(repository->ctx, "root-a", "device-a",
                                                              77u, &snapshot),

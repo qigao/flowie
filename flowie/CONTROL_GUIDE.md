@@ -340,6 +340,50 @@ JSON-RPC `-32602`。响应继承管理 RPC 的 `Cache-Control: no-store`、禁�
 re-authentication；成功提交的新 principal 会原子替换旧 expiry deadline。禁用用户、轮换或撤销
 credential 仍不会建立控制面到 Broker 的即时 push 通道，最坏传播时间由当前 principal TTL 决定。
 
+## Domain 数据导出与导入
+
+安装产物 `flowie-control-data` 用于迁移一个非 `system` Domain 的声明式管理数据。构建时
+`tbe_compiler` 从 `control/schema/flowie_control_data.schema` 生成 SQLite 与 PostgreSQL DDL；工具使用
+版本化 SQLite manifest（`.db`）作为可移植交换格式。manifest 包含 User、Group 层级、直接 membership、
+Role、直接 Role assignment、ACL draft 与发布状态，不包含密码/verifier、service token、management
+session 或历史 audit。它不是物理数据库备份，也不能替代升级前的完整备份。
+
+导出和导入必须在停止 Control/Flowie Server 写入后执行，并使用与 Control 相同的 YAML 和 secret 环境。
+导出拒绝覆盖已有文件；它先写同目录临时文件，读取前后 revision 一致后才原子发布：
+
+```bash
+flowie-control-data export \
+  --config /etc/flowie/flowie-control.yml \
+  --domain booth \
+  --output /var/backups/flowie/booth-domain.db
+```
+
+导入前先执行 dry-run。dry-run 会检查格式版本、唯一 Domain、引用完整性和 canonical ACL，读取目标
+Repository revision，但不执行领域写命令：
+
+```bash
+flowie-control-data import \
+  --config /etc/flowie/flowie-control.yml \
+  --input /var/backups/flowie/booth-domain.db \
+  --dry-run
+
+flowie-control-data import \
+  --config /etc/flowie/flowie-control.yml \
+  --input /var/backups/flowie/booth-domain.db
+```
+
+实际导入按 Domain、User、Group 深度、Role、直接关系、ACL、publish 的依赖顺序调用共享 Management
+Service，因此 revision 与 audit 仍由 Control Repository 作为唯一事实源推进，不直接写 Control 表。
+目标应是刚重建且除固定 `system` bootstrap 外为空的 Repository；唯一允许的其他非空状态是同一
+manifest 上一次中断后留下的可重放前缀。
+工具不把 manifest 当作增量补丁，也不会覆盖或协调与本次导入无关的既有 Domain 数据。
+每条命令使用稳定 request ID；进程在中途失败时，修正外部原因后可用同一 manifest 重跑，已经成功的前缀
+按幂等 replay 处理。导入不会生成 credential；完成后须由管理员按正常 Management RPC/Dashboard 流程为
+service User 签发新 token。若需回退，停止写入并恢复操作前另行保存的物理数据库备份。
+
+`--env-file <path>` 可在解析数据库 `env://` secret 前加载显式 DotEnv 文件。禁止导出或导入 `system`
+Domain，避免把固定系统管理员身份当作业务迁移数据。
+
 ## ACL 文法与发布
 
 当前 ACL 按 `role`、`group` 或 `user` 主体维护。用户的有效 Role/Group 规则与自身 User 规则共同
