@@ -4,8 +4,122 @@ cmake_add_grammar(FLOWIE_CONTROL_ACL
   LEXER_DEPENDS_ON_GRAMMAR
   FOLDER "flowie/control/acl")
 
+unset(FLOWIE_CONTROL_TBE_COMPILER CACHE)
+find_program(FLOWIE_CONTROL_TBE_COMPILER
+             NAMES tbe_compiler tbe_compiler.exe
+             PATHS "$ENV{TURBOPARSER_ROOT}/bin"
+             NO_DEFAULT_PATH REQUIRED)
+set(FLOWIE_CONTROL_DATA_SCHEMA
+    "${CMAKE_CURRENT_SOURCE_DIR}/schema/flowie_control_data.schema")
+set(FLOWIE_CONTROL_DATA_GENERATED_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/data-schema")
+set(FLOWIE_CONTROL_DATA_SQLITE_DDL
+    "${FLOWIE_CONTROL_DATA_GENERATED_DIR}/flowie-control-data.sqlite.sql")
+set(FLOWIE_CONTROL_DATA_POSTGRESQL_DDL
+    "${FLOWIE_CONTROL_DATA_GENERATED_DIR}/flowie-control-data.postgresql.sql")
+set(FLOWIE_CONTROL_DATA_SCHEMA_SOURCE
+    "${FLOWIE_CONTROL_DATA_GENERATED_DIR}/flowie_control_data_schema.c")
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_DATA_GENERATED_DIR}"
+  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
+          --lang sqlite --output "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
+  DEPENDS "${FLOWIE_CONTROL_DATA_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
+  COMMENT "Generating Flowie Control SQLite data-manifest schema"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_DATA_GENERATED_DIR}"
+  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
+          --lang postgresql --output "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}"
+  DEPENDS "${FLOWIE_CONTROL_DATA_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
+  COMMENT "Generating Flowie Control PostgreSQL data-manifest schema"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_DATA_SCHEMA_SOURCE}"
+  COMMAND "${CMAKE_COMMAND}"
+          -DINPUT=${FLOWIE_CONTROL_DATA_SQLITE_DDL}
+          -DOUTPUT=${FLOWIE_CONTROL_DATA_SCHEMA_SOURCE}
+          -DSYMBOL=FLOWIE_CONTROL_DATA_SCHEMA_BYTES
+          -DHEADER=flowie_control_data_schema_internal.h
+          -DFUNCTION=flowie_control_data_schema_sql
+          -P "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  DEPENDS "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
+          "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  COMMENT "Embedding Flowie Control data-manifest schema"
+  VERBATIM)
+add_custom_target(flowie_control_data_ddl
+                  DEPENDS "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
+                          "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}")
+set_target_properties(flowie_control_data_ddl PROPERTIES FOLDER "flowie/control/data")
+
+set(FLOWIE_CONTROL_STORE_SCHEMA
+    "${CMAKE_CURRENT_SOURCE_DIR}/schema/flowie_control_store.schema")
+set(FLOWIE_CONTROL_STORE_GENERATED_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/store-schema")
+set(FLOWIE_CONTROL_STORE_SQLITE_DDL
+    "${FLOWIE_CONTROL_STORE_GENERATED_DIR}/flowie-control-store.sqlite.sql")
+set(FLOWIE_CONTROL_STORE_POSTGRESQL_DDL
+    "${FLOWIE_CONTROL_STORE_GENERATED_DIR}/flowie-control-store.postgresql.sql")
+set(FLOWIE_CONTROL_STORE_SQLITE_SOURCE
+    "${FLOWIE_CONTROL_STORE_GENERATED_DIR}/flowie_control_store_schema_sqlite.c")
+set(FLOWIE_CONTROL_STORE_POSTGRESQL_SOURCE
+    "${FLOWIE_CONTROL_STORE_GENERATED_DIR}/flowie_control_store_schema_postgresql.c")
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_STORE_GENERATED_DIR}"
+  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
+          --lang sqlite --output "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
+  DEPENDS "${FLOWIE_CONTROL_STORE_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
+  COMMENT "Generating Flowie Control SQLite store schema"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_STORE_GENERATED_DIR}"
+  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
+          --lang postgresql --output "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
+  DEPENDS "${FLOWIE_CONTROL_STORE_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
+  COMMENT "Generating Flowie Control PostgreSQL store schema"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_STORE_SQLITE_SOURCE}"
+  COMMAND "${CMAKE_COMMAND}"
+          -DINPUT=${FLOWIE_CONTROL_STORE_SQLITE_DDL}
+          -DOUTPUT=${FLOWIE_CONTROL_STORE_SQLITE_SOURCE}
+          -DSYMBOL=FLOWIE_CONTROL_STORE_SQLITE_SCHEMA_BYTES
+          -DHEADER=flowie_control_store_schema_internal.h
+          -DFUNCTION=flowie_control_store_schema_sqlite_sql
+          -P "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  DEPENDS "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
+          "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  COMMENT "Embedding Flowie Control SQLite store schema"
+  VERBATIM)
+add_custom_command(
+  OUTPUT "${FLOWIE_CONTROL_STORE_POSTGRESQL_SOURCE}"
+  COMMAND "${CMAKE_COMMAND}"
+          -DINPUT=${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}
+          -DOUTPUT=${FLOWIE_CONTROL_STORE_POSTGRESQL_SOURCE}
+          -DSYMBOL=FLOWIE_CONTROL_STORE_POSTGRESQL_SCHEMA_BYTES
+          -DHEADER=flowie_control_store_schema_internal.h
+          -DFUNCTION=flowie_control_store_schema_postgresql_sql
+          -P "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  DEPENDS "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
+          "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+  COMMENT "Embedding Flowie Control PostgreSQL store schema"
+  VERBATIM)
+add_custom_target(flowie_control_store_ddl
+                  DEPENDS "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
+                          "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}")
+set_target_properties(flowie_control_store_ddl PROPERTIES FOLDER "flowie/control/data")
+
 add_library(flowie_control_core STATIC ${FLOWIE_CONTROL_ACL_LEXER_GEN}
                                         ${FLOWIE_CONTROL_ACL_GRAMMAR_GEN}
+                                        ${FLOWIE_CONTROL_DATA_SCHEMA_SOURCE}
+                                        ${FLOWIE_CONTROL_STORE_SQLITE_SOURCE}
+                                        ${FLOWIE_CONTROL_STORE_POSTGRESQL_SOURCE}
+                                        flowie_control_data_schema_internal.h
+                                        flowie_control_data_transfer.c
+                                        flowie_control_data_transfer_internal.h
                                         flowie_control_acl.c
                                         flowie_control_acl_internal.h
                                         flowie_control_auth_cache.c
@@ -34,17 +148,28 @@ add_library(flowie_control_core STATIC ${FLOWIE_CONTROL_ACL_LEXER_GEN}
                                         flowie_control_validation_internal.h
                                         flowie_control_database.c
                                         flowie_control_database_internal.h
+                                        flowie_control_store_schema.c
+                                        flowie_control_store_schema_internal.h
                                         flowie_control_store.c
                                         flowie_control_store_internal.h)
 add_dependencies(flowie_control_core ${FLOWIE_CONTROL_ACL_LEXER_TARGET}
                                      ${FLOWIE_CONTROL_ACL_GRAMMAR_TARGET})
 cmake_config_target(flowie_control_core NO_INSTALL FOLDER "flowie/control/internal")
 target_include_directories(flowie_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-                                              PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+                                               PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
+                                                       ${FLOWIE_CONTROL_DATA_GENERATED_DIR}
+                                                       ${FLOWIE_CONTROL_STORE_GENERATED_DIR})
 target_link_libraries(flowie_control_core
                       PUBLIC Flowie::App flowie_orm_flow
                       PRIVATE Flowie::Protocol
-                              TurboUtils::Core TurboUtils::STL monocypher)
+                               TurboUtils::Core TurboUtils::STL monocypher)
+add_dependencies(flowie_control_core flowie_control_data_ddl flowie_control_store_ddl)
+
+install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
+              "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}"
+              "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
+              "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
+        DESTINATION share/turboflow/control)
 
   find_package(OpenSSL REQUIRED)
   add_library(
@@ -63,6 +188,10 @@ target_link_libraries(flowie_control_core
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_config_internal.h
+                                          flowie_control_database_config.c
+                                          flowie_control_database_config_internal.h
+                                          flowie_control_data_options.c
+                                          flowie_control_data_options_internal.h
                                           flowie_control_security_limits_internal.h
                                           flowie_control_startup_options.c
                                           flowie_control_startup_options_internal.h)
@@ -135,6 +264,10 @@ target_link_libraries(flowie_control_startup
     target_link_libraries(flowie-control PRIVATE flowie_control_runtime)
     cmake_target_enable_boringssl_linkage(flowie-control)
     install(TARGETS flowie-control RUNTIME DESTINATION bin)
+    add_executable(flowie-control-data flowie_control_data_main.c)
+    cmake_config_target(flowie-control-data FOLDER "flowie/control")
+    target_link_libraries(flowie-control-data PRIVATE flowie_control_startup flowie_control_core)
+    install(TARGETS flowie-control-data RUNTIME DESTINATION bin)
     install(FILES "${PROJECT_SOURCE_DIR}/flowie/examples/flowie-control.yml"
             DESTINATION share/turboflow/examples/flowie OPTIONAL)
 
@@ -249,6 +382,39 @@ if(BUILD_TESTS)
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_database
                        PROPERTIES LABELS "flowie;control-plane;storage-contract")
+  cmake_add_test(
+    test_flowie_control_data_schema
+    SOURCES tests/test_flowie_control_data_schema.c
+    LIBS flowie_control_core TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    FOLDER "flowie/control/tests")
+  set_tests_properties(test_flowie_control_data_schema
+                       PROPERTIES LABELS "flowie;control-plane;storage-contract;data-transfer")
+  cmake_add_test(
+    test_flowie_control_store_schema
+    SOURCES tests/test_flowie_control_store_schema.c
+    LIBS flowie_control_core TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    FOLDER "flowie/control/tests")
+  set_tests_properties(test_flowie_control_store_schema
+                       PROPERTIES LABELS "flowie;control-plane;storage-contract")
+
+  cmake_add_test(
+    test_flowie_control_data_transfer
+    SOURCES tests/test_flowie_control_data_transfer.c
+    LIBS flowie_control_core TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    FOLDER "flowie/control/tests")
+  set_tests_properties(test_flowie_control_data_transfer
+                       PROPERTIES LABELS "flowie;control-plane;storage-contract;data-transfer")
+  cmake_add_test(
+    test_flowie_control_data_options
+    SOURCES tests/test_flowie_control_data_options.c
+    LIBS flowie_control_startup TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER "flowie/control/tests")
+  set_tests_properties(test_flowie_control_data_options
+                       PROPERTIES LABELS "flowie;control-plane;data-transfer")
   cmake_add_test(
     test_flowie_control_store
     SOURCES tests/test_flowie_control_store.c

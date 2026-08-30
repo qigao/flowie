@@ -987,6 +987,11 @@ docker image rm "$FLOWIE_SERVER_IMAGE"
 - `deploy/server/Dockerfile` 从本次八仓库源码构建成功；镜像 revision 等于源码归档 SHA-256，
   runtime 用户和动态库验证通过；`flowie_server --help` 输出 usage，且符合当前 TurboUtils parser 的
   退出码 `1` 契约；镜像默认入口达到 `healthy`，MQTT 5 QoS 1 收发成功，SIGTERM 退出码为 `0`。
+- release install 验证应包含 `bin/flowie-control-data`、
+  `share/turboflow/control/flowie-control-data.sqlite.sql` 和
+  `share/turboflow/control/flowie-control-data.postgresql.sql`；运行 data-transfer CTest，确认 Domain
+  manifest export、dry-run、import 与幂等 replay 实际通过。该工具必须在停止 Control 写入后使用，
+  manifest 不包含 credential/session/audit，不能代替 PostgreSQL/SQLite 物理备份。
 - nightly 的 corpus、六项 30/60 分钟 soak 和 Clang libFuzzer 全部 PASS，且无资源单调增长。
 - 结果记录同一个源码归档 SHA-256；Linux 结果不得从 Windows 结果推定。
 

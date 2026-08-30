@@ -1,0 +1,282 @@
+schema FlowieControlStore [
+  id(1),
+  version(7),
+  byte_order(little),
+  db_init(sqlite, "INSERT INTO flowie_control_schema_version(singleton, version, fingerprint) VALUES (1, 7, 'flowie-control-persistent-session-schema-v7-20260829')"),
+  db_init(postgresql, "INSERT INTO flowie_control_schema_version(singleton, version, fingerprint) VALUES (1, 7, 'flowie-control-persistent-session-schema-v7-20260829')"),
+  db_init(sqlite, "INSERT INTO flowie_control_meta(singleton, revision) VALUES (1, 0)"),
+  db_init(postgresql, "INSERT INTO flowie_control_meta(singleton, revision) VALUES (1, 0)"),
+  db_init(sqlite, "INSERT INTO flowie_control_management_session_sequence(singleton, value) VALUES (1, 0)"),
+  db_init(postgresql, "INSERT INTO flowie_control_management_session_sequence(singleton, value) VALUES (1, 0)")
+];
+
+[db_table(flowie_control_schema_version),
+ db_check(ck_flowie_control_schema_version_singleton_sqlite, sqlite, "singleton = 1"),
+ db_check(ck_flowie_control_schema_version_singleton_postgresql, postgresql, "singleton = 1"),
+ db_check(ck_flowie_control_schema_version_version_sqlite, sqlite, "version > 0"),
+ db_check(ck_flowie_control_schema_version_version_postgresql, postgresql, "version > 0")]
+message FlowieControlSchemaVersion {
+  [db_primary_key(1)] int32 singleton;
+  int32 version;
+  string fingerprint;
+}
+
+[db_table(flowie_control_meta),
+ db_check(ck_flowie_control_meta_singleton_sqlite, sqlite, "singleton = 1"),
+ db_check(ck_flowie_control_meta_singleton_postgresql, postgresql, "singleton = 1"),
+ db_check(ck_flowie_control_meta_revision_sqlite, sqlite, "revision >= 0"),
+ db_check(ck_flowie_control_meta_revision_postgresql, postgresql, "revision >= 0")]
+message FlowieControlMeta {
+  [db_primary_key(1)] int32 singleton;
+  int64 revision;
+}
+
+[db_table(flowie_control_domain)]
+message FlowieControlDomain {
+  [db_primary_key(1)] string domain_id;
+}
+
+[db_table(flowie_control_user),
+ db_foreign_key(fk_flowie_control_user_domain, FlowieControlDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_user_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_user_enabled_postgresql, postgresql, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_user_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_user_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_user_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_user_created_postgresql, postgresql, "created_at > 0"),
+ db_check(ck_flowie_control_user_updated_sqlite, sqlite, "updated_at > 0"),
+ db_check(ck_flowie_control_user_updated_postgresql, postgresql, "updated_at > 0")]
+message FlowieControlUser {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  string principal_type;
+  int32 enabled;
+  int64 revision;
+  int64 created_at;
+  int64 updated_at;
+}
+
+[db_table(flowie_control_credential),
+ db_foreign_key(fk_flowie_control_credential_user, FlowieControlUser, domain_id, domain_id, principal_id, principal_id),
+ db_check(ck_flowie_control_credential_kdf_sqlite, sqlite, "kdf_algorithm = 2"),
+ db_check(ck_flowie_control_credential_kdf_postgresql, postgresql, "kdf_algorithm = 2"),
+ db_check(ck_flowie_control_credential_memory_sqlite, sqlite, "memory_blocks > 0"),
+ db_check(ck_flowie_control_credential_memory_postgresql, postgresql, "memory_blocks > 0"),
+ db_check(ck_flowie_control_credential_passes_sqlite, sqlite, "passes > 0"),
+ db_check(ck_flowie_control_credential_passes_postgresql, postgresql, "passes > 0"),
+ db_check(ck_flowie_control_credential_lanes_sqlite, sqlite, "lanes > 0"),
+ db_check(ck_flowie_control_credential_lanes_postgresql, postgresql, "lanes > 0"),
+ db_check(ck_flowie_control_credential_salt_sqlite, sqlite, "length(salt) = 16"),
+ db_check(ck_flowie_control_credential_salt_postgresql, postgresql, "length(salt) = 16"),
+ db_check(ck_flowie_control_credential_verifier_sqlite, sqlite, "length(verifier) = 32"),
+ db_check(ck_flowie_control_credential_verifier_postgresql, postgresql, "length(verifier) = 32"),
+ db_check(ck_flowie_control_credential_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_credential_enabled_postgresql, postgresql, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_credential_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_credential_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_credential_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_credential_created_postgresql, postgresql, "created_at > 0"),
+ db_check(ck_flowie_control_credential_updated_sqlite, sqlite, "updated_at > 0"),
+ db_check(ck_flowie_control_credential_updated_postgresql, postgresql, "updated_at > 0")]
+message FlowieControlCredential {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  int32 kdf_algorithm;
+  int32 memory_blocks;
+  int32 passes;
+  int32 lanes;
+  bytes salt;
+  bytes verifier;
+  int32 enabled;
+  int64 revision;
+  int64 created_at;
+  int64 updated_at;
+}
+
+[db_table(flowie_control_group),
+ db_foreign_key(fk_flowie_control_group_domain, FlowieControlDomain, domain_id, domain_id),
+ db_foreign_key(fk_flowie_control_group_parent, FlowieControlGroup, domain_id, domain_id, parent_group_id, group_id),
+ db_check(ck_flowie_control_group_depth_sqlite, sqlite, "depth BETWEEN 0 AND 15"),
+ db_check(ck_flowie_control_group_depth_postgresql, postgresql, "depth BETWEEN 0 AND 15"),
+ db_check(ck_flowie_control_group_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_group_enabled_postgresql, postgresql, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_group_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_group_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_group_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_group_created_postgresql, postgresql, "created_at > 0"),
+ db_check(ck_flowie_control_group_updated_sqlite, sqlite, "updated_at > 0"),
+ db_check(ck_flowie_control_group_updated_postgresql, postgresql, "updated_at > 0"),
+ db_check(ck_flowie_control_group_identity_sqlite, sqlite, "group_id <> domain_id"),
+ db_check(ck_flowie_control_group_identity_postgresql, postgresql, "group_id <> domain_id"),
+ db_check(ck_flowie_control_group_parent_depth_sqlite, sqlite, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)"),
+ db_check(ck_flowie_control_group_parent_depth_postgresql, postgresql, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)")]
+message FlowieControlGroup {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string group_id;
+  optional string parent_group_id;
+  int32 depth;
+  int32 enabled;
+  int64 revision;
+  int64 created_at;
+  int64 updated_at;
+}
+
+[db_table(flowie_control_role),
+ db_foreign_key(fk_flowie_control_role_domain, FlowieControlDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_role_enabled_sqlite, sqlite, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_role_enabled_postgresql, postgresql, "enabled IN (0, 1)"),
+ db_check(ck_flowie_control_role_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_role_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_role_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_role_created_postgresql, postgresql, "created_at > 0"),
+ db_check(ck_flowie_control_role_updated_sqlite, sqlite, "updated_at > 0"),
+ db_check(ck_flowie_control_role_updated_postgresql, postgresql, "updated_at > 0")]
+message FlowieControlRole {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string role_id;
+  int32 enabled;
+  int64 revision;
+  int64 created_at;
+  int64 updated_at;
+}
+
+[db_table(flowie_control_membership),
+ db_foreign_key(fk_flowie_control_membership_user, FlowieControlUser, domain_id, domain_id, principal_id, principal_id),
+ db_foreign_key(fk_flowie_control_membership_group, FlowieControlGroup, domain_id, domain_id, group_id, group_id),
+ db_check(ck_flowie_control_membership_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_membership_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_membership_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_membership_created_postgresql, postgresql, "created_at > 0")]
+message FlowieControlMembership {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  [db_primary_key(3)] string group_id;
+  int64 revision;
+  int64 created_at;
+}
+
+[db_table(flowie_control_user_role),
+ db_foreign_key(fk_flowie_control_user_role_user, FlowieControlUser, domain_id, domain_id, principal_id, principal_id),
+ db_foreign_key(fk_flowie_control_user_role_role, FlowieControlRole, domain_id, domain_id, role_id, role_id),
+ db_check(ck_flowie_control_user_role_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_user_role_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_user_role_created_sqlite, sqlite, "created_at > 0"),
+ db_check(ck_flowie_control_user_role_created_postgresql, postgresql, "created_at > 0")]
+message FlowieControlUserRole {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  [db_primary_key(3)] string role_id;
+  int64 revision;
+  int64 created_at;
+}
+
+[db_table(flowie_control_management_session_sequence),
+ db_check(ck_flowie_control_management_session_sequence_singleton_sqlite, sqlite, "singleton = 1"),
+ db_check(ck_flowie_control_management_session_sequence_singleton_postgresql, postgresql, "singleton = 1"),
+ db_check(ck_flowie_control_management_session_sequence_value_sqlite, sqlite, "value >= 0"),
+ db_check(ck_flowie_control_management_session_sequence_value_postgresql, postgresql, "value >= 0")]
+message FlowieControlManagementSessionSequence {
+  [db_primary_key(1)] int32 singleton;
+  int64 value;
+}
+
+[db_table(flowie_control_management_session),
+ db_foreign_key(fk_flowie_control_management_session_user, FlowieControlUser, domain_id, domain_id, principal_id, principal_id),
+ db_foreign_key_on_delete(fk_flowie_control_management_session_user, cascade),
+ db_index(flowie_control_management_session_principal_idx, domain_id, principal_id, issued_sequence),
+ db_index(flowie_control_management_session_lru_idx, last_used),
+ db_index(flowie_control_management_session_expiry_idx, expires_at),
+ db_check(ck_flowie_control_management_session_digest_sqlite, sqlite, "length(token_digest) = 32"),
+ db_check(ck_flowie_control_management_session_digest_postgresql, postgresql, "length(token_digest) = 32"),
+ db_check(ck_flowie_control_management_session_csrf_sqlite, sqlite, "length(csrf) = 64"),
+ db_check(ck_flowie_control_management_session_csrf_postgresql, postgresql, "length(csrf) = 64"),
+ db_check(ck_flowie_control_management_session_expiry_value_sqlite, sqlite, "expires_at > 0"),
+ db_check(ck_flowie_control_management_session_expiry_value_postgresql, postgresql, "expires_at > 0"),
+ db_check(ck_flowie_control_management_session_sequence_sqlite, sqlite, "issued_sequence > 0"),
+ db_check(ck_flowie_control_management_session_sequence_postgresql, postgresql, "issued_sequence > 0"),
+ db_check(ck_flowie_control_management_session_last_used_sqlite, sqlite, "last_used > 0"),
+ db_check(ck_flowie_control_management_session_last_used_postgresql, postgresql, "last_used > 0")]
+message FlowieControlManagementSession {
+  [db_primary_key(1)] bytes token_digest;
+  string domain_id;
+  string principal_id;
+  string csrf;
+  int64 expires_at;
+  int64 issued_sequence;
+  int64 last_used;
+}
+
+[db_table(flowie_control_audit),
+ db_foreign_key(fk_flowie_control_audit_domain, FlowieControlDomain, domain_id, domain_id),
+ db_check(ck_flowie_control_audit_revision_sqlite, sqlite, "result_revision > 0"),
+ db_check(ck_flowie_control_audit_revision_postgresql, postgresql, "result_revision > 0"),
+ db_check(ck_flowie_control_audit_occurred_sqlite, sqlite, "occurred_at > 0"),
+ db_check(ck_flowie_control_audit_occurred_postgresql, postgresql, "occurred_at > 0")]
+message FlowieControlAudit {
+  [db_primary_key(1)] string request_id;
+  string actor;
+  string operation;
+  string domain_id;
+  string target_id;
+  string target_detail;
+  int64 result_revision;
+  int64 occurred_at;
+}
+
+[db_table(flowie_control_policy_draft),
+ db_foreign_key(fk_flowie_control_policy_draft_domain, FlowieControlDomain, domain_id, domain_id),
+ db_unique_index(flowie_control_policy_draft_ordinal_idx, domain_id, ordinal),
+ db_check(ck_flowie_control_policy_draft_subject_kind_sqlite, sqlite, "subject_kind IN (1, 2, 3)"),
+ db_check(ck_flowie_control_policy_draft_subject_kind_postgresql, postgresql, "subject_kind IN (1, 2, 3)"),
+ db_check(ck_flowie_control_policy_draft_subject_id_sqlite, sqlite, "length(subject_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_policy_draft_subject_id_postgresql, postgresql, "length(subject_id) BETWEEN 1 AND 255"),
+ db_check(ck_flowie_control_policy_draft_ordinal_sqlite, sqlite, "ordinal BETWEEN 0 AND 4095"),
+ db_check(ck_flowie_control_policy_draft_ordinal_postgresql, postgresql, "ordinal BETWEEN 0 AND 4095"),
+ db_check(ck_flowie_control_policy_draft_document_sqlite, sqlite, "length(rule_document) BETWEEN 1 AND 16383"),
+ db_check(ck_flowie_control_policy_draft_document_postgresql, postgresql, "length(rule_document) BETWEEN 1 AND 16383"),
+ db_check(ck_flowie_control_policy_draft_revision_sqlite, sqlite, "revision > 0"),
+ db_check(ck_flowie_control_policy_draft_revision_postgresql, postgresql, "revision > 0"),
+ db_check(ck_flowie_control_policy_draft_updated_sqlite, sqlite, "updated_at > 0"),
+ db_check(ck_flowie_control_policy_draft_updated_postgresql, postgresql, "updated_at > 0")]
+message FlowieControlPolicyDraft {
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] int32 subject_kind;
+  [db_primary_key(3)] string subject_id;
+  int32 ordinal;
+  string rule_document;
+  int64 revision;
+  int64 updated_at;
+}
+
+[db_table(flowie_control_published_bundle),
+ db_check(ck_flowie_control_published_bundle_version_sqlite, sqlite, "policy_version > 0"),
+ db_check(ck_flowie_control_published_bundle_version_postgresql, postgresql, "policy_version > 0"),
+ db_check(ck_flowie_control_published_bundle_expiry_sqlite, sqlite, "expires_at >= 0"),
+ db_check(ck_flowie_control_published_bundle_expiry_postgresql, postgresql, "expires_at >= 0")]
+message FlowieControlPublishedBundle {
+  [db_primary_key(1)] string namespace_name;
+  int64 policy_version;
+  int64 expires_at;
+}
+
+[db_table(flowie_control_published_rule),
+ db_foreign_key(fk_flowie_control_published_rule_bundle, FlowieControlPublishedBundle, namespace_name, namespace_name),
+ db_foreign_key_on_delete(fk_flowie_control_published_rule_bundle, cascade),
+ db_check(ck_flowie_control_published_rule_ordinal_sqlite, sqlite, "ordinal >= 0"),
+ db_check(ck_flowie_control_published_rule_ordinal_postgresql, postgresql, "ordinal >= 0"),
+ db_check(ck_flowie_control_published_rule_line_sqlite, sqlite, "length(rule_line) > 0"),
+ db_check(ck_flowie_control_published_rule_line_postgresql, postgresql, "length(rule_line) > 0")]
+message FlowieControlPublishedRule {
+  [db_primary_key(1)] string namespace_name;
+  [db_primary_key(2)] int32 ordinal;
+  string rule_line;
+}
+
+[db_table(flowie_control_policy_publish_result),
+ db_foreign_key(fk_flowie_control_policy_publish_result_audit, FlowieControlAudit, request_id, request_id),
+ db_check(ck_flowie_control_policy_publish_result_version_sqlite, sqlite, "policy_version > 0"),
+ db_check(ck_flowie_control_policy_publish_result_version_postgresql, postgresql, "policy_version > 0")]
+message FlowieControlPolicyPublishResult {
+  [db_primary_key(1)] string request_id;
+  int64 policy_version;
+}

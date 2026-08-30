@@ -179,6 +179,8 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       /opt/flowie-runtime/bin/flowie_server; \
     install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control" \
       /opt/flowie-runtime/bin/flowie-control; \
+    install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control-data" \
+      /opt/flowie-runtime/bin/flowie-control-data; \
     for libdir in \
       "/opt/turboutils/$FLOWIE_PROFILE/lib" "/opt/turboparser/$FLOWIE_PROFILE/lib" \
       "/opt/turbonet/$FLOWIE_PROFILE/lib" "/opt/turbodb/$FLOWIE_PROFILE/lib" \
@@ -205,7 +207,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
           -exec cp -a '{}' /opt/flowie-runtime/lib/ ';'; \
       fi; \
     done; \
-    for executable in flowie_server flowie-control; do \
+    for executable in flowie_server flowie-control flowie-control-data; do \
       case "$executable" in \
         flowie_server) manifest=flowie-server ;; \
         *) manifest=$executable ;; \
@@ -232,10 +234,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /opt/flowie-runtime/bin/flowie_server /usr/local/bin/flowie_server
 COPY --from=builder /opt/flowie-runtime/bin/flowie-control /usr/local/bin/flowie-control
+COPY --from=builder /opt/flowie-runtime/bin/flowie-control-data /usr/local/bin/flowie-control-data
 COPY --from=builder /opt/flowie-runtime/lib/ /usr/local/lib/
 COPY --from=builder /opt/flowie/share/ /opt/flowie/share/
 COPY --from=builder /opt/flowie-runtime/flowie-server.ldd /usr/share/doc/flowie/flowie-server.ldd
 COPY --from=builder /opt/flowie-runtime/flowie-control.ldd /usr/share/doc/flowie/flowie-control.ldd
+COPY --from=builder /opt/flowie-runtime/flowie-control-data.ldd /usr/share/doc/flowie/flowie-control-data.ldd
 COPY --chmod=0755 deploy/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --chmod=0755 deploy/server/flowie-control-entrypoint.sh \
   /usr/local/bin/flowie-control-entrypoint
@@ -244,7 +248,7 @@ COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh \
 COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
 
 RUN ldconfig \
-    && for executable in flowie_server flowie-control; do \
+    && for executable in flowie_server flowie-control flowie-control-data; do \
          case "$executable" in \
            flowie_server) manifest=flowie-server ;; \
            *) manifest=$executable ;; \
