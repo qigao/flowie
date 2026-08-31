@@ -152,7 +152,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
   cmeta_data_desc row_data;
   orm_flow_config_t flow_config;
   orm_error_t error;
-  cflow_source source = {0};
+  cflow_publisher publisher = {0};
   flowie_orm_row_t row;
   orm_status_t status;
   size_t rows = 0u;
@@ -189,13 +189,13 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
   if (max_buffer_bytes != 0u) flow_config.max_buffer_bytes = max_buffer_bytes;
   orm_error_init(&error);
   status = transaction ? orm_query_open_flow_in_transaction(
-                             query, transaction, &flow_config, &source, &error)
-                       : orm_query_open_flow(query, &flow_config, &source, &error);
+                             query, transaction, &flow_config, &publisher, &error)
+                       : orm_query_open_flow(query, &flow_config, &publisher, &error);
   rc = flowie_orm_status_to_turbo(status);
   if (rc != TURBO_OK) return rc;
   memset(&row, 0, sizeof(row));
   for (;;) {
-    cflow_step step = cflow_source_resume(&source, NULL, &row);
+    cflow_step step = cflow_publisher_resume(&publisher, NULL, &row);
     if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE) {
       if (rows >= max_rows)
         rc = TURBO_ENOSPC;
@@ -211,7 +211,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
     rc = step.kind == CFLOW_STEP_WAIT ? TURBO_ENOTSUP : TURBO_EIO;
     break;
   }
-  cflow_source_destroy(&source);
+  cflow_publisher_destroy(&publisher);
   if (row_count) *row_count = rows;
   return rc;
 }
@@ -219,7 +219,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
 int flowie_orm_command_execute(orm_query_t *query, orm_transaction_t *transaction,
                                uint64_t *affected_rows) {
   orm_error_t error;
-  cflow_source source = {0};
+  cflow_publisher publisher = {0};
   orm_command_result_t result = ORM_COMMAND_RESULT_INIT;
   orm_status_t status;
   cflow_step step;
@@ -228,16 +228,16 @@ int flowie_orm_command_execute(orm_query_t *query, orm_transaction_t *transactio
   if (!query) return TURBO_EINVAL;
   orm_error_init(&error);
   status = transaction ? orm_query_open_command_flow_in_transaction(
-                             query, transaction, &source, &error)
-                       : orm_query_open_command_flow(query, &source, &error);
+                             query, transaction, &publisher, &error)
+                       : orm_query_open_command_flow(query, &publisher, &error);
   rc = flowie_orm_status_to_turbo(status);
   if (rc != TURBO_OK) return rc;
-  step = cflow_source_resume(&source, NULL, &result);
+  step = cflow_publisher_resume(&publisher, NULL, &result);
   if (step.kind != CFLOW_STEP_VALUE_AND_DONE)
     rc = step.kind == CFLOW_STEP_WAIT ? TURBO_ENOTSUP : TURBO_EIO;
   else if (affected_rows)
     *affected_rows = result.affected_rows;
-  cflow_source_destroy(&source);
+  cflow_publisher_destroy(&publisher);
   return rc;
 }
 

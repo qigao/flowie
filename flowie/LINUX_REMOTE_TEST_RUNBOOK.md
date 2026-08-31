@@ -337,11 +337,11 @@ docker run --detach \
   --read-only \
   --tmpfs /tmp:size=64m,mode=1777 \
   --tmpfs /run:size=16m,mode=0755 \
-  --env FLOWIE_PORT="$FLOWIE_RUNTIME_PORT" \
   --env FLOWIE_HEALTH_PORT="$FLOWIE_RUNTIME_PORT" \
-  --env FLOWIE_PROTOCOL_STORE_DRIVER=sqlite \
-  --env 'FLOWIE_PROTOCOL_STORE_OPTIONS={"filename":":memory:"}' \
-  "$FLOWIE_SERVER_IMAGE"
+  "$FLOWIE_SERVER_IMAGE" \
+  flowie_server --host 127.0.0.1 --port "$FLOWIE_RUNTIME_PORT" --transport tcp \
+    --protocol-store-driver sqlite \
+    --protocol-store-options '{"filename":":memory:"}'
 
 for attempt in $(seq 1 60); do
   FLOWIE_RUNTIME_HEALTH="$(docker inspect --format '{{.State.Health.Status}}' \
