@@ -480,17 +480,17 @@ static int flowie_server_http_response_status(http_response_t *response) {
   return TURBO_OK;
 }
 
-static int flowie_server_http_headers(const flowie_server_http_provider_config_t *config,
-                                      char *service_id, size_t service_id_size,
-                                      char *service_domain, size_t service_domain_size,
-                                      const char *headers[4]) {
+int flowie_server_http_headers(const flowie_server_http_provider_config_t *config,
+                               char *service_id, size_t service_id_size,
+                               char *service_domain, size_t service_domain_size,
+                               const char *headers[4]) {
   int id_length;
   int domain_length;
   if (!config || !service_id || !service_domain || !headers) return TURBO_EINVAL;
-  id_length = snprintf(service_id, service_id_size, "X-TurboFlow-Service-Id: %s",
-                       config->service_id);
+  id_length =
+      snprintf(service_id, service_id_size, "X-Flowie-Service-Id: %s", config->service_id);
   domain_length = snprintf(service_domain, service_domain_size,
-                           "X-TurboFlow-Service-Domain: %s", config->service_domain);
+                           "X-Flowie-Service-Domain: %s", config->service_domain);
   if (id_length <= 0 || (size_t)id_length >= service_id_size || domain_length <= 0 ||
       (size_t)domain_length >= service_domain_size)
     return TURBO_ERANGE;
@@ -508,8 +508,8 @@ static int flowie_server_http_authenticate(void *ctx,
   turbo_http_t *client = NULL;
   http_response_t *response = NULL;
   const char *headers[4];
-  char service_id[sizeof("X-TurboFlow-Service-Id: ") + FLOWIE_SECURITY_ID_MAX + 1u];
-  char service_domain[sizeof("X-TurboFlow-Service-Domain: ") + FLOWIE_SECURITY_ID_MAX + 1u];
+  char service_id[sizeof("X-Flowie-Service-Id: ") + FLOWIE_SECURITY_ID_MAX + 1u];
+  char service_domain[sizeof("X-Flowie-Service-Domain: ") + FLOWIE_SECURITY_ID_MAX + 1u];
   char *body = NULL;
   size_t body_size = 0u;
   int rc;
@@ -542,8 +542,8 @@ static int flowie_server_http_authorize(void *ctx, const flowie_security_request
   turbo_http_t *client = NULL;
   http_response_t *response = NULL;
   const char *headers[4];
-  char service_id[sizeof("X-TurboFlow-Service-Id: ") + FLOWIE_SECURITY_ID_MAX + 1u];
-  char service_domain[sizeof("X-TurboFlow-Service-Domain: ") + FLOWIE_SECURITY_ID_MAX + 1u];
+  char service_id[sizeof("X-Flowie-Service-Id: ") + FLOWIE_SECURITY_ID_MAX + 1u];
+  char service_domain[sizeof("X-Flowie-Service-Domain: ") + FLOWIE_SECURITY_ID_MAX + 1u];
   char *body = NULL;
   size_t body_size = 0u;
   int rc;
