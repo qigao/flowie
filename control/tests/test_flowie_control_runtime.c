@@ -13,6 +13,8 @@
 
 #define TEST_FINGERPRINT "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+static const flowie_control_config_t RUNTIME_TEST_DEFAULT_CONFIG = FLOWIE_CONTROL_CONFIG_INIT;
+
 typedef struct control_runtime_fixture_s {
   char *path;
   flowie_control_store_t *store;
@@ -108,6 +110,54 @@ static void runtime_fixture_close(control_runtime_fixture_t *fixture) {
   check_equal(tt_remove_file(fixture->path), 0);
   free(fixture->path);
   memset(fixture, 0, sizeof(*fixture));
+}
+
+static void runtime_jwt_jwks_composition_test(void) {
+  char cert_file[512] = {0};
+  char key_file[512] = {0};
+  control_runtime_fixture_t fixture = runtime_fixture_open();
+  flowie_control_config_t *config = (flowie_control_config_t *)malloc(sizeof(*config));
+  flowie_control_runtime_t *runtime = NULL;
+
+  check_not_null(config);
+  memcpy(config, &RUNTIME_TEST_DEFAULT_CONFIG, sizeof(*config));
+  flowie_control_store_destroy(fixture.store);
+  fixture.store = NULL;
+  check_equal(tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)),
+              0);
+  check_equal(flowie_control_test_runtime_turbodb(config, fixture.path), 0);
+  (void)snprintf(config->management.rpc_path, sizeof(config->management.rpc_path), "%s",
+                 "/v2/control/rpc");
+  (void)snprintf(config->listener.tls.cert_file, sizeof(config->listener.tls.cert_file), "%s",
+                 cert_file);
+  (void)snprintf(config->listener.tls.key_file, sizeof(config->listener.tls.key_file), "%s",
+                 key_file);
+  config->auth.enabled = 1;
+  (void)snprintf(config->auth.listener_id, sizeof(config->auth.listener_id), "%s",
+                 "flowie-control-auth");
+  (void)snprintf(config->auth.method, sizeof(config->auth.method), "%s", "bearer");
+  config->auth.jwt_jwks.enabled = 1;
+  (void)snprintf(config->auth.jwt_jwks.url, sizeof(config->auth.jwt_jwks.url), "%s",
+                 "https://identity.example/.well-known/jwks.json");
+  (void)snprintf(config->auth.jwt_jwks.trusted_issuer, sizeof(config->auth.jwt_jwks.trusted_issuer),
+                 "%s", "https://identity.example");
+  (void)snprintf(config->auth.jwt_jwks.audience, sizeof(config->auth.jwt_jwks.audience), "%s",
+                 "flowie");
+  (void)snprintf(config->auth.jwt_jwks.subject_type, sizeof(config->auth.jwt_jwks.subject_type),
+                 "%s", "device");
+  (void)snprintf(config->auth.jwt_jwks.algorithm, sizeof(config->auth.jwt_jwks.algorithm), "%s",
+                 "EdDSA");
+  (void)snprintf(config->auth.jwt_jwks.ca_file, sizeof(config->auth.jwt_jwks.ca_file), "%s",
+                 cert_file);
+
+  check_equal(flowie_control_runtime_create(config, &runtime), TURBO_OK);
+  check_not_null(runtime);
+  check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+
+  free(config);
+  tls_test_remove_file(key_file);
+  tls_test_remove_file(cert_file);
+  runtime_fixture_close(&fixture);
 }
 
 spec("Flowie controller runtime") {
@@ -213,17 +263,16 @@ spec("Flowie controller runtime") {
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
-    (void)snprintf(config.turbodb.options[0].keyword,
-                   sizeof(config.turbodb.options[0].keyword), "%s", "conninfo");
-    (void)snprintf(config.turbodb.options[0].value,
-                   sizeof(config.turbodb.options[0].value), "%s",
+    (void)snprintf(config.turbodb.options[0].keyword, sizeof(config.turbodb.options[0].keyword),
+                   "%s", "conninfo");
+    (void)snprintf(config.turbodb.options[0].value, sizeof(config.turbodb.options[0].value), "%s",
                    "host=db.example password=literal");
     check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
 
-    (void)snprintf(config.turbodb.options[0].keyword,
-                   sizeof(config.turbodb.options[0].keyword), "%s", "sslpassword");
-    (void)snprintf(config.turbodb.options[0].value,
-                   sizeof(config.turbodb.options[0].value), "%s", "env://BAD-NAME");
+    (void)snprintf(config.turbodb.options[0].keyword, sizeof(config.turbodb.options[0].keyword),
+                   "%s", "sslpassword");
+    (void)snprintf(config.turbodb.options[0].value, sizeof(config.turbodb.options[0].value), "%s",
+                   "env://BAD-NAME");
     check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
   }
 
@@ -275,7 +324,54 @@ spec("Flowie controller runtime") {
     tls_test_remove_file(cert_file);
   }
 
-  it("rejects external HTTPS auth during runtime composition") {
+  it("validates JWT JWKS trust and bounded executor configuration before startup") {
+    char cert_file[512] = {0};
+    char key_file[512] = {0};
+    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
+
+    check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
+    check_equal(
+        tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
+    (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
+                   "/v2/control/rpc");
+    (void)snprintf(config.listener.tls.cert_file, sizeof(config.listener.tls.cert_file), "%s",
+                   cert_file);
+    (void)snprintf(config.listener.tls.key_file, sizeof(config.listener.tls.key_file), "%s",
+                   key_file);
+    config.auth.enabled = 1;
+    (void)snprintf(config.auth.method, sizeof(config.auth.method), "%s", "bearer");
+    config.auth.jwt_jwks.enabled = 1;
+    (void)snprintf(config.auth.jwt_jwks.url, sizeof(config.auth.jwt_jwks.url), "%s",
+                   "https://identity.example/.well-known/jwks.json");
+    (void)snprintf(config.auth.jwt_jwks.trusted_issuer, sizeof(config.auth.jwt_jwks.trusted_issuer),
+                   "%s", "https://identity.example");
+    (void)snprintf(config.auth.jwt_jwks.audience, sizeof(config.auth.jwt_jwks.audience), "%s",
+                   "flowie");
+    (void)snprintf(config.auth.jwt_jwks.subject_type, sizeof(config.auth.jwt_jwks.subject_type),
+                   "%s", "device");
+    (void)snprintf(config.auth.jwt_jwks.algorithm, sizeof(config.auth.jwt_jwks.algorithm), "%s",
+                   "EdDSA");
+    (void)snprintf(config.auth.jwt_jwks.ca_file, sizeof(config.auth.jwt_jwks.ca_file), "%s",
+                   cert_file);
+
+    check_equal(flowie_control_runtime_validate(&config), TURBO_OK);
+    config.auth.jwt_jwks.executor_workers = 0u;
+    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    config.auth.jwt_jwks.executor_workers =
+        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS;
+    (void)snprintf(config.auth.jwt_jwks.ca_file, sizeof(config.auth.jwt_jwks.ca_file), "%s",
+                   "missing-jwks-ca.pem");
+    check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
+
+    tls_test_remove_file(key_file);
+    tls_test_remove_file(cert_file);
+  }
+
+  it("composes JWT JWKS auth for management and broker endpoints") {
+    runtime_jwt_jwks_composition_test();
+  }
+
+  it("composes external HTTPS auth for management and broker endpoints") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
     control_runtime_fixture_t fixture = runtime_fixture_open();
@@ -323,8 +419,10 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.external_https.tls.client_key_file,
                    sizeof(config.auth.external_https.tls.client_key_file), "%s", key_file);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_ENOTSUP);
-    check_null(runtime);
+    check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
+    check_not_null(runtime);
+    check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+    runtime = NULL;
 
     check_equal(runtime_test_set_env("FLOWIE_RUNTIME_EXTERNAL_TOKEN", NULL), 0);
     tls_test_remove_file(key_file);

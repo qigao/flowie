@@ -226,8 +226,7 @@ static int external_https_copy_groups(const json_value_t *object,
       return TURBO_EPROTO;
     memcpy(assertion->external_groups[index], text, size);
     assertion->external_groups[index][size] = '\0';
-    if (!external_https_text_valid(assertion->external_groups[index], FLOWIE_SECURITY_ID_MAX,
-                                   1))
+    if (!external_https_text_valid(assertion->external_groups[index], FLOWIE_SECURITY_ID_MAX, 1))
       return TURBO_EPROTO;
     for (size_t previous = 0u; previous < index; ++previous)
       if (strcmp(assertion->external_groups[previous], assertion->external_groups[index]) == 0)
@@ -243,8 +242,8 @@ int flowie_control_external_https_decode_response(
   static const char *const denied_fields[] = {"version", "authenticated"};
   static const char *const outer_fields[] = {"version", "authenticated", "assertion"};
   static const char *const assertion_fields[] = {
-      "issuer",     "subject",  "subject_type",    "auth_method",     "issued_at",
-      "expires_at", "revision", "assurance_level", "account_enabled", "groups"};
+      "issuer",     "domain_id", "subject",         "subject_type",    "auth_method", "issued_at",
+      "expires_at", "revision",  "assurance_level", "account_enabled", "groups"};
   flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   turbo_json_doc_t *document = NULL;
   json_value_t *authenticated;
@@ -282,6 +281,8 @@ int flowie_control_external_https_decode_response(
     goto done;
   if (external_https_copy_json_string(assertion_object, "issuer", assertion.issuer,
                                       sizeof(assertion.issuer)) != TURBO_OK ||
+      external_https_copy_json_string(assertion_object, "domain_id", assertion.domain_id,
+                                      sizeof(assertion.domain_id)) != TURBO_OK ||
       external_https_copy_json_string(assertion_object, "subject", assertion.subject,
                                       sizeof(assertion.subject)) != TURBO_OK ||
       external_https_copy_json_string(assertion_object, "subject_type", assertion.subject_type,
@@ -328,11 +329,11 @@ static int external_https_json_add(json_value_t *object, const char *field, json
 
 static int external_https_request_valid(const flowie_control_external_auth_request_t *request) {
   return request && request->size >= sizeof(*request) &&
-         external_https_text_valid(request->domain_id, FLOWIE_SECURITY_ID_MAX, 1) &&
+         external_https_text_valid(request->domain_id, FLOWIE_SECURITY_ID_MAX, 0) &&
          external_https_text_valid(request->presented_identity, FLOWIE_SECURITY_ID_MAX, 1) &&
          external_https_text_valid(request->method, FLOWIE_SECURITY_TYPE_MAX, 1) &&
          request->secret && request->secret_size > 0u &&
-         request->secret_size <= FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX &&
+         request->secret_size <= FLOWIE_CONTROL_EXTERNAL_HTTPS_MAX_SECRET_SIZE &&
          external_https_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX, 1) &&
          external_https_text_valid(request->remote_address, FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX,
                                    1) &&
@@ -355,8 +356,8 @@ int flowie_control_external_https_encode_request(
   if (external_https_json_add(
           document, "version",
           turbo_json_create_uint64(FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)) != TURBO_OK ||
-      external_https_json_add(document, "domain",
-                              turbo_json_create_string(request->domain_id)) != TURBO_OK ||
+      external_https_json_add(document, "domain", turbo_json_create_string(request->domain_id)) !=
+          TURBO_OK ||
       external_https_json_add(document, "identity",
                               turbo_json_create_string(request->presented_identity)) != TURBO_OK ||
       external_https_json_add(document, "method", turbo_json_create_string(request->method)) !=
@@ -554,9 +555,8 @@ done:
   return rc;
 }
 
-static int
-external_https_tls_files_validate(const flowie_control_external_https_tls_t *tls,
-                                  const flowie_security_key_provider_t *key_provider) {
+static int external_https_tls_files_validate(const flowie_control_external_https_tls_t *tls,
+                                             const flowie_security_key_provider_t *key_provider) {
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
   SSL_CTX *context = NULL;
   char *password = NULL;
@@ -639,7 +639,7 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
                                                   memory_order_relaxed));
   admitted = 1;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
-                                          authenticator->service_token_ref, &lease);
+                                      authenticator->service_token_ref, &lease);
   if (rc != TURBO_OK) goto done;
   token_size = lease.byte_count;
   if (!external_https_secret_valid(&lease)) {
@@ -794,7 +794,7 @@ int flowie_control_external_https_authenticator_create(
   rc = external_https_validate_url(authenticator->url, &authenticator->host, &authenticator->port);
   if (rc != TURBO_OK) goto fail;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
-                                          authenticator->service_token_ref, &lease);
+                                      authenticator->service_token_ref, &lease);
   if (rc != TURBO_OK) goto fail;
   if (!external_https_secret_valid(&lease)) {
     rc = TURBO_EPERM;

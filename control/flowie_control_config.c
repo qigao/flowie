@@ -130,8 +130,7 @@ int flowie_control_config_secret_ref_valid(const char *value) {
 }
 
 int flowie_control_config_turbodb_secret_option(const char *keyword) {
-  static const char *const secret_options[] = {
-      "conninfo", "password", "sslpassword", "uri", "url"};
+  static const char *const secret_options[] = {"conninfo", "password", "sslpassword", "uri", "url"};
   size_t index;
   if (!keyword) return 0;
   for (index = 0u; index < sizeof(secret_options) / sizeof(secret_options[0]); ++index) {
@@ -547,6 +546,148 @@ static int control_config_parse_auth_local_executor(const json_value_t *executor
   return rc;
 }
 
+static int control_config_jwt_algorithm_supported(const char *algorithm) {
+  static const char *const supported[] = {"ES256", "ES384", "ES512", "PS256",  "PS384", "PS512",
+                                          "RS256", "RS384", "RS512", "ES256K", "EdDSA"};
+  if (!algorithm) return 0;
+  for (size_t index = 0u; index < sizeof(supported) / sizeof(supported[0]); ++index) {
+    if (strcmp(algorithm, supported[index]) == 0) return 1;
+  }
+  return 0;
+}
+
+static int control_config_parse_jwt_jwks_executor(const json_value_t *executor,
+                                                  flowie_control_config_t *config,
+                                                  flowie_control_config_error_t *error) {
+  static const char *const keys[] = {"workers", "queue_capacity", "deadline_ms"};
+  flowie_control_config_jwt_jwks_t *resolved = &config->auth.jwt_jwks;
+  uint64_t number;
+  int rc;
+  if (!executor) return TURBO_OK;
+  rc = control_config_object(executor, "$.auth.jwt_jwks.executor", keys,
+                             sizeof(keys) / sizeof(keys[0]), error);
+  if (rc == TURBO_OK && turbo_json_object_get(executor, keys[0])) {
+    rc = control_config_integer(
+        turbo_json_object_get(executor, keys[0]), "$.auth.jwt_jwks.executor.workers", 1u,
+        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS, &number, error);
+    if (rc == TURBO_OK) resolved->executor_workers = (uint32_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(executor, keys[1])) {
+    rc = control_config_integer(
+        turbo_json_object_get(executor, keys[1]), "$.auth.jwt_jwks.executor.queue_capacity", 1u,
+        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY, &number, error);
+    if (rc == TURBO_OK) resolved->executor_queue_capacity = (size_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(executor, keys[2])) {
+    rc = control_config_integer(
+        turbo_json_object_get(executor, keys[2]), "$.auth.jwt_jwks.executor.deadline_ms", 1u,
+        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_DEADLINE_MS, &number, error);
+    if (rc == TURBO_OK) resolved->executor_deadline_ms = (uint32_t)number;
+  }
+  return rc;
+}
+
+static int control_config_parse_jwt_jwks_tls(const json_value_t *tls,
+                                             flowie_control_config_t *config,
+                                             flowie_control_config_error_t *error) {
+  static const char *const keys[] = {"ca_file"};
+  int rc;
+  if (!tls) return TURBO_OK;
+  rc = control_config_object(tls, "$.auth.jwt_jwks.tls", keys, sizeof(keys) / sizeof(keys[0]),
+                             error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(tls, keys[0]), "$.auth.jwt_jwks.tls.ca_file",
+                             config->auth.jwt_jwks.ca_file, sizeof(config->auth.jwt_jwks.ca_file),
+                             0, error);
+  return rc;
+}
+
+static int control_config_parse_jwt_jwks(const json_value_t *jwt, flowie_control_config_t *config,
+                                         flowie_control_config_error_t *error) {
+  static const char *const keys[] = {"url",
+                                     "trusted_issuer",
+                                     "audience",
+                                     "subject_type",
+                                     "algorithm",
+                                     "timeout_ms",
+                                     "max_response_size",
+                                     "max_keys",
+                                     "max_token_size",
+                                     "refresh_interval_seconds",
+                                     "clock_skew_seconds",
+                                     "executor",
+                                     "tls"};
+  flowie_control_config_jwt_jwks_t *resolved = &config->auth.jwt_jwks;
+  uint64_t number;
+  int rc =
+      control_config_object(jwt, "$.auth.jwt_jwks", keys, sizeof(keys) / sizeof(keys[0]), error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(jwt, "url"), "$.auth.jwt_jwks.url",
+                             resolved->url, sizeof(resolved->url), 1, error);
+  if (rc == TURBO_OK && strncmp(resolved->url, "https://", sizeof("https://") - 1u) != 0)
+    rc = control_config_error(error, TURBO_EINVAL, "$.auth.jwt_jwks.url",
+                              "JWT JWKS URL must use HTTPS");
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(jwt, "trusted_issuer"),
+                             "$.auth.jwt_jwks.trusted_issuer", resolved->trusted_issuer,
+                             sizeof(resolved->trusted_issuer), 1, error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(jwt, "audience"), "$.auth.jwt_jwks.audience",
+                             resolved->audience, sizeof(resolved->audience), 1, error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(jwt, "subject_type"),
+                             "$.auth.jwt_jwks.subject_type", resolved->subject_type,
+                             sizeof(resolved->subject_type), 1, error);
+  if (rc == TURBO_OK)
+    rc = control_config_text(turbo_json_object_get(jwt, "algorithm"), "$.auth.jwt_jwks.algorithm",
+                             resolved->algorithm, sizeof(resolved->algorithm), 1, error);
+  if (rc == TURBO_OK && !control_config_jwt_algorithm_supported(resolved->algorithm))
+    rc = control_config_error(error, TURBO_EINVAL, "$.auth.jwt_jwks.algorithm",
+                              "unsupported or symmetric JWT algorithm");
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "timeout_ms")) {
+    rc = control_config_integer(turbo_json_object_get(jwt, "timeout_ms"),
+                                "$.auth.jwt_jwks.timeout_ms", 1u,
+                                FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_TIMEOUT_MS, &number, error);
+    if (rc == TURBO_OK) resolved->timeout_ms = (uint32_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "max_response_size")) {
+    rc = control_config_integer(turbo_json_object_get(jwt, "max_response_size"),
+                                "$.auth.jwt_jwks.max_response_size", 1u,
+                                FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_RESPONSE_SIZE, &number, error);
+    if (rc == TURBO_OK) resolved->max_response_size = (size_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "max_keys")) {
+    rc = control_config_integer(turbo_json_object_get(jwt, "max_keys"), "$.auth.jwt_jwks.max_keys",
+                                1u, FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_KEYS, &number, error);
+    if (rc == TURBO_OK) resolved->max_keys = (uint32_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "max_token_size")) {
+    rc = control_config_integer(turbo_json_object_get(jwt, "max_token_size"),
+                                "$.auth.jwt_jwks.max_token_size", 1u,
+                                FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_TOKEN_SIZE, &number, error);
+    if (rc == TURBO_OK) resolved->max_token_size = (size_t)number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "refresh_interval_seconds")) {
+    rc = control_config_integer(turbo_json_object_get(jwt, "refresh_interval_seconds"),
+                                "$.auth.jwt_jwks.refresh_interval_seconds", 1u,
+                                FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_REFRESH_SECONDS, &number, error);
+    if (rc == TURBO_OK) resolved->refresh_interval_seconds = number;
+  }
+  if (rc == TURBO_OK && turbo_json_object_get(jwt, "clock_skew_seconds")) {
+    rc = control_config_integer(
+        turbo_json_object_get(jwt, "clock_skew_seconds"), "$.auth.jwt_jwks.clock_skew_seconds", 0u,
+        FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_CLOCK_SKEW_SECONDS, &number, error);
+    if (rc == TURBO_OK) resolved->clock_skew_seconds = (uint32_t)number;
+  }
+  if (rc == TURBO_OK)
+    rc = control_config_parse_jwt_jwks_executor(turbo_json_object_get(jwt, "executor"), config,
+                                                error);
+  if (rc == TURBO_OK)
+    rc = control_config_parse_jwt_jwks_tls(turbo_json_object_get(jwt, "tls"), config, error);
+  if (rc == TURBO_OK) resolved->enabled = 1;
+  return rc;
+}
+
 static int control_config_parse_auth(const json_value_t *auth, flowie_control_config_t *config,
                                      flowie_control_config_error_t *error) {
   static const char *const keys[] = {"enabled",
@@ -556,8 +697,10 @@ static int control_config_parse_auth(const json_value_t *auth, flowie_control_co
                                      "credential_cache_capacity",
                                      "credential_cache_ttl_seconds",
                                      "local_executor",
-                                     "external_https"};
+                                     "external_https",
+                                     "jwt_jwks"};
   json_value_t *external;
+  json_value_t *jwt;
   uint64_t number;
   int rc = control_config_object(auth, "$.auth", keys, sizeof(keys) / sizeof(keys[0]), error);
   if (rc == TURBO_OK && turbo_json_object_get(auth, "enabled"))
@@ -571,6 +714,9 @@ static int control_config_parse_auth(const json_value_t *auth, flowie_control_co
     if (turbo_json_object_get(auth, "external_https"))
       return control_config_error(error, TURBO_EINVAL, "$.auth.external_https",
                                   "external HTTPS authentication requires auth.enabled");
+    if (turbo_json_object_get(auth, "jwt_jwks"))
+      return control_config_error(error, TURBO_EINVAL, "$.auth.jwt_jwks",
+                                  "JWT JWKS authentication requires auth.enabled");
     return TURBO_OK;
   }
   rc = control_config_text(turbo_json_object_get(auth, "listener_id"), "$.auth.listener_id",
@@ -600,10 +746,15 @@ static int control_config_parse_auth(const json_value_t *auth, flowie_control_co
     rc = control_config_parse_auth_local_executor(turbo_json_object_get(auth, "local_executor"),
                                                   config, error);
   external = turbo_json_object_get(auth, "external_https");
-  if (rc == TURBO_OK && external && config->auth.local_executor.configured)
+  jwt = turbo_json_object_get(auth, "jwt_jwks");
+  if (rc == TURBO_OK && external && jwt)
+    rc = control_config_error(error, TURBO_EINVAL, "$.auth.jwt_jwks",
+                              "only one external authentication provider may be configured");
+  if (rc == TURBO_OK && (external || jwt) && config->auth.local_executor.configured)
     rc = control_config_error(error, TURBO_EINVAL, "$.auth.local_executor",
-                              "local executor cannot be configured with external HTTPS auth");
+                              "local executor cannot be configured with external authentication");
   if (rc == TURBO_OK && external) rc = control_config_parse_external_https(external, config, error);
+  if (rc == TURBO_OK && jwt) rc = control_config_parse_jwt_jwks(jwt, config, error);
   return rc;
 }
 
@@ -658,7 +809,7 @@ int flowie_control_config_parse_yaml(const char *yaml, size_t yaml_size,
   }
   if (rc == TURBO_OK && turbo_json_object_get(document, "auth"))
     rc = control_config_parse_auth(turbo_json_object_get(document, "auth"), &resolved, error);
-  if (rc == TURBO_OK && resolved.auth.external_https.enabled &&
+  if (rc == TURBO_OK && (resolved.auth.external_https.enabled || resolved.auth.jwt_jwks.enabled) &&
       resolved.management.login_executor_configured)
     rc = control_config_error(error, TURBO_EINVAL, "$.management.login_executor",
                               "login executor is only valid for local authentication");

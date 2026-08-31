@@ -186,6 +186,20 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
     PRIVATE TurboHttp::HttpClient TurboNet::CoroNet TurboUtils::Core
             TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto monocypher)
 
+  add_library(
+    flowie_control_jwt_jwks_authenticator STATIC
+    flowie_control_jwt_jwks_authenticator.c
+    flowie_control_jwt_jwks_authenticator_internal.h)
+  cmake_config_target(flowie_control_jwt_jwks_authenticator NO_INSTALL
+                      FOLDER "flowie/control/internal")
+  target_include_directories(flowie_control_jwt_jwks_authenticator
+                             PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+                                    ${PROJECT_SOURCE_DIR}/flowie/include)
+  target_link_libraries(
+    flowie_control_jwt_jwks_authenticator
+    PRIVATE TurboHttp::Cjwt TurboHttp::HttpClient TurboNet::CoroNet TurboUtils::Core
+            TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto)
+
 add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_config_internal.h
                                           flowie_control_database_config.c
@@ -259,6 +273,10 @@ target_link_libraries(flowie_control_startup
                             PRIVATE flowie_control_external_https_authenticator)
       target_compile_definitions(flowie_control_runtime
                                  PRIVATE FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH=1)
+      target_link_libraries(flowie_control_runtime
+                            PRIVATE flowie_control_jwt_jwks_authenticator)
+      target_compile_definitions(flowie_control_runtime
+                                 PRIVATE FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH=1)
     add_executable(flowie-control flowie_control_main.c)
     cmake_config_target(flowie-control FOLDER "flowie/control")
     target_link_libraries(flowie-control PRIVATE flowie_control_runtime)
@@ -479,15 +497,37 @@ if(BUILD_TESTS)
       test_flowie_control_external_https_authenticator
       PROPERTIES LABELS
                  "flowie;control-plane;security-contract;external-auth;https")
+    cmake_add_test(
+      test_flowie_control_jwt_jwks_authenticator
+      SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
+      LIBS flowie_control_jwt_jwks_authenticator TurboHttp::Cjwt TurboNet::CoroNet
+           TurboUtils::TinyTest
+      INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
+      FOLDER "flowie/control/tests")
+    target_link_libraries(test_flowie_control_jwt_jwks_authenticator
+                          PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    cmake_target_enable_boringssl_linkage(test_flowie_control_jwt_jwks_authenticator)
+    if(WIN32)
+      target_link_libraries(test_flowie_control_jwt_jwks_authenticator PRIVATE ws2_32)
+    endif()
+    set_tests_properties(
+      test_flowie_control_jwt_jwks_authenticator
+      PROPERTIES LABELS
+                 "flowie;control-plane;security-contract;external-auth;jwt;jwks")
     if(WIN32)
       set_target_properties(
         test_flowie_control_external_https_authenticator
+        test_flowie_control_jwt_jwks_authenticator
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                    "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
       set_tests_properties(
         test_flowie_control_external_https_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+      set_tests_properties(
+        test_flowie_control_jwt_jwks_authenticator
+        PROPERTIES ENVIRONMENT_MODIFICATION
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Cjwt>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboParser::Parser>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
   cmake_add_test(
     test_flowie_control_principal_cache

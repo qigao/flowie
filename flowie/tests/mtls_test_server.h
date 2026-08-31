@@ -9,21 +9,21 @@
 #include <openssl/ssl.h>
 
 #ifdef _WIN32
-#  include <winsock2.h>
-#  include <ws2tcpip.h>
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
 typedef SOCKET flow_mtls_test_socket_t;
-#  define FLOW_MTLS_TEST_INVALID_SOCKET INVALID_SOCKET
-#  define flow_mtls_test_close_socket closesocket
+  #define FLOW_MTLS_TEST_INVALID_SOCKET INVALID_SOCKET
+  #define flow_mtls_test_close_socket closesocket
 #else
-#  include <arpa/inet.h>
-#  include <netinet/in.h>
-#  include <signal.h>
-#  include <sys/select.h>
-#  include <sys/socket.h>
-#  include <unistd.h>
+  #include <arpa/inet.h>
+  #include <netinet/in.h>
+  #include <signal.h>
+  #include <sys/select.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
 typedef int flow_mtls_test_socket_t;
-#  define FLOW_MTLS_TEST_INVALID_SOCKET (-1)
-#  define flow_mtls_test_close_socket close
+  #define FLOW_MTLS_TEST_INVALID_SOCKET (-1)
+  #define flow_mtls_test_close_socket close
 #endif
 
 #define FLOW_MTLS_TEST_REQUEST_CAPACITY 4096u
@@ -37,12 +37,13 @@ typedef struct flow_mtls_test_server_s {
   unsigned short port;
   int started;
   int status;
+  int require_peer_certificate;
   int peer_verified;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
 } flow_mtls_test_server_t;
 
-static SSL_CTX *flow_mtls_test_server_context(void) {
+static SSL_CTX *flow_mtls_test_server_context(int require_peer_certificate) {
   SSL_CTX *ctx = NULL;
   BIO *cert_bio = NULL;
   BIO *key_bio = NULL;
@@ -56,8 +57,12 @@ static SSL_CTX *flow_mtls_test_server_context(void) {
   key = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
   if (!cert || !key || SSL_CTX_use_certificate(ctx, cert) != 1 ||
       SSL_CTX_use_PrivateKey(ctx, key) != 1 || SSL_CTX_check_private_key(ctx) != 1 ||
-      X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), cert) != 1) goto fail;
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+      (require_peer_certificate && X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), cert) != 1))
+    goto fail;
+  SSL_CTX_set_verify(ctx,
+                     require_peer_certificate ? SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                                              : SSL_VERIFY_NONE,
+                     NULL);
   X509_free(cert);
   EVP_PKEY_free(key);
   BIO_free(cert_bio);
@@ -119,7 +124,7 @@ static void flow_mtls_test_server_main(void *arg) {
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size = 0u;
   server->status = -1;
-  ctx = flow_mtls_test_server_context();
+  ctx = flow_mtls_test_server_context(server->require_peer_certificate);
   if (!ctx || !flow_mtls_test_wait_readable(server->listener)) goto done;
   client = accept(server->listener, NULL, NULL);
   if (client == FLOW_MTLS_TEST_INVALID_SOCKET) goto done;
@@ -127,10 +132,10 @@ static void flow_mtls_test_server_main(void *arg) {
   if (!ssl || SSL_set_fd(ssl, (int)client) != 1 || SSL_accept(ssl) != 1) goto done;
   peer = SSL_get_peer_certificate(ssl);
   server->peer_verified = peer != NULL && SSL_get_verify_result(ssl) == X509_V_OK;
-  if (!server->peer_verified) goto done;
+  if (server->require_peer_certificate && !server->peer_verified) goto done;
   do {
-    int received = SSL_read(ssl, request + request_size,
-                            (int)(sizeof(request) - 1u - request_size));
+    int received =
+        SSL_read(ssl, request + request_size, (int)(sizeof(request) - 1u - request_size));
     if (received <= 0) goto done;
     request_size += (size_t)received;
     request[request_size] = '\0';
@@ -152,9 +157,9 @@ done:
   SSL_CTX_free(ctx);
 }
 
-static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
-                                               const uint8_t *response, size_t response_size,
-                                               uint32_t response_delay_ms) {
+static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
+                                          size_t response_size, uint32_t response_delay_ms,
+                                          int require_peer_certificate) {
   struct sockaddr_in address;
 #ifdef _WIN32
   int address_size = (int)sizeof(address);
@@ -166,6 +171,7 @@ static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
 #endif
   if (!server || (!response && response_size != 0u)) return -1;
   memset(server, 0, sizeof(*server));
+  server->require_peer_certificate = require_peer_certificate ? 1 : 0;
   server->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (server->listener == FLOW_MTLS_TEST_INVALID_SOCKET) return -1;
   memset(&address, 0, sizeof(address));
@@ -192,8 +198,19 @@ static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
   return 0;
 }
 
-static int flow_mtls_test_server_start(flow_mtls_test_server_t *server,
-                                       const uint8_t *response, size_t response_size) {
+static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
+                                               const uint8_t *response, size_t response_size,
+                                               uint32_t response_delay_ms) {
+  return flow_mtls_test_server_start_ex(server, response, response_size, response_delay_ms, 1);
+}
+
+static int flow_tls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
+                                      size_t response_size) {
+  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 0);
+}
+
+static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
+                                       size_t response_size) {
   return flow_mtls_test_server_start_delayed(server, response, response_size, 0u);
 }
 

@@ -68,9 +68,11 @@ MQTT client。Broker 使用 Repository 中具有精确 endpoint Role 的 service
 Auth 成功响应中的用户 Domain 才决定后续 ACL policy，Broker service principal 的 Domain 不会成为
 业务 Domain，也不会加入 topic。
 
-第三方 HTTPS assertion contract 为严格 version 2，并接收相同的直接 peer address 与可选 MQTT 客户
+第三方 HTTPS assertion contract 为严格 version 3，并接收相同的直接 peer address 与可选 MQTT 客户
 证书指纹。第三方系统可据此组合自身账户认证，但返回的 external groups/claims 仍必须经过本地
-principal 映射；ACL 始终只来自 control Repository。
+principal 映射；ACL 始终只来自 control Repository。其请求 `domain` 为空表示 Broker 通用认证正在
+请求可信 Domain 发现，成功 assertion 必须返回非空 `domain_id`；管理登录等已有目标 Domain 的入口
+会发送该 expected Domain，并要求响应精确匹配。
 
 各数据边界固定如下：
 
@@ -110,7 +112,7 @@ principal 映射；ACL 始终只来自 control Repository。
 | `management.session.capacity` | 同一 Repository 中的有界登录会话数，默认 `1024`，最大 `65536`；超过容量时按持久化 LRU 撤销 |
 | `management.session.max_sessions_per_principal` | 每个 `(domain, principal)` 最多保留的会话数，默认 `5`，最大 `65536`；新登录撤销该主体最早签发的会话 |
 | `management.session.ttl_seconds` | 会话上限，默认 `3600`，最大 `86400`；不会超过认证 principal expiry |
-| `management.login_executor.*` | 本地管理登录的 `workers/queue_capacity/deadline_ms`，默认 `4/128/10000`；外部 HTTPS Auth 时禁止显式配置 |
+| `management.login_executor.*` | 本地管理登录的 `workers/queue_capacity/deadline_ms`，默认 `4/128/10000`；任一外部 Auth provider 启用时禁止显式配置 |
 | `dashboard.enabled` | 是否注册固定 HTMX Dashboard 路由 |
 | `auth.enabled` | 是否注册 `/v4/authenticate` 与 `/v4/acl/check`；默认关闭 |
 | `auth.local_executor.workers` | 本地 Auth 同步 verifier worker 数，`1..64`，默认 `4` |
@@ -125,6 +127,14 @@ principal 映射；ACL 始终只来自 control Repository。
 | `auth.external_https.max_response_size` | `1024..65536`，默认 `16384` |
 | `auth.external_https.max_in_flight` | `1..1024`，默认 `64`；满载时在读取 token 和发起网络请求前返回 busy |
 | `auth.external_https.tls.*` | 可选私有 CA；client certificate/key 必须成对出现，密码只接受 `env://...` |
+| `auth.jwt_jwks` | 可选；与 `local_executor`、`external_https` 互斥，本地验证 JWT，JWKS 只从固定 HTTPS URL 获取 |
+| `auth.jwt_jwks.url` | 必须为带明确 path 的 HTTPS URL；userinfo、query、fragment 均拒绝，redirect/retry 禁用 |
+| `auth.jwt_jwks.trusted_issuer` / `audience` / `subject_type` | 必填并精确匹配；`sub` 与请求 identity 精确匹配，签名后的 `domain_id` 选择业务 Domain；已有目标 Domain 的管理入口还会执行精确约束 |
+| `auth.jwt_jwks.algorithm` | 必填的单一非对称算法：ES/PS/RS、ES256K 或 EdDSA；拒绝 `none` 与 HMAC |
+| `auth.jwt_jwks.max_response_size` / `max_keys` / `max_token_size` | 默认 `65536/16/4096`，硬上限 `1048576/64/16384` |
+| `auth.jwt_jwks.refresh_interval_seconds` / `clock_skew_seconds` | 默认 `300/30`，硬上限 `86400/300`；过期 snapshot 不延寿 |
+| `auth.jwt_jwks.executor.*` | 密码学验证和 JWKS 解析的有界 worker/queue/deadline，默认 `4/128/10000` |
+| `auth.jwt_jwks.tls.ca_file` | 可选私有 CA；启动时加载校验，运行时始终验证 HTTPS peer |
 
 当 `auth.enabled: true` 时还必须设置 `listener_id` 和 `method`。Broker caller 必须是 Repository 中
 enabled 的 service principal，持有 generated credential，并按 endpoint 分配 `flowie_auth_client` 或
@@ -138,8 +148,8 @@ fail closed。
 桶有界且只保留 keyed digest，不保存 identity、证书指纹或 secret 明文。
 本地 Auth 的 Argon2id 与同步 TurboDB 调用只进入专用 executor。Iris request/response/socket
 不跨线程；deadline 只结束 HTTP 等待，不会强行取消正在执行的同步 KDF/SQL。迟到结果被丢弃，任务自行
-擦除 secret；endpoint shutdown 停止接单并 drain。显式 `local_executor` 与 `external_https` 互斥，
-外部 HTTPS Auth 始终留在 CoroNet coroutine I/O 路径。
+擦除 secret；endpoint shutdown 停止接单并 drain。显式 `local_executor` 与两个外部 provider 互斥。
+外部网络 I/O 始终留在 CoroNet coroutine 路径，JWT/JWK 解析和签名验证进入其专用有界 executor。
 YAML 不保存 ACL rule body、用户 credential、service token 或私钥内容。
 
 唯一数据库边界示例：
@@ -253,8 +263,8 @@ User Name 见 [`3.1.3.5`](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.
 标准没有要求二者相等。Flowie 启用认证时要求 User Name 非空；Client ID 遵循 MQTT 版本规则，使用
 HAProxy 的 cluster 接入部署还会在代理层要求 Client ID 非空。
 
-未配置 `external_https` 时，`/v4/authenticate` 使用 Repository 中的本地 credential verifier；配置
-`external_https` 时，它严格替换本地 verifier，失败不会回退本地密码。不在 `flowie-control` 进程内
+未配置外部 provider 时，`/v4/authenticate` 使用 Repository 中的本地 credential verifier；配置
+`external_https` 或 `jwt_jwks` 时，它严格替换本地 verifier，失败不会回退本地密码。不在 `flowie-control` 进程内
 加载 OIDC、LDAP/AD、RADIUS 或第三方数据库 SDK；它们全部由第三方 HTTPS 服务内部处理。
 
 本地 Auth 的最小配置如下：
@@ -278,7 +288,7 @@ auth:
   listener_id: flowie-control-auth
   method: bearer
   external_https:
-    url: https://third-party-auth.internal/v2/assert
+    url: https://third-party-auth.internal/v3/assert
     service_token_ref: env://FLOWIE_THIRD_PARTY_AUTH_TOKEN
     trusted_issuer: https://identity.internal
     subject_type: device
@@ -295,8 +305,32 @@ auth:
 Broker 请求同时发送 generated service token、`X-Flowie-Service-Id` 与
 `X-Flowie-Service-Domain`；Control 从 Repository 校验 principal、credential 和 endpoint Role。
 `auth.external_https.service_token_ref` 则保护 `flowie-control` 到第三方断言服务的请求，两类 token
-具有不同的信任方向、权限和轮换周期，不能复用。当前 runtime composition 明确拒绝启用
-`external_https`（`TURBO_ENOTSUP`）；该配置只保留 schema 预检，不能用于部署。
+具有不同的信任方向、权限和轮换周期，不能复用。该 provider 与管理登录、Broker Auth endpoint
+共享同一 authenticator 实例和本地 subject mapper。
+
+JWT/JWKS Auth 示例：
+
+```yaml
+auth:
+  enabled: true
+  listener_id: flowie-control-auth
+  method: bearer
+  jwt_jwks:
+    url: https://identity.internal/.well-known/jwks.json
+    trusted_issuer: https://identity.internal
+    audience: flowie
+    subject_type: device
+    algorithm: EdDSA
+    max_keys: 16
+    max_token_size: 4096
+    refresh_interval_seconds: 300
+    executor:
+      workers: 4
+      queue_capacity: 128
+      deadline_ms: 10000
+    tls:
+      ca_file: certs/identity-ca.pem
+```
 
 `POST /v4/acl/check` 只接受具有 `flowie_acl_client` Role 的受信 service bearer。请求 body 的
 principal Domain 来自 Broker 先前获得的 Auth principal；MQTT 客户端不能通过 path、query、header

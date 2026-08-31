@@ -43,6 +43,7 @@ typedef struct auth_service_external_fixture_s {
   int map_result;
   uint64_t expires_at;
   int account_enabled;
+  const char *assertion_domain_id;
   int saw_transport_context;
   int saw_mapping_context;
 } auth_service_external_fixture_t;
@@ -70,7 +71,7 @@ static int auth_service_external_verify(void *ctx,
       assertion_out->size < sizeof(*assertion_out))
     return TURBO_EINVAL;
   fixture->saw_transport_context =
-      strcmp(request->domain_id, "root-a") == 0 &&
+      request->domain_id[0] == '\0' &&
       strcmp(request->presented_identity, "external-device") == 0 &&
       strcmp(request->method, "oidc-token") == 0 && strcmp(request->protocol, "mqtt") == 0 &&
       strcmp(request->remote_address, "192.0.2.10:1883") == 0 && request->peer_certificate_sha256 &&
@@ -79,6 +80,8 @@ static int auth_service_external_verify(void *ctx,
       memcmp(request->secret, "signed-token", sizeof("signed-token") - 1u) == 0;
   if (fixture->verify_result != TURBO_OK) return fixture->verify_result;
   memcpy(assertion.issuer, "https://idp.example", sizeof("https://idp.example"));
+  memcpy(assertion.domain_id, fixture->assertion_domain_id,
+         strlen(fixture->assertion_domain_id) + 1u);
   memcpy(assertion.subject, "tenant-42/device-a", sizeof("tenant-42/device-a"));
   memcpy(assertion.subject_type, "device", sizeof("device"));
   memcpy(assertion.auth_method, "oidc-token", sizeof("oidc-token"));
@@ -103,7 +106,7 @@ static int auth_service_external_map(void *ctx,
       !result_out || result_out->size < sizeof(*result_out))
     return TURBO_EINVAL;
   fixture->saw_mapping_context =
-      strcmp(request->domain_id, "root-a") == 0 &&
+      strcmp(request->domain_id, request->assertion->domain_id) == 0 &&
       strcmp(request->presented_identity, "external-device") == 0 &&
       strcmp(request->assertion->issuer, "https://idp.example") == 0 &&
       strcmp(request->assertion->subject, "tenant-42/device-a") == 0 &&
@@ -430,17 +433,32 @@ spec("Flowie control trusted authentication service") {
     auth_service_store_close(store, path);
   }
 
-  it("rejects external authentication until assertions identify their Domain") {
+  it("uses the signed assertion Domain instead of the Broker service Domain") {
     char *path = NULL;
     flowie_control_store_t *store = auth_service_store_open(&path);
-    auth_service_policy_fixture_t policy = {31u, 0u, TURBO_OK};
-    auth_service_external_fixture_t external = {TURBO_OK, TURBO_OK, 10120u, 1, 0, 0};
+    auth_service_policy_fixture_t policy = {31u, 32u, TURBO_OK};
+    auth_service_external_fixture_t external = {TURBO_OK, TURBO_OK, 10120u, 1, "root-a", 0, 0};
     flowie_control_external_authenticator_t authenticator =
         FLOWIE_CONTROL_EXTERNAL_AUTHENTICATOR_INIT;
     flowie_control_external_identity_mapper_t mapper = FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAPPER_INIT;
     flowie_control_auth_service_config_t config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
     flowie_control_auth_service_t *service = NULL;
+    flowie_control_verified_caller_t caller = {sizeof(flowie_control_verified_caller_t),
+                                               "listener-a",
+                                               "broker-a",
+                                               "broker-services",
+                                               AUTH_SERVICE_CERT_A,
+                                               FLOWIE_CONTROL_SERVICE_AUTHENTICATE,
+                                               1};
+    flowie_control_authenticate_request_t request = FLOWIE_CONTROL_AUTHENTICATE_REQUEST_INIT;
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
     uint64_t now_seconds = 10000u;
+
+    check_equal(auth_service_domain_create(store, "root-a", "request-external-root", 0u), TURBO_OK);
+    check_equal(auth_service_user_create(store, "root-a", "request-external-user", 1u), TURBO_OK);
+    check_equal(auth_service_domain_create(store, "root-b", "request-external-root-b", 2u),
+                TURBO_OK);
+    check_equal(auth_service_user_create(store, "root-b", "request-external-user-b", 3u), TURBO_OK);
 
     authenticator.capabilities = FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES |
                                  FLOWIE_CONTROL_EXTERNAL_AUTH_GROUP_CLAIMS;
@@ -459,9 +477,34 @@ spec("Flowie control trusted authentication service") {
     check_equal(flowie_control_auth_service_create(&config, &service), TURBO_EINVAL);
     check_null(service);
     config.external_identity_mapper = &mapper;
-    check_equal(flowie_control_auth_service_create(&config, &service), TURBO_ENOTSUP);
-    check_null(service);
+    check_equal(flowie_control_auth_service_create(&config, &service), TURBO_OK);
+    check_not_null(service);
 
+    request.caller = &caller;
+    request.identity = "external-device";
+    request.method = "oidc-token";
+    request.secret = (const uint8_t *)"signed-token";
+    request.secret_size = sizeof("signed-token") - 1u;
+    request.protocol = "mqtt";
+    request.remote_address = "192.0.2.10:1883";
+    request.peer_certificate_sha256 = AUTH_SERVICE_CLIENT_CERT;
+    check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
+                TURBO_OK);
+    check_equal(principal.domain_id, "root-a");
+    check_equal(principal.principal_id, "device-a");
+    check_true(external.saw_transport_context);
+    check_true(external.saw_mapping_context);
+
+    external.assertion_domain_id = "root-b";
+    check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
+                TURBO_OK);
+    check_equal(principal.domain_id, "root-b");
+    check_equal(flowie_control_auth_service_authenticate_root(service, "root-a", "management-login",
+                                                              &request, 0, NULL, &principal, NULL),
+                TURBO_EPROTO);
+    check_equal(principal.principal_id, "");
+
+    flowie_control_auth_service_destroy(service);
     auth_service_store_close(store, path);
   }
 

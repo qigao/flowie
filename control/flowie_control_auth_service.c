@@ -56,9 +56,9 @@ static uint64_t flowie_control_auth_default_clock(void *ctx) {
   return now > 0 ? (uint64_t)now : 0u;
 }
 
-int flowie_control_auth_service_resolve_domain(
-    const flowie_control_auth_service_t *service, const flowie_control_verified_caller_t *caller,
-    char domain_id_out[FLOWIE_SECURITY_ID_MAX + 1u]) {
+int flowie_control_auth_service_resolve_domain(const flowie_control_auth_service_t *service,
+                                               const flowie_control_verified_caller_t *caller,
+                                               char domain_id_out[FLOWIE_SECURITY_ID_MAX + 1u]) {
   if (domain_id_out) domain_id_out[0] = '\0';
   if (!service || !caller || caller->size < sizeof(*caller) || !domain_id_out ||
       caller->authenticated != 1 ||
@@ -97,8 +97,6 @@ int flowie_control_auth_service_create(const flowie_control_auth_service_config_
             TURBO_OK ||
         strcmp(config->method, config->external_authenticator->method) != 0)))
     return TURBO_EINVAL;
-  if (config->external_authenticator) return TURBO_ENOTSUP;
-
   service = (flowie_control_auth_service_t *)calloc(1u, sizeof(*service));
   if (!service) return TURBO_ENOMEM;
   service->repository = *config->repository;
@@ -139,10 +137,11 @@ void flowie_control_auth_service_destroy(flowie_control_auth_service_t *service)
   free(service);
 }
 
-int flowie_control_auth_service_authenticate_root(
+static int flowie_control_auth_service_authenticate_root_impl(
     flowie_control_auth_service_t *service, const char *domain_id, const char *caller_scope,
     const flowie_control_authenticate_request_t *request, int require_policy,
     const flowie_control_credential_resolution_t *resolved_credential,
+    const flowie_control_external_auth_assertion_t *verified_external_assertion,
     flowie_security_principal_t *principal_out, int *credential_cache_hit_out) {
   flowie_control_credential_verify_result_t verified = FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
   flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
@@ -160,8 +159,7 @@ int flowie_control_auth_service_authenticate_root(
 
   if (credential_cache_hit_out) *credential_cache_hit_out = 0;
   if (principal_out && principal_out->size >= sizeof(*principal_out)) *principal_out = principal;
-  if (!service || !domain_id || !caller_scope || !request ||
-      request->size < sizeof(*request) ||
+  if (!service || !domain_id || !caller_scope || !request || request->size < sizeof(*request) ||
       !flowie_control_auth_text_valid(domain_id, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_text_valid(caller_scope, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_text_valid(request->identity, FLOWIE_SECURITY_ID_MAX) ||
@@ -175,40 +173,46 @@ int flowie_control_auth_service_authenticate_root(
         resolved_credential->verified.size < sizeof(resolved_credential->verified) ||
         resolved_credential->verified.user_revision == 0u ||
         resolved_credential->verified.credential_revision == 0u)) ||
+      (verified_external_assertion &&
+       (!service->external_auth_enabled ||
+        verified_external_assertion->size < sizeof(*verified_external_assertion))) ||
       (request->peer_certificate_sha256 &&
        !flowie_control_auth_fingerprint_valid(request->peer_certificate_sha256)))
     return TURBO_EINVAL;
-  if ((require_policy != 0 && require_policy != 1) ||
-      strcmp(request->method, service->method) != 0)
+  if ((require_policy != 0 && require_policy != 1) || strcmp(request->method, service->method) != 0)
     return TURBO_EPERM;
 
-  if (!resolved_credential) {
+  if (!resolved_credential && !verified_external_assertion) {
     rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, caller_scope, domain_id,
                                                   request->identity);
     if (rc != TURBO_OK) goto done;
   }
   if (service->external_auth_enabled) {
-    flowie_control_external_auth_request_t external_request =
-        FLOWIE_CONTROL_EXTERNAL_AUTH_REQUEST_INIT;
     flowie_control_external_identity_map_request_t map_request =
         FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAP_REQUEST_INIT;
-    if (!flowie_control_auth_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX) ||
-        !flowie_control_auth_text_valid(request->remote_address,
-                                        FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX)) {
-      rc = TURBO_EINVAL;
-      goto done;
+    if (verified_external_assertion) {
+      assertion = *verified_external_assertion;
+    } else {
+      flowie_control_external_auth_request_t external_request =
+          FLOWIE_CONTROL_EXTERNAL_AUTH_REQUEST_INIT;
+      if (!flowie_control_auth_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX) ||
+          !flowie_control_auth_text_valid(request->remote_address,
+                                          FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX)) {
+        rc = TURBO_EINVAL;
+        goto done;
+      }
+      external_request.domain_id = domain_id;
+      external_request.presented_identity = request->identity;
+      external_request.method = request->method;
+      external_request.secret = request->secret;
+      external_request.secret_size = request->secret_size;
+      external_request.protocol = request->protocol;
+      external_request.remote_address = request->remote_address;
+      external_request.peer_certificate_sha256 = request->peer_certificate_sha256;
+      rc = service->external_authenticator.verify(service->external_authenticator.ctx,
+                                                  &external_request, &assertion);
+      if (rc != TURBO_OK) goto done;
     }
-    external_request.domain_id = domain_id;
-    external_request.presented_identity = request->identity;
-    external_request.method = request->method;
-    external_request.secret = request->secret;
-    external_request.secret_size = request->secret_size;
-    external_request.protocol = request->protocol;
-    external_request.remote_address = request->remote_address;
-    external_request.peer_certificate_sha256 = request->peer_certificate_sha256;
-    rc = service->external_authenticator.verify(service->external_authenticator.ctx,
-                                                &external_request, &assertion);
-    if (rc != TURBO_OK) goto done;
     now = service->clock_seconds(service->clock_ctx);
     if (now == 0u) {
       rc = TURBO_EIO;
@@ -221,6 +225,10 @@ int flowie_control_auth_service_authenticate_root(
     }
     if (flowie_control_external_auth_assertion_validate(&assertion, service->method, now) !=
         TURBO_OK) {
+      rc = TURBO_EPROTO;
+      goto done;
+    }
+    if (strcmp(assertion.domain_id, domain_id) != 0) {
       rc = TURBO_EPROTO;
       goto done;
     }
@@ -254,7 +262,7 @@ int flowie_control_auth_service_authenticate_root(
     }
     if (rc != TURBO_OK) goto done;
   }
-  if (!resolved_credential)
+  if (!resolved_credential && !verified_external_assertion)
     flowie_control_auth_rate_limiter_record_success(service->rate_limiter, caller_scope, domain_id,
                                                     request->identity);
   if (require_policy) {
@@ -281,8 +289,8 @@ int flowie_control_auth_service_authenticate_root(
                                               verified.credential_revision, store_revision,
                                               policy_version, &snapshot, &principal_cache_hit);
       if (rc == TURBO_ENOENT) {
-        rc = service->repository.auth->principal_snapshot(
-            service->repository.ctx, domain_id, request->identity, &verified, &snapshot);
+        rc = service->repository.auth->principal_snapshot(service->repository.ctx, domain_id,
+                                                          request->identity, &verified, &snapshot);
         if (rc != TURBO_OK) goto done;
         rc = flowie_control_principal_cache_put(service->principal_cache, &snapshot, store_revision,
                                                 policy_version);
@@ -319,11 +327,74 @@ int flowie_control_auth_service_authenticate_root(
   rc = TURBO_OK;
 
 done:
-  if (rc != TURBO_OK)
-    *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
+  if (rc != TURBO_OK) *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   memset(&assertion, 0, sizeof(assertion));
   memset(&mapped, 0, sizeof(mapped));
   memset(&snapshot, 0, sizeof(snapshot));
+  return rc;
+}
+
+int flowie_control_auth_service_authenticate_root(
+    flowie_control_auth_service_t *service, const char *domain_id, const char *caller_scope,
+    const flowie_control_authenticate_request_t *request, int require_policy,
+    const flowie_control_credential_resolution_t *resolved_credential,
+    flowie_security_principal_t *principal_out, int *credential_cache_hit_out) {
+  return flowie_control_auth_service_authenticate_root_impl(
+      service, domain_id, caller_scope, request, require_policy, resolved_credential, NULL,
+      principal_out, credential_cache_hit_out);
+}
+
+static int flowie_control_auth_service_authenticate_external_discovered(
+    flowie_control_auth_service_t *service, const flowie_control_authenticate_request_t *request,
+    flowie_security_principal_t *principal_out, int *credential_cache_hit_out) {
+  flowie_control_external_auth_request_t external_request =
+      FLOWIE_CONTROL_EXTERNAL_AUTH_REQUEST_INIT;
+  flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
+  uint64_t now;
+  int rc;
+  if (!flowie_control_auth_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX) ||
+      !flowie_control_auth_text_valid(request->remote_address,
+                                      FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX))
+    return TURBO_EINVAL;
+  rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, request->caller->service_id,
+                                                request->caller->domain_id, request->identity);
+  if (rc != TURBO_OK) return rc;
+  external_request.domain_id = "";
+  external_request.presented_identity = request->identity;
+  external_request.method = request->method;
+  external_request.secret = request->secret;
+  external_request.secret_size = request->secret_size;
+  external_request.protocol = request->protocol;
+  external_request.remote_address = request->remote_address;
+  external_request.peer_certificate_sha256 = request->peer_certificate_sha256;
+  rc = service->external_authenticator.verify(service->external_authenticator.ctx,
+                                              &external_request, &assertion);
+  if (rc != TURBO_OK) goto done;
+  now = service->clock_seconds(service->clock_ctx);
+  if (now == 0u) {
+    rc = TURBO_EIO;
+    goto done;
+  }
+  if (assertion.size >= sizeof(assertion) &&
+      (assertion.account_enabled == 0 || assertion.expires_at <= now)) {
+    rc = TURBO_EPERM;
+    goto done;
+  }
+  if (flowie_control_external_auth_assertion_validate(&assertion, service->method, now) !=
+      TURBO_OK) {
+    rc = TURBO_EPROTO;
+    goto done;
+  }
+  rc = flowie_control_auth_service_authenticate_root_impl(
+      service, assertion.domain_id, request->caller->service_id, request, 1, NULL, &assertion,
+      principal_out, credential_cache_hit_out);
+  if (rc == TURBO_OK)
+    flowie_control_auth_rate_limiter_record_success(service->rate_limiter,
+                                                    request->caller->service_id,
+                                                    request->caller->domain_id, request->identity);
+
+done:
+  memset(&assertion, 0, sizeof(assertion));
   return rc;
 }
 
@@ -337,34 +408,35 @@ int flowie_control_auth_service_authenticate(flowie_control_auth_service_t *serv
   if (principal_out && principal_out->size >= sizeof(*principal_out))
     *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   if (!service || !request || request->size < sizeof(*request) || !request->caller ||
-      request->caller->size < sizeof(*request->caller) ||
-      request->caller->authenticated != 1 ||
+      request->caller->size < sizeof(*request->caller) || request->caller->authenticated != 1 ||
       (request->caller->permissions & FLOWIE_CONTROL_SERVICE_AUTHENTICATE) == 0u ||
       !flowie_control_auth_text_valid(request->caller->listener_id, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_text_valid(request->caller->service_id, FLOWIE_SECURITY_ID_MAX) ||
-      !flowie_control_auth_text_valid(request->caller->domain_id,
-                                      FLOWIE_SECURITY_ID_MAX) ||
+      !flowie_control_auth_text_valid(request->caller->domain_id, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_text_valid(request->identity, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_text_valid(request->method, FLOWIE_SECURITY_TYPE_MAX) ||
       !request->secret || request->secret_size == 0u ||
       request->secret_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX || !principal_out ||
       principal_out->size < sizeof(*principal_out) ||
       (request->caller->peer_certificate_sha256 &&
-       !flowie_control_auth_fingerprint_valid(request->caller->peer_certificate_sha256)))
+       !flowie_control_auth_fingerprint_valid(request->caller->peer_certificate_sha256)) ||
+      (request->peer_certificate_sha256 &&
+       !flowie_control_auth_fingerprint_valid(request->peer_certificate_sha256)))
     return TURBO_EPERM;
-  if (service->external_auth_enabled) return TURBO_ENOTSUP;
   if (strcmp(request->method, service->method) != 0) return TURBO_EPERM;
-  rc = flowie_control_auth_rate_limiter_acquire(
-      service->rate_limiter, request->caller->service_id, request->caller->domain_id,
-      request->identity);
+  if (service->external_auth_enabled)
+    return flowie_control_auth_service_authenticate_external_discovered(
+        service, request, principal_out, credential_cache_hit_out);
+  rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, request->caller->service_id,
+                                                request->caller->domain_id, request->identity);
   if (rc != TURBO_OK) return rc;
   rc = service->repository.auth->credential_resolve(
       service->repository.ctx, request->identity, request->secret, request->secret_size, &resolved);
   if (rc != TURBO_OK) return rc;
-  flowie_control_auth_rate_limiter_record_success(
-      service->rate_limiter, request->caller->service_id, request->caller->domain_id,
-      request->identity);
-  return flowie_control_auth_service_authenticate_root(
-      service, resolved.domain_id, request->caller->service_id, request, 1, &resolved,
+  flowie_control_auth_rate_limiter_record_success(service->rate_limiter,
+                                                  request->caller->service_id,
+                                                  request->caller->domain_id, request->identity);
+  return flowie_control_auth_service_authenticate_root_impl(
+      service, resolved.domain_id, request->caller->service_id, request, 1, &resolved, NULL,
       principal_out, credential_cache_hit_out);
 }
