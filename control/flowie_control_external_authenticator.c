@@ -49,6 +49,7 @@ int flowie_control_external_auth_assertion_validate(
   if (!assertion || assertion->size < sizeof(*assertion) ||
       !external_auth_text_valid(expected_method, FLOWIE_SECURITY_TYPE_MAX) ||
       !external_auth_text_valid(assertion->issuer, FLOWIE_CONTROL_EXTERNAL_ISSUER_MAX) ||
+      !external_auth_text_valid(assertion->domain_id, FLOWIE_SECURITY_ID_MAX) ||
       !external_auth_text_valid(assertion->subject, FLOWIE_SECURITY_ID_MAX) ||
       !external_auth_text_valid(assertion->subject_type, FLOWIE_SECURITY_TYPE_MAX) ||
       !external_auth_text_valid(assertion->auth_method, FLOWIE_SECURITY_TYPE_MAX) ||

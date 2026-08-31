@@ -44,6 +44,19 @@ extern "C" {
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_MAX_RESPONSE_SIZE 65536u
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT 64u
 #define FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_MAX_IN_FLIGHT 1024u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_TIMEOUT_MS 3000u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_TIMEOUT_MS 30000u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_RESPONSE_SIZE 65536u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_RESPONSE_SIZE (1024u * 1024u)
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_MAX_KEYS 16u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_KEYS 64u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_TOKEN_SIZE 4096u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_TOKEN_SIZE 16384u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_REFRESH_SECONDS 300u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_REFRESH_SECONDS 86400u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_CLOCK_SKEW_SECONDS 30u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_MAX_CLOCK_SKEW_SECONDS 300u
+#define FLOWIE_CONTROL_CONFIG_JWT_JWKS_ALGORITHM_MAX 15u
 #define FLOWIE_CONTROL_CONFIG_TURBODB_DRIVER_MAX 63u
 #define FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX 16u
 #define FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_KEY_MAX 63u
@@ -136,6 +149,25 @@ typedef struct flowie_control_config_auth_local_executor_s {
   uint32_t deadline_ms;
 } flowie_control_config_auth_local_executor_t;
 
+typedef struct flowie_control_config_jwt_jwks_s {
+  int enabled;
+  char url[FLOWIE_CONTROL_CONFIG_URL_MAX + 1u];
+  char trusted_issuer[FLOWIE_SECURITY_ID_MAX + 1u];
+  char audience[FLOWIE_SECURITY_ID_MAX + 1u];
+  char subject_type[FLOWIE_SECURITY_TYPE_MAX + 1u];
+  char algorithm[FLOWIE_CONTROL_CONFIG_JWT_JWKS_ALGORITHM_MAX + 1u];
+  char ca_file[TURBO_FS_MAX_PATH];
+  uint32_t timeout_ms;
+  size_t max_response_size;
+  uint32_t max_keys;
+  size_t max_token_size;
+  uint64_t refresh_interval_seconds;
+  uint32_t clock_skew_seconds;
+  uint32_t executor_workers;
+  size_t executor_queue_capacity;
+  uint32_t executor_deadline_ms;
+} flowie_control_config_jwt_jwks_t;
+
 typedef struct flowie_control_config_auth_s {
   int enabled;
   char listener_id[FLOWIE_SECURITY_ID_MAX + 1u];
@@ -145,6 +177,7 @@ typedef struct flowie_control_config_auth_s {
   uint64_t credential_cache_ttl_seconds;
   flowie_control_config_auth_local_executor_t local_executor;
   flowie_control_config_external_https_t external_https;
+  flowie_control_config_jwt_jwks_t jwt_jwks;
 } flowie_control_config_auth_t;
 
 typedef struct flowie_control_config_bootstrap_s {
@@ -184,21 +217,32 @@ typedef struct flowie_control_config_s {
                        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,           \
                    .login_executor_deadline_ms =                                                   \
                        FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},             \
-    .dashboard_enabled = 1, .auth = {                                                              \
-      .principal_ttl_seconds = 300u,                                                               \
-      .credential_cache_capacity = 4096u,                                                          \
-      .credential_cache_ttl_seconds = 60u,                                                         \
-      .local_executor = {.workers = FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,     \
-                         .queue_capacity =                                                         \
-                             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,     \
-                         .deadline_ms =                                                            \
-                             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},       \
-      .external_https = {.timeout_ms = FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_TIMEOUT_MS,    \
-                         .max_response_size =                                                      \
-                             FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_RESPONSE_SIZE,           \
-                         .max_in_flight =                                                          \
-                             FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT}           \
-    }                                                                                              \
+    .dashboard_enabled = 1,                                                                        \
+    .auth =                                                                                        \
+    {.principal_ttl_seconds = 300u,                                                                \
+     .credential_cache_capacity = 4096u,                                                           \
+     .credential_cache_ttl_seconds = 60u,                                                          \
+     .local_executor = {.workers = FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,      \
+                        .queue_capacity =                                                          \
+                            FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,      \
+                        .deadline_ms =                                                             \
+                            FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS},        \
+     .external_https = {.timeout_ms = FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_TIMEOUT_MS,     \
+                        .max_response_size =                                                       \
+                            FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_RESPONSE_SIZE,            \
+                        .max_in_flight =                                                           \
+                            FLOWIE_CONTROL_CONFIG_EXTERNAL_HTTPS_DEFAULT_MAX_IN_FLIGHT},           \
+     .jwt_jwks = {                                                                                 \
+         .timeout_ms = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_TIMEOUT_MS,                          \
+         .max_response_size = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_RESPONSE_SIZE,                \
+         .max_keys = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_MAX_KEYS,                              \
+         .max_token_size = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_TOKEN_SIZE,                      \
+         .refresh_interval_seconds = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_REFRESH_SECONDS,       \
+         .clock_skew_seconds = FLOWIE_CONTROL_CONFIG_JWT_JWKS_DEFAULT_CLOCK_SKEW_SECONDS,          \
+         .executor_workers = FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS,            \
+         .executor_queue_capacity =                                                                \
+             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_QUEUE_CAPACITY,                     \
+         .executor_deadline_ms = FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_DEADLINE_MS} }  \
   }
 
 int flowie_control_config_parse_yaml(const char *yaml, size_t yaml_size,

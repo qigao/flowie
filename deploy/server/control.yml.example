@@ -53,3 +53,23 @@ auth:
     workers: 4
     queue_capacity: 128
     deadline_ms: 10000
+  # To validate bearer JWTs locally, remove both local_executor and management.login_executor,
+  # set method to bearer, then configure this mutually exclusive provider:
+  # jwt_jwks:
+  #   url: https://identity.internal/.well-known/jwks.json
+  #   trusted_issuer: https://identity.internal
+  #   audience: flowie
+  #   subject_type: device
+  #   algorithm: EdDSA
+  #   timeout_ms: 3000
+  #   max_response_size: 65536
+  #   max_keys: 16
+  #   max_token_size: 4096
+  #   refresh_interval_seconds: 300
+  #   clock_skew_seconds: 30
+  #   executor:
+  #     workers: 4
+  #     queue_capacity: 128
+  #     deadline_ms: 10000
+  #   tls:
+  #     ca_file: /etc/flowie/certs/identity-ca.pem
