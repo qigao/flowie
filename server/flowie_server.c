@@ -1,6 +1,9 @@
 #include "flowie.h"
+#include "flowie_server_config_internal.h"
+#include "flowie_server_http_security_internal.h"
 #include "flowie_server_turbodb_config_internal.h"
 
+#include "CoroNet/turbo_coro_object_pool.h"
 #include "turbo_error.h"
 #include "turbo_parser.h"
 #include "turbo_thread.h"
@@ -16,7 +19,8 @@
 enum {
   FLOWIE_SERVER_WAIT_INTERVAL_MS = 100u,
   FLOWIE_SERVER_LOG_BUFFER_BYTES = 64u * 1024u,
-  FLOWIE_SERVER_LOG_POOL_BYTES = 32u * 1024u
+  FLOWIE_SERVER_LOG_POOL_BYTES = 32u * 1024u,
+  FLOWIE_SERVER_COROUTINE_AUXILIARY_HEADROOM = 8u
 };
 
 #define FLOWIE_SERVER_LOG_COMPONENT "Flowie.Server"
@@ -48,6 +52,21 @@ static flowie_transport_t flowie_server_transport(const char *value) {
   if (strcmp(value, "ws") == 0) return FLOWIE_TRANSPORT_WS;
   if (strcmp(value, "wss") == 0) return FLOWIE_TRANSPORT_WSS;
   return 0;
+}
+
+static const char *flowie_server_transport_name(flowie_transport_t transport) {
+  switch (transport) {
+  case FLOWIE_TRANSPORT_TCP:
+    return "tcp";
+  case FLOWIE_TRANSPORT_TLS:
+    return "tls";
+  case FLOWIE_TRANSPORT_WS:
+    return "ws";
+  case FLOWIE_TRANSPORT_WSS:
+    return "wss";
+  default:
+    return "invalid";
+  }
 }
 
 static int flowie_server_log_level(const char *value, turbo_log_level_t *level) {
@@ -221,17 +240,109 @@ static void flowie_server_runtime_destroy(flowie_endpoint_core_t *endpoint,
   flowie_protocol_repository_close(repository);
 }
 
+typedef struct flowie_server_security_runtime_s {
+  coro_context_t *context;
+  flowie_server_http_security_t *http;
+  flowie_security_realm_t *realm;
+  turbo_thread_t thread;
+  int thread_started;
+} flowie_server_security_runtime_t;
+
+static void flowie_server_context_run(void *arg) {
+  flowie_server_security_runtime_t *runtime = (flowie_server_security_runtime_t *)arg;
+  if (runtime && runtime->context)
+    (void)coro_context_run(runtime->context, TURBO_RUN_DEFAULT);
+}
+
+static void flowie_server_security_runtime_stop(flowie_server_security_runtime_t *runtime) {
+  if (!runtime || !runtime->context || !runtime->thread_started) return;
+  coro_context_set_persistent(runtime->context, 0);
+  coro_context_stop(runtime->context);
+  (void)turbo_thread_join(&runtime->thread);
+  turbo_thread_destroy(&runtime->thread);
+  runtime->thread_started = 0;
+}
+
+static void flowie_server_security_runtime_destroy(flowie_server_security_runtime_t *runtime) {
+  if (!runtime) return;
+  flowie_server_security_runtime_stop(runtime);
+  flowie_security_realm_destroy(runtime->realm);
+  flowie_server_http_security_destroy(runtime->http);
+  coro_context_destroy(runtime->context);
+  memset(runtime, 0, sizeof(*runtime));
+}
+
+static int flowie_server_security_runtime_create(
+    const flowie_server_config_t *config, const flowie_endpoint_config_t *endpoint_config,
+    flowie_server_security_runtime_t *runtime) {
+  coro_object_pool_config_t pool_config = CORO_OBJECT_POOL_CONFIG_DEFAULT;
+  flowie_security_realm_config_t realm_config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
+  size_t recv_buffer_size;
+  int rc;
+  if (!config || !endpoint_config || !runtime || !flowie_server_config_realm_name(config) ||
+      endpoint_config->max_connections == 0u)
+    return TURBO_EINVAL;
+  memset(runtime, 0, sizeof(*runtime));
+  if (endpoint_config->max_connections >
+      (SIZE_MAX - FLOWIE_SERVER_COROUTINE_AUXILIARY_HEADROOM) / 2u)
+    return TURBO_ERANGE;
+  pool_config.max_capacity =
+      (size_t)endpoint_config->max_connections * 2u +
+      FLOWIE_SERVER_COROUTINE_AUXILIARY_HEADROOM;
+  if (pool_config.initial_capacity > pool_config.max_capacity)
+    pool_config.initial_capacity = pool_config.max_capacity;
+  pool_config.stack_size = endpoint_config->coroutine_stack_size;
+  runtime->context = coro_context_create_ex(NULL, &pool_config);
+  if (!runtime->context) return TURBO_ENOMEM;
+  recv_buffer_size = endpoint_config->stream_recv_buffer_bytes
+                         ? endpoint_config->stream_recv_buffer_bytes
+                         : FLOWIE_DEFAULT_RECV_BUFFER_SIZE;
+  rc = coro_context_set_stream_recv_buffer_size(runtime->context, recv_buffer_size);
+  if (rc == TURBO_OK)
+    rc = flowie_server_http_security_create(runtime->context,
+                                            flowie_server_config_auth(config),
+                                            flowie_server_config_acl(config), &runtime->http);
+  realm_config.resource_uid = flowie_server_config_realm_resource_uid(config);
+  realm_config.owner_name = flowie_server_config_realm_owner_name(config);
+  realm_config.policy_source = flowie_server_config_acl_provider_name(config);
+  if (rc == TURBO_OK) rc = flowie_security_realm_create(&realm_config, &runtime->realm);
+  if (rc == TURBO_OK)
+    rc = flowie_security_realm_bind_authorization_provider(
+        runtime->realm, flowie_server_http_security_acl_provider(runtime->http));
+  if (rc != TURBO_OK) flowie_server_security_runtime_destroy(runtime);
+  return rc;
+}
+
+static int flowie_server_security_runtime_start(flowie_server_security_runtime_t *runtime) {
+  int rc;
+  if (!runtime || !runtime->context || runtime->thread_started) return TURBO_EINVAL;
+  coro_context_set_persistent(runtime->context, 1);
+  rc = turbo_thread_create(&runtime->thread, flowie_server_context_run, runtime);
+  if (rc != TURBO_OK) {
+    coro_context_set_persistent(runtime->context, 0);
+    return rc;
+  }
+  runtime->thread_started = 1;
+  return TURBO_OK;
+}
+
 int main(int argc, char **argv) {
   flowie_endpoint_config_t endpoint_config = FLOWIE_ENDPOINT_CONFIG_INIT;
   flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
-  const flowie_execution_binding_t execution = {
+  flowie_execution_binding_t execution = {
       sizeof(flowie_execution_binding_t), FLOWIE_EXECUTION_PRIVATE, NULL, NULL, 0u, 0u};
+  flowie_endpoint_security_binding_t security_binding = FLOWIE_ENDPOINT_SECURITY_BINDING_INIT;
   flowie_endpoint_persistence_binding_t persistence = FLOWIE_ENDPOINT_PERSISTENCE_BINDING_INIT;
   flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
   flowie_endpoint_core_t *endpoint = NULL;
   flowie_protocol_repository_t *repository = NULL;
+  flowie_server_config_t *server_config = NULL;
+  flowie_server_config_error_t config_error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
+  flowie_server_security_runtime_t security_runtime = {0};
   flowie_server_turbodb_config_t *turbodb = NULL;
   turbo_cmd_parser_t *parser;
+  char *config_path = NULL;
+  char *profile_name = NULL;
   char *host = NULL;
   char *transport_name = NULL;
   char *path = NULL;
@@ -241,6 +352,7 @@ int main(int argc, char **argv) {
   int64_t port = 1883;
   flowie_server_tuning_t tuning = FLOWIE_SERVER_TUNING_INIT;
   bool check_only = false;
+  bool require_security = false;
   turbo_log_level_t log_level = TURBO_LOG_LEVEL_INFO;
   tlog_t *logger = NULL;
   int rc;
@@ -251,6 +363,12 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   turbo_cmd_add_flag(parser, &check_only, "check", NULL, "Validate options and exit");
+  turbo_cmd_add_flag(parser, &require_security, "require-security", NULL,
+                     "Reject configurations without remote Auth and ACL providers");
+  turbo_cmd_add_string(parser, &config_path, "config", NULL,
+                       "Flowie YAML configuration file");
+  turbo_cmd_add_string(parser, &profile_name, "profile", NULL,
+                       "Flowie profile name (default: flowie)");
   turbo_cmd_add_string(parser, &host, "host", NULL, "Listener host (default: 0.0.0.0)");
   turbo_cmd_add_integer(parser, &port, "port", NULL, "Listener port (default: 1883)");
   turbo_cmd_add_string(parser, &transport_name, "transport", NULL,
@@ -305,42 +423,61 @@ int main(int argc, char **argv) {
   turbo_cmd_parse(parser, argc, argv, false);
   turbo_cmd_destroy(parser);
 
-  endpoint_config.transport = flowie_server_transport(transport_name);
-  endpoint_config.host = host ? host : "0.0.0.0";
-  endpoint_config.port = (int)port;
-  endpoint_config.path = path ? path : "/mqtt";
-  endpoint_config.manage_sessions = 1;
+  profile_name = profile_name ? profile_name : "flowie";
+  if (config_path) {
+    rc = flowie_server_config_load(config_path, profile_name, require_security ? 1 : 0,
+                                   &server_config, &config_error);
+    if (rc != TURBO_OK) {
+      (void)fprintf(stderr, "flowie_server: invalid configuration at %s: %s (%s)\n",
+                    config_error.path, config_error.message, turbo_strerror(rc));
+      return EXIT_FAILURE;
+    }
+    endpoint_config = *flowie_server_config_endpoint(server_config);
+  } else {
+    if (require_security) {
+      (void)fprintf(stderr, "flowie_server: --require-security requires --config\n");
+      return EXIT_FAILURE;
+    }
+    endpoint_config.transport = flowie_server_transport(transport_name);
+    endpoint_config.host = host ? host : "0.0.0.0";
+    endpoint_config.port = (int)port;
+    endpoint_config.path = path ? path : "/mqtt";
+    endpoint_config.manage_sessions = 1;
+    if (endpoint_config.transport == 0 || port <= 0 || port > UINT16_MAX ||
+        flowie_server_tuning_apply(&tuning, &endpoint_config) != TURBO_OK) {
+      (void)fprintf(stderr, "flowie_server: invalid listener options\n");
+      return EXIT_FAILURE;
+    }
+  }
   protocol_store_driver = protocol_store_driver ? protocol_store_driver
                                                 : FLOWIE_SERVER_TURBODB_DEFAULT_DRIVER;
   protocol_store_options = protocol_store_options ? protocol_store_options
                                                   : FLOWIE_SERVER_TURBODB_DEFAULT_OPTIONS;
   options.on_message = flowie_server_publish;
-  if (endpoint_config.transport == 0 || port <= 0 || port > UINT16_MAX ||
-      flowie_server_tuning_apply(&tuning, &endpoint_config) != TURBO_OK) {
-    (void)fprintf(stderr, "flowie_server: invalid listener options\n");
-    return EXIT_FAILURE;
-  }
   if (flowie_server_log_level(log_level_name, &log_level) != TURBO_OK) {
     (void)fprintf(stderr, "flowie_server: invalid log level: %s\n",
                   log_level_name ? log_level_name : "(null)");
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   rc = flowie_server_turbodb_config_create(protocol_store_driver, protocol_store_options, &turbodb);
   if (rc != TURBO_OK) {
     (void)fprintf(stderr, "flowie_server: invalid TurboDB configuration: %s\n",
                   turbo_strerror(rc));
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   logger = flowie_server_logging_create(log_level);
   if (!logger) {
     (void)fprintf(stderr, "flowie_server: cannot initialize logging\n");
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   TURBO_LOG_DEBUGF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                    "effective-config transport={} host={} port={} path={} reuse_port={} "
                    "protocol_store_driver={} log_level={}",
-                   transport_name ? transport_name : "tcp", endpoint_config.host,
+                   flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
                    endpoint_config.port, endpoint_config.path, endpoint_config.reuse_port,
                    flowie_server_turbodb_config_driver(turbodb), turbo_log_level_name(log_level));
   TURBO_LOG_DEBUGF(
@@ -371,14 +508,42 @@ int main(int argc, char **argv) {
       (unsigned long long)endpoint_config.tcp_keepalive_interval_ms,
       (unsigned int)endpoint_config.tcp_keepalive_count);
 
+  if (server_config && flowie_server_config_realm_name(server_config)) {
+    rc = flowie_server_security_runtime_create(server_config, &endpoint_config,
+                                               &security_runtime);
+    if (rc != TURBO_OK) {
+      TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                       "security-runtime-create-failed status={} reason={}", rc,
+                       turbo_strerror(rc));
+      flowie_server_logging_destroy(logger);
+      flowie_server_turbodb_config_destroy(turbodb);
+      flowie_server_config_destroy(server_config);
+      return EXIT_FAILURE;
+    }
+    execution.kind = FLOWIE_EXECUTION_BORROWED_CONTEXT;
+    execution.context = security_runtime.context;
+    security_binding.realm_channel = flowie_server_config_realm_name(server_config);
+    security_binding.auth_method = flowie_server_config_auth_method(server_config);
+    security_binding.auth_provider =
+        flowie_server_http_security_auth_provider(security_runtime.http);
+    security_binding.realm = security_runtime.realm;
+    bindings.security = &security_binding;
+    /* These values configured the host-owned context above. Borrowed endpoints must not
+     * attempt to reconfigure that shared owner lane. */
+    endpoint_config.coroutine_stack_size = 0u;
+    endpoint_config.stream_recv_buffer_bytes = 0u;
+  }
+
   rc = flowie_server_repository_open(flowie_server_turbodb_config_database(turbodb),
                                      &endpoint_config, &repository);
   if (rc != TURBO_OK) {
     TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "protocol-store-open-failed driver={} status={} reason={}",
                      flowie_server_turbodb_config_driver(turbodb), rc, turbo_strerror(rc));
+    flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   persistence.repository = repository;
@@ -389,15 +554,19 @@ int main(int argc, char **argv) {
     TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "endpoint-create-failed status={} reason={}", rc, turbo_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
+    flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   if (check_only) {
     flowie_server_runtime_destroy(endpoint, repository);
+    flowie_server_security_runtime_destroy(&security_runtime);
     (void)fprintf(stdout, "flowie_server: options are valid\n");
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_SUCCESS;
   }
   if (signal(SIGINT, flowie_server_signal) == SIG_ERR ||
@@ -405,37 +574,58 @@ int main(int argc, char **argv) {
     TURBO_LOG_ERROR(logger, FLOWIE_SERVER_LOG_COMPONENT,
                     "signal-handler-install-failed action=check process signal policy");
     flowie_server_runtime_destroy(endpoint, repository);
+    flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
+  }
+  if (security_runtime.context) {
+    rc = flowie_server_security_runtime_start(&security_runtime);
+    if (rc != TURBO_OK) {
+      TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                       "coroutine-owner-start-failed status={} reason={}", rc,
+                       turbo_strerror(rc));
+      flowie_server_runtime_destroy(endpoint, repository);
+      flowie_server_security_runtime_destroy(&security_runtime);
+      flowie_server_logging_destroy(logger);
+      flowie_server_turbodb_config_destroy(turbodb);
+      flowie_server_config_destroy(server_config);
+      return EXIT_FAILURE;
+    }
   }
   rc = flowie_endpoint_core_start(endpoint);
   if (rc != TURBO_OK) {
     TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "endpoint-start-failed status={} reason={}", rc, turbo_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
+    flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   TURBO_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                   "server-started transport={} host={} port={}",
-                  transport_name ? transport_name : "tcp", endpoint_config.host,
+                  flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
                   endpoint_config.port);
   (void)fprintf(stdout, "flowie_server: mqtt://%s:%d running; press Ctrl+C to stop\n",
                 endpoint_config.host, endpoint_config.port);
   while (!flowie_server_stop_requested) turbo_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
   rc = flowie_endpoint_core_stop(endpoint);
   flowie_server_runtime_destroy(endpoint, repository);
+  flowie_server_security_runtime_destroy(&security_runtime);
   if (rc != TURBO_OK) {
     TURBO_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "endpoint-stop-failed status={} reason={}", rc, turbo_strerror(rc));
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   TURBO_LOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
   flowie_server_logging_destroy(logger);
   flowie_server_turbodb_config_destroy(turbodb);
+  flowie_server_config_destroy(server_config);
   return EXIT_SUCCESS;
 }

@@ -1,8 +1,54 @@
-add_executable(flowie_server flowie_server.c flowie_server_turbodb_config.c)
-target_link_libraries(flowie_server PRIVATE Flowie::App Orm::C TurboParser::Parser)
+add_executable(
+  flowie_server
+  flowie_server.c
+  flowie_server_config.c
+  flowie_server_http_security.c
+  flowie_server_turbodb_config.c)
+target_link_libraries(
+  flowie_server PRIVATE Flowie::App Orm::C TurboHttp::TurboHttp TurboParser::Parser)
+cmake_target_enable_boringssl_linkage(flowie_server)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
 if(FLOWIE_BUILD_TESTS)
+  cmake_add_test(
+    test_flowie_server_config
+    SOURCES tests/test_flowie_server_config.c flowie_server_config.c
+    LIBS Flowie::Protocol Orm::C TurboNet::CoroNet TurboParser::Parser TurboUtils::Core
+         TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
+    FOLDER "flowie/server/tests")
+  target_compile_definitions(
+    test_flowie_server_config
+    PRIVATE FLOWIE_TEST_EU_CONFIG="${PROJECT_SOURCE_DIR}/deploy/server/.remote-flowie-eu.yml"
+            FLOWIE_TEST_INSECURE_CONFIG="${PROJECT_SOURCE_DIR}/flowie/examples/flowie.yml")
+  set_tests_properties(
+    test_flowie_server_config
+    PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
+
+  cmake_add_test(
+    test_flowie_server_http_security
+    SOURCES tests/test_flowie_server_http_security.c flowie_server_http_security.c
+    LIBS Flowie::Protocol Orm::C TurboHttp::TurboHttp TurboNet::CoroNet TurboParser::Parser
+         TurboUtils::Core TurboUtils::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
+    FOLDER "flowie/server/tests")
+  set_tests_properties(
+    test_flowie_server_http_security
+    PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
+  cmake_target_enable_boringssl_linkage(test_flowie_server_http_security)
+
+  add_test(
+    NAME flowie_server_check_native_https_security
+    COMMAND flowie_server --check --require-security
+            --config ${PROJECT_SOURCE_DIR}/deploy/server/.remote-flowie-eu.yml
+            --profile flowie --protocol-store-driver sqlite
+            --protocol-store-options {"filename":":memory:"})
+  set_tests_properties(
+    flowie_server_check_native_https_security
+    PROPERTIES
+      LABELS "flowie;flowie-release;product-contract;security-contract;coronet"
+      ENVIRONMENT "FLOWIE_AUTH_SERVICE_TOKEN=test-only-token")
+
   cmake_add_test(
     test_flowie_server_turbodb_config
     SOURCES tests/test_flowie_server_turbodb_config.c flowie_server_turbodb_config.c

@@ -4,65 +4,54 @@
 `flowie-server` 和 `flowie-postgres` 两个 service；前者由 `flowie-combined-entrypoint` 在同一容器内监督
 Server 与 Control 两个独立进程，后者为二者提供同一个 PostgreSQL database。Server 或 Control 任一进程
 退出都会终止另一进程并让应用容器重启。两个应用进程都以 UID/GID `10001` 运行，默认只监听 host
-loopback。直接运行镜像而不覆盖 entrypoint 时仍保持 Broker-only，并默认使用 SQLite。
+loopback。直接运行镜像而不覆盖 entrypoint 时仍保持 Broker-only，但必须挂载 `flowie.yml`；协议库默认
+使用 SQLite。
 
 ## 运行契约
 
-入口脚本把以下环境变量映射到 `flowie_server` 的同名参数：
+`flowie_server` 只拥有 MQTT listener、连接、会话、订阅、上下行收发和协议状态。账号、租户、设备及 ACL
+以 `flowie-control` Repository 为唯一事实源：MQTT CONNECT 通过 HTTPS `/v4/authenticate` 认证，PUBLISH/
+SUBSCRIBE 通过 HTTPS `/v4/acl/check` 逐请求判定。Flowie 不提供业务 HTTP API，也不加载 RulesForge、
+TurboFlow、FlowMQ 或 TurboRaft。
+
+入口脚本只装配配置、profile 与协议库：
 
 | 环境变量 | 默认值 | CLI 参数 |
 | --- | --- | --- |
-| `FLOWIE_HOST` | `127.0.0.1` | `--host` |
-| `FLOWIE_PORT` | `18883` | `--port` |
-| `FLOWIE_TRANSPORT` | `tcp` | `--transport` |
-| `FLOWIE_PATH` | `/mqtt` | `--path` |
+| `FLOWIE_CONFIG` | `/etc/flowie/flowie.yml` | `--config`，必须是可读文件 |
+| `FLOWIE_PROFILE` | `flowie` | `--profile` |
+| `FLOWIE_AUTH_SERVICE_TOKEN_FILE` | 无 | 入口读取 Docker secret 并导出 YAML 引用的 `FLOWIE_AUTH_SERVICE_TOKEN` |
 | `FLOWIE_PROTOCOL_STORE_DRIVER` | `sqlite` | `--protocol-store-driver` |
 | `FLOWIE_PROTOCOL_STORE_OPTIONS` | `{"filename":"/var/lib/flowie/flowie-protocol.sqlite3"}` | `--protocol-store-options`（JSON object） |
-| `FLOWIE_MAX_PACKET_SIZE` | `1048576` | `--max-packet-size` |
-| `FLOWIE_MAX_CONNECTIONS` | `1024` | `--max-connections` |
-| `FLOWIE_MAX_SESSIONS` | 跟随 `FLOWIE_MAX_CONNECTIONS` | `--max-sessions` |
-| `FLOWIE_MAX_SUBSCRIPTIONS_PER_SESSION` | `1024` | `--max-subscriptions-per-session` |
-| `FLOWIE_MAX_INFLIGHT_PER_SESSION` | `64` | `--max-inflight` |
-| `FLOWIE_MAX_RETAINED_MESSAGES` | 跟随 `FLOWIE_MAX_SESSIONS` | `--max-retained-messages` |
-| `FLOWIE_SEND_HWM_BYTES` | `1048576` | `--send-hwm-bytes` |
-| `FLOWIE_COROUTINE_STACK_SIZE` | `0`（组件默认值） | `--coroutine-stack-size` |
-| `FLOWIE_STREAM_RECV_BUFFER_BYTES` | `0`（组件默认值） | `--stream-recv-buffer-bytes` |
-| `FLOWIE_SOCKET_RECV_BUFFER_BYTES` | `0`（操作系统默认值） | `--socket-recv-buffer-bytes` |
-| `FLOWIE_SOCKET_SEND_BUFFER_BYTES` | `0`（操作系统默认值） | `--socket-send-buffer-bytes` |
-| `FLOWIE_TIMEOUT_MS` | `0`（禁用默认超时） | `--timeout-ms` |
-| `FLOWIE_RECV_TIMEOUT_MS` | `0`（跟随默认超时） | `--recv-timeout-ms` |
-| `FLOWIE_TCP_KEEPALIVE` | `0` | `--tcp-keepalive` |
-| `FLOWIE_TCP_KEEPALIVE_IDLE_MS` | `0`（操作系统默认值） | `--tcp-keepalive-idle-ms` |
-| `FLOWIE_TCP_KEEPALIVE_INTERVAL_MS` | `0`（操作系统默认值） | `--tcp-keepalive-interval-ms` |
-| `FLOWIE_TCP_KEEPALIVE_COUNT` | `0`（操作系统默认值） | `--tcp-keepalive-count` |
-| `FLOWIE_REUSE_PORT` | `0` | `--reuse-port` |
-| `FLOWIE_LOG_LEVEL` | `INFO` | `--log-level` |
 | `FLOWIE_CHECK` | `0` | `--check`（启用时） |
 
 容器内的 `FLOWIE_HEALTH_HOST`/`FLOWIE_HEALTH_PORT` 与 `FLOWIE_HEALTH_SECONDARY_HOST`/
 `FLOWIE_HEALTH_SECONDARY_PORT` 只控制健康检查，必须分别指向 MQTT 与 Control listener；Compose 通过
 `.env` 中的 `FLOWIE_CONTROL_HEALTH_HOST`/`FLOWIE_CONTROL_HEALTH_PORT` 设置 secondary 探针。向容器传入
-显式命令时，入口脚本直接执行该命令，例如 `flowie_server --check --port 18883`。`FLOWIE_CHECK=1` 让入口
-按完整环境变量生成参数后执行 check-only。
-布尔环境变量只接受 `0/1/false/true/no/yes/off/on`，其他值会在启动前失败。keepalive 的 idle、interval
-或 count 非零时必须同时启用 `FLOWIE_TCP_KEEPALIVE`。全部参数均在进程启动时确定，修改环境变量后需要重启
-broker；当前不支持运行时热更新。
+显式命令时，入口脚本直接执行该命令。`FLOWIE_CHECK=1` 执行完整的 YAML、service token、TLS client、
+security realm、endpoint 与 TurboDB 初始化检查，但不打开网络 listener。布尔值只接受
+`0/1/false/true/no/yes/off/on`。endpoint 的 host、port、transport 与容量全部来自 `flowie.yml`，环境变量
+不再维护第二份配置；修改 YAML 或 token 后需要重启 broker。
+
+YAML 解析、环境变量读取、TLS/TurboHTTP client 创建均发生在启动阶段。安全 endpoint 与两个出站 HTTP
+client 借用同一个 host-owned `coro_context`；MQTT 认证/授权热路径只做有界协议转换、可挂起的
+`turbo_http_request()` 和响应解析，不创建 client、线程，也不执行同步网络请求。
 
 连接、session、subscription、inflight 和 retained 分别是并发连接、受管会话总数、单会话订阅数、单会话
 待确认 QoS 消息数和 endpoint retained 总数的独立边界。`FLOWIE_SEND_HWM_BYTES` 是每连接待发送字节的
 高水位，不是启动时预分配内存；慢连接耗尽该预算时按既有背压策略断开。私有 CoroNet 上下文的 coroutine
-pool 容量上界为 `2 × max_connections + 32`，每个 coroutine 都有独立 stack；stream receive buffer
+pool 容量上界为 `2 × max_connections + 8`，每个 coroutine 都有独立 stack；stream receive buffer
 则为每个连接使用的两个 chunk。因此提高连接数、stack 或 receive buffer 前必须计算内存上界并用 RSS
 实测校验。socket buffer 只是向内核提出的请求，内核可能按平台策略调整实际值。
 
-`reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数；多
-worker/supervisor 拓扑属于完整的 Flowie YAML runtime，不在这个容器入口的职责范围内。建议先用
-`flowie_server --check --protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}' --log-level DEBUG ...`
-校验参数和 TurboDB schema，
+`reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数。建议先用
+`flowie_server --check --require-security --config /etc/flowie/flowie.yml --profile flowie
+--protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}'`
+校验 YAML、安全装配和 TurboDB schema，
 并保存三条不含 MQTT 身份或内容的
 `effective-config` DEBUG 记录。
-`64` 是库级 session inflight 默认值，不是客户端 MQTT 5 Receive Maximum。高并发诊断可显式设置
-`FLOWIE_MAX_INFLIGHT_PER_SESSION=1024`；容量仍需按单 session 的待发送 QoS 消息峰值评估。
+`max_inflight_per_session` 是服务端 session 的待确认 QoS 消息边界，不是客户端 MQTT 5 Receive Maximum；
+容量仍需按单 session 的待发送 QoS 消息峰值评估。
 
 当前独立 broker 以 `FLOWIE_PROTOCOL_STORE_DRIVER` 与 `FLOWIE_PROTOCOL_STORE_OPTIONS` 指定的
 TurboDB/Orm repository 作为 session、subscription、inflight、retained、pending Will 和 principal
@@ -169,7 +158,14 @@ cp deploy/server/.env.example deploy/server/.env
 cp deploy/server/control.yml.example deploy/server/config/control.yml
 umask 077
 touch deploy/server/secrets/control-key-password
+touch deploy/server/secrets/flowie-auth-service-token
 ```
+
+把现有环境的 `flowie.yml` 保存为 `deploy/server/config/flowie.yml`。其中 endpoint 是 MQTT listener 的唯一
+配置源，Auth/ACL channel 指向同容器的 `flowie-control` HTTPS listener，并以
+`env://FLOWIE_AUTH_SERVICE_TOKEN` 引用 service credential。将该 credential 的 token 值写入
+`deploy/server/secrets/flowie-auth-service-token`；入口只在启动时读取一次，不要把 token 写入 `.env`、YAML、
+Compose 文件或镜像层。
 
 将证书链和私钥分别保存为：
 
@@ -183,7 +179,8 @@ deploy/server/certs/flowie-control-server-key.pem
 Control YAML、命令行或镜像。若私钥未加密，从 `config/control.yml` 删除 `key_password_ref`，该 secret 文件
 仍需作为显式、权限受控的空文件存在。
 
-这里的 secret 只解锁 Control HTTPS 服务端私钥，不是 `system/admin` 登录密码。Vault、云 Secret Manager
+`control-key-password` 只解锁 Control HTTPS 服务端私钥，不是 `system/admin` 登录密码；
+`flowie-auth-service-token` 是 Broker 调用 Control Auth/ACL API 的 service credential。Vault、云 Secret Manager
 或其他第三方平台应在启动前把 secret 原子地落地到该文件，并保持下述 group/mode。entrypoint 只在进程
 启动时读取一次，因此更新文件后执行：
 
@@ -200,12 +197,14 @@ Compose file-backed secret 的 UID/GID/mode 不能重映射，参见
 
 ```sh
 sudo chown -R 10001:10001 deploy/server/config deploy/server/certs
-sudo chgrp 10001 deploy/server/secrets/control-key-password
+sudo chgrp 10001 deploy/server/secrets/control-key-password \
+  deploy/server/secrets/flowie-auth-service-token
 chmod 0750 deploy/server/config deploy/server/certs
-chmod 0640 deploy/server/config/control.yml \
+chmod 0640 deploy/server/config/control.yml deploy/server/config/flowie.yml \
   deploy/server/certs/flowie-control-server-chain.pem
 chmod 0600 deploy/server/certs/flowie-control-server-key.pem
-chmod 0440 deploy/server/secrets/control-key-password
+chmod 0440 deploy/server/secrets/control-key-password \
+  deploy/server/secrets/flowie-auth-service-token
 ```
 
 先启动 PostgreSQL，再验证 Server 参数、数据库连接/schema 与 Control 配置；不打开应用 listener：
@@ -288,7 +287,7 @@ docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
 docker inspect --format '{{.State.Health.Status}}' flowie-server
 ```
 
-`flowie_server --check` 校验 listener 参数、打开 protocol store 并创建或校验 schema 后退出，不启动 listener。
-若只做无文件预检，应显式传入 `--protocol-store-driver sqlite --protocol-store-options
-'{"filename":":memory:"}'`。TLS/WSS 虽是 CLI 可选 transport，但投入生产
-前仍需完成证书配置路径和握手验收；当前已验证的容器默认契约是 TCP。
+`flowie_server --check --require-security --config <flowie.yml> --profile <name>` 校验 YAML、远程 Auth/ACL
+provider、共享 CoroNet context、endpoint，并打开 protocol store 创建或校验 schema 后退出；它不会启动 MQTT
+listener，也不会向 flowie-control 发出认证/授权请求。可配合内存 SQLite 做无持久化预检。TLS/WSS listener
+投入生产前仍需完成服务端证书路径和握手验收；`flowie.yml` 中的 transport 才是最终有效值。

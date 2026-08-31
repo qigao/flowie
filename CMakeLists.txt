@@ -44,6 +44,14 @@ if(FLOWIE_BUILD_TESTS)
     flowie_standalone_dockerfile_contract
     PROPERTIES LABELS "flowie;build-contract;cluster;docker" TIMEOUT 30)
 
+  if(UNIX)
+    add_test(NAME flowie_server_docker_entrypoint_contract
+             COMMAND sh ${CMAKE_SOURCE_DIR}/deploy/server/tests/test-docker-entrypoint.sh)
+    set_tests_properties(
+      flowie_server_docker_entrypoint_contract
+      PROPERTIES LABELS "flowie;build-contract;docker;security-contract" TIMEOUT 30)
+  endif()
+
   add_test(
     NAME flowie_default_no_cluster_configure
     COMMAND

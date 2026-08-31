@@ -54,6 +54,14 @@ static int flowie_security_principal_valid(const flowie_security_principal_t *pr
          principal->group_count <= FLOWIE_SECURITY_MAX_GROUPS && principal->policy_version != 0u;
 }
 
+static int flowie_security_request_valid(const flowie_security_realm_t *realm,
+                                         const flowie_security_request_t *request,
+                                         const flowie_security_decision_t *decision) {
+  return realm && request && request->size >= sizeof(*request) && request->principal &&
+         request->domain_id && request->resource && decision && decision->size >= sizeof(*decision) &&
+         flowie_security_principal_valid(request->principal);
+}
+
 int flowie_security_authenticate(const flowie_security_auth_provider_t *provider,
                                  const flowie_security_auth_request_t *request,
                                  flowie_security_principal_t *principal_out) {
@@ -247,9 +255,7 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
   flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
   uint8_t *adapter_matches = NULL;
   int rc = TURBO_OK;
-  if (!realm || !request || request->size < sizeof(*request) || !request->principal ||
-      !request->domain_id || !request->resource || !decision_out ||
-      !flowie_security_principal_valid(request->principal))
+  if (!flowie_security_request_valid(realm, request, decision_out))
     return TURBO_EINVAL;
   decision.policy_version = realm->policy_version;
   if (strcmp(request->domain_id, request->principal->domain_id) != 0 &&
@@ -311,9 +317,26 @@ int flowie_security_realm_authorize(flowie_security_realm_t *realm,
                                     const flowie_security_request_t *request,
                                     uint64_t now_epoch_seconds,
                                     flowie_security_decision_t *decision_out) {
-  if (!realm) return TURBO_EINVAL;
-  if (realm->authorization.authorize)
-    return realm->authorization.authorize(realm->authorization.ctx, request, now_epoch_seconds,
-                                          decision_out);
-  return flowie_security_realm_evaluate(realm, request, now_epoch_seconds, decision_out);
+  int rc;
+  if (!flowie_security_request_valid(realm, request, decision_out)) return TURBO_EINVAL;
+  if (realm->authorization.authorize) {
+    flowie_security_decision_t remote = FLOWIE_SECURITY_DECISION_INIT;
+    rc = realm->authorization.authorize(realm->authorization.ctx, request, now_epoch_seconds,
+                                        &remote);
+    if (rc == TURBO_OK &&
+        ((remote.effect != FLOWIE_SECURITY_ALLOW && remote.effect != FLOWIE_SECURITY_DENY) ||
+         remote.policy_version != request->principal->policy_version ||
+         (remote.reason != FLOWIE_SECURITY_REASON_ALLOW_RULE &&
+          remote.reason != FLOWIE_SECURITY_REASON_DENY_RULE &&
+          remote.reason != FLOWIE_SECURITY_REASON_DEFAULT_DENY &&
+          remote.reason != FLOWIE_SECURITY_REASON_DOMAIN_MISMATCH &&
+          remote.reason != FLOWIE_SECURITY_REASON_PRINCIPAL_EXPIRED &&
+          remote.reason != FLOWIE_SECURITY_REASON_POLICY_VERSION_MISMATCH)))
+      rc = TURBO_EPROTO;
+    if (rc != TURBO_OK) remote = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    *decision_out = remote;
+  } else {
+    rc = flowie_security_realm_evaluate(realm, request, now_epoch_seconds, decision_out);
+  }
+  return rc == TURBO_OK && decision_out->effect == FLOWIE_SECURITY_DENY ? TURBO_EPERM : rc;
 }
