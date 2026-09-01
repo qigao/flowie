@@ -58,8 +58,9 @@ typedef struct external_https_network_options_s {
 } external_https_network_options_t;
 
 static const char EXTERNAL_HTTPS_RESPONSE_BODY[] =
-    "{\"version\":2,\"authenticated\":true,\"assertion\":{"
-    "\"issuer\":\"https://idp.example\",\"subject\":\"tenant-42/device-a\","
+    "{\"version\":3,\"authenticated\":true,\"assertion\":{"
+    "\"issuer\":\"https://idp.example\",\"domain_id\":\"root-a\","
+    "\"subject\":\"tenant-42/device-a\","
     "\"subject_type\":\"device\",\"auth_method\":\"oidc-token\","
     "\"issued_at\":100,\"expires_at\":200,\"revision\":9,\"assurance_level\":2,"
     "\"account_enabled\":true,\"groups\":[\"fleet-a\",\"operators\"]}}";
@@ -106,9 +107,9 @@ external_https_config(external_https_secret_fixture_t *fixture) {
   config.url = "https://idp.example/v1/authenticate";
   config.method = "oidc-token";
   config.service_token_ref = "env://EXTERNAL_AUTH_TOKEN";
-  config.key_provider = (flowie_security_key_provider_t){
-      sizeof(flowie_security_key_provider_t), fixture, external_https_secret_acquire,
-      external_https_secret_release};
+  config.key_provider = (flowie_security_key_provider_t){sizeof(flowie_security_key_provider_t),
+                                                         fixture, external_https_secret_acquire,
+                                                         external_https_secret_release};
   return config;
 }
 
@@ -202,7 +203,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   if (rc != TURBO_OK) goto done;
   fixture.token = options->request_token;
   fixture.token_size = options->request_token_size;
-  fixture.token_version = 2u;
+  fixture.token_version = 3u;
   task.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
   task.request = external_https_request();
   task.assertion =
@@ -245,13 +246,14 @@ spec("Flowie control external HTTPS authenticator") {
   it("strictly decodes one typed assertion and explicit denial") {
     flowie_control_external_auth_assertion_t assertion =
         FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    static const char denied[] = "{\"version\":2,\"authenticated\":false}";
+    static const char denied[] = "{\"version\":3,\"authenticated\":false}";
 
     check_equal(flowie_control_external_https_decode_response(
-                     EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
-                     "oidc-token", &assertion),
-                 TURBO_OK);
+                    EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
+                    "oidc-token", &assertion),
+                TURBO_OK);
     check_equal(assertion.issuer, "https://idp.example");
+    check_equal(assertion.domain_id, "root-a");
     check_equal(assertion.subject, "tenant-42/device-a");
     check_equal(assertion.subject_type, "device");
     check_equal(assertion.auth_method, "oidc-token");
@@ -265,20 +267,21 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(assertion.external_groups[1], "operators");
 
     check_equal(flowie_control_external_https_decode_response(denied, sizeof(denied) - 1u,
-                                                               "oidc-token", &assertion),
-                 TURBO_EPERM);
+                                                              "oidc-token", &assertion),
+                TURBO_EPERM);
     check_equal(assertion.subject, "");
   }
 
   it("rejects unknown fields, duplicate groups, wrong methods, and noncanonical numbers") {
     flowie_control_external_auth_assertion_t assertion =
         FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    static const char unknown[] = "{\"version\":2,\"authenticated\":false,\"reason\":\"hidden\"}";
+    static const char unknown[] = "{\"version\":3,\"authenticated\":false,\"reason\":\"hidden\"}";
     static const char duplicate_field[] =
-        "{\"version\":2,\"authenticated\":false,\"authenticated\":false}";
+        "{\"version\":3,\"authenticated\":false,\"authenticated\":false}";
     static const char duplicate_group[] =
-        "{\"version\":2,\"authenticated\":true,\"assertion\":{"
-        "\"issuer\":\"idp\",\"subject\":\"device-a\",\"subject_type\":\"device\","
+        "{\"version\":3,\"authenticated\":true,\"assertion\":{"
+        "\"issuer\":\"idp\",\"domain_id\":\"root-a\",\"subject\":\"device-a\","
+        "\"subject_type\":\"device\","
         "\"auth_method\":\"oidc-token\",\"issued_at\":100,\"expires_at\":200,"
         "\"revision\":9,\"assurance_level\":2,\"account_enabled\":true,"
         "\"groups\":[\"fleet-a\",\"fleet-a\"]}}";
@@ -286,24 +289,24 @@ spec("Flowie control external HTTPS authenticator") {
     static const char overflow[] = "{\"version\":18446744073709551616,\"authenticated\":false}";
 
     check_equal(flowie_control_external_https_decode_response(unknown, sizeof(unknown) - 1u,
-                                                               "oidc-token", &assertion),
-                 TURBO_EPROTO);
+                                                              "oidc-token", &assertion),
+                TURBO_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
-                     duplicate_field, sizeof(duplicate_field) - 1u, "oidc-token", &assertion),
-                 TURBO_EPROTO);
+                    duplicate_field, sizeof(duplicate_field) - 1u, "oidc-token", &assertion),
+                TURBO_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
-                     duplicate_group, sizeof(duplicate_group) - 1u, "oidc-token", &assertion),
-                 TURBO_EPROTO);
+                    duplicate_group, sizeof(duplicate_group) - 1u, "oidc-token", &assertion),
+                TURBO_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
-                     EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
-                     "password", &assertion),
-                 TURBO_EPROTO);
+                    EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
+                    "password", &assertion),
+                TURBO_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
-                     leading_zero, sizeof(leading_zero) - 1u, "oidc-token", &assertion),
-                 TURBO_EPROTO);
+                    leading_zero, sizeof(leading_zero) - 1u, "oidc-token", &assertion),
+                TURBO_EPROTO);
     check_equal(flowie_control_external_https_decode_response(overflow, sizeof(overflow) - 1u,
-                                                               "oidc-token", &assertion),
-                 TURBO_EPROTO);
+                                                              "oidc-token", &assertion),
+                TURBO_EPROTO);
   }
 
   it("encodes only the bounded versioned request fields") {
@@ -313,22 +316,32 @@ spec("Flowie control external HTTPS authenticator") {
     size_t body_size = 0u;
 
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                 TURBO_OK);
+                TURBO_OK);
     check_not_null(body);
     check_equal(turbo_parse_json((const uint8_t *)body, body_size, &document), TURBO_OK);
     check_not_null(document);
     check_equal(turbo_json_object_size(document), 8u);
-    check_within(turbo_json_number(turbo_json_object_get(document, "version")), 2.0, 0.001);
+    check_within(turbo_json_number(turbo_json_object_get(document, "version")), 3.0, 0.001);
     check_equal(turbo_json_string(turbo_json_object_get(document, "domain")), "root-a");
     check_equal(turbo_json_string(turbo_json_object_get(document, "identity")), "external-device");
     check_equal(turbo_json_string(turbo_json_object_get(document, "secret_base64")),
-                 "c2lnbmVkLXRva2Vu");
+                "c2lnbmVkLXRva2Vu");
     check_equal(turbo_json_string(turbo_json_object_get(document, "protocol")), "mqtt");
     check_equal(turbo_json_string(turbo_json_object_get(document, "remote_address")),
-                 "192.0.2.10:1883");
+                "192.0.2.10:1883");
     check_equal(turbo_json_string(turbo_json_object_get(document, "peer_certificate_sha256")),
-                 EXTERNAL_HTTPS_CLIENT_CERT);
+                EXTERNAL_HTTPS_CLIENT_CERT);
 
+    turbo_free_json(&document);
+    turbo_json_serialize_free(body);
+    document = NULL;
+    body = NULL;
+    body_size = 0u;
+    request.domain_id = "";
+    check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
+                TURBO_OK);
+    check_equal(turbo_parse_json((const uint8_t *)body, body_size, &document), TURBO_OK);
+    check_equal(turbo_json_string(turbo_json_object_get(document, "domain")), "");
     turbo_free_json(&document);
     turbo_json_serialize_free(body);
   }
@@ -341,7 +354,7 @@ spec("Flowie control external HTTPS authenticator") {
     request.peer_certificate_sha256 =
         "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_null(body);
     check_equal(body_size, 0u);
   }
@@ -360,25 +373,25 @@ spec("Flowie control external HTTPS authenticator") {
 
     config.url = "http://idp.example/v1/authenticate";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_null(authenticator);
     config = external_https_config(&invalid_tls_fixture);
     config.tls.client_cert_file = "missing-client-cert.pem";
     config.tls.client_key_file = "missing-client-key.pem";
     config.tls.client_key_password_ref = "env://EXTERNAL_AUTH_TOKEN";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_EIO);
+                TURBO_EIO);
     check_null(authenticator);
     check_equal(invalid_tls_fixture.acquire_calls, 2u);
     check_equal(invalid_tls_fixture.release_calls, 2u);
     config = external_https_config(&fixture);
     config.tls.client_cert_file = "client.pem";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     check_null(authenticator);
     config = external_https_config(&fixture);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_OK);
+                TURBO_OK);
     check_not_null(authenticator);
     interface = flowie_control_external_https_authenticator_interface(authenticator);
     check_not_null(interface);
@@ -391,11 +404,11 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(fixture.acquire_calls, 1u);
     check_equal(fixture.release_calls, 1u);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(stats.started_requests, 0u);
     stats.size = 0u;
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
 
     flowie_control_external_https_authenticator_destroy(authenticator);
   }
@@ -465,7 +478,7 @@ spec("Flowie control external HTTPS authenticator") {
   }
 
   it("fails closed on a malformed JSON assertion") {
-    static const char invalid_body[] = "{\"version\":2,\"authenticated\":";
+    static const char invalid_body[] = "{\"version\":3,\"authenticated\":";
     char response[512];
     external_https_network_result_t result;
     external_https_network_options_t options;
@@ -575,7 +588,7 @@ spec("Flowie control external HTTPS authenticator") {
     memset(&task, 0, sizeof(task));
     atomic_init(&task.done, 0);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_OK);
+                TURBO_OK);
     check_not_null(authenticator);
     fixture.acquire_status = TURBO_EIO;
     task.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
@@ -590,7 +603,7 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_equal(task.status, TURBO_EIO);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(stats.started_requests, 1u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.local_failures, 1u);
@@ -630,17 +643,17 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(
         tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
     check_equal(flow_mtls_test_server_start_delayed(&server, (const uint8_t *)response,
-                                                     (size_t)response_size, 1000u),
-                 0);
+                                                    (size_t)response_size, 1000u),
+                0);
     check_greater(snprintf(url, sizeof(url), "https://localhost:%u/v1/authenticate", server.port),
-                 0);
+                  0);
     config.url = url;
     config.max_in_flight = 1u;
     config.tls.ca_file = cert_file;
     config.tls.client_cert_file = cert_file;
     config.tls.client_key_file = key_file;
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                 TURBO_OK);
+                TURBO_OK);
     check_not_null(authenticator);
     first.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
     first.request = external_https_request();
@@ -669,7 +682,7 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(fixture.acquire_calls, 2u);
     check_equal(fixture.release_calls, 2u);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                 TURBO_OK);
+                TURBO_OK);
     check_equal(stats.started_requests, 2u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.succeeded, 1u);

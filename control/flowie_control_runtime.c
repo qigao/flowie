@@ -1,6 +1,6 @@
+#include "flowie_control_database_config_internal.h"
 #include "flowie_control_http_request_internal.h"
 #include "flowie_control_runtime_internal.h"
-#include "flowie_control_database_config_internal.h"
 
 #include "platform.h"
 #include "CoroNet/turbo_coro_context.h"
@@ -13,6 +13,9 @@
 #include "flowie_control_dashboard_internal.h"
 #if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
   #include "flowie_control_external_https_authenticator_internal.h"
+#endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  #include "flowie_control_jwt_jwks_authenticator_internal.h"
 #endif
 #include "flowie_control_management_rpc_internal.h"
 #include "flowie_control_management_session_internal.h"
@@ -58,6 +61,11 @@ struct flowie_control_runtime_s {
   int listener_thread_started;
 #if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
   flowie_control_external_https_authenticator_t *external_https_authenticator;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  flowie_control_jwt_jwks_authenticator_t *jwt_jwks_authenticator;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH) || defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
   flowie_control_external_subject_mapper_t *external_subject_mapper;
 #endif
 };
@@ -93,6 +101,13 @@ static void flowie_control_runtime_listener_thread(void *ctx) {
 #if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
 static int flowie_control_runtime_validate_external_https(const flowie_control_config_t *config);
 #endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+static int flowie_control_runtime_validate_jwt_jwks(const flowie_control_config_t *config);
+#endif
+
+static int flowie_control_runtime_external_auth_enabled(const flowie_control_config_t *config) {
+  return config && (config->auth.external_https.enabled || config->auth.jwt_jwks.enabled);
+}
 
 static uint64_t flowie_control_runtime_clock(void *ctx) {
   (void)ctx;
@@ -122,7 +137,7 @@ static int flowie_control_runtime_routes_valid(const flowie_control_config_t *co
       FLOWIE_CONTROL_DASHBOARD_LOGOUT_PATH};
   if (!config || !config->management.rpc_path[0]) return 0;
   if (strcmp(config->management.rpc_path, FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT) == 0) return 0;
-  if (config->auth.external_https.enabled && !config->auth.enabled) return 0;
+  if (flowie_control_runtime_external_auth_enabled(config) && !config->auth.enabled) return 0;
   if (config->auth.enabled &&
       strcmp(config->management.rpc_path, FLOWIE_CONTROL_AUTH_HTTP_PATH) == 0)
     return 0;
@@ -202,25 +217,27 @@ int flowie_control_runtime_validate(const flowie_control_config_t *config) {
   turbo_tls_server_config_t tls = {0};
   coro_context_t *context = NULL;
   coro_socket_t *socket = NULL;
+  int external_auth;
   int rc;
   if (!flowie_control_runtime_routes_valid(config)) return TURBO_EINVAL;
+  if (config->auth.external_https.enabled && config->auth.jwt_jwks.enabled) return TURBO_EINVAL;
+  external_auth = flowie_control_runtime_external_auth_enabled(config);
   if (config->listener.coroutine_stack_size <
           FLOWIE_CONTROL_CONFIG_LISTENER_MIN_COROUTINE_STACK_SIZE ||
       config->listener.coroutine_stack_size >
           FLOWIE_CONTROL_CONFIG_LISTENER_MAX_COROUTINE_STACK_SIZE)
     return TURBO_EINVAL;
   if (config->dashboard_enabled && config->listener.tls.client_auth_required) return TURBO_EINVAL;
-  if ((config->auth.external_https.enabled && config->management.login_executor_configured) ||
-      (!config->auth.external_https.enabled &&
-       (config->management.login_executor_workers == 0u ||
-        config->management.login_executor_workers >
-            FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS ||
-        config->management.login_executor_queue_capacity == 0u ||
-        config->management.login_executor_queue_capacity >
-            FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY ||
-        config->management.login_executor_deadline_ms == 0u ||
-        config->management.login_executor_deadline_ms >
-            FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_DEADLINE_MS)))
+  if ((external_auth && config->management.login_executor_configured) ||
+      (!external_auth && (config->management.login_executor_workers == 0u ||
+                          config->management.login_executor_workers >
+                              FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS ||
+                          config->management.login_executor_queue_capacity == 0u ||
+                          config->management.login_executor_queue_capacity >
+                              FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY ||
+                          config->management.login_executor_deadline_ms == 0u ||
+                          config->management.login_executor_deadline_ms >
+                              FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_DEADLINE_MS)))
     return TURBO_EINVAL;
   if (strcmp(config->bootstrap.domain_id, FLOWIE_CONTROL_SYSTEM_DOMAIN) != 0 ||
       strcmp(config->bootstrap.principal_id, FLOWIE_CONTROL_SYSTEM_ADMIN_DEFAULT_USERNAME) != 0 ||
@@ -231,17 +248,16 @@ int flowie_control_runtime_validate(const flowie_control_config_t *config) {
           FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX)
     return TURBO_EINVAL;
   if (config->auth.enabled &&
-      ((config->auth.external_https.enabled && config->auth.local_executor.configured) ||
-       (!config->auth.external_https.enabled &&
-        (config->auth.local_executor.workers == 0u ||
-         config->auth.local_executor.workers >
-             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS ||
-         config->auth.local_executor.queue_capacity == 0u ||
-         config->auth.local_executor.queue_capacity >
-             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY ||
-         config->auth.local_executor.deadline_ms == 0u ||
-         config->auth.local_executor.deadline_ms >
-             FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_DEADLINE_MS))))
+      ((external_auth && config->auth.local_executor.configured) ||
+       (!external_auth && (config->auth.local_executor.workers == 0u ||
+                           config->auth.local_executor.workers >
+                               FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_WORKERS ||
+                           config->auth.local_executor.queue_capacity == 0u ||
+                           config->auth.local_executor.queue_capacity >
+                               FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_QUEUE_CAPACITY ||
+                           config->auth.local_executor.deadline_ms == 0u ||
+                           config->auth.local_executor.deadline_ms >
+                               FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_MAX_DEADLINE_MS))))
     return TURBO_EINVAL;
   rc = flowie_control_runtime_validate_store(config);
   if (rc != TURBO_OK) return rc;
@@ -258,6 +274,13 @@ int flowie_control_runtime_validate(const flowie_control_config_t *config) {
   if (rc == TURBO_OK && config->auth.external_https.enabled) {
 #if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
     rc = flowie_control_runtime_validate_external_https(config);
+#else
+    rc = TURBO_ENOTSUP;
+#endif
+  }
+  if (rc == TURBO_OK && config->auth.jwt_jwks.enabled) {
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+    rc = flowie_control_runtime_validate_jwt_jwks(config);
 #else
     rc = TURBO_ENOTSUP;
 #endif
@@ -498,6 +521,80 @@ flowie_control_runtime_create_external_https(flowie_control_runtime_t *runtime,
 }
 #endif
 
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+static void flowie_control_runtime_jwt_jwks_configs(
+    const flowie_control_config_t *config,
+    flowie_control_jwt_jwks_authenticator_config_t *authenticator_out,
+    flowie_control_external_subject_mapper_config_t *mapper_out) {
+  const flowie_control_config_jwt_jwks_t *jwt = &config->auth.jwt_jwks;
+  *authenticator_out = (flowie_control_jwt_jwks_authenticator_config_t)
+      FLOWIE_CONTROL_JWT_JWKS_AUTHENTICATOR_CONFIG_INIT;
+  authenticator_out->url = jwt->url;
+  authenticator_out->method = config->auth.method;
+  authenticator_out->trusted_issuer = jwt->trusted_issuer;
+  authenticator_out->audience = jwt->audience;
+  authenticator_out->subject_type = jwt->subject_type;
+  authenticator_out->algorithm = jwt->algorithm;
+  authenticator_out->ca_file = jwt->ca_file[0] ? jwt->ca_file : NULL;
+  authenticator_out->timeout_ms = jwt->timeout_ms;
+  authenticator_out->max_response_size = jwt->max_response_size;
+  authenticator_out->max_keys = jwt->max_keys;
+  authenticator_out->max_token_size = jwt->max_token_size;
+  authenticator_out->refresh_interval_seconds = jwt->refresh_interval_seconds;
+  authenticator_out->clock_skew_seconds = jwt->clock_skew_seconds;
+  authenticator_out->executor_workers = jwt->executor_workers;
+  authenticator_out->executor_queue_capacity = jwt->executor_queue_capacity;
+  authenticator_out->executor_deadline_ms = jwt->executor_deadline_ms;
+  *mapper_out = (flowie_control_external_subject_mapper_config_t)
+      FLOWIE_CONTROL_EXTERNAL_SUBJECT_MAPPER_CONFIG_INIT;
+  mapper_out->trusted_issuer = jwt->trusted_issuer;
+  mapper_out->subject_type = jwt->subject_type;
+}
+
+static int flowie_control_runtime_validate_jwt_jwks(const flowie_control_config_t *config) {
+  flowie_control_jwt_jwks_authenticator_config_t authenticator_config;
+  flowie_control_external_subject_mapper_config_t mapper_config;
+  flowie_control_jwt_jwks_authenticator_t *authenticator = NULL;
+  flowie_control_external_subject_mapper_t *mapper = NULL;
+  int rc;
+  if (!config->auth.jwt_jwks.enabled) return TURBO_OK;
+  flowie_control_runtime_jwt_jwks_configs(config, &authenticator_config, &mapper_config);
+  rc = flowie_control_jwt_jwks_authenticator_create(&authenticator_config, &authenticator);
+  if (rc == TURBO_OK) rc = flowie_control_external_subject_mapper_create(&mapper_config, &mapper);
+  flowie_control_external_subject_mapper_destroy(mapper);
+  flowie_control_jwt_jwks_authenticator_destroy(authenticator);
+  return rc;
+}
+
+static int
+flowie_control_runtime_create_jwt_jwks(flowie_control_runtime_t *runtime,
+                                       flowie_control_auth_service_config_t *service_config) {
+  flowie_control_jwt_jwks_authenticator_config_t authenticator_config;
+  flowie_control_external_subject_mapper_config_t mapper_config;
+  int rc;
+  if (!runtime->config.auth.jwt_jwks.enabled) return TURBO_OK;
+  if (runtime->jwt_jwks_authenticator && runtime->external_subject_mapper) {
+    service_config->external_authenticator =
+        flowie_control_jwt_jwks_authenticator_interface(runtime->jwt_jwks_authenticator);
+    service_config->external_identity_mapper =
+        flowie_control_external_subject_mapper_interface(runtime->external_subject_mapper);
+    return TURBO_OK;
+  }
+  flowie_control_runtime_jwt_jwks_configs(&runtime->config, &authenticator_config, &mapper_config);
+  rc = flowie_control_jwt_jwks_authenticator_create(&authenticator_config,
+                                                    &runtime->jwt_jwks_authenticator);
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_control_external_subject_mapper_create(&mapper_config,
+                                                     &runtime->external_subject_mapper);
+  if (rc != TURBO_OK) return rc;
+  service_config->external_authenticator =
+      flowie_control_jwt_jwks_authenticator_interface(runtime->jwt_jwks_authenticator);
+  service_config->external_identity_mapper =
+      flowie_control_external_subject_mapper_interface(runtime->external_subject_mapper);
+  return TURBO_OK;
+}
+#endif
+
 static int flowie_control_runtime_create_management_sessions(flowie_control_runtime_t *runtime) {
   flowie_control_auth_service_config_t auth_config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
   flowie_control_management_session_config_t session_config =
@@ -524,6 +621,12 @@ static int flowie_control_runtime_create_management_sessions(flowie_control_runt
   if (rc != TURBO_OK) return rc;
 #else
   if (runtime->config.auth.external_https.enabled) return TURBO_ENOTSUP;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  rc = flowie_control_runtime_create_jwt_jwks(runtime, &auth_config);
+  if (rc != TURBO_OK) return rc;
+#else
+  if (runtime->config.auth.jwt_jwks.enabled) return TURBO_ENOTSUP;
 #endif
   rc = flowie_control_auth_service_create(&auth_config, &runtime->management_auth_service);
   if (rc != TURBO_OK) return rc;
@@ -568,6 +671,12 @@ static int flowie_control_runtime_create_auth(flowie_control_runtime_t *runtime)
 #else
   if (runtime->config.auth.external_https.enabled) return TURBO_ENOTSUP;
 #endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  rc = flowie_control_runtime_create_jwt_jwks(runtime, &service_config);
+  if (rc != TURBO_OK) return rc;
+#else
+  if (runtime->config.auth.jwt_jwks.enabled) return TURBO_ENOTSUP;
+#endif
   rc = flowie_control_auth_service_create(&service_config, &runtime->auth_service);
   if (rc != TURBO_OK) return rc;
   credential_config.listener_id = runtime->config.auth.listener_id;
@@ -581,7 +690,8 @@ static int flowie_control_runtime_create_auth(flowie_control_runtime_t *runtime)
   endpoint_config.adapter = runtime->auth_adapter;
   endpoint_config.service_credentials = runtime->service_credentials;
   endpoint_config.max_request_body_size = FLOWIE_CONTROL_AUTH_ENDPOINT_BODY_MAX;
-  endpoint_config.local_executor_enabled = runtime->config.auth.external_https.enabled ? 0 : 1;
+  endpoint_config.local_executor_enabled =
+      flowie_control_runtime_external_auth_enabled(&runtime->config) ? 0 : 1;
   endpoint_config.local_executor_workers = runtime->config.auth.local_executor.workers;
   endpoint_config.local_executor_queue_capacity =
       runtime->config.auth.local_executor.queue_capacity;
@@ -698,7 +808,8 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
     dashboard_config.logout = flowie_control_runtime_logout;
     dashboard_config.session_ctx = runtime;
     dashboard_config.session_ttl_seconds = runtime->config.management.session_ttl_seconds;
-    dashboard_config.login_executor_enabled = runtime->config.auth.external_https.enabled ? 0 : 1;
+    dashboard_config.login_executor_enabled =
+        flowie_control_runtime_external_auth_enabled(&runtime->config) ? 0 : 1;
     dashboard_config.login_executor_workers = runtime->config.management.login_executor_workers;
     dashboard_config.login_executor_queue_capacity =
         runtime->config.management.login_executor_queue_capacity;
@@ -855,11 +966,17 @@ int flowie_control_runtime_destroy(flowie_control_runtime_t *runtime) {
   runtime->management_sessions = NULL;
   flowie_control_auth_service_destroy(runtime->management_auth_service);
   runtime->management_auth_service = NULL;
-#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
+#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH) || defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
   flowie_control_external_subject_mapper_destroy(runtime->external_subject_mapper);
   runtime->external_subject_mapper = NULL;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
   flowie_control_external_https_authenticator_destroy(runtime->external_https_authenticator);
   runtime->external_https_authenticator = NULL;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  flowie_control_jwt_jwks_authenticator_destroy(runtime->jwt_jwks_authenticator);
+  runtime->jwt_jwks_authenticator = NULL;
 #endif
   flowie_control_management_service_destroy(runtime->management_service);
   runtime->management_service = NULL;

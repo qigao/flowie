@@ -31,6 +31,8 @@
 #define FLOWIE_MQTT_CLIENT_DEFAULT_MAX_INBOUND_QOS2 64u
 #define FLOWIE_MQTT_CLIENT_DEFAULT_COMMAND_QUEUE_CAPACITY 64u
 #define FLOWIE_MQTT_CLIENT_DEFAULT_COMMAND_QUEUE_BYTES (4u * 1024u * 1024u)
+#define FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_INITIAL_DELAY_MS 250u
+#define FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS 30000u
 #define FLOWIE_MQTT_CLIENT_MIN_STREAM_RECV_BUFFER_SIZE 1024u
 #define FLOWIE_MQTT_CLIENT_MAX_STREAM_RECV_BUFFER_SIZE (1024u * 1024u)
 
@@ -144,6 +146,50 @@ typedef int (*flowie_mqtt_client_auth_challenge_fn)(
     flowie_mqtt_client_t *client, const flowie_mqtt_control_packet_view_t *challenge,
     flowie_mqtt_client_auth_response_t *response, void *user_data);
 
+/**
+ * Replace the retained CONNECT after an authentication rejection. The current
+ * packet and all of its spans are borrowed for this callback. On TURBO_OK,
+ * refreshed must be a complete valid CONNECT packet; the client deep-copies it
+ * before the callback returns. This callback runs on the DLL worker coroutine
+ * and must not perform blocking or heavyweight work.
+ */
+typedef int (*flowie_mqtt_client_refresh_connect_fn)(
+    flowie_mqtt_client_t *client, uint8_t reason_code,
+    const flowie_mqtt_connect_packet_t *current, flowie_mqtt_connect_packet_t *refreshed,
+    void *user_data);
+
+/**
+ * Reports each automatic reconnect attempt on the DLL worker thread. response
+ * is borrowed for the callback and is non-NULL only when a CONNACK was parsed.
+ * A zero status plus CONNACK reason 0 means the client is connected.
+ */
+typedef void (*flowie_mqtt_client_reconnect_fn)(
+    flowie_mqtt_client_t *client, uint32_t attempt, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data);
+
+/** Optional automatic reconnect policy consumed by flowie_mqtt_client_create_ex(). */
+typedef struct flowie_mqtt_client_resilience_config_s {
+  size_t size;
+  /** Zero selects FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_INITIAL_DELAY_MS. */
+  uint64_t initial_delay_ms;
+  /** Zero selects FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS. */
+  uint64_t max_delay_ms;
+  /** Maximum automatic attempts per outage; zero means unlimited. */
+  uint32_t max_attempts;
+  /** Required to retry CONNACK/DISCONNECT reasons 0x86 and 0x87. */
+  flowie_mqtt_client_refresh_connect_fn refresh_connect;
+  /** Optional per-attempt notification. */
+  flowie_mqtt_client_reconnect_fn on_reconnect;
+} flowie_mqtt_client_resilience_config_t;
+
+#define FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT                                                \
+  {sizeof(flowie_mqtt_client_resilience_config_t),                                               \
+   FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_INITIAL_DELAY_MS,                                        \
+   FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS,                                            \
+   0u,                                                                                           \
+   NULL,                                                                                         \
+   NULL}
+
 typedef struct flowie_mqtt_client_config_s {
   size_t size;
   flowie_mqtt_client_transport_t transport;
@@ -221,6 +267,15 @@ typedef struct flowie_mqtt_client_config_s {
  */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
                                                        flowie_mqtt_client_t **out);
+
+/**
+ * Create a callback-driven client with an opt-in automatic reconnect policy.
+ * The policy is copied. Passing NULL preserves flowie_mqtt_client_create()
+ * behavior. Retained CONNECT credentials are wiped on replacement/destruction.
+ */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create_ex(
+    const flowie_mqtt_client_config_t *config,
+    const flowie_mqtt_client_resilience_config_t *resilience, flowie_mqtt_client_t **out);
 
 /**
  * Destroy the client outside its callbacks. Destruction stops admission,

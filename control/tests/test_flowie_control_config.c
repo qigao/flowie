@@ -65,6 +65,43 @@ static const char valid_external_https_config[] =
     "      client_key_file: flowie-client-key.pem\n"
     "      client_key_password_ref: env://FLOWIE_THIRD_PARTY_KEY_PASSWORD\n";
 
+static const char valid_jwt_jwks_config[] =
+    "version: 1\n"
+    "listener:\n"
+    "  tls:\n"
+    "    cert_file: cert.pem\n"
+    "    key_file: key.pem\n"
+    "storage:\n"
+    "  turbodb:\n"
+    "    driver: sqlite\n"
+    "    options:\n"
+    "      filename: control.db\n"
+    "management:\n"
+    "  session:\n"
+    "    capacity: 1024\n"
+    "auth:\n"
+    "  enabled: true\n"
+    "  listener_id: flowie-control-auth\n"
+    "  method: bearer\n"
+    "  jwt_jwks:\n"
+    "    url: https://identity.example/.well-known/jwks.json\n"
+    "    trusted_issuer: https://identity.example\n"
+    "    audience: flowie\n"
+    "    subject_type: device\n"
+    "    algorithm: EdDSA\n"
+    "    timeout_ms: 2400\n"
+    "    max_response_size: 32768\n"
+    "    max_keys: 8\n"
+    "    max_token_size: 3072\n"
+    "    refresh_interval_seconds: 120\n"
+    "    clock_skew_seconds: 15\n"
+    "    executor:\n"
+    "      workers: 3\n"
+    "      queue_capacity: 48\n"
+    "      deadline_ms: 7000\n"
+    "    tls:\n"
+    "      ca_file: identity-ca.pem\n";
+
 static const char valid_turbodb_config[] = "version: 1\n"
                                            "listener:\n"
                                            "  tls:\n"
@@ -575,5 +612,49 @@ spec("Flowie controller configuration") {
     memcpy(enabled, "false", sizeof("false") - 1u);
     check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
     check_equal(error.path, "$.auth.external_https");
+  }
+
+  it("loads bounded JWT JWKS authentication configuration") {
+    check_equal(parse_config(valid_jwt_jwks_config, &config, &error), TURBO_OK);
+    check_true(config.auth.jwt_jwks.enabled);
+    check_false(config.auth.external_https.enabled);
+    check_equal(config.auth.jwt_jwks.url, "https://identity.example/.well-known/jwks.json");
+    check_equal(config.auth.jwt_jwks.trusted_issuer, "https://identity.example");
+    check_equal(config.auth.jwt_jwks.audience, "flowie");
+    check_equal(config.auth.jwt_jwks.subject_type, "device");
+    check_equal(config.auth.jwt_jwks.algorithm, "EdDSA");
+    check_equal(config.auth.jwt_jwks.timeout_ms, 2400u);
+    check_equal(config.auth.jwt_jwks.max_response_size, 32768u);
+    check_equal(config.auth.jwt_jwks.max_keys, 8u);
+    check_equal(config.auth.jwt_jwks.max_token_size, 3072u);
+    check_equal(config.auth.jwt_jwks.refresh_interval_seconds, 120u);
+    check_equal(config.auth.jwt_jwks.clock_skew_seconds, 15u);
+    check_equal(config.auth.jwt_jwks.executor_workers, 3u);
+    check_equal(config.auth.jwt_jwks.executor_queue_capacity, 48u);
+    check_equal(config.auth.jwt_jwks.executor_deadline_ms, 7000u);
+    check_equal(config.auth.jwt_jwks.ca_file, "identity-ca.pem");
+  }
+
+  it("rejects symmetric JWT algorithms") {
+    char yaml[sizeof(valid_jwt_jwks_config)];
+    char *algorithm;
+
+    memcpy(yaml, valid_jwt_jwks_config, sizeof(valid_jwt_jwks_config));
+    algorithm = strstr(yaml, "algorithm: EdDSA");
+    check_not_null(algorithm);
+    memcpy(algorithm + sizeof("algorithm: ") - 1u, "HS256", sizeof("HS256") - 1u);
+    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.auth.jwt_jwks.algorithm");
+  }
+
+  it("rejects simultaneous external authentication providers") {
+    char yaml[sizeof(valid_jwt_jwks_config) + sizeof(valid_external_https_config)];
+    const char *external = strstr(valid_external_https_config, "  external_https:\n");
+
+    check_not_null(external);
+    memcpy(yaml, valid_jwt_jwks_config, sizeof(valid_jwt_jwks_config));
+    memcpy(yaml + sizeof(valid_jwt_jwks_config) - 1u, external, strlen(external) + 1u);
+    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(error.path, "$.auth.jwt_jwks");
   }
 }

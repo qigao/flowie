@@ -908,7 +908,7 @@ static int flowie_control_policy_document_validate(flowie_control_database_t *da
                                                    flowie_control_acl_document_t *document_out,
                                                    size_t *rule_count_out,
                                                    size_t *deny_rule_count_out) {
-  flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_acl_document_t *document = NULL;
   size_t rule_count = 1u;
   size_t deny_count = 0u;
   int enabled = 0;
@@ -916,28 +916,40 @@ static int flowie_control_policy_document_validate(flowie_control_database_t *da
   if (rule_count_out) *rule_count_out = 0u;
   if (deny_rule_count_out) *deny_rule_count_out = 0u;
   if (!database || !rule_count_out || !deny_rule_count_out) return TURBO_EINVAL;
+  document = (flowie_control_acl_document_t *)malloc(sizeof(*document));
+  if (!document) return TURBO_ENOMEM;
+  flowie_control_acl_document_init(document);
   rc = flowie_control_acl_document_syntax_validate(domain_id, document_text, document_size,
-                                                   &document);
-  if (rc != TURBO_OK) return rc;
+                                                   document);
+  if (rc != TURBO_OK) goto done;
   rc = flowie_control_domain_exists(database, domain_id);
-  if (rc != TURBO_OK) return rc;
-  rc = flowie_control_policy_subject_enabled(database, domain_id, document.subject_kind,
-                                             document.subject, &enabled);
-  if (rc != TURBO_OK) return rc;
-  if (!enabled) return TURBO_EPERM;
-  if (document.connection_effect == FLOWIE_SECURITY_DENY) deny_count = 1u;
-  for (size_t index = 0u; index < document.entry_count; ++index) {
-    const flowie_control_acl_entry_t *entry = &document.entries[index];
+  if (rc != TURBO_OK) goto done;
+  rc = flowie_control_policy_subject_enabled(database, domain_id, document->subject_kind,
+                                             document->subject, &enabled);
+  if (rc != TURBO_OK) goto done;
+  if (!enabled) {
+    rc = TURBO_EPERM;
+    goto done;
+  }
+  if (document->connection_effect == FLOWIE_SECURITY_DENY) deny_count = 1u;
+  for (size_t index = 0u; index < document->entry_count; ++index) {
+    const flowie_control_acl_entry_t *entry = &document->entries[index];
     if (entry->alternative_count == 0u ||
-        rule_count > FLOWIE_SECURITY_MAX_RULES - entry->alternative_count)
-      return TURBO_ENOSPC;
+        rule_count > FLOWIE_SECURITY_MAX_RULES - entry->alternative_count) {
+      rc = TURBO_ENOSPC;
+      goto done;
+    }
     rule_count += entry->alternative_count;
     if (entry->effect == FLOWIE_SECURITY_DENY) deny_count += entry->alternative_count;
   }
-  if (document_out) *document_out = document;
+  if (document_out) *document_out = *document;
   *rule_count_out = rule_count;
   *deny_rule_count_out = deny_count;
-  return TURBO_OK;
+  rc = TURBO_OK;
+
+done:
+  free(document);
+  return rc;
 }
 
 static int flowie_control_policy_validate_database(flowie_control_database_t *database,
@@ -3730,7 +3742,7 @@ int flowie_control_store_policy_subject_rule_put(
   const flowie_control_acl_document_t *document;
   size_t expanded_rule_count = 0u;
   size_t deny_rule_count = 0u;
-  char canonical[FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u];
+  char *canonical = NULL;
   size_t canonical_size = 0u;
   uint64_t current = 0u;
   uint64_t next = 0u;
@@ -3744,16 +3756,21 @@ int flowie_control_store_policy_subject_rule_put(
       result->size < sizeof(*result) || command->ordinal >= FLOWIE_SECURITY_MAX_RULES ||
       !command->document)
     return TURBO_EINVAL;
-  rc = flowie_control_acl_format(command->document, canonical, sizeof(canonical), &canonical_size);
-  if (rc != TURBO_OK) return rc;
+  canonical = (char *)malloc(FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u);
+  if (!canonical) return TURBO_ENOMEM;
+  rc = flowie_control_acl_format(command->document, canonical,
+                                 FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u, &canonical_size);
+  if (rc != TURBO_OK) goto done;
   canonical[canonical_size] = '\0';
   document = command->document;
   if (!flowie_control_command_common_valid(command->domain_id, document->subject, command->actor,
                                            command->request_id, command->expected_revision,
-                                           command->occurred_at))
-    return TURBO_EINVAL;
+                                           command->occurred_at)) {
+    rc = TURBO_EINVAL;
+    goto done;
+  }
   rc = flowie_control_open_database(store, &database);
-  if (rc != TURBO_OK) return rc;
+  if (rc != TURBO_OK) goto done;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3837,7 +3854,8 @@ done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
-  (void)flowie_control_database_close(database);
+  if (database) (void)flowie_control_database_close(database);
+  free(canonical);
   if (rc != TURBO_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }

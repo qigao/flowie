@@ -116,6 +116,44 @@ typedef struct flowie_mqtt_qos2_wake_state_s {
   unsigned int pubcomp_sent;
 } flowie_mqtt_qos2_wake_state_t;
 
+typedef struct flowie_mqtt_resilience_state_s {
+  atomic_int broker_connects;
+  atomic_int initial_completions;
+  atomic_int initial_reason;
+  atomic_int reconnect_completions;
+  atomic_int reconnect_attempt;
+  atomic_int reconnect_status;
+  atomic_int reconnect_reason;
+  atomic_int server_status;
+  atomic_int refresh_calls;
+  atomic_int refreshed_token_seen;
+  atomic_int background_errors;
+  atomic_int background_status;
+  atomic_int ping_submit_status;
+  atomic_int ping_completions;
+  atomic_int ping_status;
+  uint8_t disconnect_reason;
+} flowie_mqtt_resilience_state_t;
+
+static void flowie_mqtt_resilience_state_init(flowie_mqtt_resilience_state_t *state) {
+  memset(state, 0, sizeof(*state));
+  atomic_init(&state->broker_connects, 0);
+  atomic_init(&state->initial_completions, 0);
+  atomic_init(&state->initial_reason, -1);
+  atomic_init(&state->reconnect_completions, 0);
+  atomic_init(&state->reconnect_attempt, 0);
+  atomic_init(&state->reconnect_status, TURBO_EBUSY);
+  atomic_init(&state->reconnect_reason, -1);
+  atomic_init(&state->server_status, TURBO_OK);
+  atomic_init(&state->refresh_calls, 0);
+  atomic_init(&state->refreshed_token_seen, 0);
+  atomic_init(&state->background_errors, 0);
+  atomic_init(&state->background_status, TURBO_OK);
+  atomic_init(&state->ping_submit_status, TURBO_EBUSY);
+  atomic_init(&state->ping_completions, 0);
+  atomic_init(&state->ping_status, TURBO_OK);
+}
+
 static void
 flowie_mqtt_test_error_connect_completion(flowie_mqtt_client_t *client, int status,
                                           const flowie_mqtt_control_packet_view_t *response,
@@ -1133,6 +1171,237 @@ static void flowie_mqtt_test_closing_broker_handler(coro_socket_t *socket, void 
   state->server_done = 1;
 }
 
+static void flowie_mqtt_server_busy_then_ready_handler(coro_socket_t *socket, void *arg) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)arg;
+  flowie_mqtt_test_broker_stream_t stream = {0};
+  flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+  flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
+  int attempt = atomic_fetch_add_explicit(&state->broker_connects, 1, memory_order_acq_rel) + 1;
+  int rc;
+  stream.socket = socket;
+  coro_socket_set_timeout(socket, FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS);
+  rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_UNSPECIFIED,
+                                    FLOWIE_MQTT_PACKET_CONNECT, &packet);
+  if (rc == TURBO_OK &&
+      (flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK ||
+       connect.version != FLOWIE_MQTT_VERSION_5))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK)
+    rc = flowie_mqtt_test_send_control(socket, FLOWIE_MQTT_VERSION_5,
+                                       FLOWIE_MQTT_PACKET_CONNACK, 0u,
+                                       attempt == 1 ? 0x89u : 0u,
+                                       (flowie_mqtt_span_t){0});
+  if (rc == TURBO_OK && attempt != 1) {
+    packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
+    rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_5,
+                                      FLOWIE_MQTT_PACKET_DISCONNECT, &packet);
+    if (rc == TURBO_EOF || rc == TURBO_ECONNRESET) rc = TURBO_OK;
+  }
+  if (rc != TURBO_OK)
+    atomic_store_explicit(&state->server_status, rc, memory_order_release);
+}
+
+static void flowie_mqtt_expired_token_then_ready_handler(coro_socket_t *socket, void *arg) {
+  static const uint8_t initial_token[] = "token-1";
+  static const uint8_t refreshed_token[] = "token-2";
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)arg;
+  flowie_mqtt_test_broker_stream_t stream = {0};
+  flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+  flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
+  int attempt = atomic_fetch_add_explicit(&state->broker_connects, 1, memory_order_acq_rel) + 1;
+  int rc;
+  stream.socket = socket;
+  coro_socket_set_timeout(socket, FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS);
+  rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_UNSPECIFIED,
+                                    FLOWIE_MQTT_PACKET_CONNECT, &packet);
+  if (rc == TURBO_OK &&
+      (flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK ||
+       connect.version != FLOWIE_MQTT_VERSION_5 || connect.password.size == 0u))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK && attempt == 1 &&
+      (connect.password.size != sizeof(initial_token) - 1u ||
+       memcmp(connect.password.data, initial_token, sizeof(initial_token) - 1u) != 0))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK && attempt != 1) {
+    if (connect.password.size != sizeof(refreshed_token) - 1u ||
+        memcmp(connect.password.data, refreshed_token, sizeof(refreshed_token) - 1u) != 0)
+      rc = TURBO_EPROTO;
+    else
+      atomic_store_explicit(&state->refreshed_token_seen, 1, memory_order_release);
+  }
+  if (rc == TURBO_OK)
+    rc = flowie_mqtt_test_send_control(socket, FLOWIE_MQTT_VERSION_5,
+                                       FLOWIE_MQTT_PACKET_CONNACK, 0u,
+                                       attempt == 1 ? 0x87u : 0u,
+                                       (flowie_mqtt_span_t){0});
+  if (rc == TURBO_OK && attempt != 1) {
+    packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
+    rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_5,
+                                      FLOWIE_MQTT_PACKET_DISCONNECT, &packet);
+    if (rc == TURBO_EOF || rc == TURBO_ECONNRESET) rc = TURBO_OK;
+  }
+  if (rc != TURBO_OK)
+    atomic_store_explicit(&state->server_status, rc, memory_order_release);
+}
+
+static void flowie_mqtt_disconnect_then_reconnect_handler(coro_socket_t *socket, void *arg) {
+  static const uint8_t initial_token[] = "token-1";
+  static const uint8_t refreshed_token[] = "token-2";
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)arg;
+  flowie_mqtt_test_broker_stream_t stream = {0};
+  flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+  flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
+  int attempt = atomic_fetch_add_explicit(&state->broker_connects, 1, memory_order_acq_rel) + 1;
+  int rc;
+  stream.socket = socket;
+  coro_socket_set_timeout(socket, FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS);
+  rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_UNSPECIFIED,
+                                    FLOWIE_MQTT_PACKET_CONNECT, &packet);
+  if (rc == TURBO_OK &&
+      (flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK ||
+       connect.version != FLOWIE_MQTT_VERSION_5))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK && attempt == 1 &&
+      (connect.password.size != sizeof(initial_token) - 1u ||
+       memcmp(connect.password.data, initial_token, sizeof(initial_token) - 1u) != 0))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK && attempt != 1) {
+    if (state->disconnect_reason != 0x87u ||
+        connect.password.size != sizeof(refreshed_token) - 1u ||
+        memcmp(connect.password.data, refreshed_token, sizeof(refreshed_token) - 1u) != 0)
+      rc = TURBO_EPROTO;
+    else
+      atomic_store_explicit(&state->refreshed_token_seen, 1, memory_order_release);
+  }
+  if (rc == TURBO_OK)
+    rc = flowie_mqtt_test_send_control(socket, FLOWIE_MQTT_VERSION_5,
+                                       FLOWIE_MQTT_PACKET_CONNACK, 0u, 0u,
+                                       (flowie_mqtt_span_t){0});
+  if (rc == TURBO_OK && attempt == 1)
+    rc = flowie_mqtt_test_send_control(socket, FLOWIE_MQTT_VERSION_5,
+                                       FLOWIE_MQTT_PACKET_DISCONNECT, 0u,
+                                       state->disconnect_reason, (flowie_mqtt_span_t){0});
+  if (rc == TURBO_OK && attempt != 1) {
+    packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
+    rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_5,
+                                      FLOWIE_MQTT_PACKET_DISCONNECT, &packet);
+    if (rc == TURBO_EOF || rc == TURBO_ECONNRESET) rc = TURBO_OK;
+  }
+  if (rc != TURBO_OK)
+    atomic_store_explicit(&state->server_status, rc, memory_order_release);
+}
+
+static void flowie_mqtt_ping_close_then_ready_handler(coro_socket_t *socket, void *arg) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)arg;
+  flowie_mqtt_test_broker_stream_t stream = {0};
+  flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+  flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
+  int attempt = atomic_fetch_add_explicit(&state->broker_connects, 1, memory_order_acq_rel) + 1;
+  int rc;
+  stream.socket = socket;
+  coro_socket_set_timeout(socket, FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS);
+  rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_UNSPECIFIED,
+                                    FLOWIE_MQTT_PACKET_CONNECT, &packet);
+  if (rc == TURBO_OK &&
+      (flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK ||
+       connect.version != FLOWIE_MQTT_VERSION_5))
+    rc = TURBO_EPROTO;
+  if (rc == TURBO_OK)
+    rc = flowie_mqtt_test_send_control(socket, FLOWIE_MQTT_VERSION_5,
+                                       FLOWIE_MQTT_PACKET_CONNACK, 0u, 0u,
+                                       (flowie_mqtt_span_t){0});
+  if (rc == TURBO_OK && attempt == 1) {
+    packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
+    rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_5,
+                                      FLOWIE_MQTT_PACKET_PINGREQ, &packet);
+  } else if (rc == TURBO_OK) {
+    packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
+    rc = flowie_mqtt_test_expect_type(&stream, FLOWIE_MQTT_VERSION_5,
+                                      FLOWIE_MQTT_PACKET_DISCONNECT, &packet);
+    if (rc == TURBO_EOF || rc == TURBO_ECONNRESET) rc = TURBO_OK;
+  }
+  if (rc != TURBO_OK)
+    atomic_store_explicit(&state->server_status, rc, memory_order_release);
+}
+
+static int flowie_mqtt_refresh_expired_connect(
+    flowie_mqtt_client_t *client, uint8_t reason_code,
+    const flowie_mqtt_connect_packet_t *current, flowie_mqtt_connect_packet_t *refreshed,
+    void *user_data) {
+  static const uint8_t initial_token[] = "token-1";
+  static const uint8_t refreshed_token[] = "token-2";
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  if (reason_code != 0x87u || !current || !refreshed || !current->has_password ||
+      current->password.size != sizeof(initial_token) - 1u ||
+      memcmp(current->password.data, initial_token, sizeof(initial_token) - 1u) != 0)
+    return TURBO_EPROTO;
+  *refreshed = *current;
+  refreshed->has_password = 1u;
+  refreshed->password =
+      (flowie_mqtt_span_t){refreshed_token, sizeof(refreshed_token) - 1u};
+  atomic_fetch_add_explicit(&state->refresh_calls, 1, memory_order_release);
+  return TURBO_OK;
+}
+
+static void flowie_mqtt_resilience_connect_completion(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  if (status == TURBO_OK && (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK))
+    status = TURBO_EPROTO;
+  atomic_store_explicit(&state->initial_reason,
+                        response ? (int)response->reason_code : -1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&state->initial_completions, 1, memory_order_release);
+  if (status != TURBO_OK)
+    atomic_store_explicit(&state->server_status, status, memory_order_release);
+}
+
+static void flowie_mqtt_resilience_reconnect_completion(
+    flowie_mqtt_client_t *client, uint32_t attempt, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  atomic_store_explicit(&state->reconnect_attempt, (int)attempt, memory_order_relaxed);
+  atomic_store_explicit(&state->reconnect_status, status, memory_order_relaxed);
+  atomic_store_explicit(&state->reconnect_reason,
+                        response ? (int)response->reason_code : -1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&state->reconnect_completions, 1, memory_order_release);
+}
+
+static void flowie_mqtt_resilience_error(flowie_mqtt_client_t *client, int status,
+                                         void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  atomic_store_explicit(&state->background_status, status, memory_order_relaxed);
+  atomic_fetch_add_explicit(&state->background_errors, 1, memory_order_release);
+}
+
+static void flowie_mqtt_resilience_connect_and_ping(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  int submit_status = TURBO_EPROTO;
+  if (status == TURBO_OK && response && response->type == FLOWIE_MQTT_PACKET_CONNACK &&
+      response->reason_code == 0u)
+    submit_status = flowie_mqtt_client_ping(client);
+  atomic_store_explicit(&state->initial_reason,
+                        response ? (int)response->reason_code : -1, memory_order_relaxed);
+  atomic_store_explicit(&state->ping_submit_status, submit_status, memory_order_relaxed);
+  atomic_fetch_add_explicit(&state->initial_completions, 1, memory_order_release);
+}
+
+static void flowie_mqtt_resilience_ping_completion(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  if (response) status = TURBO_EPROTO;
+  atomic_store_explicit(&state->ping_status, status, memory_order_relaxed);
+  atomic_fetch_add_explicit(&state->ping_completions, 1, memory_order_release);
+}
+
 static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version,
                                           flowie_mqtt_test_state_t *state) {
   enum { FLOWIE_MQTT_MANAGED_COMMAND_COUNT = 7 };
@@ -1267,6 +1536,8 @@ spec("flowie mqtt callback client") {
   it("validates configuration and starts disconnected") {
     static const uint8_t duplicate_filter[] = "duplicate/#";
     flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
     flowie_mqtt_client_topic_handler_t duplicate_handlers[2] = {{0}};
     flowie_mqtt_client_t *client = (flowie_mqtt_client_t *)(uintptr_t)1u;
     check_equal(flowie_mqtt_client_create(&config, &client), TURBO_EINVAL);
@@ -1293,6 +1564,20 @@ spec("flowie mqtt callback client") {
     check_equal(flowie_mqtt_client_create(&config, &client), TURBO_ERANGE);
     check_null(client);
     config.stream_recv_buffer_bytes = 0u;
+    resilience.size -= 1u;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_EINVAL);
+    check_null(client);
+    resilience.size = sizeof(resilience);
+    resilience.initial_delay_ms = 100u;
+    resilience.max_delay_ms = 10u;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_EINVAL);
+    check_null(client);
+    resilience = (flowie_mqtt_client_resilience_config_t)
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    check_not_null(client);
+    flowie_mqtt_client_destroy(client);
+    client = NULL;
     duplicate_handlers[0].filter =
         (flowie_mqtt_span_t){duplicate_filter, sizeof(duplicate_filter) - 1u};
     duplicate_handlers[0].on_message = flowie_mqtt_test_on_publish;
@@ -2161,6 +2446,368 @@ spec("flowie mqtt callback client") {
     check_equal(atomic_load_explicit(&state.error_count, memory_order_acquire), 1);
     error_status = atomic_load_explicit(&state.error_status, memory_order_relaxed);
     check_true(error_status == TURBO_EOF || error_status == TURBO_ECONNRESET);
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("reconnects after MQTT 5 server busy without completing the public connect twice") {
+    static const uint8_t client_id[] = "flowie-server-busy";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_server_busy_then_ready_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 2u;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while ((!flowie_mqtt_client_is_connected(client) ||
+            atomic_load_explicit(&state.reconnect_completions, memory_order_acquire) == 0) &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    info("broker_connects=%d initial=%d reconnect=%d attempt=%d status=%d reason=%d",
+         atomic_load_explicit(&state.broker_connects, memory_order_acquire),
+         atomic_load_explicit(&state.initial_completions, memory_order_acquire),
+         atomic_load_explicit(&state.reconnect_completions, memory_order_acquire),
+         atomic_load_explicit(&state.reconnect_attempt, memory_order_relaxed),
+         atomic_load_explicit(&state.reconnect_status, memory_order_relaxed),
+         atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed));
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 2);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0x89);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_attempt, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_status, memory_order_relaxed), TURBO_OK);
+    check_equal(atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_true(flowie_mqtt_client_is_connected(client));
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("refreshes an expired CONNECT token before reconnecting") {
+    static const uint8_t client_id[] = "flowie-expired-token";
+    static const uint8_t username[] = "device";
+    static const uint8_t initial_token[] = "token-1";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_expired_token_then_ready_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 2u;
+    resilience.refresh_connect = flowie_mqtt_refresh_expired_connect;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    connect.has_username = 1u;
+    connect.has_password = 1u;
+    connect.username = (flowie_mqtt_span_t){username, sizeof(username) - 1u};
+    connect.password = (flowie_mqtt_span_t){initial_token, sizeof(initial_token) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while ((!flowie_mqtt_client_is_connected(client) ||
+            atomic_load_explicit(&state.reconnect_completions, memory_order_acquire) == 0) &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 2);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0x87);
+    check_equal(atomic_load_explicit(&state.refresh_calls, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.refreshed_token_seen, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_status, memory_order_relaxed), TURBO_OK);
+    check_equal(atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_true(flowie_mqtt_client_is_connected(client));
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("refreshes credentials after an MQTT 5 not-authorized disconnect") {
+    static const uint8_t client_id[] = "flowie-disconnect-refresh";
+    static const uint8_t username[] = "device";
+    static const uint8_t initial_token[] = "token-1";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    state.disconnect_reason = 0x87u;
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_disconnect_then_reconnect_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.on_error = flowie_mqtt_resilience_error;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 2u;
+    resilience.refresh_connect = flowie_mqtt_refresh_expired_connect;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    connect.has_username = 1u;
+    connect.has_password = 1u;
+    connect.username = (flowie_mqtt_span_t){username, sizeof(username) - 1u};
+    connect.password = (flowie_mqtt_span_t){initial_token, sizeof(initial_token) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while ((!flowie_mqtt_client_is_connected(client) ||
+            atomic_load_explicit(&state.reconnect_completions, memory_order_acquire) == 0) &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 2);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.background_errors, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.refresh_calls, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.refreshed_token_seen, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_status, memory_order_relaxed), TURBO_OK);
+    check_equal(atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_true(flowie_mqtt_client_is_connected(client));
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("does not reconnect after an MQTT 5 session-taken-over disconnect") {
+    static const uint8_t client_id[] = "flowie-session-taken-over";
+    static const uint8_t username[] = "device";
+    static const uint8_t initial_token[] = "token-1";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    state.disconnect_reason = 0x8eu;
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_disconnect_then_reconnect_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.on_error = flowie_mqtt_resilience_error;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 1u;
+    resilience.refresh_connect = flowie_mqtt_refresh_expired_connect;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    connect.has_username = 1u;
+    connect.has_password = 1u;
+    connect.username = (flowie_mqtt_span_t){username, sizeof(username) - 1u};
+    connect.password = (flowie_mqtt_span_t){initial_token, sizeof(initial_token) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&state.background_errors, memory_order_acquire) == 0 &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    deadline = turbo_monotonic_ms() + 100u;
+    while (turbo_monotonic_ms() < deadline) {
+      (void)coro_context_run(server_context, TURBO_RUN_NOWAIT);
+      turbo_sleep_ms(1u);
+    }
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.background_errors, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.refresh_calls, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_false(flowie_mqtt_client_is_connected(client));
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("interrupts an automatic reconnect backoff during destroy") {
+    static const uint8_t client_id[] = "flowie-backoff-destroy";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    uint64_t started;
+    uint64_t elapsed;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_server_busy_then_ready_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 500u;
+    resilience.max_delay_ms = 500u;
+    resilience.max_attempts = 2u;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&state.initial_completions, memory_order_acquire) == 0 &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0x89);
+    turbo_sleep_ms(20u);
+    started = turbo_monotonic_ms();
+    flowie_mqtt_client_destroy(client);
+    elapsed = turbo_monotonic_ms() - started;
+    check_true(elapsed < 250u);
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("reconnects when the network closes during an accepted command") {
+    static const uint8_t client_id[] = "flowie-command-close";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    int ping_status;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_ping_close_then_ready_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_and_ping;
+    config.on_ping = flowie_mqtt_resilience_ping_completion;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 2u;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while ((!flowie_mqtt_client_is_connected(client) ||
+            atomic_load_explicit(&state.reconnect_completions, memory_order_acquire) == 0) &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 2);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.ping_submit_status, memory_order_relaxed), TURBO_OK);
+    check_equal(atomic_load_explicit(&state.ping_completions, memory_order_acquire), 1);
+    ping_status = atomic_load_explicit(&state.ping_status, memory_order_relaxed);
+    check_true(ping_status == TURBO_EOF || ping_status == TURBO_ECONNRESET);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.reconnect_status, memory_order_relaxed), TURBO_OK);
+    check_equal(atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_true(flowie_mqtt_client_is_connected(client));
     flowie_mqtt_client_destroy(client);
     coro_socket_destroy(server);
     coro_context_destroy(server_context);

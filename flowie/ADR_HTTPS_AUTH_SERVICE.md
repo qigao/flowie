@@ -154,9 +154,11 @@ Argon2id 和同步 Repository 工作运行在专用有界 executor，不占用 C
 HTTP 429，deadline 到期返回 HTTP 503；认证拒绝或 service caller 无权限返回 HTTP 403。deadline
 不会强杀已接收的同步 KDF，任务仍负责最终擦除 secret，endpoint 关闭时 drain 已接收任务。
 
-当前 composition root 只支持 Repository-backed local Auth。`auth.external_https` 仍有配置结构，但
-runtime create 会以 `TURBO_ENOTSUP` fail fast；不能把它作为已发布能力，也不存在失败后回退本地
-Auth 的路径。
+composition root 支持 Repository-backed local Auth、严格 version 3 assertion 的
+`auth.external_https`，以及固定 HTTPS JWKS 信任源的 `auth.jwt_jwks`；三者互斥。两个外部 provider
+都必须返回可信的 Domain-bound assertion，随后只在该业务 Domain 由本地 Repository 映射 principal
+和权限；Broker service principal 的 Domain 不参与业务 Domain 选择。已有目标 Domain 的管理入口会
+额外要求 assertion 精确匹配；任何网络、TLS、签名、声明或映射失败都不会回退本地 Auth。
 
 ## ACL Decision HTTPS 契约
 
@@ -357,4 +359,4 @@ audit 完整身份确认；无法确认则 fail closed，不猜测成功。
 - ACL decision compiled cache 或无缓存容量结论及 P50/P95/P99 压力数据；
 - Control HA、Repository pool、连接/请求限流、证书轮换、备份/PITR 和故障注入；
 - ASan/UBSan、threat model 与 service credential 泄露响应 runbook；
-- external HTTPS Auth verifier 的明确实现决策；在此之前保持 `TURBO_ENOTSUP`。
+- external HTTPS/JWT JWKS Auth 的真实 IdP、密钥轮换、过载和故障注入部署 gate。

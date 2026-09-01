@@ -74,6 +74,7 @@ typedef struct flowie_control_acl_parse_ctx_s {
   int accepted;
 } flowie_control_acl_parse_ctx_t;
 
+void flowie_control_acl_document_init(flowie_control_acl_document_t *document);
 void flowie_control_acl_lexer_init(flowie_control_acl_lexer_t *lexer, const char *text,
                                    size_t text_size);
 int flowie_control_acl_lexer_next(flowie_control_acl_lexer_t *lexer,

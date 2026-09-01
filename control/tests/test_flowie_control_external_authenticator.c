@@ -25,6 +25,7 @@ static int external_identity_map(void *ctx,
 static flowie_control_external_auth_assertion_t valid_assertion(void) {
   flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   memcpy(assertion.issuer, "https://idp.example", sizeof("https://idp.example"));
+  memcpy(assertion.domain_id, "root-a", sizeof("root-a"));
   memcpy(assertion.subject, "tenant-42/device-a", sizeof("tenant-42/device-a"));
   memcpy(assertion.subject_type, "device", sizeof("device"));
   memcpy(assertion.auth_method, "oidc-token", sizeof("oidc-token"));
@@ -65,26 +66,30 @@ spec("Flowie control external authenticator contract") {
     flowie_control_external_auth_assertion_t assertion = valid_assertion();
 
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                 TURBO_OK);
+                TURBO_OK);
+    assertion.domain_id[0] = '\0';
+    check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
+                TURBO_EINVAL);
+    assertion = valid_assertion();
     assertion.account_enabled = 0;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     assertion = valid_assertion();
     assertion.expires_at = 150u;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     assertion = valid_assertion();
     assertion.issued_at = 151u;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     assertion = valid_assertion();
     memcpy(assertion.external_groups[1], assertion.external_groups[0],
            sizeof(assertion.external_groups[1]));
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
     assertion = valid_assertion();
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "password", 150u),
-                 TURBO_EINVAL);
+                TURBO_EINVAL);
   }
 
   it("requires the mapper to return one bounded local principal id") {

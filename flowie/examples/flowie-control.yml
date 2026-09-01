@@ -41,7 +41,7 @@ management:
     max_sessions_per_principal: 5
     ttl_seconds: 3600
   # Local password verification runs outside the Iris owner lane.
-  # Remove this explicit block when auth.external_https is enabled.
+  # Remove this explicit block when auth.external_https or auth.jwt_jwks is enabled.
   login_executor:
     workers: 4
     queue_capacity: 128
@@ -52,8 +52,7 @@ dashboard:
 
 auth:
   enabled: false
-  # Set enabled=true and configure the common fields below to use local Auth.
-  # external_https remains schema-reserved; current runtime composition rejects it.
+  # Set enabled=true and configure exactly one of local_executor, external_https, or jwt_jwks.
   # listener_id: flowie-control-auth
   # method: bearer
   # principal_ttl_seconds: 300
@@ -63,8 +62,8 @@ auth:
   #   deadline_ms: 10000
   # Broker callers are Repository service principals with flowie_auth_client and/or
   # flowie_acl_client Roles. Their generated credentials are not stored in this YAML.
-  # external_https: # mutually exclusive with an explicit local_executor block
-  #   url: https://third-party-auth.internal/v2/assert
+  # external_https: # mutually exclusive with local_executor and jwt_jwks
+  #   url: https://third-party-auth.internal/v3/assert
   #   service_token_ref: env://FLOWIE_THIRD_PARTY_AUTH_TOKEN
   #   trusted_issuer: https://identity.internal
   #   subject_type: device
@@ -76,3 +75,21 @@ auth:
   #     client_cert_file: certs/flowie-auth-client-chain.pem
   #     client_key_file: certs/flowie-auth-client-key.pem
   #     client_key_password_ref: env://FLOWIE_THIRD_PARTY_AUTH_KEY_PASSWORD
+  # jwt_jwks: # mutually exclusive with local_executor and external_https
+  #   url: https://identity.internal/.well-known/jwks.json
+  #   trusted_issuer: https://identity.internal
+  #   audience: flowie
+  #   subject_type: device
+  #   algorithm: EdDSA
+  #   timeout_ms: 3000
+  #   max_response_size: 65536
+  #   max_keys: 16
+  #   max_token_size: 4096
+  #   refresh_interval_seconds: 300
+  #   clock_skew_seconds: 30
+  #   executor:
+  #     workers: 4
+  #     queue_capacity: 128
+  #     deadline_ms: 10000
+  #   tls:
+  #     ca_file: certs/identity-ca.pem

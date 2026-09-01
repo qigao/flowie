@@ -26,6 +26,11 @@ typedef struct flowie_transport_baseline_state_s {
   uint8_t publish_qos;
 } flowie_transport_baseline_state_t;
 
+typedef struct flowie_transport_auth_failure_s {
+  size_t calls;
+  int result;
+} flowie_transport_auth_failure_t;
+
 static int flowie_transport_baseline_on_message(flowie_endpoint_core_t *endpoint,
                                                 flowie_message_t *message,
                                                 flowie_publish_result_t *result, void *ctx) {
@@ -36,6 +41,148 @@ static int flowie_transport_baseline_on_message(flowie_endpoint_core_t *endpoint
   result->status = TURBO_OK;
   result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
   return TURBO_OK;
+}
+
+static int flowie_transport_auth_failure_authenticate(
+    void *ctx, const flowie_security_auth_request_t *request,
+    flowie_security_principal_t *principal_out) {
+  flowie_transport_auth_failure_t *fixture = (flowie_transport_auth_failure_t *)ctx;
+  if (!fixture || !request || !principal_out) return TURBO_EINVAL;
+  fixture->calls += 1u;
+  return fixture->result;
+}
+
+static int flowie_transport_expect_connack(flowie_test_socket_t client,
+                                           const uint8_t *expected, size_t expected_size) {
+  uint8_t received[8];
+  int rc;
+  if (!expected || expected_size > sizeof(received)) return TURBO_EINVAL;
+  rc = flowie_test_recv_exact(client, received, expected_size);
+  if (rc != TURBO_OK) {
+    (void)fprintf(stderr, "CONNACK receive failed: %d\n", rc);
+    return TURBO_EPROTO;
+  }
+  if (memcmp(received, expected, expected_size) != 0) {
+    (void)fprintf(stderr, "unexpected CONNACK:");
+    for (size_t i = 0u; i < expected_size; ++i) (void)fprintf(stderr, " %02x", received[i]);
+    (void)fprintf(stderr, "\n");
+    return TURBO_EPROTO;
+  }
+  return TURBO_OK;
+}
+
+static int flowie_transport_expect_close(flowie_test_socket_t client) {
+  uint8_t first_byte = 0u;
+  int rc;
+  if (!flowie_test_socket_readable(client, 1500u)) return TURBO_ETIMEDOUT;
+  rc = flowie_test_recv_exact(client, &first_byte, 1u);
+  return rc != TURBO_OK || first_byte == UINT8_C(0xe0) ? TURBO_OK : TURBO_EPROTO;
+}
+
+static int flowie_transport_auth_unavailable_case(void) {
+  static const uint8_t connack_v5[] = {0x20u, 0x03u, 0x00u, 0x88u, 0x00u};
+  static const uint8_t connack_busy_v5[] = {0x20u, 0x03u, 0x00u, 0x89u, 0x00u};
+  static const uint8_t connack_v311[] = {0x20u, 0x02u, 0x00u, 0x03u};
+  static const struct {
+    flowie_mqtt_version_t version;
+    int provider_result;
+    const uint8_t *connack;
+    size_t connack_size;
+  } cases[] = {
+      {FLOWIE_MQTT_VERSION_5, TURBO_ETIMEDOUT, connack_v5, sizeof(connack_v5)},
+      {FLOWIE_MQTT_VERSION_5, TURBO_EIO, connack_v5, sizeof(connack_v5)},
+      {FLOWIE_MQTT_VERSION_5, TURBO_EBUSY, connack_busy_v5, sizeof(connack_busy_v5)},
+      {FLOWIE_MQTT_VERSION_3_1_1, TURBO_ETIMEDOUT, connack_v311, sizeof(connack_v311)},
+      {FLOWIE_MQTT_VERSION_3_1_1, TURBO_EBUSY, connack_v311, sizeof(connack_v311)},
+      {FLOWIE_MQTT_VERSION_5, TURBO_EPROTO, NULL, 0u},
+  };
+  const flowie_execution_binding_t execution = {sizeof(flowie_execution_binding_t),
+                                                 FLOWIE_EXECUTION_PRIVATE};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
+  flowie_endpoint_security_binding_t security = FLOWIE_ENDPOINT_SECURITY_BINDING_INIT;
+  flowie_security_realm_config_t realm_config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
+  flowie_security_realm_t *realm = NULL;
+  flowie_transport_auth_failure_t auth = {0};
+  flowie_security_auth_provider_t provider = {
+      sizeof(provider), &auth, flowie_transport_auth_failure_authenticate};
+  flowie_endpoint_core_t *endpoint = NULL;
+  unsigned short port = flowie_test_port();
+  int rc = TURBO_OK;
+
+  if (port == 0u) return TURBO_EIO;
+  realm_config.policy_version = 1u;
+  rc = flowie_security_realm_create(&realm_config, &realm);
+  if (rc != TURBO_OK) goto done;
+
+  security.realm_channel = "security.transport-auth";
+  security.auth_method = "password";
+  security.auth_provider = &provider;
+  security.realm = realm;
+  bindings.security = &security;
+  config.host = "127.0.0.1";
+  config.port = (int)port;
+  config.max_connections = 4u;
+  config.recv_timeout_ms = FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+  config.manage_sessions = 1;
+  config.max_sessions = 4u;
+  config.max_subscriptions_per_session = 4u;
+  config.max_inflight_per_session = 4u;
+  options.on_message = flowie_transport_baseline_on_message;
+  rc = flowie_endpoint_core_create_ex("transport-auth-unavailable", &config, &options,
+                                      &execution, &bindings, &endpoint);
+  if (rc != TURBO_OK) goto done;
+  rc = flowie_endpoint_core_start(endpoint);
+  if (rc != TURBO_OK) goto done;
+
+  for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_test_socket_t client = FLOWIE_TEST_INVALID_SOCKET;
+    uint8_t connect_packet[128];
+    size_t connect_size = 0u;
+
+    connect.version = cases[i].version;
+    connect.clean_start = 1u;
+    connect.keep_alive = 30u;
+    connect.client_id =
+        (flowie_mqtt_span_t){(const uint8_t *)"auth-unavailable-client", 23u};
+    connect.has_username = 1u;
+    connect.has_password = 1u;
+    connect.username = (flowie_mqtt_span_t){(const uint8_t *)"writer", 6u};
+    connect.password = (flowie_mqtt_span_t){(const uint8_t *)"secret", 6u};
+    auth.result = cases[i].provider_result;
+    if (flowie_mqtt_connect_packet_encode(&connect, connect_packet, sizeof(connect_packet),
+                                           &connect_size) != FLOWIE_MQTT_PARSE_OK) {
+      rc = TURBO_EPROTO;
+      break;
+    }
+    client = flowie_test_connect(port);
+    if (client == FLOWIE_TEST_INVALID_SOCKET) {
+      rc = TURBO_EIO;
+      break;
+    }
+    rc = flowie_test_send(client, connect_packet, connect_size);
+    if (rc == TURBO_OK && cases[i].connack)
+      rc = flowie_transport_expect_connack(client, cases[i].connack, cases[i].connack_size);
+    else if (rc == TURBO_OK)
+      rc = flowie_transport_expect_close(client);
+    flowie_test_socket_close(client);
+    if (rc != TURBO_OK) {
+      (void)fprintf(stderr, "authentication unavailable case %zu failed\n", i);
+      break;
+    }
+  }
+  if (rc == TURBO_OK && auth.calls != sizeof(cases) / sizeof(cases[0])) rc = TURBO_EPROTO;
+
+done:
+  if (endpoint) {
+    int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == TURBO_OK && stop_rc != TURBO_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
+  flowie_security_realm_destroy(realm);
+  return rc;
 }
 
 static void flowie_transport_baseline_complete(flowie_transport_baseline_state_t *state,
@@ -284,6 +431,10 @@ done:
 }
 
 spec("Flowie TCP/TLS/WS/WSS release baseline") {
+  it("reports authentication provider unavailability in CONNACK") {
+    check_equal(flowie_transport_auth_unavailable_case(), TURBO_OK);
+  }
+
   it("serves MQTT 3.1, 3.1.1, and 5 over TCP") {
     check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_TCP, 100u), TURBO_OK);
   }

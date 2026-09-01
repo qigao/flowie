@@ -334,9 +334,9 @@ When enabled, `control.auth.external_https.stats` returns:
 ```
 
 Counters are process-lifetime aggregate snapshots, not windowed rates or SLO calculations.
-The current composition root rejects `auth.external_https` with `TURBO_ENOTSUP`, so deployed
-instances report `{"enabled":false}`. The expanded counter shape is reserved for a future runtime
-that explicitly enables the provider; clients must not infer availability from schema presence.
+When `auth.external_https` is active, the runtime exposes that provider's counters; otherwise it
+reports `{"enabled":false}`. JWT/JWKS uses local signature verification and is not folded into these
+remote assertion request counters.
 
 ### Users, passwords, and credentials
 

@@ -83,7 +83,8 @@ topic_lex:
     re2c:yyfill:enable = 0;
     re2c:eof = 0;
     topic_static = [A-Za-z0-9_.:@~$-]+;
-    topic_atom = topic_static | "%u" | "%c" | "+" | "#";
+    topic_role = "%" [A-Za-z0-9_.:@~-]+;
+    topic_atom = topic_static | topic_role | "+" | "#";
     topic_alternatives = "{" topic_static ("," topic_static)+ "}";
     topic_pattern = topic_atom ("/" (topic_atom | topic_alternatives))*;
     topic_hspace = [ \t]+;

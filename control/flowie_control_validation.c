@@ -35,7 +35,7 @@ int flowie_control_acl_document_syntax_validate(const char *domain_id, const cha
     return TURBO_EINVAL;
   workspace = (flowie_control_acl_validation_workspace_t *)malloc(sizeof(*workspace));
   if (!workspace) return TURBO_ENOMEM;
-  workspace->document = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_acl_document_init(&workspace->document);
   rc = flowie_control_acl_parse(document_text, document_size, &workspace->document);
   if (rc != TURBO_OK) goto done;
   domain_size = strlen(domain_id);
