@@ -165,7 +165,41 @@ MQTT 3.1/3.1.1 调用 re-authentication 会通过 `on_auth` 返回 `TURBO_ENOTSU
 配置结构没有本地 ABI 版本号，也不接受历史布局；`size` 必须精确匹配当前完整结构。
 MQTT 版本只来自 CONNECT packet 的 MQTT 3.1、3.1.1 或 5 协议字段。
 
-## 5. TLS、WSS 与客户端 mTLS
+## 5. 自动重连与 CONNECT token 刷新
+
+`flowie_mqtt_client_create()` 保持原行为，不会自动重连。需要韧性策略时使用独立的
+`flowie_mqtt_client_resilience_config_t`，避免扩展主配置结构造成静默 ABI 兼容问题：
+
+```c
+flowie_mqtt_client_resilience_config_t resilience =
+    FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+resilience.initial_delay_ms = 250;
+resilience.max_delay_ms = 30000;
+resilience.max_attempts = 0; /* unlimited */
+resilience.refresh_connect = refresh_connect;
+resilience.on_reconnect = on_reconnect;
+
+rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
+```
+
+策略只保留最近一次已提交 CONNECT 的一份深拷贝，并由 client worker coroutine 单线程推进：
+
+- CONNACK `0x88`（Server unavailable）、`0x89`（Server busy）及瞬态网络错误按指数退避重连。
+- CONNACK 或 DISCONNECT `0x86`/`0x87` 先调用 `refresh_connect`；回调必须返回一份完整的新 CONNECT，
+  client 会在回调返回前深拷贝它。JWT bearer 放在 CONNECT password 时，在这里替换 token。
+- DISCONNECT `0x89` 普通重连；`0x8e`（Session taken over）、协议错误及永久认证拒绝不重连。
+- 初始公开 CONNECT 仍只产生一次 `on_connect`；每次内部 attempt 由 `on_reconnect` 报告。
+- `max_attempts` 是每次掉线后的自动 attempt 上限，0 表示不限制；成功连接会重置 attempt 和退避。
+
+`refresh_connect` 和 `on_reconnect` 都运行在 client worker coroutine。回调内的网络 I/O 必须使用
+coroutine API，并设置明确 timeout；密码学、文件扫描等重型工作应提交到有界 worker pool，不能阻塞
+owner lane。回调不能销毁同一个 client。缓存的 CONNECT password/token 在替换和销毁时会清零。
+
+此机制与 MQTT enhanced authentication 不同：`flowie_mqtt_client_authenticate()` 的 AUTH `0x19`
+用于已协商 Authentication Method 的协议内 re-auth；JWT 作为普通 CONNECT password 时使用上述
+refresh-and-reconnect 路径，不能把新 password 塞进 AUTH packet。
+
+## 6. TLS、WSS 与客户端 mTLS
 
 TLS：
 
@@ -196,7 +230,7 @@ config.path = "/mqtt";
 - client 销毁时会擦除内部私钥密码副本。
 - 不要把私钥密码写进源码、日志或普通 YAML；从进程 secret provider 获取后临时传入。
 
-## 6. Callback 与线程边界
+## 7. Callback 与线程边界
 
 所有 callback 在 client 自己的 worker thread 上执行：
 
@@ -208,7 +242,7 @@ config.path = "/mqtt";
 
 Topic handler 使用 MQTT filter；多个 filter 匹配时按配置顺序调用，首个非 `TURBO_OK` 返回会停止后续 handler。
 
-## 7. 命令与错误语义
+## 8. 命令与错误语义
 
 公开操作包括 CONNECT、PUBLISH、SUBSCRIBE、UNSUBSCRIBE、PING、AUTH 和 DISCONNECT。
 
@@ -223,7 +257,7 @@ MQTT 5 成功 CONNACK 中的 Maximum Packet Size、Maximum QoS、Retain Availabl
 会约束后续发送；违反 broker 声明的 PUBLISH 在发送前失败。当前 command worker 对 QoS 1/2 串行执行，
 因此任一时刻最多只有一个发往 broker 的 QoS PUBLISH，天然不超过合法的 Receive Maximum 下限 1。
 
-## 8. 容量建议
+## 9. 容量建议
 
 默认 command queue 为 64 条、4 MiB owned bytes，默认最大 packet 为 1 MiB。生产环境应按峰值请求和可接受
 内存设置 `command_queue_capacity`、`command_queue_max_bytes`、`max_packet_size` 和

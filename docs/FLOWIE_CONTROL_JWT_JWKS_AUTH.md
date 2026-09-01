@@ -65,6 +65,24 @@ endpoint 不再套第二层 executor。未配置该块时，本地密码认证�
 JWKS 初次按需拉取。未取得有效 snapshot、snapshot 到期、未知 `kid`、签名或声明不匹配均拒绝
 认证；不会回退到本地密码、旧 key 或远程 introspection。
 
+Flowie 在 CONNECT 期间调用认证或 ACL provider 时，`TURBO_ETIMEDOUT` 与 `TURBO_EIO` 表示依赖
+暂时不可用：MQTT 5 返回 CONNACK `0x88`（Server unavailable），MQTT 3.1/3.1.1 返回 `0x03`。
+provider 明确返回 `TURBO_EBUSY` 时，MQTT 5 返回 `0x89`（Server busy），MQTT 3.1/3.1.1 同样返回
+`0x03`。凭据或权限拒绝仍使用既有拒绝码；`TURBO_EPROTO`、内存错误等内部故障继续关闭连接，不
+伪装成服务不可用。
+
+Flowie MQTT client 的自动行为是显式 opt-in：`flowie_mqtt_client_create()` 不变，
+`flowie_mqtt_client_create_ex()` 接受独立 resilience 配置。CONNACK `0x88`/`0x89` 与瞬态网络错误
+复用最近一次 CONNECT 并指数退避；`0x86`/`0x87` 必须由 `refresh_connect` 生成完整的新 CONNECT
+后才重试。JWT bearer 作为 CONNECT password 时，刷新回调替换 password；client 随即深拷贝，旧、
+新 token 副本在替换或销毁时清零。DISCONNECT `0x87` 走同一刷新路径，`0x89` 普通重连，`0x8e`
+（Session taken over）和协议错误不重连。
+
+该路径不改变 MQTT enhanced AUTH：AUTH `0x19` 只用于 CONNECT 已声明 Authentication Method 的
+协议内 re-authentication。JWT password 不能通过 AUTH `0x19` 替换。刷新与 reconnect callback 在
+client worker coroutine 执行；网络请求必须使用 coroutine I/O，签名验证等重型函数必须放入有界
+worker pool，不能阻塞 owner lane。
+
 ## 迁移、回滚与验证
 
 迁移时先让 IdP 发布带完整元数据的公钥，并签发包含上述必需声明的 token，再启用

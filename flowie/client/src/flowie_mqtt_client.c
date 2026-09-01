@@ -45,6 +45,7 @@ typedef struct flowie_mqtt_client_command_s {
   void *user_data;
   uint8_t *owned_bytes;
   size_t owned_size;
+  int sensitive;
   union {
     flowie_mqtt_connect_packet_t connect;
     flowie_mqtt_publish_packet_t publish;
@@ -96,6 +97,21 @@ struct flowie_mqtt_client_s {
   flowie_mqtt_client_completion_fn on_disconnect;
   flowie_mqtt_client_error_fn on_error;
   void *user_data;
+  int resilience_enabled;
+  uint64_t reconnect_initial_delay_ms;
+  uint64_t reconnect_max_delay_ms;
+  uint32_t reconnect_max_attempts;
+  flowie_mqtt_client_refresh_connect_fn refresh_connect;
+  flowie_mqtt_client_reconnect_fn on_reconnect;
+  coro_wait_t *reconnect_wait;
+  flowie_mqtt_client_command_t *reconnect_connect;
+  uint64_t reconnect_delay_ms;
+  uint64_t reconnect_deadline_ms;
+  uint32_t reconnect_attempt;
+  int reconnect_pending;
+  int reconnect_waiting;
+  uint8_t disconnect_reason;
+  int disconnect_reason_valid;
   tstr send_buffer;
   turbo_bytes_t framing;
   char *recv_data;
@@ -229,6 +245,21 @@ static int flowie_mqtt_client_config_validate(const flowie_mqtt_client_config_t 
     }
   }
   return TURBO_OK;
+}
+
+static int flowie_mqtt_client_resilience_validate(
+    const flowie_mqtt_client_resilience_config_t *resilience) {
+  uint64_t initial_delay_ms;
+  uint64_t max_delay_ms;
+  if (!resilience) return TURBO_OK;
+  if (resilience->size != sizeof(*resilience)) return TURBO_EINVAL;
+  initial_delay_ms = resilience->initial_delay_ms
+                         ? resilience->initial_delay_ms
+                         : FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_INITIAL_DELAY_MS;
+  max_delay_ms = resilience->max_delay_ms
+                     ? resilience->max_delay_ms
+                     : FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS;
+  return initial_delay_ms <= max_delay_ms ? TURBO_OK : TURBO_EINVAL;
 }
 
 static int flowie_mqtt_client_auth_method_get(const flowie_mqtt_property_block_view_t *properties,
@@ -404,6 +435,8 @@ flowie_mqtt_client_command_new(flowie_mqtt_client_command_type_t type,
 
 static void flowie_mqtt_client_command_destroy(flowie_mqtt_client_command_t *command) {
   if (!command) return;
+  if (command->sensitive && command->owned_bytes)
+    crypto_wipe(command->owned_bytes, command->owned_size);
   free(command->owned_bytes);
   free(command);
 }
@@ -429,6 +462,7 @@ static int flowie_mqtt_client_clone_connect(flowie_mqtt_client_command_t *comman
   size_t total = 0u;
   uint8_t *cursor;
   int rc;
+  command->sensitive = 1;
   if (packet->size < sizeof(*packet) || packet->abi_version != FLOWIE_MQTT_PROTOCOL_ABI_V1)
     return TURBO_EINVAL;
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i) {
@@ -443,6 +477,88 @@ static int flowie_mqtt_client_clone_connect(flowie_mqtt_client_command_t *comman
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i)
     flowie_mqtt_client_copy_span(source[i], &cursor, &spans[i]);
   return TURBO_OK;
+}
+
+static int flowie_mqtt_client_reconnect_connect_replace(
+    flowie_mqtt_client_t *client, const flowie_mqtt_connect_packet_t *packet) {
+  flowie_mqtt_client_command_t *replacement;
+  int rc;
+  if (!client || !packet) return TURBO_EINVAL;
+  replacement = (flowie_mqtt_client_command_t *)calloc(1, sizeof(*replacement));
+  if (!replacement) return TURBO_ENOMEM;
+  replacement->type = FLOWIE_MQTT_CLIENT_COMMAND_CONNECT;
+  rc = flowie_mqtt_client_clone_connect(replacement, packet);
+  if (rc != TURBO_OK) {
+    flowie_mqtt_client_command_destroy(replacement);
+    return rc;
+  }
+  flowie_mqtt_client_command_destroy(client->reconnect_connect);
+  client->reconnect_connect = replacement;
+  return TURBO_OK;
+}
+
+static void flowie_mqtt_client_reconnect_cancel(flowie_mqtt_client_t *client,
+                                                int clear_connect) {
+  if (!client) return;
+  client->reconnect_pending = 0;
+  client->reconnect_attempt = 0u;
+  client->reconnect_delay_ms = client->reconnect_initial_delay_ms;
+  client->reconnect_deadline_ms = 0u;
+  if (clear_connect) {
+    flowie_mqtt_client_command_destroy(client->reconnect_connect);
+    client->reconnect_connect = NULL;
+  }
+}
+
+static int flowie_mqtt_client_reconnect_reason(uint8_t reason_code) {
+  return reason_code == UINT8_C(0x88) || reason_code == UINT8_C(0x89);
+}
+
+static int flowie_mqtt_client_refresh_reason(uint8_t reason_code) {
+  return reason_code == UINT8_C(0x86) || reason_code == UINT8_C(0x87);
+}
+
+static int flowie_mqtt_client_reconnect_status(int status) {
+  switch (status) {
+  case TURBO_EOF:
+  case TURBO_ECONNRESET:
+  case TURBO_ECONNREFUSED:
+  case TURBO_ETIMEDOUT:
+  case TURBO_ENETDOWN:
+  case TURBO_ENETUNREACH:
+  case TURBO_EHOSTUNREACH:
+  case TURBO_EIO:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+static void flowie_mqtt_client_reconnect_schedule(flowie_mqtt_client_t *client) {
+  uint64_t now;
+  if (!client || !client->resilience_enabled || !client->reconnect_connect) return;
+  if (client->reconnect_max_attempts != 0u &&
+      client->reconnect_attempt >= client->reconnect_max_attempts) {
+    client->reconnect_pending = 0;
+    return;
+  }
+  if (client->reconnect_delay_ms == 0u)
+    client->reconnect_delay_ms = client->reconnect_initial_delay_ms;
+  now = turbo_monotonic_ms();
+  client->reconnect_deadline_ms =
+      client->reconnect_delay_ms > UINT64_MAX - now ? UINT64_MAX
+                                                    : now + client->reconnect_delay_ms;
+  client->reconnect_pending = 1;
+}
+
+static void flowie_mqtt_client_reconnect_backoff(flowie_mqtt_client_t *client) {
+  uint64_t doubled;
+  if (!client) return;
+  doubled = client->reconnect_delay_ms > UINT64_MAX / 2u
+                ? UINT64_MAX
+                : client->reconnect_delay_ms * 2u;
+  client->reconnect_delay_ms =
+      doubled > client->reconnect_max_delay_ms ? client->reconnect_max_delay_ms : doubled;
 }
 
 static int flowie_mqtt_client_clone_publish(flowie_mqtt_client_command_t *command,
@@ -844,8 +960,14 @@ static int flowie_mqtt_client_handle_unsolicited(flowie_mqtt_client_t *client,
     return flowie_mqtt_client_handle_publish(client, packet);
   case FLOWIE_MQTT_PACKET_PUBREL:
     return flowie_mqtt_client_handle_pubrel(client, packet);
-  case FLOWIE_MQTT_PACKET_DISCONNECT:
+  case FLOWIE_MQTT_PACKET_DISCONNECT: {
+    flowie_mqtt_control_packet_view_t disconnect = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
+    int rc = flowie_mqtt_control_packet_parse(packet, &disconnect);
+    if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
+    client->disconnect_reason = disconnect.reason_code;
+    client->disconnect_reason_valid = packet->version == FLOWIE_MQTT_VERSION_5;
     return TURBO_ECONNRESET;
+  }
   case FLOWIE_MQTT_PACKET_AUTH:
     return TURBO_EPROTO;
   default:
@@ -895,6 +1017,56 @@ static void flowie_mqtt_client_report_error(flowie_mqtt_client_t *client, int st
   client->callback_active = 0;
 }
 
+static void flowie_mqtt_client_report_reconnect(
+    flowie_mqtt_client_t *client, uint32_t attempt, int status,
+    const flowie_mqtt_control_packet_view_t *response) {
+  if (!client->on_reconnect) return;
+  client->callback_active = 1;
+  client->on_reconnect(client, attempt, status, response, client->user_data);
+  client->callback_active = 0;
+}
+
+static int flowie_mqtt_client_refresh_reconnect(flowie_mqtt_client_t *client,
+                                                uint8_t reason_code) {
+  flowie_mqtt_connect_packet_t refreshed = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  int rc;
+  if (!client || !client->refresh_connect || !client->reconnect_connect)
+    return TURBO_ENOTSUP;
+  client->callback_active = 1;
+  rc = client->refresh_connect(client, reason_code,
+                               &client->reconnect_connect->packet.connect, &refreshed,
+                               client->user_data);
+  client->callback_active = 0;
+  if (rc != TURBO_OK) return rc;
+  return flowie_mqtt_client_reconnect_connect_replace(client, &refreshed);
+}
+
+static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *client,
+                                                       int status, int increase_backoff) {
+  uint8_t reason_code;
+  int has_reason;
+  int schedule = 0;
+  if (!client || !client->resilience_enabled || !client->reconnect_connect) return;
+  reason_code = client->disconnect_reason;
+  has_reason = client->disconnect_reason_valid;
+  client->disconnect_reason_valid = 0;
+  if (has_reason && flowie_mqtt_client_refresh_reason(reason_code)) {
+    int refresh_rc = flowie_mqtt_client_refresh_reconnect(client, reason_code);
+    if (refresh_rc != TURBO_OK) {
+      flowie_mqtt_client_reconnect_cancel(client, 1);
+      flowie_mqtt_client_report_error(client, refresh_rc);
+      return;
+    }
+    schedule = 1;
+  } else if ((has_reason && reason_code == UINT8_C(0x89)) ||
+             (!has_reason && flowie_mqtt_client_reconnect_status(status))) {
+    schedule = 1;
+  }
+  if (!schedule) return;
+  if (increase_backoff) flowie_mqtt_client_reconnect_backoff(client);
+  flowie_mqtt_client_reconnect_schedule(client);
+}
+
 static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
                                           flowie_mqtt_client_command_t **out) {
   int stopping;
@@ -932,15 +1104,64 @@ static int flowie_mqtt_client_is_stopping(flowie_mqtt_client_t *client) {
   return stopping;
 }
 
+static void flowie_mqtt_client_run_reconnect(flowie_mqtt_client_t *client) {
+  flowie_mqtt_control_packet_view_t response = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
+  const flowie_mqtt_control_packet_view_t *response_ptr = NULL;
+  uint32_t attempt;
+  int rc;
+  if (!client || !client->reconnect_connect || flowie_mqtt_client_is_stopping(client)) return;
+  client->reconnect_pending = 0;
+  attempt = ++client->reconnect_attempt;
+  rc = flowie_mqtt_client_connect_operation(client, &client->reconnect_connect->packet.connect,
+                                             &response);
+  if (rc == TURBO_OK) response_ptr = &response;
+  flowie_mqtt_client_report_reconnect(client, attempt, rc, response_ptr);
+  if (flowie_mqtt_client_is_stopping(client)) return;
+  if (rc == TURBO_OK && response.reason_code == 0u) {
+    flowie_mqtt_client_reconnect_cancel(client, 0);
+    return;
+  }
+  if (rc == TURBO_OK && flowie_mqtt_client_reconnect_reason(response.reason_code)) {
+    flowie_mqtt_client_reconnect_backoff(client);
+    flowie_mqtt_client_reconnect_schedule(client);
+    return;
+  }
+  if (rc == TURBO_OK && flowie_mqtt_client_refresh_reason(response.reason_code)) {
+    rc = flowie_mqtt_client_refresh_reconnect(client, response.reason_code);
+    if (rc == TURBO_OK) {
+      flowie_mqtt_client_reconnect_backoff(client);
+      flowie_mqtt_client_reconnect_schedule(client);
+    } else {
+      flowie_mqtt_client_reconnect_cancel(client, 1);
+      flowie_mqtt_client_report_error(client, rc);
+    }
+    return;
+  }
+  if (rc != TURBO_OK) {
+    flowie_mqtt_client_reconnect_after_failure(client, rc, 1);
+    return;
+  }
+  client->reconnect_pending = 0;
+}
+
 static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
                                            flowie_mqtt_client_command_t *command) {
   flowie_mqtt_control_packet_view_t response = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
   const flowie_mqtt_control_packet_view_t *response_ptr = NULL;
   int rc;
+  client->disconnect_reason_valid = 0;
   switch (command->type) {
   case FLOWIE_MQTT_CLIENT_COMMAND_CONNECT:
-    rc = flowie_mqtt_client_connect_operation(client, &command->packet.connect, &response);
-    if (rc == TURBO_OK) response_ptr = &response;
+    if (client->resilience_enabled) {
+      rc = flowie_mqtt_client_reconnect_connect_replace(client, &command->packet.connect);
+      if (rc == TURBO_OK) flowie_mqtt_client_reconnect_cancel(client, 0);
+    } else {
+      rc = TURBO_OK;
+    }
+    if (rc == TURBO_OK) {
+      rc = flowie_mqtt_client_connect_operation(client, &command->packet.connect, &response);
+      if (rc == TURBO_OK) response_ptr = &response;
+    }
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_PUBLISH:
     rc = flowie_mqtt_client_publish_operation(client, &command->packet.publish, &response);
@@ -975,6 +1196,33 @@ static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
     response_ptr = NULL;
   }
   flowie_mqtt_client_complete(client, command, rc, response_ptr);
+  if (command->type == FLOWIE_MQTT_CLIENT_COMMAND_CONNECT && client->resilience_enabled &&
+      !flowie_mqtt_client_is_stopping(client)) {
+    if (rc == TURBO_OK && response_ptr && response.reason_code == 0u) {
+      flowie_mqtt_client_reconnect_cancel(client, 0);
+    } else if (rc == TURBO_OK && response_ptr &&
+               flowie_mqtt_client_reconnect_reason(response.reason_code)) {
+      flowie_mqtt_client_reconnect_schedule(client);
+    } else if (rc == TURBO_OK && response_ptr &&
+               flowie_mqtt_client_refresh_reason(response.reason_code)) {
+      int refresh_rc = flowie_mqtt_client_refresh_reconnect(client, response.reason_code);
+      if (refresh_rc == TURBO_OK)
+        flowie_mqtt_client_reconnect_schedule(client);
+      else {
+        flowie_mqtt_client_reconnect_cancel(client, 1);
+        flowie_mqtt_client_report_error(client, refresh_rc);
+      }
+    } else if (rc != TURBO_OK) {
+      flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
+    } else {
+      flowie_mqtt_client_reconnect_cancel(client, 1);
+    }
+  } else if (command->type == FLOWIE_MQTT_CLIENT_COMMAND_DISCONNECT) {
+    flowie_mqtt_client_reconnect_cancel(client, 1);
+  } else if (rc != TURBO_OK && client->resilience_enabled &&
+             !flowie_mqtt_client_is_stopping(client)) {
+    flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
+  }
 }
 
 static void flowie_mqtt_client_worker_pump(coro_t *co, void *arg) {
@@ -984,6 +1232,7 @@ static void flowie_mqtt_client_worker_pump(coro_t *co, void *arg) {
     flowie_mqtt_client_command_t *command = NULL;
     if (flowie_mqtt_client_command_pop(client, &command)) {
       flowie_mqtt_client_transport_close(client, 1);
+      flowie_mqtt_client_reconnect_cancel(client, 1);
       flowie_mqtt_client_cancel_commands(client, TURBO_ESHUTDOWN);
       client->pump_active = 0;
       coro_context_set_persistent(client->context, 0);
@@ -995,10 +1244,30 @@ static void flowie_mqtt_client_worker_pump(coro_t *co, void *arg) {
       flowie_mqtt_client_command_destroy(command);
       continue;
     }
+    if (client->reconnect_pending) {
+      uint64_t now = turbo_monotonic_ms();
+      uint64_t remaining_ms =
+          client->reconnect_deadline_ms > now ? client->reconnect_deadline_ms - now : 0u;
+      int rc = TURBO_OK;
+      if (remaining_ms != 0u) {
+        client->reconnect_waiting = 1;
+        rc = coro_wait_for(client->reconnect_wait, remaining_ms);
+        client->reconnect_waiting = 0;
+      }
+      if (rc == TURBO_EINTR || rc == TURBO_ESHUTDOWN) continue;
+      if (rc != TURBO_OK) {
+        client->reconnect_pending = 0;
+        flowie_mqtt_client_report_error(client, rc);
+        continue;
+      }
+      flowie_mqtt_client_run_reconnect(client);
+      continue;
+    }
     if (client->state == FLOWIE_MQTT_CLIENT_CONNECTED) {
       flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
       int handled = 0;
       int rc;
+      client->disconnect_reason_valid = 0;
       client->idle_receive = 1;
       rc = flowie_mqtt_client_receive_packet(client, &packet);
       client->idle_receive = 0;
@@ -1011,6 +1280,7 @@ static void flowie_mqtt_client_worker_pump(coro_t *co, void *arg) {
       if (rc != TURBO_OK) {
         flowie_mqtt_client_transport_close(client, 1);
         flowie_mqtt_client_report_error(client, rc);
+        flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
       }
       continue;
     }
@@ -1046,7 +1316,10 @@ static void flowie_mqtt_client_worker_wake(void *arg1, void *arg2) {
     }
     return;
   }
-  if (stopping && client->socket) {
+  if (client->reconnect_waiting && client->reconnect_wait) {
+    (void)coro_wait_interrupt(client->reconnect_wait,
+                              stopping ? TURBO_ESHUTDOWN : TURBO_EINTR);
+  } else if (stopping && client->socket) {
     /* Destruction owns the transport now. Closing on the loop thread wakes an
      * active command without relying on a second, nested context post. */
     flowie_mqtt_client_transport_close(client, 1);
@@ -1145,8 +1418,9 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   return rc;
 }
 
-int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
-                              flowie_mqtt_client_t **out) {
+int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
+                                 const flowie_mqtt_client_resilience_config_t *resilience,
+                                 flowie_mqtt_client_t **out) {
   const flowie_mqtt_client_tls_config_t *tls;
   flowie_mqtt_client_t *client;
   size_t max_packet_size;
@@ -1154,6 +1428,8 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
   if (out) *out = NULL;
   if (!out) return TURBO_EINVAL;
   rc = flowie_mqtt_client_config_validate(config);
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_mqtt_client_resilience_validate(resilience);
   if (rc != TURBO_OK) return rc;
   max_packet_size = config->max_packet_size ? config->max_packet_size
                                             : FLOWIE_MQTT_CLIENT_DEFAULT_MAX_PACKET_SIZE;
@@ -1185,6 +1461,18 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
   client->on_disconnect = config->on_disconnect;
   client->on_error = config->on_error;
   client->user_data = config->user_data;
+  if (resilience) {
+    client->resilience_enabled = 1;
+    client->reconnect_initial_delay_ms =
+        resilience->initial_delay_ms ? resilience->initial_delay_ms
+                                     : FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_INITIAL_DELAY_MS;
+    client->reconnect_max_delay_ms =
+        resilience->max_delay_ms ? resilience->max_delay_ms
+                                 : FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS;
+    client->reconnect_max_attempts = resilience->max_attempts;
+    client->refresh_connect = resilience->refresh_connect;
+    client->on_reconnect = resilience->on_reconnect;
+  }
   client->command_queue_capacity = config->command_queue_capacity
                                        ? config->command_queue_capacity
                                        : FLOWIE_MQTT_CLIENT_DEFAULT_COMMAND_QUEUE_CAPACITY;
@@ -1236,6 +1524,13 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
     rc = TURBO_ENOMEM;
     goto fail;
   }
+  if (resilience) {
+    client->reconnect_wait = coro_wait_create(client->context);
+    if (!client->reconnect_wait) {
+      rc = TURBO_ENOMEM;
+      goto fail;
+    }
+  }
   if (client->stream_recv_buffer_bytes != 0u) {
     rc = coro_context_set_stream_recv_buffer_size(client->context,
                                                   client->stream_recv_buffer_bytes);
@@ -1251,6 +1546,11 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
 fail:
   flowie_mqtt_client_destroy(client);
   return rc;
+}
+
+int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
+                              flowie_mqtt_client_t **out) {
+  return flowie_mqtt_client_create_ex(config, NULL, out);
 }
 
 void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
@@ -1280,7 +1580,13 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
       flowie_mqtt_client_command_destroy(command);
     deque_destroy(&client->commands);
   }
+  flowie_mqtt_client_command_destroy(client->reconnect_connect);
+  client->reconnect_connect = NULL;
   if (client->sync_initialized) turbo_mutex_destroy(&client->command_mutex);
+  if (client->reconnect_wait) {
+    (void)coro_wait_destroy(client->reconnect_wait);
+    client->reconnect_wait = NULL;
+  }
   if (client->context) coro_context_destroy(client->context);
   if (client->qos2_initialized) hash_set_destroy(&client->inbound_qos2);
   if (client->framing_initialized) turbo_bytes_destroy(&client->framing);
