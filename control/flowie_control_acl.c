@@ -161,6 +161,9 @@ flowie_control_acl_topic_parse(flowie_control_acl_parse_ctx_t *ctx,
       topic.uses_username = 1;
     } else if (segment_length == 2u && memcmp(cursor, "%c", 2u) == 0) {
       topic.uses_client_id = 1;
+    } else if (segment_length > 1u && cursor[0] == '%' &&
+               flowie_control_acl_topic_static(cursor + 1u, segment_length - 1u, 0)) {
+      topic.uses_client_id = 1;
     } else if (cursor[0] == '{') {
       if (!final_segment) {
         flowie_control_acl_set_error(ctx, TURBO_EPROTO);
@@ -218,6 +221,14 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
   ++ctx->document.entry_count;
 }
 
+void flowie_control_acl_document_init(flowie_control_acl_document_t *document) {
+  if (!document) return;
+  memset(document, 0, sizeof(*document));
+  document->size = sizeof(*document);
+  document->subject_kind = FLOWIE_SECURITY_SUBJECT_ANY;
+  document->connection_effect = FLOWIE_SECURITY_DENY;
+}
+
 int flowie_control_acl_parse(const char *text, size_t text_size,
                              flowie_control_acl_document_t *out) {
   flowie_control_acl_parse_ctx_t *ctx = NULL;
@@ -226,14 +237,13 @@ int flowie_control_acl_parse(const char *text, size_t text_size,
   void *parser = NULL;
   int token_id = FLOWIE_CONTROL_ACL_LEX_END;
   int rc = TURBO_OK;
-  if (out && out->size >= sizeof(*out))
-    *out = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  if (out && out->size >= sizeof(*out)) flowie_control_acl_document_init(out);
   if (!text || text_size == 0u || text_size > FLOWIE_CONTROL_ACL_DOCUMENT_MAX ||
       memchr(text, '\0', text_size) || !out || out->size < sizeof(*out))
     return TURBO_EINVAL;
   ctx = (flowie_control_acl_parse_ctx_t *)calloc(1u, sizeof(*ctx));
   if (!ctx) return TURBO_ENOMEM;
-  ctx->document = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_acl_document_init(&ctx->document);
   parser = FlowieControlAclParseAlloc(malloc);
   if (!parser) {
     free(ctx);

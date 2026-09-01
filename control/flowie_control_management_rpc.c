@@ -1692,7 +1692,7 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
   static const char *const delete_allowed[] = {"domain_id", "subject_kind", "subject_id",
                                                "request_id"};
   flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+  flowie_control_acl_document_t *document = NULL;
   turbo_json_doc_t *params = NULL;
   const char *domain_id = NULL;
   const char *request_id = NULL;
@@ -1713,7 +1713,14 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
     rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
   if (rc == TURBO_OK && remove)
     rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1, &subject_id);
-  if (rc == TURBO_OK && !remove) rc = flowie_control_rpc_subject_document(params, &document);
+  if (rc == TURBO_OK && !remove) {
+    document = (flowie_control_acl_document_t *)malloc(sizeof(*document));
+    if (!document) rc = TURBO_ENOMEM;
+    else {
+      flowie_control_acl_document_init(document);
+      rc = flowie_control_rpc_subject_document(params, document);
+    }
+  }
   if (rc == TURBO_OK && !remove) {
     rc = flowie_control_rpc_u64(params, "ordinal", 1, &ordinal);
     if (rc == TURBO_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = TURBO_ERANGE;
@@ -1736,7 +1743,7 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
         FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     command.domain_id = domain_id;
     command.ordinal = (uint32_t)ordinal;
-    command.document = &document;
+    command.document = document;
     command.actor = caller->actor;
     command.request_id = request_id;
     command.occurred_at = occurred_at;
@@ -1744,6 +1751,7 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
                                                            &result);
   }
   turbo_free_json(&params);
+  free(document);
   return rc == TURBO_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
