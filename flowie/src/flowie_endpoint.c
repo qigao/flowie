@@ -50,6 +50,9 @@
 #endif
 #define FLOWIE_PRIVATE_COROUTINE_AUXILIARY_HEADROOM 8u
 #define FLOWIE_MQTT_REASON_NOT_AUTHORIZED UINT8_C(0x87)
+#define FLOWIE_MQTT_REASON_SERVER_UNAVAILABLE UINT8_C(0x88)
+#define FLOWIE_MQTT_REASON_SERVER_BUSY UINT8_C(0x89)
+#define FLOWIE_MQTT_CONNECT_RETURN_SERVER_UNAVAILABLE UINT8_C(0x03)
 #define FLOWIE_MQTT_REASON_SESSION_TAKEN_OVER UINT8_C(0x8e)
 #define FLOWIE_MQTT_REASON_QUOTA_EXCEEDED UINT8_C(0x97)
 #define FLOWIE_MQTT_REASON_TOPIC_ALIAS_INVALID UINT8_C(0x94)
@@ -5793,7 +5796,17 @@ static int flowie_endpoint_session_prepare(void *ctx, flowie_ingress_t *ingress,
             endpoint, &principal, FLOWIE_SECURITY_ACTION_PUBLISH, connect.will_topic,
             FLOWIE_MQTT_SECURITY_TOPIC, connect.username, connect.client_id);
       if (rc != TURBO_OK) {
-        if (rc != TURBO_EPERM && rc != TURBO_ENOTSUP) return rc;
+        if (rc == TURBO_ETIMEDOUT || rc == TURBO_EIO) {
+          security_reason = connect.version == FLOWIE_MQTT_VERSION_5
+                                ? FLOWIE_MQTT_REASON_SERVER_UNAVAILABLE
+                                : FLOWIE_MQTT_CONNECT_RETURN_SERVER_UNAVAILABLE;
+        } else if (rc == TURBO_EBUSY) {
+          security_reason = connect.version == FLOWIE_MQTT_VERSION_5
+                                ? FLOWIE_MQTT_REASON_SERVER_BUSY
+                                : FLOWIE_MQTT_CONNECT_RETURN_SERVER_UNAVAILABLE;
+        } else if (rc != TURBO_EPERM && rc != TURBO_ENOTSUP) {
+          return rc;
+        }
         decision.reply.type = FLOWIE_MQTT_PACKET_CONNACK;
         decision.reply.version = connect.version;
         decision.reply.reason_code = security_reason;
