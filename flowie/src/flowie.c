@@ -167,8 +167,7 @@ static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter
     const char *end = strchr(cursor, '/');
     size_t segment_size = end ? (size_t)(end - cursor) : strlen(cursor);
     const char *segment = cursor;
-    if (segment_size == 2u && segment[0] == '%' &&
-        (segment[1] == 'u' || segment[1] == 'c')) {
+    if (segment_size > 1u && segment[0] == '%') {
       segment = "+";
       segment_size = 1u;
       uses_placeholders = 1;
@@ -193,6 +192,24 @@ static int flowie_mqtt_security_identity_segment_valid(flowie_mqtt_span_t value)
   return 1;
 }
 
+static int flowie_mqtt_security_role_client_id(flowie_mqtt_span_t client_id,
+                                               const char *role, size_t role_size,
+                                               flowie_mqtt_span_t *base_out) {
+  flowie_mqtt_span_t role_span;
+  size_t role_offset;
+  if (!role || role_size == 0u || !base_out || client_id.size <= role_size + 1u ||
+      !flowie_mqtt_security_identity_segment_valid(client_id))
+    return 0;
+  role_span = (flowie_mqtt_span_t){(const uint8_t *)role, role_size};
+  if (!flowie_mqtt_security_identity_segment_valid(role_span)) return 0;
+  role_offset = client_id.size - role_size;
+  if (client_id.data[role_offset - 1u] != '-' ||
+      memcmp(client_id.data + role_offset, role, role_size) != 0)
+    return 0;
+  *base_out = (flowie_mqtt_span_t){client_id.data, role_offset - 1u};
+  return flowie_mqtt_security_identity_segment_valid(*base_out);
+}
+
 static int flowie_mqtt_security_placeholders_match(
     const char *pattern, flowie_mqtt_span_t resource,
     const flowie_mqtt_security_context_t *context) {
@@ -214,6 +231,13 @@ static int flowie_mqtt_security_placeholders_match(
       flowie_mqtt_span_t expected =
           pattern_cursor[1] == 'u' ? context->username : context->client_id;
       if (!flowie_mqtt_security_identity_segment_valid(expected) || resource_size != expected.size ||
+          memcmp(resource_cursor, expected.data, resource_size) != 0)
+        return 0;
+    } else if (pattern_size > 1u && pattern_cursor[0] == '%') {
+      flowie_mqtt_span_t expected;
+      if (!flowie_mqtt_security_role_client_id(context->client_id, pattern_cursor + 1u,
+                                                pattern_size - 1u, &expected) ||
+          resource_size != expected.size ||
           memcmp(resource_cursor, expected.data, resource_size) != 0)
         return 0;
     }

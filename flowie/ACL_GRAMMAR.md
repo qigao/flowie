@@ -78,7 +78,8 @@ entry          = [entry-effect SP] access SP "topic" SP topic-pattern ;
 entry-effect   = "allow" | "deny" ;
 access         = "read" | "write" | "readwrite" ;
 topic-pattern  = domain "/" segment *("/" segment) ;
-segment        = static | "%u" | "%c" | "+" | terminal-hash | terminal-alternatives ;
+segment        = static | placeholder | "+" | terminal-hash | terminal-alternatives ;
+placeholder    = "%u" | "%c" | "%" identifier ;
 terminal-hash  = "#" ;
 terminal-alternatives = "{" static "," static *("," static) "}" ;
 subject        = identifier ;
@@ -87,7 +88,7 @@ identifier     = 1*(ALPHA | DIGIT | "_" | "." | ":" | "@" | "~" | "-") ;
 static         = 1*(ALPHA | DIGIT | "_" | "." | ":" | "@" | "~" | "-" | "$") ;
 ```
 
-`#` 与 alternatives 只能是最后一个 segment。`%u`、`%c`、`+` 必须各自占据完整 segment；不接受
+`#` 与 alternatives 只能是最后一个 segment。placeholder 与 `+` 必须各自占据完整 segment；不接受
 `device-%u`、`prefix+` 或空 segment。第一段 Domain 只接受 `identifier`，不能使用 wildcard、placeholder
 或 `$`。topic 至少包含 Domain 与其后的一个 segment。
 
@@ -113,6 +114,9 @@ Control UI 会从类型化主体表单生成 canonical 文档，并在提交前�
 - 静态 segment 支持字母、数字、`_ . : @ ~ - $`；Domain 不支持 `$`。
 - `%u` 精确替换为当前 MQTT CONNECT username，`%c` 精确替换为 client ID。运行时值必须非空，且
   不能包含 `/`、`+` 或 `#`。
+- 除 `%u`、`%c` 外，`%<role>` 是通用角色 placeholder。它只匹配以 `-<role>` 结尾的 CONNECT client ID，
+  并以移除该后缀后的 base client ID 匹配当前 topic segment。例如 `%capture` 可让
+  `<uuid>-capture` 匹配 `.../devices/<uuid>/command`；角色名完全由 ACL 规则定义。
 - `+` 匹配一个 topic level；终端 `#` 匹配剩余 topic levels。
 - 终端 `{event,heartbeat,process}` 包含 2 到 16 个互不重复的静态候选，每项编译成一条内部规则。
 - 文档主体、MQTT username 与 client ID 是不同字段，不要求彼此相同。

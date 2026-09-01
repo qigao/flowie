@@ -111,21 +111,24 @@ spec("Flowie Control subject-scoped ACL grammar") {
   it("accepts placeholders in any complete tail segment and dollar in static segments") {
     static const char input[] =
         "user device-1 allow {"
-        "readwrite topic root-a/$bridge/%c/devices/%u/state"
+        "readwrite topic root-a/$bridge/%capture/devices/%u/state "
+        "read topic root-a/$bridge/%controller/command"
         "}";
     flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
 
     check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), TURBO_OK);
     check_true(document.entries[0].uses_username);
     check_true(document.entries[0].uses_client_id);
-    check_equal(document.entries[0].topic, "root-a/$bridge/%c/devices/%u/state");
+    check_equal(document.entries[0].topic, "root-a/$bridge/%capture/devices/%u/state");
+    check_true(document.entries[1].uses_client_id);
+    check_equal(document.entries[1].topic, "root-a/$bridge/%controller/command");
   }
 
   it("compiles connection state substitutions and alternatives into bounded internal rules") {
     static const char input[] =
         "user device-1 allow {"
         "write topic root-a/groups/region/operators/devices/%u/{event,heartbeat} "
-        "read topic root-a/groups/region/operators/devices/%c/command"
+        "read topic root-a/groups/region/operators/devices/%capture/command"
         "}";
     flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
     flowie_security_rule_t rules[4] = {FLOWIE_SECURITY_RULE_INIT,
@@ -153,7 +156,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     check_equal(rules[2].pattern,
                  "root-a/groups/region/operators/devices/%u/heartbeat");
     check_equal(rules[3].pattern,
-                 "root-a/groups/region/operators/devices/%c/command");
+                 "root-a/groups/region/operators/devices/%capture/command");
     check_equal(flowie_mqtt_security_matcher_init(&matcher), TURBO_OK);
     realm_config.policy_version = 1u;
     realm_config.rules = rules;
@@ -182,6 +185,27 @@ spec("Flowie Control subject-scoped ACL grammar") {
     decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
     check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
+
+    mqtt.client_id =
+        (flowie_mqtt_span_t){(const uint8_t *)"7f4c12-capture", sizeof("7f4c12-capture") - 1u};
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
+    request.resource = "root-a/groups/region/operators/devices/7f4c12/command";
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
+
+    mqtt.client_id =
+        (flowie_mqtt_span_t){(const uint8_t *)"7f4c12-controller",
+                             sizeof("7f4c12-controller") - 1u};
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(decision.effect, FLOWIE_SECURITY_DENY);
+
+    mqtt.client_id =
+        (flowie_mqtt_span_t){(const uint8_t *)"other-capture", sizeof("other-capture") - 1u};
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     flowie_security_realm_destroy(realm);
   }
 
@@ -194,7 +218,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     static const char partial_wildcard[] =
         "user device-1 allow { read topic root-a/device+ }";
     static const char partial_placeholder[] =
-        "user device-1 allow { read topic root-a/%u-suffix }";
+        "user device-1 allow { read topic root-a/device-%capture }";
     static const char non_terminal_hash[] =
         "user device-1 allow { read topic root-a/#/event }";
     static const char non_terminal_alternatives[] =
