@@ -15,6 +15,23 @@ static int test_set_environment(const char *name, const char *value) {
 }
 
 spec("Flowie standalone HTTPS security protocol") {
+  it("uses the Flowie service identity headers required by Control") {
+    flowie_server_http_provider_config_t config = {0};
+    const char *headers[4] = {0};
+    char service_id[sizeof("X-Flowie-Service-Id: broker-main")];
+    char service_domain[sizeof("X-Flowie-Service-Domain: platform-services")];
+
+    (void)strcpy(config.service_id, "broker-main");
+    (void)strcpy(config.service_domain, "platform-services");
+    check_equal(flowie_server_http_headers(&config, service_id, sizeof(service_id),
+                                           service_domain, sizeof(service_domain), headers),
+                TURBO_OK);
+    check_equal(headers[0], "Content-Type: application/json");
+    check_equal(headers[1], "Accept: application/json");
+    check_equal(headers[2], "X-Flowie-Service-Id: broker-main");
+    check_equal(headers[3], "X-Flowie-Service-Domain: platform-services");
+  }
+
   it("encodes Auth v3 credentials and decodes the complete principal") {
     static const uint8_t secret[] = "secret";
     static const char response[] =
