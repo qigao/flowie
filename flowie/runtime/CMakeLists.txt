@@ -25,7 +25,7 @@ target_include_directories(
          "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>")
 target_link_libraries(
   flowie_transport
-  PUBLIC TurboNet::CoroNet TurboUtils::Core)
+  PUBLIC TurboNet::CoroNet Rocida::Core)
 
 if(FLOWIE_BUILD_TESTS)
   add_subdirectory(tests)

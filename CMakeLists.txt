@@ -69,27 +69,9 @@ if(FLOWIE_BUILD_TESTS)
     PROPERTIES LABELS "flowie;build-contract;cluster" TIMEOUT 300)
 endif()
 
-# Flowie is an independent MQTT product. Its broker depends only on CoroNet and
-# foundational libraries; product orchestration belongs to downstream adapters.
-set(_flowie_dependency_roots
-    TURBOUTILS_ROOT TURBOPARSER_ROOT TURBONET_ROOT TURBODB_ROOT TURBOHTTP_ROOT)
-if(FLOWIE_BUILD_CLUSTER)
-  list(APPEND _flowie_dependency_roots TURBORAFT_ROOT FLOWMQ_ROOT)
-endif()
-foreach(_flowie_dependency_root IN LISTS _flowie_dependency_roots)
-  if(NOT DEFINED ENV{${_flowie_dependency_root}} OR
-     "$ENV{${_flowie_dependency_root}}" STREQUAL "")
-    message(FATAL_ERROR
-            "Required dependency root is not defined: ${_flowie_dependency_root}")
-  endif()
-  if(NOT IS_DIRECTORY "$ENV{${_flowie_dependency_root}}")
-    message(FATAL_ERROR
-            "${_flowie_dependency_root} is not a directory: $ENV{${_flowie_dependency_root}}")
-  endif()
-endforeach()
-
-find_package(TurboUtils CONFIG REQUIRED
-             PATHS "$ENV{TURBOUTILS_ROOT}" NO_DEFAULT_PATH)
+ 
+find_package(Rocida 1.1 CONFIG REQUIRED
+             PATHS "$ENV{ROCIDA_ROOT}" NO_DEFAULT_PATH) 
 find_package(TurboParser CONFIG REQUIRED
              PATHS "$ENV{TURBOPARSER_ROOT}" NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
@@ -99,8 +81,8 @@ find_package(TurboNet CONFIG REQUIRED
 find_package(xxHash CONFIG REQUIRED)
 find_package(Orm CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
-if(TARGET TurboParser::DataBind AND NOT TARGET TurboUtils::DataBind)
-  add_library(TurboUtils::DataBind ALIAS TurboParser::DataBind)
+if(TARGET TurboParser::DataBind AND NOT TARGET Rocida::DataBind)
+  add_library(Rocida::DataBind ALIAS TurboParser::DataBind)
 endif()
 find_package(TurboHttp CONFIG REQUIRED
              PATHS "$ENV{TURBOHTTP_ROOT}" NO_DEFAULT_PATH)

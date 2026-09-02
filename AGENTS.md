@@ -208,7 +208,7 @@
 
 #### 库优先级顺序（从高到低）
 
-1. **TurboUtils**（通过 `find_package(TurboUtils CONFIG REQUIRED)` 与 `TurboUtils::Core` 使用）— 最优先
+1. **TurboUtils**（通过 `find_package(TurboUtils CONFIG REQUIRED)` 与 `Rocida::Core` 使用）— 最优先
 2. **项目内模块**（`exprtk/`、`plugins/` 等）
 3. **vendor/ 库**（sds、croar、mir、monocypher、sha2、uuid、miniblas）
 4. **vcpkg 依赖**（xxhash、sqlite3、zstd、openssl、c-ares、aklomp-base64、simde）

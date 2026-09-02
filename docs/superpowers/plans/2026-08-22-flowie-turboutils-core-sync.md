@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Migrate Flowie from removed TurboUtils compatibility APIs to component-owned export macros, `tstr/vstr`, and `turboutils::stl` without changing MQTT, cluster, control, or storage behavior.
+**Goal:** Migrate Flowie from removed TurboUtils compatibility APIs to component-owned export macros, `tstr/vstr`, and `Rocida::stl` without changing MQTT, cluster, control, or storage behavior.
 
 **Architecture:** Keep Flowie Protocol and Flowie Core as separate DLL ABI owners. Protocol declarations use `FLOWIE_PROTOCOL_C_API`; the main Flowie library and its internal declarations use `FLOWIE_C_API`. String and container changes are mechanical API migrations, with status translation centralized at the Flowie boundary.
 
-**Tech Stack:** C11/C++17, CMake Presets, TurboUtils::Core, TurboUtils::STL, TinyTest.
+**Tech Stack:** C11/C++17, CMake Presets, Rocida::Core, Rocida::STL, TinyTest.
 
 **Spec:** User request in this conversation dated 2026-08-22.
 
@@ -281,7 +281,7 @@ Expected: string compatibility failures are absent.
 - Modify: `control/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: the direct `<turbostl/*.h>` APIs and `TurboUtils::STL`.
+- Consumes: the direct `<turbostl/*.h>` APIs and `Rocida::STL`.
 - Produces: only `flowie_stl_error(stl_status)` at Flowie's error-domain boundary; it does not proxy container operations.
 
 - [ ] **Step 1: Capture the first container compile failure**
@@ -298,7 +298,7 @@ capacity limits and translate status only where it crosses into Flowie's `TURBO_
 
 - [ ] **Step 3: Add private STL linkage**
 
-Link only targets that compile container implementation code to `TurboUtils::STL`; do not expose container implementation types in installed APIs.
+Link only targets that compile container implementation code to `Rocida::STL`; do not expose container implementation types in installed APIs.
 
 - [ ] **Step 4: Rebuild**
 

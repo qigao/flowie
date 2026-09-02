@@ -38,7 +38,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
           ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Core)
+target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Core)
 
 install(FILES ${FLOWIE_PROTOCOL_HEADERS} DESTINATION include)
 

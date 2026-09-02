@@ -4,14 +4,14 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
 endif()
 
 add_executable(flowie_supervisor_test_worker flowie_supervisor_test_worker.c)
-target_link_libraries(flowie_supervisor_test_worker PRIVATE TurboUtils::Core)
+target_link_libraries(flowie_supervisor_test_worker PRIVATE Rocida::Core)
 cmake_config_target(flowie_supervisor_test_worker NO_INSTALL FOLDER "flowie/server/tests")
 
 cmake_add_test(
   test_flowie_supervisor
   SOURCES test_flowie_supervisor.c ${PROJECT_SOURCE_DIR}/server/flowie_supervisor_runtime.c
           ${PROJECT_SOURCE_DIR}/server/flowie_supervisor_runtime_internal.h
-  LIBS TurboUtils::Core TurboUtils::TinyTest
+  LIBS Rocida::Core Rocida::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/server ${CMAKE_CURRENT_SOURCE_DIR}
   FOLDER "flowie/server/tests")
 target_compile_definitions(
@@ -27,7 +27,7 @@ set_tests_properties(test_flowie_supervisor
 cmake_add_test(
   test_flowie_server_application
   SOURCES test_flowie_server_application.c
-  LIBS flowie_server_application TurboUtils::TinyTest
+  LIBS flowie_server_application Rocida::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/server ${PROJECT_SOURCE_DIR}/io/socket/tests
            ${PROJECT_SOURCE_DIR}/flowie/tests
   FOLDER "flowie/server/tests")
@@ -108,7 +108,7 @@ set_tests_properties(flowie_server_check_dev_product
 cmake_add_test(
   test_flowie_dev_server_bdd
   SOURCES test_flowie_dev_server_bdd.c
-  LIBS Flowie::Client TurboUtils::Core TurboUtils::TinyTest
+  LIBS Flowie::Client Rocida::Core Rocida::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
   FOLDER "flowie/server/tests")
 target_compile_definitions(
@@ -128,7 +128,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS TurboUtils::Core TurboUtils::TinyTest
+    LIBS Rocida::Core Rocida::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(
@@ -148,7 +148,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_fixed_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS TurboUtils::Core TurboUtils::TinyTest
+    LIBS Rocida::Core Rocida::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(

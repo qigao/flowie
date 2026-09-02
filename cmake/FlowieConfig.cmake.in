@@ -1,8 +1,10 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-
-find_dependency(TurboUtils CONFIG REQUIRED)
+ 
+find_dependency(Rocida   CONFIG REQUIRED
+                PATHS "${ROCIDA_ROOT_PATH}"
+                NO_DEFAULT_PATH) 
 find_dependency(TurboParser CONFIG REQUIRED)
 find_dependency(TurboNet CONFIG REQUIRED)
 find_dependency(Orm CONFIG REQUIRED)

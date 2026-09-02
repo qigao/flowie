@@ -3,6 +3,12 @@
   "version-semver": "1.0.0",
   "dependencies": [
     {
+      "name": "c-ares"
+    },
+    {
+      "name": "llhttp"
+    },
+    {
       "name": "xxhash",
       "version>=": "0.8.3"
     },

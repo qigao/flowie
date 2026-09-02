@@ -13,8 +13,8 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_config
     SOURCES tests/test_flowie_server_config.c flowie_server_config.c
-    LIBS Flowie::Protocol Orm::C TurboNet::CoroNet TurboParser::Parser TurboUtils::Core
-         TurboUtils::TinyTest
+    LIBS Flowie::Protocol Orm::C TurboNet::CoroNet TurboParser::Parser Rocida::Core
+         Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
   target_compile_definitions(
@@ -29,7 +29,7 @@ if(FLOWIE_BUILD_TESTS)
     test_flowie_server_http_security
     SOURCES tests/test_flowie_server_http_security.c flowie_server_http_security.c
     LIBS Flowie::Protocol Orm::C TurboHttp::TurboHttp TurboNet::CoroNet TurboParser::Parser
-         TurboUtils::Core TurboUtils::TinyTest
+         Rocida::Core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
   set_tests_properties(
@@ -52,7 +52,7 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_turbodb_config
     SOURCES tests/test_flowie_server_turbodb_config.c flowie_server_turbodb_config.c
-    LIBS Orm::C TurboParser::Parser TurboUtils::TinyTest
+    LIBS Orm::C TurboParser::Parser Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/server/tests")
   set_tests_properties(

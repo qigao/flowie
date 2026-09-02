@@ -162,7 +162,7 @@ target_include_directories(flowie_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(flowie_control_core
                       PUBLIC Flowie::App flowie_orm_flow
                       PRIVATE Flowie::Protocol
-                               TurboUtils::Core TurboUtils::STL monocypher)
+                               Rocida::Core Rocida::STL monocypher)
 add_dependencies(flowie_control_core flowie_control_data_ddl flowie_control_store_ddl)
 
 install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
@@ -183,7 +183,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   target_link_libraries(
     flowie_control_external_https_authenticator
     PUBLIC flowie_control_core
-    PRIVATE TurboHttp::HttpClient TurboNet::CoroNet TurboUtils::Core
+    PRIVATE TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
             TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto monocypher)
 
   add_library(
@@ -197,7 +197,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
                                     ${PROJECT_SOURCE_DIR}/flowie/include)
   target_link_libraries(
     flowie_control_jwt_jwks_authenticator
-    PRIVATE TurboHttp::Cjwt TurboHttp::HttpClient TurboNet::CoroNet TurboUtils::Core
+    PRIVATE TurboHttp::Cjwt TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
             TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto)
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
@@ -213,7 +213,7 @@ cmake_config_target(flowie_control_startup NO_INSTALL FOLDER "flowie/control/int
 target_include_directories(flowie_control_startup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(flowie_control_startup
                       PUBLIC Flowie::App
-                      PRIVATE TurboUtils::Core TurboParser::Parser)
+                      PRIVATE Rocida::Core TurboParser::Parser)
 
   set(FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/dashboard-resources"
@@ -257,7 +257,7 @@ target_link_libraries(flowie_control_startup
     PRIVATE FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR="${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}")
   target_link_libraries(flowie_control_iris_adapter
                         PUBLIC flowie_control_core TurboHttp::Iris
-                        PRIVATE flowie Flowie::Protocol TurboHttp::HttpClient TurboNet::CoroNet TurboUtils::Core
+                        PRIVATE flowie Flowie::Protocol TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
                                 TurboParser::Mustache TurboParser::Parser monocypher)
 
     add_library(flowie_control_runtime STATIC flowie_control_runtime.c
@@ -267,7 +267,7 @@ target_link_libraries(flowie_control_startup
     target_include_directories(flowie_control_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(flowie_control_runtime
                           PUBLIC flowie_control_startup flowie_control_core
-                          PRIVATE flowie_control_iris_adapter TurboNet::CoroNet TurboUtils::Core
+                          PRIVATE flowie_control_iris_adapter TurboNet::CoroNet Rocida::Core
                                   monocypher)
       target_link_libraries(flowie_control_runtime
                             PRIVATE flowie_control_external_https_authenticator)
@@ -294,7 +294,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_runtime
         SOURCES tests/test_flowie_control_runtime.c
-        LIBS flowie_control_runtime TurboUtils::TinyTest
+        LIBS flowie_control_runtime Rocida::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_runtime)
@@ -303,7 +303,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_bootstrap_runtime
         SOURCES tests/test_flowie_control_bootstrap_runtime.c
-        LIBS flowie_control_runtime TurboUtils::TinyTest
+        LIBS flowie_control_runtime Rocida::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_bootstrap_runtime)
@@ -313,7 +313,7 @@ target_link_libraries(flowie_control_startup
         test_flowie_control_https_integration
         SOURCES tests/test_flowie_control_https_integration.c
         LIBS flowie_control_runtime flowie_control_core TurboHttp::HttpClient
-             TurboNet::CoroNet TurboUtils::Core TurboUtils::TinyTest OpenSSL::Crypto
+             TurboNet::CoroNet Rocida::Core Rocida::TinyTest OpenSSL::Crypto
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_https_integration)
@@ -343,15 +343,15 @@ target_link_libraries(flowie_control_startup
         set_tests_properties(
           test_flowie_control_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_bootstrap_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_https_integration
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       endif()
     endif()
 
@@ -359,7 +359,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_acl
     SOURCES tests/test_flowie_control_acl.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_acl
@@ -367,7 +367,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_bootstrap
     SOURCES tests/test_flowie_control_bootstrap.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_bootstrap
@@ -376,7 +376,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_startup_options
     SOURCES tests/test_flowie_control_startup_options.c
-    LIBS flowie_control_startup TurboUtils::TinyTest
+    LIBS flowie_control_startup Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_startup_options
@@ -384,7 +384,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_config
     SOURCES tests/test_flowie_control_config.c
-    LIBS flowie_control_startup TurboUtils::TinyTest
+    LIBS flowie_control_startup Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   target_compile_definitions(
@@ -395,7 +395,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_database
     SOURCES tests/test_flowie_control_database.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_database
@@ -403,7 +403,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_schema
     SOURCES tests/test_flowie_control_data_schema.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_schema
@@ -411,7 +411,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_store_schema
     SOURCES tests/test_flowie_control_store_schema.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_store_schema
@@ -420,7 +420,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_transfer
     SOURCES tests/test_flowie_control_data_transfer.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_transfer
@@ -428,7 +428,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_options
     SOURCES tests/test_flowie_control_data_options.c
-    LIBS flowie_control_startup TurboUtils::TinyTest
+    LIBS flowie_control_startup Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_options
@@ -436,7 +436,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_store
     SOURCES tests/test_flowie_control_store.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_store
@@ -445,7 +445,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_turbodb_live
       SOURCES tests/test_flowie_control_turbodb_live.c
-      LIBS flowie_control_core TurboUtils::TinyTest
+      LIBS flowie_control_core Rocida::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(
@@ -456,7 +456,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_repository
     SOURCES tests/test_flowie_control_repository.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_repository
@@ -464,7 +464,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_cache
     SOURCES tests/test_flowie_control_auth_cache.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_cache
@@ -473,7 +473,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_external_authenticator
     SOURCES tests/test_flowie_control_external_authenticator.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_external_authenticator
@@ -483,7 +483,7 @@ if(BUILD_TESTS)
       test_flowie_control_external_https_authenticator
       SOURCES tests/test_flowie_control_external_https_authenticator.c
       LIBS flowie_control_external_https_authenticator TurboNet::CoroNet
-           TurboUtils::TinyTest
+           Rocida::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
     find_package(OpenSSL REQUIRED)
@@ -501,7 +501,7 @@ if(BUILD_TESTS)
       test_flowie_control_jwt_jwks_authenticator
       SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
       LIBS flowie_control_jwt_jwks_authenticator TurboHttp::Cjwt TurboNet::CoroNet
-           TurboUtils::TinyTest
+           Rocida::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
     target_link_libraries(test_flowie_control_jwt_jwks_authenticator
@@ -523,16 +523,16 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_external_https_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_tests_properties(
         test_flowie_control_jwt_jwks_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Cjwt>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboParser::Parser>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Cjwt>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboParser::Parser>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
   cmake_add_test(
     test_flowie_control_principal_cache
     SOURCES tests/test_flowie_control_principal_cache.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_principal_cache
@@ -540,7 +540,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_rate_limiter
     SOURCES tests/test_flowie_control_auth_rate_limiter.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_rate_limiter
@@ -548,7 +548,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_service
     SOURCES tests/test_flowie_control_auth_service.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_service
@@ -557,7 +557,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_management_session
     SOURCES tests/test_flowie_control_management_session.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_management_session
@@ -565,7 +565,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_service_credential
     SOURCES tests/test_flowie_control_service_credential.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_service_credential
@@ -574,7 +574,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_management_service
     SOURCES tests/test_flowie_control_management_service.c
-    LIBS flowie_control_core TurboUtils::TinyTest
+    LIBS flowie_control_core Rocida::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_management_service
@@ -582,7 +582,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_auth_iris_adapter
       SOURCES tests/test_flowie_control_auth_iris_adapter.c
-      LIBS flowie_control_iris_adapter TurboUtils::TinyTest
+      LIBS flowie_control_iris_adapter Rocida::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(test_flowie_control_auth_iris_adapter
@@ -590,7 +590,7 @@ if(BUILD_TESTS)
       cmake_add_test(
         test_flowie_control_management_rpc
         SOURCES tests/test_flowie_control_management_rpc.c
-        LIBS flowie_control_iris_adapter TurboUtils::TinyTest
+        LIBS flowie_control_iris_adapter Rocida::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
         FOLDER "flowie/control/tests")
       set_tests_properties(test_flowie_control_management_rpc
@@ -598,7 +598,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_dashboard
       SOURCES tests/test_flowie_control_dashboard.c
-      LIBS flowie_control_iris_adapter TurboUtils::TinyTest
+      LIBS flowie_control_iris_adapter Rocida::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(test_flowie_control_dashboard
@@ -611,7 +611,7 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_auth_iris_adapter
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_target_properties(
           test_flowie_control_management_rpc
           PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -619,7 +619,7 @@ if(BUILD_TESTS)
         set_tests_properties(
           test_flowie_control_management_rpc
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_target_properties(
         test_flowie_control_dashboard
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -627,6 +627,6 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_dashboard
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboUtils::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
 endif()
