@@ -651,7 +651,7 @@ spec("Flowie management JSON-RPC") {
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
     check_equal(mem_init(&arena, 0u), 0);
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
-    check_equal(rpc->method_count, 34u);
+    check_equal(rpc->method_count, 35u);
     check_equal(iris_app_lookup_rpc_context(app, "/v2/control/rpc"), server);
 
     document = management_rpc_call(
@@ -701,7 +701,7 @@ spec("Flowie management JSON-RPC") {
     mem_destroy(&arena);
   }
 
-  it("restricts global external HTTPS statistics to security administrators") {
+  it("restricts global external HTTPS statistics to the Platform administrator") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
     flowie_control_management_service_t *service = NULL;
@@ -757,6 +757,17 @@ spec("Flowie management JSON-RPC") {
     document = management_rpc_call(
         server, app, &arena, &security,
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"id\":3}", &status);
+    check_equal(status, TURBO_EPERM);
+    check_equal(management_rpc_error_code(document), -32003);
+    check_equal(fixture.external_https_stats_calls, 0u);
+    turbo_free_json(&document);
+
+    fixture.caller.domain_id = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN;
+    fixture.caller.actor = "admin";
+    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN;
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"id\":4}", &status);
     check_equal(status, TURBO_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = turbo_json_object_get(document, "result");
@@ -778,16 +789,6 @@ spec("Flowie management JSON-RPC") {
     check_equal(fixture.external_https_stats_calls, 1u);
     turbo_free_json(&document);
 
-    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN;
-    document = management_rpc_call(
-        server, app, &arena, &security,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"id\":4}", &status);
-    check_equal(status, TURBO_EPERM);
-    check_equal(management_rpc_error_code(document), -32003);
-    check_equal(fixture.external_https_stats_calls, 1u);
-    turbo_free_json(&document);
-
-    fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
     fixture.external_https_enabled = 0;
     document = management_rpc_call(
         server, app, &arena, &security,
@@ -1093,7 +1094,7 @@ spec("Flowie management JSON-RPC") {
     management_rpc_close(server, rpc, app, service, store, path);
   }
 
-  it("lets only the system administrator provision a root administrator") {
+  it("lets the platform administrator manage domains without entering them") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
     flowie_control_management_service_t *service = NULL;
@@ -1104,10 +1105,6 @@ spec("Flowie management JSON-RPC") {
     iris_security_context_t security = {0};
     mem_pool_t arena;
     turbo_json_doc_t *document = NULL;
-    flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
-    flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
-    flowie_control_credential_verify_result_t verified =
-        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
     int status = 0;
 
     fixture.caller.domain_id = "root-a";
@@ -1148,6 +1145,17 @@ spec("Flowie management JSON-RPC") {
     check_equal(management_rpc_error_code(document), 0);
     turbo_free_json(&document);
 
+    document = management_rpc_call(
+        server, app, &arena, &security,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"control.domain.admin.initialize\",\"params\":{"
+        "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
+        "\"initial_password\":\"Root-B-Admin-Password-2026\","
+        "\"request_id\":\"root-b-admin-initialize\"},\"id\":4}",
+        &status);
+    check_equal(status, TURBO_OK);
+    check_equal(management_rpc_error_code(document), 0);
+    turbo_free_json(&document);
+
     document =
         management_rpc_call(server, app, &arena, &security,
                             "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.create\",\"params\":{"
@@ -1155,7 +1163,8 @@ spec("Flowie management JSON-RPC") {
                             "\"principal_type\":\"human\",\"request_id\":\"admin-b-create\""
                             "},\"id\":3}",
                             &status);
-    check_equal(management_rpc_error_code(document), 0);
+    check_equal(status, TURBO_EPERM);
+    check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);
 
     document =
@@ -1165,58 +1174,8 @@ spec("Flowie management JSON-RPC") {
                             "\"new_password\":\"Root-B-Admin-Password-2026\",\"mode\":\"create\","
                             "\"request_id\":\"admin-b-password\"},\"id\":4}",
                             &status);
-    check_equal(management_rpc_error_code(document), 0);
-    check_not_null(turbo_json_object_get(document, "result"));
-    turbo_free_json(&document);
-    check_equal(flowie_control_store_credential_verify(
-                    store, "root-b", "admin-b", "Root-B-Admin-Password-2026",
-                    sizeof("Root-B-Admin-Password-2026") - 1u, &verified),
-                TURBO_OK);
-    check_equal(verified.credential_revision, 4u);
-
-    document =
-        management_rpc_call(server, app, &arena, &security,
-                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
-                            "\"domain_id\":\"root-b\",\"role_id\":\"security_admin\","
-                            "\"request_id\":\"root-b-security-role\"},\"id\":5}",
-                            &status);
-    check_equal(management_rpc_error_code(document), 0);
-    turbo_free_json(&document);
-
-    document =
-        management_rpc_call(server, app, &arena, &security,
-                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.assign\",\"params\":{"
-                            "\"domain_id\":\"root-b\",\"principal_id\":\"admin-b\","
-                            "\"role_id\":\"security_admin\",\"request_id\":\"admin-b-role\""
-                            "},\"id\":6}",
-                            &status);
-    check_equal(management_rpc_error_code(document), 0);
-    turbo_free_json(&document);
-
-    check_equal(flowie_control_store_user_get(store, "root-b", "admin-b", &user), TURBO_OK);
-    check_true(user.enabled);
-    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles), TURBO_OK);
-    check_equal(roles.role_count, 1u);
-    check_equal(roles.roles[0], FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN);
-
-    document =
-        management_rpc_call(server, app, &arena, &security,
-                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.create\",\"params\":{"
-                            "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
-                            "\"request_id\":\"root-b-operators\""
-                            "},\"id\":7}",
-                            &status);
-    check_equal(management_rpc_error_code(document), 0);
-    turbo_free_json(&document);
-
-    document =
-        management_rpc_call(server, app, &arena, &security,
-                            "{\"jsonrpc\":\"2.0\",\"method\":\"control.group.delete\",\"params\":{"
-                            "\"domain_id\":\"root-b\",\"group_id\":\"operators\","
-                            "\"request_id\":\"root-b-operators-delete\""
-                            "},\"id\":8}",
-                            &status);
-    check_equal(management_rpc_error_code(document), 0);
+    check_equal(status, TURBO_EPERM);
+    check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);
 
     document =
@@ -1240,14 +1199,8 @@ spec("Flowie management JSON-RPC") {
                             "{\"jsonrpc\":\"2.0\",\"method\":\"control.user.list\",\"params\":{"
                             "\"domain_id\":\"root-b\",\"limit\":10},\"id\":9}",
                             &status);
-    check_equal(management_rpc_error_code(document), 0);
-    {
-      json_value_t *rpc_result = turbo_json_object_get(document, "result");
-      json_value_t *items = turbo_json_object_get(rpc_result, "items");
-      check_equal(turbo_json_array_size(items), 1u);
-      check_equal(turbo_json_string(turbo_json_object_get(turbo_json_array_get(items, 0u), "id")),
-                  "admin-b");
-    }
+    check_equal(status, TURBO_EPERM);
+    check_equal(management_rpc_error_code(document), -32003);
     turbo_free_json(&document);
 
     fixture.caller.domain_id = "root-a";

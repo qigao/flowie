@@ -56,6 +56,7 @@ typedef struct dashboard_open_options_s {
   uint32_t executor_workers;
   size_t executor_queue_capacity;
   uint32_t executor_deadline_ms;
+  const char *rpc_path;
 } dashboard_open_options_t;
 
 typedef struct dashboard_executor_fixture_s {
@@ -148,6 +149,7 @@ dashboard_open_with_options(char **path_out, flowie_control_store_t **store_out,
   dashboard_config.login_executor_workers = options->executor_workers;
   dashboard_config.login_executor_queue_capacity = options->executor_queue_capacity;
   dashboard_config.login_executor_deadline_ms = options->executor_deadline_ms;
+  dashboard_config.rpc_path = options->rpc_path;
   check_equal(flowie_control_dashboard_create(&dashboard_config, &dashboard), TURBO_OK);
   return dashboard;
 }
@@ -163,7 +165,8 @@ static flowie_control_dashboard_t *dashboard_open(char **path_out,
       0,
       FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_WORKERS,
       FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_QUEUE_CAPACITY,
-      FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_DEADLINE_MS};
+      FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_DEADLINE_MS,
+      "/internal/control-rpc"};
   return dashboard_open_with_options(path_out, store_out, service_out, caller, &options);
 }
 
@@ -201,7 +204,8 @@ spec("Flowie ACL dashboard") {
     caller.actor = "security-admin";
     caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
     options = (dashboard_open_options_t){
-        dashboard_executor_login, dashboard_executor_logout, &fixture, 1, 1u, 1u, 10000u};
+        dashboard_executor_login, dashboard_executor_logout, &fixture, 1, 1u, 1u, 10000u,
+        "/internal/control-rpc"};
     dashboard = dashboard_open_with_options(&path, &store, &service, &caller, &options);
     for (size_t index = 0u; index < TASK_COUNT; ++index) {
       tasks[index].dashboard = dashboard;
@@ -251,7 +255,8 @@ spec("Flowie ACL dashboard") {
     caller.actor = "security-admin";
     caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
     options = (dashboard_open_options_t){
-        dashboard_executor_login, dashboard_executor_logout, &fixture, 1, 1u, 1u, 1u};
+        dashboard_executor_login, dashboard_executor_logout, &fixture, 1, 1u, 1u, 1u,
+        "/internal/control-rpc"};
     dashboard = dashboard_open_with_options(&path, &store, &service, &caller, &options);
     task.dashboard = dashboard;
     task.fixture = &fixture;
@@ -574,6 +579,10 @@ spec("Flowie ACL dashboard") {
     check_contains(html, "hx-include=\"closest .command\"");
     check_contains(html, "hx-target=\"#dashboard\"");
     check_contains(html, "aria-label=\"Control sections\"");
+    check_contains(html, "data-workspace-kind=\"domain\"");
+    check_contains(html, ">Domain</h2>");
+    check_false(strstr(html, "id=\"integration-setup-title\"") != NULL);
+    check_contains(html, "href=\"/v2/control/dashboard/integration\"");
     check_false(strstr(html, ">Manage</p>") != NULL);
     check_false(strstr(html, "href=\"#identity-management\"") != NULL);
     check_false(strstr(html, "href=\"#role-management\"") != NULL);
@@ -705,6 +714,8 @@ spec("Flowie ACL dashboard") {
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ROLES_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACLS_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_AUDIT_PATH), dashboard);
+    check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_INTEGRATION_PATH),
+                dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACTION_PATH), dashboard);
     check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CSS_PATH), dashboard);
@@ -719,6 +730,7 @@ spec("Flowie ACL dashboard") {
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ROLES_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACLS_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_AUDIT_PATH));
+    check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_INTEGRATION_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_ACTION_PATH));
     check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_DASHBOARD_CSS_PATH));
@@ -730,19 +742,21 @@ spec("Flowie ACL dashboard") {
     dashboard_close(dashboard, service, store, path);
   }
 
-  it("renders users groups roles ACL and audit as isolated pages") {
+  it("renders records audit and integration as isolated pages") {
     static const flowie_control_dashboard_section_t sections[] = {
         FLOWIE_CONTROL_DASHBOARD_SECTION_USERS, FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS,
         FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES, FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS,
-        FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT};
-    static const char *const names[] = {"users", "groups", "roles", "acls", "audit"};
-    static const char *const ids[] = {"users", "groups", "roles", "acl-rules", "audit"};
+        FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT, FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION};
+    static const char *const names[] = {"users", "groups", "roles", "acls", "audit", "integration"};
+    static const char *const ids[] = {"users",     "groups", "roles",
+                                      "acl-rules", "audit",  "integration"};
     static const char *const active_links[] = {
         "href=\"/v2/control/dashboard/users\" aria-current=\"page\"",
         "href=\"/v2/control/dashboard/groups\" aria-current=\"page\"",
         "href=\"/v2/control/dashboard/roles\" aria-current=\"page\"",
         "href=\"/v2/control/dashboard/acls\" aria-current=\"page\"",
-        "href=\"/v2/control/dashboard/audit\" aria-current=\"page\""};
+        "href=\"/v2/control/dashboard/audit\" aria-current=\"page\"",
+        "href=\"/v2/control/dashboard/integration\" aria-current=\"page\""};
     char *path = NULL;
     flowie_control_store_t *store = NULL;
     flowie_control_management_service_t *service = NULL;
@@ -767,9 +781,18 @@ spec("Flowie ACL dashboard") {
       (void)snprintf(expected_section, sizeof(expected_section), "<section id=\"%s\"", ids[index]);
       (void)snprintf(expected_query, sizeof(expected_query), "section=%s", names[index]);
       check_contains(html, expected_section);
-      check_contains(html, expected_query);
+      if (sections[index] != FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION)
+        check_contains(html, expected_query);
       check_contains(html, active_links[index]);
       check_false(strstr(html, "<section id=\"overview\"") != NULL);
+      if (sections[index] == FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION) {
+        check_contains(html, "id=\"integration-setup-title\"");
+        check_contains(html, "data-rpc-path=\"/internal/control-rpc\"");
+        check_contains(html, "FLOWIE_CONTROL_RPC_PATH=/internal/control-rpc");
+        check_contains(html, "aria-label=\"Copy RPC endpoint\"");
+        check_contains(html, "aria-label=\"Copy integration configuration\"");
+        check_contains(html, "id=\"integration-copy-status\" role=\"status\" aria-live=\"polite\"");
+      }
       if (index == 1u) {
         check_contains(html, "class=\"group-tree\" role=\"tree\"");
         check_false(strstr(html, "<table") != NULL);
@@ -885,7 +908,7 @@ spec("Flowie ACL dashboard") {
     dashboard_close(dashboard, service, store, path);
   }
 
-  it("renders HTMX CRUD controls for the system administrator") {
+  it("renders platform controls without domain management actions") {
     char *path = NULL;
     char body[1024];
     char *html = NULL;
@@ -916,27 +939,25 @@ spec("Flowie ACL dashboard") {
     check_false(strstr(html, "id=\"identity-management\"") != NULL);
     check_false(strstr(html, "id=\"role-management\"") != NULL);
     check_false(strstr(html, "id=\"acl-management\"") != NULL);
-    check_contains(html, "href=\"/v2/control/dashboard/audit\"");
-    check_contains(html, "popovertarget=\"users-add\"");
-    check_contains(html, "popovertarget=\"groups-add\"");
-    check_contains(html, "popovertarget=\"roles-add\"");
-    check_contains(html, "popovertarget=\"acl-add\"");
-    check_contains(html, "popovertarget=\"acl-publish\"");
+    check_false(strstr(html, "href=\"/v2/control/dashboard/users\"") != NULL);
+    check_false(strstr(html, "href=\"/v2/control/dashboard/groups\"") != NULL);
+    check_false(strstr(html, "href=\"/v2/control/dashboard/roles\"") != NULL);
+    check_false(strstr(html, "href=\"/v2/control/dashboard/acls\"") != NULL);
+    check_false(strstr(html, "href=\"/v2/control/dashboard/audit\"") != NULL);
+    check_contains(html, "href=\"/v2/control/dashboard/integration\"");
+    check_contains(html, ">Configuration</a>");
     check_contains(html, "popovertarget=\"domain-add\"");
-    check_contains(html, "Third-party platform setup");
-    check_contains(html, "Create an isolated domain");
-    check_contains(html, "Add a human administrator");
-    check_contains(html, "Set the first password");
-    check_contains(html, "Assign only the required roles");
+    check_contains(html, "Domain lifecycle");
     check_contains(html, "operation\" value=\"domain.create");
-    check_contains(html, "operation\" value=\"user.create");
-    check_contains(html, "operation\" value=\"group.create");
-    check_contains(html, "operation\" value=\"role.create");
-    check_contains(html, "operation\" value=\"policy.subject_rule.put");
+    check_contains(html, "operation\" value=\"domain.admin.initialize");
+    check_false(strstr(html, "operation\" value=\"user.create") != NULL);
+    check_false(strstr(html, "operation\" value=\"group.create") != NULL);
+    check_false(strstr(html, "operation\" value=\"role.create") != NULL);
+    check_false(strstr(html, "operation\" value=\"policy.subject_rule.put") != NULL);
     check_contains(html, "hx-post=\"/v2/control/dashboard/action\"");
-    check_contains(html, "id=\"domain-scope\"");
-    check_contains(html, "hx-trigger=\"change from:#domain-scope\"");
-    check_false(strstr(html, ">Switch</button>") != NULL);
+    check_false(strstr(html, "id=\"domain-scope\"") != NULL);
+    check_contains(html, "data-workspace-kind=\"platform\"");
+    check_contains(html, "Platform");
     flowie_control_dashboard_html_free(html);
     html = NULL;
 
@@ -947,19 +968,24 @@ spec("Flowie ACL dashboard") {
                                                       strlen(body)),
                 TURBO_OK);
 
+    (void)snprintf(
+        body, sizeof(body),
+        "csrf=%s&operation=domain.admin.initialize&domain_id=root-b&principal_id=admin-b&"
+        "new_password=Root-B-Admin-Password-2026&confirm_password="
+        "Root-B-Admin-Password-2026&request_id=request-root-b-admin",
+        DASHBOARD_CSRF);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF, body,
+                                                      strlen(body)),
+                TURBO_OK);
+
     {
       flowie_control_dashboard_page_t page = FLOWIE_CONTROL_DASHBOARD_PAGE_INIT;
       memcpy(page.domain_id, "root-a", sizeof("root-a"));
       page.section = FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
       check_equal(flowie_control_dashboard_render_page(dashboard, &caller, DASHBOARD_CSRF, &page,
                                                        &html, &html_size),
-                  TURBO_OK);
-      check_contains(html, "Domain");
-      check_contains(html, "value=\"root-a\"");
-      check_contains(html, "href=\"/v2/control/dashboard/groups?domain_id=root-a\"");
-      check_contains(html, "hx-post=\"/v2/control/dashboard/action?domain_id=root-a");
-      check_false(strstr(html, "popovertarget=\"domain-add\"") != NULL);
-      flowie_control_dashboard_html_free(html);
+                  TURBO_EPERM);
+      check_null(html);
     }
 
     dashboard_close(dashboard, service, store, path);

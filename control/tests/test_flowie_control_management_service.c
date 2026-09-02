@@ -260,7 +260,7 @@ spec("Flowie ACL management service") {
     management_close(service, store, path);
   }
 
-  it("lets only the system administrator set human passwords across domains") {
+  it("lets a Domain security administrator set passwords only in that Domain") {
     static const char initial_password[] = "Root-B-Initial-Password-2026";
     static const char replacement_password[] = "Root-B-Replaced-Password-2026";
     char *path = NULL;
@@ -268,6 +268,7 @@ spec("Flowie ACL management service") {
     flowie_control_management_service_t *service = management_open(&path, &store);
     flowie_control_management_caller_t system_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_management_caller_t root_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_management_caller_t domain_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
     flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_password_set_command_t password = FLOWIE_CONTROL_PASSWORD_SET_COMMAND_INIT;
@@ -281,6 +282,9 @@ spec("Flowie ACL management service") {
     root_admin.domain_id = "root-a";
     root_admin.actor = "root-admin";
     root_admin.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    domain_admin.domain_id = "root-b";
+    domain_admin.actor = "admin-b";
+    domain_admin.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
 
     root.domain_id = "root-b";
     root.actor = system_admin.actor;
@@ -292,25 +296,26 @@ spec("Flowie ACL management service") {
     user.domain_id = "root-b";
     user.principal_id = "admin-b";
     user.principal_type = "human";
-    user.actor = system_admin.actor;
+    user.actor = "seed";
     user.request_id = "admin-b-create";
     user.expected_revision = 2u;
     user.occurred_at = 2001u;
-    check_equal(flowie_control_management_user_create(service, &system_admin, &user, &result),
-                TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
 
     password.domain_id = "root-b";
     password.principal_id = "admin-b";
     password.new_password = initial_password;
     password.new_password_size = sizeof(initial_password) - 1u;
     password.mode = FLOWIE_CONTROL_PASSWORD_CREATE;
-    password.actor = system_admin.actor;
+    password.actor = domain_admin.actor;
     password.request_id = "admin-b-password-create";
     password.expected_revision = 3u;
     password.occurred_at = 2002u;
     check_equal(flowie_control_management_password_set(service, &root_admin, &password, &result),
                 TURBO_EPERM);
     check_equal(flowie_control_management_password_set(service, &system_admin, &password, &result),
+                TURBO_EPERM);
+    check_equal(flowie_control_management_password_set(service, &domain_admin, &password, &result),
                 TURBO_OK);
     check_equal(result.revision, 4u);
     check_equal(flowie_control_store_credential_verify(store, "root-b", "admin-b", initial_password,
@@ -324,7 +329,7 @@ spec("Flowie ACL management service") {
     password.request_id = "admin-b-password-replace";
     password.expected_revision = 4u;
     password.occurred_at = 2003u;
-    check_equal(flowie_control_management_password_set(service, &system_admin, &password, &result),
+    check_equal(flowie_control_management_password_set(service, &domain_admin, &password, &result),
                 TURBO_OK);
     check_equal(result.revision, 5u);
     verified =
@@ -338,7 +343,7 @@ spec("Flowie ACL management service") {
     management_close(service, store, path);
   }
 
-  it("lets only the system administrator select another existing domain") {
+  it("keeps platform and domain management scopes isolated") {
     char *path = NULL;
     flowie_control_store_t *store = NULL;
     flowie_control_management_service_t *service = management_open(&path, &store);
@@ -346,10 +351,7 @@ spec("Flowie ACL management service") {
     flowie_control_management_caller_t root_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_management_caller_t scoped = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
     flowie_control_domain_create_command_t root = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
-    flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    flowie_control_user_view_t users[2] = {FLOWIE_CONTROL_USER_VIEW_INIT,
-                                           FLOWIE_CONTROL_USER_VIEW_INIT};
     flowie_control_domain_view_t roots[3] = {FLOWIE_CONTROL_DOMAIN_VIEW_INIT,
                                              FLOWIE_CONTROL_DOMAIN_VIEW_INIT,
                                              FLOWIE_CONTROL_DOMAIN_VIEW_INIT};
@@ -376,29 +378,16 @@ spec("Flowie ACL management service") {
     root.occurred_at = 2001u;
     check_equal(flowie_control_management_domain_create(service, &system_admin, &root, &result),
                 TURBO_OK);
-    user.domain_id = "root-b";
-    user.principal_id = "admin-b";
-    user.principal_type = "human";
-    user.actor = system_admin.actor;
-    user.request_id = "request-admin-b";
-    user.expected_revision = 3u;
-    user.occurred_at = 2002u;
-    check_equal(flowie_control_management_user_create(service, &system_admin, &user, &result),
-                TURBO_OK);
-
     check_equal(flowie_control_management_scope_caller(service, &system_admin, "root-b", &scoped),
-                TURBO_OK);
-    check_equal(scoped.domain_id, "root-b");
-    check_equal(
-        flowie_control_management_user_list(service, &scoped, NULL, users, 2u, &count, &has_more),
-        TURBO_OK);
-    check_equal(count, 1u);
-    check_equal(users[0].principal_id, "admin-b");
-    check_false(has_more);
+                TURBO_EPERM);
     check_equal(flowie_control_management_scope_caller(service, &root_admin, "root-b", &scoped),
                 TURBO_EPERM);
     check_equal(flowie_control_management_scope_caller(service, &system_admin, "missing", &scoped),
-                TURBO_ENOENT);
+                TURBO_EPERM);
+    check_equal(flowie_control_management_scope_caller(
+                    service, &system_admin, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN, &scoped),
+                TURBO_OK);
+    check_equal(scoped.domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN);
 
     check_equal(flowie_control_management_domain_list(service, &system_admin, NULL, roots, 3u,
                                                       &count, &has_more),
@@ -411,6 +400,82 @@ spec("Flowie ACL management service") {
     check_equal(flowie_control_management_domain_list(service, &root_admin, NULL, roots, 3u, &count,
                                                       &has_more),
                 TURBO_EPERM);
+
+    management_close(service, store, path);
+  }
+
+  it("initializes the first Domain administrator through a resumable Platform command") {
+    static const char password[] = "Domain-Admin-Initial-Password-2026";
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = management_open(&path, &store);
+    flowie_control_management_caller_t platform_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_management_caller_t domain_admin = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_domain_create_command_t domain = FLOWIE_CONTROL_DOMAIN_CREATE_COMMAND_INIT;
+    flowie_control_domain_admin_initialize_command_t initialize =
+        FLOWIE_CONTROL_DOMAIN_ADMIN_INITIALIZE_COMMAND_INIT;
+    flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
+    flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
+    flowie_control_credential_verify_result_t verified =
+        FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+    int has_security_admin = 0;
+    int has_password_change = 0;
+
+    platform_admin.domain_id = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN;
+    platform_admin.actor = "admin";
+    platform_admin.permissions = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN;
+    domain_admin.domain_id = "root-a";
+    domain_admin.actor = "root-admin";
+    domain_admin.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
+    domain.domain_id = "root-b";
+    domain.actor = platform_admin.actor;
+    domain.request_id = "domain-root-b";
+    domain.expected_revision = 1u;
+    domain.occurred_at = 3000u;
+    check_equal(flowie_control_management_domain_create(service, &platform_admin, &domain, &result),
+                TURBO_OK);
+
+    initialize.domain_id = "root-b";
+    initialize.principal_id = "admin-b";
+    initialize.initial_password = password;
+    initialize.initial_password_size = sizeof(password) - 1u;
+    initialize.actor = platform_admin.actor;
+    initialize.request_id = "initialize-root-b-admin";
+    initialize.occurred_at = 3001u;
+    check_equal(flowie_control_management_domain_admin_initialize(service, &domain_admin,
+                                                                  &initialize, &result),
+                TURBO_EPERM);
+    check_equal(flowie_control_management_domain_admin_initialize(service, &platform_admin,
+                                                                  &initialize, &result),
+                TURBO_OK);
+    check_equal(flowie_control_store_user_get(store, "root-b", "admin-b", &user), TURBO_OK);
+    check_equal(user.principal_type, "human");
+    check_true(user.enabled);
+    check_equal(flowie_control_store_credential_verify(store, "root-b", "admin-b", password,
+                                                       sizeof(password) - 1u, &verified),
+                TURBO_OK);
+    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles), TURBO_OK);
+    for (uint32_t index = 0u; index < roles.role_count; ++index) {
+      has_security_admin |=
+          strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN) == 0;
+      has_password_change |=
+          strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED) == 0;
+    }
+    check_true(has_security_admin);
+    check_true(has_password_change);
+
+    result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    check_equal(flowie_control_management_domain_admin_initialize(service, &platform_admin,
+                                                                  &initialize, &result),
+                TURBO_OK);
+    check_true(result.replayed);
+
+    initialize.principal_id = "another-admin";
+    initialize.request_id = "initialize-another-root-b-admin";
+    check_equal(flowie_control_management_domain_admin_initialize(service, &platform_admin,
+                                                                  &initialize, &result),
+                TURBO_EBUSY);
 
     management_close(service, store, path);
   }

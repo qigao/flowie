@@ -306,15 +306,83 @@
     });
   }
 
+  function integrationSetups(target) {
+    var setups = [];
+    if (!target) return setups;
+    if (target.matches && target.matches("[data-integration-setup]")) setups.push(target);
+    if (target.querySelectorAll) {
+      setups = setups.concat(Array.from(target.querySelectorAll("[data-integration-setup]")));
+    }
+    return setups;
+  }
+
+  function initializeIntegrationSetup(target) {
+    integrationSetups(target).forEach(function (setup) {
+      var rpcPath = setup.getAttribute("data-rpc-path") || "";
+      var domain = setup.getAttribute("data-domain") || "";
+      var endpoint = setup.querySelector("[data-runtime-endpoint]");
+      var config = setup.querySelector("[data-runtime-config]");
+      var origin = window.location.origin;
+
+      if (endpoint) endpoint.textContent = origin + rpcPath;
+      if (config) {
+        config.textContent = [
+          "FLOWIE_CONTROL_BASE_URL=" + origin,
+          "FLOWIE_CONTROL_LOGIN_PATH=/v2/control/login",
+          "FLOWIE_CONTROL_RPC_PATH=" + rpcPath,
+          "FLOWIE_CONTROL_DOMAIN=" + domain
+        ].join("\n");
+      }
+    });
+  }
+
+  function selectCopyTarget(target) {
+    var selection;
+    var range;
+    if (!target || typeof window.getSelection !== "function" ||
+        typeof document.createRange !== "function") return;
+    selection = window.getSelection();
+    range = document.createRange();
+    range.selectNodeContents(target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function copyIntegrationValue(button) {
+    var setup = button.closest("[data-integration-setup]");
+    var target = document.getElementById(button.getAttribute("data-copy-target"));
+    var status = setup ? setup.querySelector("#integration-copy-status") : null;
+    var value = target ? target.textContent : "";
+
+    if (!target || !status || !value) return;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(value).then(function () {
+        status.textContent = "Copied to clipboard.";
+      }).catch(function () {
+        selectCopyTarget(target);
+        status.textContent = "Copy unavailable. The value is selected for manual copy.";
+      });
+    } else {
+      selectCopyTarget(target);
+      status.textContent = "Copy unavailable. The value is selected for manual copy.";
+    }
+  }
+
   document.addEventListener("click", function (event) {
     var option = event.target.closest("[data-picker-option]");
     var popoverButton = event.target.closest("[popovertarget]");
     var copyButton = event.target.closest("[data-copy-credential]");
+    var integrationCopyButton = event.target.closest("[data-copy-target]");
     var dismissButton = event.target.closest("[data-dismiss-credential]");
     var secret;
     var token;
     var status;
     var popover;
+
+    if (integrationCopyButton) {
+      copyIntegrationValue(integrationCopyButton);
+      return;
+    }
 
     if (dismissButton) {
       secret = dismissButton.closest("[data-credential-secret]");
@@ -373,6 +441,12 @@
     var first;
     var last;
 
+    if (activePopover && activePopover.matches(":popover-open") && event.key === "Escape") {
+      event.preventDefault();
+      activePopover.hidePopover();
+      return;
+    }
+
     if (option && !option.disabled) {
       nextOption = adjacentPickerOption(option, event.key);
       if (nextOption) {
@@ -407,8 +481,17 @@
   });
 
   document.addEventListener("htmx:afterSwap", function (event) {
+    initializeIntegrationSetup(event.detail.target);
     focusCredentialSecret(event.detail.target);
   });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      initializeIntegrationSetup(document);
+    });
+  } else {
+    initializeIntegrationSetup(document);
+  }
 
   document.addEventListener("htmx:configRequest", function (event) {
     var command = event.detail.elt.closest(".command");

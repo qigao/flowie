@@ -1,25 +1,37 @@
 <div class="dashboard__inner">
   <nav class="dashboard-nav" aria-label="Control sections">
     <div class="dashboard-nav__group">
-      <p class="dashboard-nav__label">Workspace</p>
+      <p class="dashboard-nav__label">{{#is_platform_workspace}}Platform{{/is_platform_workspace}}{{#is_domain_workspace}}Domain{{/is_domain_workspace}}</p>
       <a href="{{overview_path}}"{{#is_overview}} aria-current="page"{{/is_overview}}>Overview</a>
+      <a href="{{integration_path}}"{{#is_integration}} aria-current="page"{{/is_integration}}>{{#is_platform_workspace}}Configuration{{/is_platform_workspace}}{{#is_domain_workspace}}Integration{{/is_domain_workspace}}</a>
+    </div>
+    {{#is_domain_workspace}}<div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">Identity</p>
+      <a href="{{users_path}}"{{#is_users}} aria-current="page"{{/is_users}}>Users</a>
     </div>
     <div class="dashboard-nav__group">
-      <p class="dashboard-nav__label">Records</p>
-      <a href="{{users_path}}"{{#is_users}} aria-current="page"{{/is_users}}>Users</a>
+      <p class="dashboard-nav__label">Access</p>
       <a href="{{groups_path}}"{{#is_groups}} aria-current="page"{{/is_groups}}>Groups</a>
       <a href="{{roles_path}}"{{#is_roles}} aria-current="page"{{/is_roles}}>Roles</a>
       <a href="{{acls_path}}"{{#is_acls}} aria-current="page"{{/is_acls}}>ACL rules</a>
+    </div>{{/is_domain_workspace}}
+    {{#can_audit_read}}<div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">Governance</p>
       {{#can_audit_read}}<a href="{{audit_path}}"{{#is_audit}} aria-current="page"{{/is_audit}}>Audit</a>{{/can_audit_read}}
-    </div>
+    </div>{{/can_audit_read}}
   </nav>
 
   <div class="dashboard__content">
-  {{#can_select_root}}<form class="root-scope" hx-get="/v2/control/dashboard/content" hx-trigger="change from:#domain-scope" hx-target="#dashboard" hx-swap="innerHTML">
-    <label for="domain-scope">Domain</label>
-    <input id="domain-scope" name="domain_id" list="domains" value="{{domain_id}}" required maxlength="255" aria-label="Domain">
-    <datalist id="domains">{{#domains}}<option value="{{domain_id}}"></option>{{/domains}}</datalist>
-  </form>{{/can_select_root}}
+  <section class="workspace-context" data-workspace-kind="{{#is_platform_workspace}}platform{{/is_platform_workspace}}{{#is_domain_workspace}}domain{{/is_domain_workspace}}" aria-labelledby="workspace-context-title">
+    <div class="workspace-context__identity">
+      <p class="eyebrow">Current scope</p>
+      <div class="workspace-context__title">
+        <h2 id="workspace-context-title">{{#is_platform_workspace}}Platform{{/is_platform_workspace}}{{#is_domain_workspace}}Domain{{/is_domain_workspace}}</h2>
+        <code>{{domain_id}}</code>
+      </div>
+      <p>{{#is_platform_workspace}}Monitor the control plane, review runtime configuration, and manage Domain lifecycle. Domain-owned identities and policy remain outside this scope.{{/is_platform_workspace}}{{#is_domain_workspace}}Users, access policy, audit records and integration settings on this page belong only to this Domain.{{/is_domain_workspace}}</p>
+    </div>
+  </section>
   <div id="dashboard-feedback" class="feedback" aria-live="polite"></div>
   {{#credential_issued}}<section class="credential-secret" data-credential-secret tabindex="-1" aria-labelledby="credential-secret-title" aria-describedby="credential-secret-guidance">
     <div class="credential-secret__heading"><div><p class="eyebrow">Service credential</p><h2 id="credential-secret-title">New token ready</h2></div><button type="button" class="button--quiet" data-dismiss-credential>Dismiss token</button></div>
@@ -50,15 +62,15 @@
 
   {{#show_overview}}<section id="overview" class="summary" aria-labelledby="summary-title">
     <div class="section-heading">
-      <div><p class="eyebrow">Current state</p><h2 id="summary-title">Policy overview</h2></div>
+      <div><p class="eyebrow">Current state</p><h2 id="summary-title">{{#is_platform_workspace}}Platform overview{{/is_platform_workspace}}{{#is_domain_workspace}}Policy overview{{/is_domain_workspace}}</h2></div>
       <div class="dataset-toolbar">
-        <span class="scope">Domain: {{domain_id}} · User: {{actor}}</span>
-        {{#can_create_domain}}<button type="button" popovertarget="domain-add">Add domain</button>{{/can_create_domain}}
+        <span class="scope">{{#is_platform_workspace}}Platform operator{{/is_platform_workspace}}{{#is_domain_workspace}}Domain: {{domain_id}}{{/is_domain_workspace}} · User: {{actor}}</span>
+        {{#can_create_domain}}<button type="button" class="button--quiet" popovertarget="domain-admin-initialize">Initialize admin</button><button type="button" popovertarget="domain-add">Add domain</button>{{/can_create_domain}}
       </div>
     </div>
     {{#can_create_domain}}<div id="domain-add" class="control-popover" popover>
       <div class="popover-heading"><div><p class="eyebrow">Domains</p><h3>Create a domain</h3></div><button type="button" class="button--close" popovertarget="domain-add" popovertargetaction="hide" aria-label="Close" title="Close"></button></div>
-      <p class="task-hint">Create the isolation boundary first, then switch to it to add service or human users.</p>
+      <p class="task-hint">Create the isolation boundary here. Domain-owned identities and access policy are managed by that Domain's administrator.</p>
       <div class="command command--compact">
         <input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="operation" value="domain.create">
         <label>Domain ID<input name="domain_id" required maxlength="255" autocomplete="off"></label>
@@ -66,21 +78,72 @@
         <button type="button" hx-post="{{action_url}}" hx-include="closest .command" hx-target="#dashboard" hx-swap="innerHTML" hx-disabled-elt="this">Create domain</button>
       </div>
     </div>{{/can_create_domain}}
-    {{#can_select_root}}<aside class="onboarding" aria-labelledby="third-party-setup-title">
-      <div class="onboarding__heading"><p class="eyebrow">Operator guide</p><h3 id="third-party-setup-title">Third-party platform setup</h3><p>Provision each platform in its own domain. Every step uses an independently audited Management command, so stop on an error and resume from that step.</p></div>
-      <ol class="onboarding__steps">
-        <li><strong>Create an isolated domain</strong><span>Use Add domain, then select the new domain above.</span></li>
-        <li><strong>Add a human administrator</strong><span>Open <a href="{{users_path}}">Users</a>, choose type <code>human</code>, and create the platform operator.</span></li>
-        <li><strong>Set the first password</strong><span>Use Set password on that human user and choose <code>create</code>. Control does not display or generate human passwords.</span></li>
-        <li><strong>Assign only the required roles</strong><span>Open <a href="{{roles_path}}">Roles</a>, create the required roles, then assign them to the operator.</span></li>
-      </ol>
-    </aside>{{/can_select_root}}
-    <dl class="metrics">
+    {{#can_create_domain}}<div id="domain-admin-initialize" class="control-popover" popover>
+      <div class="popover-heading"><div><p class="eyebrow">Domain lifecycle</p><h3>Initialize Domain admin</h3></div><button type="button" class="button--close" popovertarget="domain-admin-initialize" popovertargetaction="hide" aria-label="Close" title="Close"></button></div>
+      <p class="task-hint">Creates or resumes the first human security administrator. The initial password must be changed at first sign-in.</p>
+      <div class="command command--compact">
+        <input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="operation" value="domain.admin.initialize">
+        <label>Domain ID<input name="domain_id" required maxlength="255" autocomplete="off"></label>
+        <label>Administrator ID<input name="principal_id" required maxlength="255" autocomplete="username"></label>
+        <label>Initial password<input type="password" name="new_password" required minlength="16" maxlength="255" autocomplete="new-password"></label>
+        <label>Confirm password<input type="password" name="confirm_password" required minlength="16" maxlength="255" autocomplete="new-password"></label>
+        <input type="hidden" name="request_id" data-request-id>
+        <button type="button" hx-post="{{action_url}}" hx-include="closest .command" hx-target="#dashboard" hx-swap="innerHTML" hx-disabled-elt="this">Initialize administrator</button>
+      </div>
+    </div>{{/can_create_domain}}
+    {{#is_platform_workspace}}<aside class="onboarding" aria-labelledby="domain-lifecycle-title">
+      <div class="onboarding__heading"><p class="eyebrow">Isolation boundaries</p><h3 id="domain-lifecycle-title">Domain lifecycle</h3><p>The Platform can create and enumerate Domains, but it cannot enter their users, roles, groups, ACL rules, integrations, or audit records.</p></div>
+      <ul class="domain-list">{{#domains}}<li><code>{{domain_id}}</code></li>{{/domains}}{{^domains}}<li class="empty">No Domains created yet.</li>{{/domains}}</ul>
+    </aside>{{/is_platform_workspace}}
+    {{#is_domain_workspace}}<dl class="metrics">
       <div><dt>Policy version</dt><dd>{{policy_version}}</dd></div>
       <div><dt>Draft rules</dt><dd>{{draft_rule_count}}</dd></div>
       <div><dt>Published rules</dt><dd>{{published_rule_count}}</dd></div>
-    </dl>
+    </dl>{{/is_domain_workspace}}
   </section>{{/show_overview}}
+
+  {{#show_integration}}<section id="integration" class="dataset integration-page" aria-labelledby="integration-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">{{#is_platform_workspace}}Runtime{{/is_platform_workspace}}{{#is_domain_workspace}}Backend connectivity{{/is_domain_workspace}}</p><h2 id="integration-title">{{#is_platform_workspace}}Platform configuration{{/is_platform_workspace}}{{#is_domain_workspace}}Integration{{/is_domain_workspace}}</h2></div>
+      <span class="scope">{{#is_platform_workspace}}Platform{{/is_platform_workspace}}{{#is_domain_workspace}}Domain: {{domain_id}}{{/is_domain_workspace}}</span>
+    </div>
+    <p class="section-intro">{{#is_platform_workspace}}Review the effective Management endpoint and copy configuration for platform automation. Runtime edits and process restarts remain with the deployment supervisor.{{/is_platform_workspace}}{{#is_domain_workspace}}Connect one backend to the current Domain through the authenticated Management RPC endpoint. Credentials stay server-side and are never embedded in this page.{{/is_domain_workspace}}</p>
+    <section class="setup-console" aria-labelledby="integration-setup-title" data-integration-setup data-rpc-path="{{rpc_path}}" data-domain="{{domain_id}}">
+      <div class="setup-console__intro">
+        <p class="eyebrow">Quick setup</p>
+        <h3 id="integration-setup-title">{{#is_platform_workspace}}Management RPC{{/is_platform_workspace}}{{#is_domain_workspace}}Connect your backend{{/is_domain_workspace}}</h3>
+        <p>Use the current Control origin and runtime RPC path. Authenticate from your service, keep the bearer session private, then send JSON-RPC 2.0 requests.</p>
+      </div>
+      <div class="setup-console__body">
+        <ol class="setup-steps" aria-label="Integration setup steps">
+          <li><span>1</span><div><strong>Sign in</strong><small>POST the domain, principal and password to <code>/v2/control/login</code>.</small></div></li>
+          <li><span>2</span><div><strong>Store the session</strong><small>Keep the returned bearer token in the backend only.</small></div></li>
+          <li><span>3</span><div><strong>Call Management RPC</strong><small>Send JSON-RPC 2.0 to the endpoint below.</small></div></li>
+        </ol>
+        <div class="setup-values">
+          <div class="setup-value">
+            <span>RPC endpoint</span>
+            <code id="integration-rpc-endpoint" data-runtime-endpoint>{{rpc_path}}</code>
+            <button type="button" class="button--quiet button--copy" data-copy-target="integration-rpc-endpoint" aria-label="Copy RPC endpoint" aria-describedby="integration-copy-status">Copy</button>
+          </div>
+          <div class="setup-value">
+            <span>Current domain</span>
+            <code>{{domain_id}}</code>
+          </div>
+        </div>
+        <details class="setup-config">
+          <summary>Integration configuration</summary>
+          <p>Start with environment variables, then load them into your service configuration. No credential is written to this page.</p>
+          <pre><code id="integration-config" data-runtime-config>FLOWIE_CONTROL_BASE_URL=https://control.example.com
+FLOWIE_CONTROL_LOGIN_PATH=/v2/control/login
+FLOWIE_CONTROL_RPC_PATH={{rpc_path}}
+FLOWIE_CONTROL_DOMAIN={{domain_id}}</code></pre>
+          <button type="button" class="button--secondary button--copy" data-copy-target="integration-config" aria-label="Copy integration configuration" aria-describedby="integration-copy-status">Copy configuration</button>
+        </details>
+        <output id="integration-copy-status" role="status" aria-live="polite"></output>
+      </div>
+    </section>
+  </section>{{/show_integration}}
 
   {{#show_users}}<section id="users" class="dataset" aria-labelledby="users-title">
     <div class="section-heading">
