@@ -284,6 +284,17 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create_ex(
  */
 FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
 
+/**
+ * Select the MQTT protocol version before the first versioned command is accepted.
+ * Clients default to MQTT 5. An UNSPECIFIED packet version inherits this selection;
+ * an explicit packet version must match it. This function performs no I/O.
+ *
+ * Returns TURBO_EINVAL for an unsupported version, TURBO_EALREADY after version
+ * lock-in, or TURBO_ESHUTDOWN after shutdown begins.
+ */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
+                                                            flowie_mqtt_version_t version);
+
 /** Read-only connection state; this does not perform I/O. */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_client_t *client);
 

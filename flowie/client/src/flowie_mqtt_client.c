@@ -63,6 +63,7 @@ struct flowie_mqtt_client_s {
   coro_socket_t *socket;
   flowie_mqtt_client_transport_t transport;
   flowie_mqtt_client_state_t state;
+  flowie_mqtt_version_t selected_version;
   flowie_mqtt_version_t version;
   tstr host;
   tstr path;
@@ -131,6 +132,7 @@ struct flowie_mqtt_client_s {
   int idle_receive;
   int interrupt_pending;
   int stopping;
+  int version_locked;
   size_t command_queue_capacity;
   size_t command_queue_max_bytes;
   size_t command_queue_bytes;
@@ -1335,10 +1337,45 @@ static void flowie_mqtt_client_worker(void *arg) {
   (void)coro_context_run(client->context, TURBO_RUN_DEFAULT);
 }
 
+static flowie_mqtt_version_t *
+flowie_mqtt_client_command_version(flowie_mqtt_client_command_t *command) {
+  if (!command) return NULL;
+  switch (command->type) {
+  case FLOWIE_MQTT_CLIENT_COMMAND_CONNECT:
+    return &command->packet.connect.version;
+  case FLOWIE_MQTT_CLIENT_COMMAND_PUBLISH:
+    return &command->packet.publish.version;
+  case FLOWIE_MQTT_CLIENT_COMMAND_SUBSCRIBE:
+    return &command->packet.subscribe.version;
+  case FLOWIE_MQTT_CLIENT_COMMAND_UNSUBSCRIBE:
+    return &command->packet.unsubscribe.version;
+  default:
+    return NULL;
+  }
+}
+
+static int flowie_mqtt_client_command_version_resolve_locked(
+    const flowie_mqtt_client_t *client, flowie_mqtt_client_command_t *command,
+    int *versioned_out) {
+  flowie_mqtt_version_t *version;
+  if (!client || !command || !versioned_out) return TURBO_EINVAL;
+  *versioned_out = 0;
+  version = flowie_mqtt_client_command_version(command);
+  if (!version) return TURBO_OK;
+  *versioned_out = 1;
+  if (*version == FLOWIE_MQTT_VERSION_UNSPECIFIED) {
+    *version = client->selected_version;
+    return TURBO_OK;
+  }
+  if (!flowie_mqtt_version_is_supported(*version)) return TURBO_EINVAL;
+  return *version == client->selected_version ? TURBO_OK : TURBO_EPROTO;
+}
+
 static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
                                      flowie_mqtt_client_command_t *command) {
   size_t charge;
   size_t queue_size;
+  int versioned = 0;
   int rc;
   if (!client || !command) return TURBO_EINVAL;
   if (command->owned_size > SIZE_MAX - sizeof(*command)) return TURBO_EMSGSIZE;
@@ -1347,6 +1384,9 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = TURBO_ESHUTDOWN;
+  } else if ((rc = flowie_mqtt_client_command_version_resolve_locked(
+                  client, command, &versioned)) != TURBO_OK) {
+    /* The caller retains ownership when validation rejects admission. */
   } else if (queue_size >= client->command_queue_capacity) {
     rc = TURBO_ENOSPC;
   } else if (charge > client->command_queue_max_bytes - client->command_queue_bytes) {
@@ -1360,6 +1400,8 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
         flowie_mqtt_client_command_t *rolled_back = NULL;
         (void)deque_pop_back(&client->commands, &rolled_back);
         client->command_queue_bytes -= charge;
+      } else if (versioned) {
+        client->version_locked = 1;
       }
     }
   }
@@ -1373,6 +1415,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   size_t charge = 0u;
   size_t inserted = 0u;
   size_t queue_size;
+  int any_versioned = 0;
   int rc = TURBO_OK;
   if (!client || !commands || command_count == 0u) return TURBO_EINVAL;
   for (size_t i = 0u; i < command_count; ++i) {
@@ -1388,6 +1431,15 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = TURBO_ESHUTDOWN;
+  } else {
+    for (size_t i = 0u; rc == TURBO_OK && i < command_count; ++i) {
+      int versioned = 0;
+      rc = flowie_mqtt_client_command_version_resolve_locked(client, commands[i], &versioned);
+      if (versioned) any_versioned = 1;
+    }
+  }
+  if (rc != TURBO_OK) {
+    /* Reject the complete batch before any queue ownership transfer. */
   } else if (queue_size > client->command_queue_capacity ||
              command_count > client->command_queue_capacity - queue_size) {
     rc = TURBO_ENOSPC;
@@ -1403,6 +1455,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
       client->command_queue_bytes += charge;
       rc = coro_post(client->context, flowie_mqtt_client_worker_wake, client, NULL);
       if (rc == TURBO_OK) {
+        if (any_versioned) client->version_locked = 1;
         turbo_mutex_unlock(&client->command_mutex);
         return TURBO_OK;
       }
@@ -1436,6 +1489,7 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   client = (flowie_mqtt_client_t *)calloc(1, sizeof(*client));
   if (!client) return TURBO_ENOMEM;
   atomic_init(&client->public_connected, 0);
+  client->selected_version = FLOWIE_MQTT_VERSION_5;
   client->transport = config->transport;
   client->port = config->port;
   client->timeout_ms =
@@ -1936,6 +1990,21 @@ static int flowie_mqtt_client_disconnect_operation(flowie_mqtt_client_t *client,
 
 int flowie_mqtt_client_is_connected(const flowie_mqtt_client_t *client) {
   return client && atomic_load_explicit(&client->public_connected, memory_order_acquire);
+}
+
+int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
+                                   flowie_mqtt_version_t version) {
+  int rc;
+  if (!client || !flowie_mqtt_version_is_supported(version)) return TURBO_EINVAL;
+  turbo_mutex_lock(&client->command_mutex);
+  if (client->stopping) rc = TURBO_ESHUTDOWN;
+  else if (client->version_locked) rc = TURBO_EALREADY;
+  else {
+    client->selected_version = version;
+    rc = TURBO_OK;
+  }
+  turbo_mutex_unlock(&client->command_mutex);
+  return rc;
 }
 
 static int flowie_mqtt_client_submit_owned(flowie_mqtt_client_t *client,

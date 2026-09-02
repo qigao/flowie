@@ -1402,7 +1402,8 @@ static void flowie_mqtt_resilience_ping_completion(
   atomic_fetch_add_explicit(&state->ping_completions, 1, memory_order_release);
 }
 
-static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version,
+static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version, int select_version,
+                                          flowie_mqtt_version_t packet_version,
                                           flowie_mqtt_test_state_t *state) {
   enum { FLOWIE_MQTT_MANAGED_COMMAND_COUNT = 7 };
   uint8_t client_id[] = "flowie-callback-client";
@@ -1464,7 +1465,11 @@ static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version,
   if (rc != TURBO_OK) goto done;
   rc = flowie_mqtt_client_create(&config, &state->client);
   if (rc != TURBO_OK) goto done;
-  connect.version = version;
+  if (select_version) {
+    rc = flowie_mqtt_client_set_version(state->client, version);
+    if (rc != TURBO_OK) goto done;
+  }
+  connect.version = packet_version;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
@@ -1472,10 +1477,10 @@ static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version,
   subscriptions[0].qos = 1u;
   subscriptions[1].filter = filters[1];
   subscriptions[1].qos = 1u;
-  subscribe.version = version;
+  subscribe.version = packet_version;
   subscribe.subscriptions = subscriptions;
   subscribe.subscription_count = 2u;
-  publish.version = version;
+  publish.version = packet_version;
   publish.data = publish_topics;
   publish.count = 2u;
   publish_topics[0].qos = 1u;
@@ -1484,7 +1489,7 @@ static int flowie_mqtt_test_run_callbacks(flowie_mqtt_version_t version,
   publish_topics[1].qos = 2u;
   publish_topics[1].topic = filters[1];
   publish_topics[1].payload = (flowie_mqtt_span_t){payload_two, sizeof(payload_two) - 1u};
-  unsubscribe.version = version;
+  unsubscribe.version = packet_version;
   unsubscribe.filters = filters;
   unsubscribe.filter_count = 2u;
 
@@ -2813,9 +2818,11 @@ spec("flowie mqtt callback client") {
     coro_context_destroy(server_context);
   }
 
-  it("completes MQTT 3.1 callbacks against a local broker") {
+  it("uses selected MQTT 3.1 for unspecified packet versions") {
     flowie_mqtt_test_state_t state;
-    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_3_1, &state), TURBO_OK);
+    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_3_1, 1,
+                                               FLOWIE_MQTT_VERSION_UNSPECIFIED, &state),
+                TURBO_OK);
     check_equal(state.publish_count, 2);
     check_equal(state.topics[0], "server/topic/one");
     check_equal(state.payloads[0], "from-broker-one");
@@ -2824,9 +2831,11 @@ spec("flowie mqtt callback client") {
     check_equal(state.secondary_match_count, 1);
   }
 
-  it("completes MQTT 3.1.1 callbacks against a local broker") {
+  it("uses selected MQTT 3.1.1 for unspecified packet versions") {
     flowie_mqtt_test_state_t state;
-    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_3_1_1, &state), TURBO_OK);
+    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_3_1_1, 1,
+                                               FLOWIE_MQTT_VERSION_UNSPECIFIED, &state),
+                TURBO_OK);
     check_equal(state.publish_count, 2);
     check_equal(state.topics[0], "server/topic/one");
     check_equal(state.payloads[0], "from-broker-one");
@@ -2835,9 +2844,11 @@ spec("flowie mqtt callback client") {
     check_equal(state.secondary_match_count, 1);
   }
 
-  it("completes MQTT 5 callbacks against a local broker") {
+  it("defaults unspecified packet versions to MQTT 5") {
     flowie_mqtt_test_state_t state;
-    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_5, &state), TURBO_OK);
+    check_equal(flowie_mqtt_test_run_callbacks(FLOWIE_MQTT_VERSION_5, 0,
+                                               FLOWIE_MQTT_VERSION_UNSPECIFIED, &state),
+                TURBO_OK);
     check_equal(state.publish_count, 2);
     check_equal(state.topics[0], "server/topic/one");
     check_equal(state.payloads[0], "from-broker-one");
