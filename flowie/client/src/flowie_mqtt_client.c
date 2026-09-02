@@ -481,15 +481,30 @@ static int flowie_mqtt_client_clone_connect(flowie_mqtt_client_command_t *comman
   return TURBO_OK;
 }
 
+static int flowie_mqtt_client_version_resolve(const flowie_mqtt_client_t *client,
+                                              flowie_mqtt_version_t *version) {
+  if (!client || !version) return TURBO_EINVAL;
+  if (*version == FLOWIE_MQTT_VERSION_UNSPECIFIED) {
+    *version = client->selected_version;
+    return TURBO_OK;
+  }
+  if (!flowie_mqtt_version_is_supported(*version)) return TURBO_EINVAL;
+  return *version == client->selected_version ? TURBO_OK : TURBO_EPROTO;
+}
+
 static int flowie_mqtt_client_reconnect_connect_replace(
     flowie_mqtt_client_t *client, const flowie_mqtt_connect_packet_t *packet) {
+  flowie_mqtt_connect_packet_t resolved;
   flowie_mqtt_client_command_t *replacement;
   int rc;
   if (!client || !packet) return TURBO_EINVAL;
+  resolved = *packet;
+  rc = flowie_mqtt_client_version_resolve(client, &resolved.version);
+  if (rc != TURBO_OK) return rc;
   replacement = (flowie_mqtt_client_command_t *)calloc(1, sizeof(*replacement));
   if (!replacement) return TURBO_ENOMEM;
   replacement->type = FLOWIE_MQTT_CLIENT_COMMAND_CONNECT;
-  rc = flowie_mqtt_client_clone_connect(replacement, packet);
+  rc = flowie_mqtt_client_clone_connect(replacement, &resolved);
   if (rc != TURBO_OK) {
     flowie_mqtt_client_command_destroy(replacement);
     return rc;
@@ -1363,12 +1378,7 @@ static int flowie_mqtt_client_command_version_resolve_locked(
   version = flowie_mqtt_client_command_version(command);
   if (!version) return TURBO_OK;
   *versioned_out = 1;
-  if (*version == FLOWIE_MQTT_VERSION_UNSPECIFIED) {
-    *version = client->selected_version;
-    return TURBO_OK;
-  }
-  if (!flowie_mqtt_version_is_supported(*version)) return TURBO_EINVAL;
-  return *version == client->selected_version ? TURBO_OK : TURBO_EPROTO;
+  return flowie_mqtt_client_version_resolve(client, version);
 }
 
 static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,

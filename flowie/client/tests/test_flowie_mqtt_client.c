@@ -161,6 +161,15 @@ flowie_mqtt_test_error_connect_completion(flowie_mqtt_client_t *client, int stat
 static void flowie_mqtt_test_background_error(flowie_mqtt_client_t *client, int status,
                                               void *user_data);
 
+static void flowie_mqtt_test_ignore_completion(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user_data) {
+  (void)client;
+  (void)status;
+  (void)response;
+  (void)user_data;
+}
+
 static void flowie_mqtt_mtls_connect_completion(flowie_mqtt_client_t *client, int status,
                                                 const flowie_mqtt_control_packet_view_t *response,
                                                 void *user_data) {
@@ -1344,6 +1353,19 @@ static int flowie_mqtt_refresh_expired_connect(
   return TURBO_OK;
 }
 
+static int flowie_mqtt_refresh_with_conflicting_version(
+    flowie_mqtt_client_t *client, uint8_t reason_code,
+    const flowie_mqtt_connect_packet_t *current, flowie_mqtt_connect_packet_t *refreshed,
+    void *user_data) {
+  flowie_mqtt_resilience_state_t *state = (flowie_mqtt_resilience_state_t *)user_data;
+  (void)client;
+  if (reason_code != 0x87u || !current || !refreshed) return TURBO_EPROTO;
+  *refreshed = *current;
+  refreshed->version = FLOWIE_MQTT_VERSION_3_1_1;
+  atomic_fetch_add_explicit(&state->refresh_calls, 1, memory_order_release);
+  return TURBO_OK;
+}
+
 static void flowie_mqtt_resilience_connect_completion(
     flowie_mqtt_client_t *client, int status,
     const flowie_mqtt_control_packet_view_t *response, void *user_data) {
@@ -1590,6 +1612,40 @@ spec("flowie mqtt callback client") {
     config.topic_handlers = (flowie_mqtt_client_topic_handler_map_t){duplicate_handlers, 2u};
     check_equal(flowie_mqtt_client_create(&config, &client), TURBO_EINVAL);
     check_null(client);
+  }
+
+  it("validates protocol selection and locks it after command admission") {
+    static const uint8_t client_id[] = "flowie-version-boundary";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_client_t *client = NULL;
+    unsigned short port = flowie_test_port();
+    check_not_equal(port, 0u);
+    check_equal(flowie_mqtt_client_set_version(NULL, FLOWIE_MQTT_VERSION_5), TURBO_EINVAL);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = 50u;
+    config.on_connect = flowie_mqtt_test_ignore_completion;
+    check_equal(flowie_mqtt_client_create(&config, &client), TURBO_OK);
+    check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_UNSPECIFIED),
+                TURBO_EINVAL);
+    check_equal(flowie_mqtt_client_set_version(client, (flowie_mqtt_version_t)2),
+                TURBO_EINVAL);
+    check_equal(flowie_mqtt_client_set_version(client, (flowie_mqtt_version_t)6),
+                TURBO_EINVAL);
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    connect.version = FLOWIE_MQTT_VERSION_3_1_1;
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_EPROTO);
+    check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_3_1_1), TURBO_OK);
+    connect.version = FLOWIE_MQTT_VERSION_5;
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_EPROTO);
+    connect.version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_3_1_1),
+                TURBO_EALREADY);
+    check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_5), TURBO_EALREADY);
+    flowie_mqtt_client_destroy(client);
   }
 
   it("accepts verified TLS client identity and rejects incomplete credentials") {
@@ -2572,6 +2628,71 @@ spec("flowie mqtt callback client") {
     check_equal(atomic_load_explicit(&state.reconnect_reason, memory_order_relaxed), 0);
     check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
     check_true(flowie_mqtt_client_is_connected(client));
+    flowie_mqtt_client_destroy(client);
+    coro_socket_destroy(server);
+    coro_context_destroy(server_context);
+  }
+
+  it("rejects a refreshed CONNECT that changes the selected protocol version") {
+    static const uint8_t client_id[] = "flowie-version-conflict";
+    static const uint8_t username[] = "device";
+    static const uint8_t initial_token[] = "token-1";
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_resilience_config_t resilience =
+        FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_resilience_state_t state = {0};
+    flowie_mqtt_client_t *client = NULL;
+    coro_context_t *server_context = coro_context_create(NULL);
+    coro_socket_t *server = NULL;
+    unsigned short port = flowie_test_port();
+    uint64_t deadline;
+    check_not_null(server_context);
+    check_not_equal(port, 0u);
+    flowie_mqtt_resilience_state_init(&state);
+    server = coro_socket_create_tcpv4(server_context);
+    check_not_null(server);
+    check_equal(coro_socket_listen_on(server, "127.0.0.1", port,
+                                     flowie_mqtt_expired_token_then_ready_handler, &state),
+                TURBO_OK);
+    config.host = "127.0.0.1";
+    config.port = port;
+    config.timeout_ms = FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    config.on_connect = flowie_mqtt_resilience_connect_completion;
+    config.on_error = flowie_mqtt_resilience_error;
+    config.user_data = &state;
+    resilience.initial_delay_ms = 1u;
+    resilience.max_delay_ms = 1u;
+    resilience.max_attempts = 2u;
+    resilience.refresh_connect = flowie_mqtt_refresh_with_conflicting_version;
+    resilience.on_reconnect = flowie_mqtt_resilience_reconnect_completion;
+    check_equal(flowie_mqtt_client_create_ex(&config, &resilience, &client), TURBO_OK);
+    connect.clean_start = 1u;
+    connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+    connect.has_username = 1u;
+    connect.has_password = 1u;
+    connect.username = (flowie_mqtt_span_t){username, sizeof(username) - 1u};
+    connect.password = (flowie_mqtt_span_t){initial_token, sizeof(initial_token) - 1u};
+    check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_OK);
+    deadline = turbo_monotonic_ms() + FLOWIE_MQTT_CLIENT_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&state.background_errors, memory_order_acquire) == 0 &&
+           turbo_monotonic_ms() < deadline)
+      (void)coro_context_run(server_context, TURBO_RUN_ONCE);
+    deadline = turbo_monotonic_ms() + 100u;
+    while (turbo_monotonic_ms() < deadline) {
+      (void)coro_context_run(server_context, TURBO_RUN_NOWAIT);
+      turbo_sleep_ms(1u);
+    }
+    check_equal(atomic_load_explicit(&state.broker_connects, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_completions, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.initial_reason, memory_order_relaxed), 0x87);
+    check_equal(atomic_load_explicit(&state.refresh_calls, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.background_errors, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&state.background_status, memory_order_relaxed),
+                TURBO_EPROTO);
+    check_equal(atomic_load_explicit(&state.reconnect_completions, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&state.server_status, memory_order_acquire), TURBO_OK);
+    check_false(flowie_mqtt_client_is_connected(client));
     flowie_mqtt_client_destroy(client);
     coro_socket_destroy(server);
     coro_context_destroy(server_context);
