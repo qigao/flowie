@@ -4,7 +4,6 @@
 #include "base64_utils.h"
 #include "http_client.h"
 #include "monocypher.h"
-#include "turbo_coro.h"
 #include "turbo_error.h"
 #include "turbo_parser.h"
 #include "turbo_str.h"
@@ -626,7 +625,7 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
       assertion_out->size < sizeof(*assertion_out) ||
       strcmp(request->method, authenticator->method) != 0)
     return TURBO_EINVAL;
-  if (!coro_running() || !coro_context_current()) return TURBO_ENOTSUP;
+  if (!coro_context_current()) return TURBO_ENOTSUP;
   external_https_counter_increment(&authenticator->started_requests);
   in_flight = atomic_load_explicit(&authenticator->in_flight, memory_order_relaxed);
   do {
