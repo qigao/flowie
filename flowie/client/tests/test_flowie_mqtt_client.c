@@ -1815,6 +1815,53 @@ spec("flowie mqtt callback client") {
     flowie_mqtt_client_destroy(client);
   }
 
+  it("keeps protocol selection unlocked after versioned byte-budget rejection") {
+    static const uint8_t client_id[] = "flowie-budget-version";
+    static const uint8_t topic_names[2][12] = {"batch/one", "batch/two"};
+    flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+    flowie_mqtt_client_publish_topic_t topics[2] = {{0}};
+    flowie_mqtt_client_publish_topic_vec_t topic_vec =
+        FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
+    int completion_count = 0;
+
+    {
+      flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+      flowie_mqtt_client_t *client = NULL;
+      config.host = "127.0.0.1";
+      config.command_queue_max_bytes = 1u;
+      config.on_connect = flowie_mqtt_test_count_completion;
+      config.user_data = &completion_count;
+      connect.clean_start = 1u;
+      connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+      check_equal(flowie_mqtt_client_create(&config, &client), TURBO_OK);
+      check_equal(flowie_mqtt_client_connect(client, &connect), TURBO_ENOSPC);
+      check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_3_1_1), TURBO_OK);
+      check_equal(completion_count, 0);
+      flowie_mqtt_client_destroy(client);
+    }
+
+    {
+      flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+      flowie_mqtt_client_t *client = NULL;
+      config.host = "127.0.0.1";
+      config.command_queue_capacity = 2u;
+      config.command_queue_max_bytes = 1u;
+      config.on_publish = flowie_mqtt_test_count_completion;
+      config.user_data = &completion_count;
+      topics[0].topic =
+          (flowie_mqtt_span_t){topic_names[0], strlen((const char *)topic_names[0])};
+      topics[1].topic =
+          (flowie_mqtt_span_t){topic_names[1], strlen((const char *)topic_names[1])};
+      topic_vec.data = topics;
+      topic_vec.count = 2u;
+      check_equal(flowie_mqtt_client_create(&config, &client), TURBO_OK);
+      check_equal(flowie_mqtt_client_publish(client, &topic_vec), TURBO_ENOSPC);
+      check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_3_1), TURBO_OK);
+      check_equal(completion_count, 0);
+      flowie_mqtt_client_destroy(client);
+    }
+  }
+
   it("rejects a topic vector atomically when the command queue is too small") {
     static const uint8_t topic_names[2][12] = {"batch/one", "batch/two"};
     static const uint8_t payloads[2][4] = {"one", "two"};

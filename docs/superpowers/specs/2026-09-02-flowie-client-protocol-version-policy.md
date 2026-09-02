@@ -82,4 +82,3 @@ Wire-level local broker tests must prove:
   error without silent fallback;
 - the existing MQTT 5 capability, reason-code, properties, enhanced-authentication, reconnect, and
   MQTT 3 callback suites remain green.
-

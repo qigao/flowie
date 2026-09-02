@@ -199,4 +199,3 @@ build artifacts are not tracked, no public struct layout changed, and no placeho
 
 Commit only reviewed source, tests, specs, plans, and documentation; do not commit local index or build
 artifacts.
-

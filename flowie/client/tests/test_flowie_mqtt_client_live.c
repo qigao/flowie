@@ -407,6 +407,12 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
   if (rc != TURBO_OK) return rc;
+  rc = flowie_mqtt_client_set_version(state->client, test_case->version);
+  if (rc != TURBO_OK) {
+    flowie_mqtt_client_destroy(state->client);
+    state->client = NULL;
+    return rc;
+  }
   connect.version = test_case->version;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
