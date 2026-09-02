@@ -55,8 +55,8 @@ static int data_db_exec(flowie_control_database_t *database, const char *sql) {
 }
 
 static int data_bind_text(flowie_control_statement_t *statement, int index, const char *value) {
-  const int status = flowie_control_database_bind_text(statement, index, value, -1,
-                                                        FLOWIE_CONTROL_DB_TRANSIENT);
+  const int status =
+      flowie_control_database_bind_text(statement, index, value, -1, FLOWIE_CONTROL_DB_TRANSIENT);
   return status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : data_db_status(status);
 }
 
@@ -71,8 +71,7 @@ static int data_statement_done(flowie_control_statement_t *statement) {
 
 static int data_prepare(flowie_control_database_t *database, const char *sql,
                         flowie_control_statement_t **statement_out) {
-  const int status =
-      flowie_control_database_prepare(database, sql, -1, statement_out, NULL);
+  const int status = flowie_control_database_prepare(database, sql, -1, statement_out, NULL);
   return status == FLOWIE_CONTROL_DB_OK ? TURBO_OK : data_db_status(status);
 }
 
@@ -181,8 +180,8 @@ static int data_insert_user(flowie_control_statement_t *statement,
   int rc = data_bind_text(statement, 1, item->domain_id);
   if (rc == TURBO_OK) rc = data_bind_text(statement, 2, item->principal_id);
   if (rc == TURBO_OK) rc = data_bind_text(statement, 3, item->principal_type);
-  if (rc == TURBO_OK && flowie_control_database_bind_int(statement, 4, item->enabled) !=
-                            FLOWIE_CONTROL_DB_OK)
+  if (rc == TURBO_OK &&
+      flowie_control_database_bind_int(statement, 4, item->enabled) != FLOWIE_CONTROL_DB_OK)
     rc = TURBO_EIO;
   return rc == TURBO_OK ? data_statement_done(statement) : rc;
 }
@@ -198,9 +197,8 @@ static int data_insert_group(flowie_control_statement_t *statement,
                            : flowie_control_database_bind_null(statement, 3);
     if (status != FLOWIE_CONTROL_DB_OK) rc = data_db_status(status);
   }
-  if (rc == TURBO_OK &&
-      flowie_control_database_bind_int64(statement, 4, (int64_t)item->depth) !=
-          FLOWIE_CONTROL_DB_OK)
+  if (rc == TURBO_OK && flowie_control_database_bind_int64(statement, 4, (int64_t)item->depth) !=
+                            FLOWIE_CONTROL_DB_OK)
     rc = TURBO_EIO;
   return rc == TURBO_OK ? data_statement_done(statement) : rc;
 }
@@ -217,8 +215,8 @@ static int data_insert_role(flowie_control_statement_t *statement,
                             const flowie_control_role_view_t *item) {
   int rc = data_bind_text(statement, 1, item->domain_id);
   if (rc == TURBO_OK) rc = data_bind_text(statement, 2, item->role_id);
-  if (rc == TURBO_OK && flowie_control_database_bind_int(statement, 3, item->enabled) !=
-                            FLOWIE_CONTROL_DB_OK)
+  if (rc == TURBO_OK &&
+      flowie_control_database_bind_int(statement, 3, item->enabled) != FLOWIE_CONTROL_DB_OK)
     rc = TURBO_EIO;
   return rc == TURBO_OK ? data_statement_done(statement) : rc;
 }
@@ -399,8 +397,8 @@ static int data_export_policy(const flowie_control_repository_t *repository, con
     do {
       size_t count = 0u;
       for (size_t index = 0u; index < FLOWIE_CONTROL_DATA_POLICY_PAGE_MAX; ++index)
-        items[index] = (flowie_control_policy_subject_rule_view_t)
-            FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
+        items[index] =
+            (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
       rc = repository->policy->subject_rule_list(
           repository->ctx, domain_id, (flowie_security_subject_kind_t)kind, after, has_after, items,
           FLOWIE_CONTROL_DATA_POLICY_PAGE_MAX, &count, &more);
@@ -408,13 +406,13 @@ static int data_export_policy(const flowie_control_repository_t *repository, con
         size_t text_size = 0u;
         rc = flowie_control_acl_format(&items[index].document, text, sizeof(text), &text_size);
         if (rc == TURBO_OK) rc = data_bind_text(statement, 1, domain_id);
-        if (rc == TURBO_OK && flowie_control_database_bind_int(statement, 2, kind) !=
-                                  FLOWIE_CONTROL_DB_OK)
+        if (rc == TURBO_OK &&
+            flowie_control_database_bind_int(statement, 2, kind) != FLOWIE_CONTROL_DB_OK)
           rc = TURBO_EIO;
         if (rc == TURBO_OK) rc = data_bind_text(statement, 3, items[index].document.subject);
-        if (rc == TURBO_OK && flowie_control_database_bind_int64(
-                                  statement, 4, (int64_t)items[index].ordinal) !=
-                                  FLOWIE_CONTROL_DB_OK)
+        if (rc == TURBO_OK &&
+            flowie_control_database_bind_int64(statement, 4, (int64_t)items[index].ordinal) !=
+                FLOWIE_CONTROL_DB_OK)
           rc = TURBO_EIO;
         if (rc == TURBO_OK) rc = data_bind_text(statement, 5, text);
         if (rc == TURBO_OK) rc = data_statement_done(statement);
@@ -435,13 +433,11 @@ static int data_export_policy(const flowie_control_repository_t *repository, con
                       &statement);
     if (rc == TURBO_OK) rc = data_bind_text(statement, 1, domain_id);
     result->policy_published = policy.policy_version != 0u;
-    if (rc == TURBO_OK && flowie_control_database_bind_int(statement, 2,
-                                                            result->policy_published) !=
-                              FLOWIE_CONTROL_DB_OK)
+    if (rc == TURBO_OK && flowie_control_database_bind_int(
+                              statement, 2, result->policy_published) != FLOWIE_CONTROL_DB_OK)
       rc = TURBO_EIO;
-    if (rc == TURBO_OK &&
-        flowie_control_database_bind_int64(statement, 3, (int64_t)policy.expires_at) !=
-            FLOWIE_CONTROL_DB_OK)
+    if (rc == TURBO_OK && flowie_control_database_bind_int64(
+                              statement, 3, (int64_t)policy.expires_at) != FLOWIE_CONTROL_DB_OK)
       rc = TURBO_EIO;
     if (rc == TURBO_OK) rc = data_statement_done(statement);
   }
@@ -449,8 +445,8 @@ static int data_export_policy(const flowie_control_repository_t *repository, con
   return rc;
 }
 
-int flowie_control_data_export(const flowie_control_repository_t *repository,
-                               const char *domain_id, const char *output_path,
+int flowie_control_data_export(const flowie_control_repository_t *repository, const char *domain_id,
+                               const char *output_path,
                                flowie_control_data_transfer_result_t *result) {
   flowie_control_data_transfer_result_t value = FLOWIE_CONTROL_DATA_TRANSFER_RESULT_INIT;
   flowie_control_domain_view_t domain = FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
@@ -460,8 +456,8 @@ int flowie_control_data_export(const flowie_control_repository_t *repository,
   uint64_t final_revision = 0u;
   int published = 0;
   int rc;
-  if (!repository || !domain_id || !output_path || !result ||
-      result->size < sizeof(*result) || strcmp(domain_id, FLOWIE_CONTROL_SYSTEM_DOMAIN) == 0 ||
+  if (!repository || !domain_id || !output_path || !result || result->size < sizeof(*result) ||
+      strcmp(domain_id, FLOWIE_CONTROL_SYSTEM_DOMAIN) == 0 ||
       strlen(output_path) > FLOWIE_CONTROL_DATA_PATH_MAX - 16u)
     return TURBO_EINVAL;
   *result = value;
@@ -508,9 +504,8 @@ int flowie_control_data_export(const flowie_control_repository_t *repository,
 }
 
 static int data_source_preflight(flowie_control_database_t *database, char *domain_id,
-                                 size_t domain_capacity, uint64_t *source_revision,
-                                 int *published, uint64_t *expires_at,
-                                 size_t *policy_rule_count) {
+                                 size_t domain_capacity, uint64_t *source_revision, int *published,
+                                 uint64_t *expires_at, size_t *policy_rule_count) {
   flowie_control_statement_t *statement = NULL;
   flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
   char text[FLOWIE_CONTROL_DATA_RULE_TEXT_MAX + 1u];
@@ -575,12 +570,10 @@ static int data_source_preflight(flowie_control_database_t *database, char *doma
     if (rc == TURBO_OK) rc = flowie_control_acl_parse(text, text_size, &document);
     if (rc == TURBO_OK)
       rc = flowie_control_acl_format(&document, canonical, sizeof(canonical), &canonical_size);
-    if (rc == TURBO_OK &&
-        (canonical_size != text_size || memcmp(canonical, text, text_size) != 0))
+    if (rc == TURBO_OK && (canonical_size != text_size || memcmp(canonical, text, text_size) != 0))
       rc = TURBO_EPROTO;
-    if (rc == TURBO_OK &&
-        (document.subject_kind != (flowie_security_subject_kind_t)subject_kind ||
-         strcmp(document.subject, subject_id) != 0))
+    if (rc == TURBO_OK && (document.subject_kind != (flowie_security_subject_kind_t)subject_kind ||
+                           strcmp(document.subject, subject_id) != 0))
       rc = TURBO_EPROTO;
     if (rc == TURBO_OK) ++*policy_rule_count;
   }
@@ -591,7 +584,8 @@ static int data_source_preflight(flowie_control_database_t *database, char *doma
   }
   if (rc == TURBO_OK)
     rc = data_prepare(database, "SELECT * FROM pragma_foreign_key_check LIMIT 1", &statement);
-  if (rc == TURBO_OK && (status = flowie_control_database_step(statement)) != FLOWIE_CONTROL_DB_DONE)
+  if (rc == TURBO_OK &&
+      (status = flowie_control_database_step(statement)) != FLOWIE_CONTROL_DB_DONE)
     rc = status == FLOWIE_CONTROL_DB_ROW ? TURBO_EPROTO : data_db_status(status);
   if (statement) (void)flowie_control_database_finalize(statement);
   return rc;
@@ -651,6 +645,7 @@ static int data_import_rows(flowie_control_database_t *database,
                             const flowie_control_management_caller_t *caller, const char *domain_id,
                             uint64_t source_revision,
                             flowie_control_data_transfer_result_t *result) {
+  flowie_control_management_caller_t domain_caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
   flowie_control_statement_t *statement = NULL;
   flowie_control_command_result_t command_result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   char request_id[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u];
@@ -674,13 +669,18 @@ static int data_import_rows(flowie_control_database_t *database,
   domain.occurred_at = source_revision + sequence;
   if (rc == TURBO_OK)
     rc = flowie_control_management_domain_create(service, caller, &domain, &command_result);
+  if (rc == TURBO_OK) {
+    domain_caller = *caller;
+    domain_caller.domain_id = domain_id;
+    caller = &domain_caller;
+  }
 
-#define DATA_IMPORT_PREPARE(query)                                                                \
-  do {                                                                                            \
-    if (statement) {                                                                              \
+#define DATA_IMPORT_PREPARE(query)                                                                 \
+  do {                                                                                             \
+    if (statement) {                                                                               \
       (void)flowie_control_database_finalize(statement);                                           \
-      statement = NULL;                                                                           \
-    }                                                                                             \
+      statement = NULL;                                                                            \
+    }                                                                                              \
     if (rc == TURBO_OK) rc = data_prepare(database, query, &statement);                            \
   } while (0)
 
@@ -702,8 +702,8 @@ static int data_import_rows(flowie_control_database_t *database,
     create.request_id = request_id;
     create.expected_revision = revision;
     create.occurred_at = source_revision + sequence;
-    if (rc == TURBO_OK) rc = flowie_control_management_user_create(service, caller, &create,
-                                                                    &command_result);
+    if (rc == TURBO_OK)
+      rc = flowie_control_management_user_create(service, caller, &create, &command_result);
     if (rc == TURBO_OK) ++result->user_count;
   }
   if (rc == TURBO_OK && status != FLOWIE_CONTROL_DB_DONE) rc = data_db_status(status);
@@ -762,8 +762,8 @@ static int data_import_rows(flowie_control_database_t *database,
     if (rc == TURBO_OK) rc = data_column_text(statement, 1, second, sizeof(second), 0);
     if (rc == TURBO_OK) rc = data_import_revision(service, caller, &revision);
     if (rc == TURBO_OK)
-      rc = data_request_id(request_id, sizeof(request_id), domain_id, source_revision,
-                           "membership", sequence++);
+      rc = data_request_id(request_id, sizeof(request_id), domain_id, source_revision, "membership",
+                           sequence++);
     add.domain_id = domain_id;
     add.principal_id = first;
     add.group_id = second;
@@ -786,8 +786,8 @@ static int data_import_rows(flowie_control_database_t *database,
     if (rc == TURBO_OK) rc = data_column_text(statement, 1, second, sizeof(second), 0);
     if (rc == TURBO_OK) rc = data_import_revision(service, caller, &revision);
     if (rc == TURBO_OK)
-      rc = data_request_id(request_id, sizeof(request_id), domain_id, source_revision,
-                           "assignment", sequence++);
+      rc = data_request_id(request_id, sizeof(request_id), domain_id, source_revision, "assignment",
+                           sequence++);
     add.domain_id = domain_id;
     add.principal_id = first;
     add.role_id = second;
@@ -823,8 +823,8 @@ static int data_import_rows(flowie_control_database_t *database,
     put.expected_revision = revision;
     put.occurred_at = source_revision + sequence;
     if (rc == TURBO_OK)
-      rc = flowie_control_management_policy_subject_rule_put(service, caller, &put,
-                                                               &command_result);
+      rc =
+          flowie_control_management_policy_subject_rule_put(service, caller, &put, &command_result);
     if (rc == TURBO_OK) ++result->policy_rule_count;
   }
   if (rc == TURBO_OK && status != FLOWIE_CONTROL_DB_DONE) rc = data_db_status(status);
@@ -933,13 +933,13 @@ int flowie_control_data_import(const flowie_control_repository_t *repository,
   caller.permissions = FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN |
                        FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN |
                        FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN |
-                       FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN |
-                       FLOWIE_CONTROL_MANAGEMENT_VIEWER;
+                       FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN | FLOWIE_CONTROL_MANAGEMENT_VIEWER;
   if (rc == TURBO_OK) rc = data_import_revision(service, &caller, &initial_target_revision);
   if (rc == TURBO_OK) target_revision_known = 1;
   value.target_revision = initial_target_revision;
   if (rc == TURBO_OK && !dry_run)
     rc = data_import_rows(database, service, &caller, domain_id, value.source_revision, &value);
+  if (rc == TURBO_OK && !dry_run) caller.domain_id = domain_id;
   if (rc == TURBO_OK && !dry_run && value.policy_published) {
     flowie_control_policy_publish_command_t publish = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     flowie_control_policy_publish_result_t published = FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;

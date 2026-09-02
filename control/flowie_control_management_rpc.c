@@ -34,6 +34,7 @@ enum {
 static const char *const FLOWIE_CONTROL_RPC_METHODS[] = {"control.system.status",
                                                          "control.auth.external_https.stats",
                                                          "control.domain.create",
+                                                         "control.domain.admin.initialize",
                                                          "control.domain.list",
                                                          "control.user.get",
                                                          "control.user.list",
@@ -102,6 +103,24 @@ typedef struct flowie_control_rpc_policy_job_s {
   char command_domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
   char request_id[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u];
 } flowie_control_rpc_policy_job_t;
+
+typedef struct flowie_control_rpc_domain_admin_job_s {
+  flowie_control_management_service_t *service;
+  coro_wait_t *wait;
+  atomic_uint references;
+  atomic_int completed;
+  atomic_int owner_state;
+  int result;
+  flowie_control_management_caller_t caller;
+  flowie_control_domain_admin_initialize_command_t command;
+  flowie_control_command_result_t command_result;
+  char caller_domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char actor[FLOWIE_CONTROL_ACTOR_MAX + 1u];
+  char command_domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char principal_id[FLOWIE_SECURITY_ID_MAX + 1u];
+  char request_id[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u];
+  uint8_t initial_password[FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX];
+} flowie_control_rpc_domain_admin_job_t;
 
 static void flowie_control_rpc_method(Req *request, Res *response);
 static int flowie_control_rpc_registered_method(Req *request, Res *response,
@@ -335,6 +354,110 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
   return rc;
 }
 
+static void
+flowie_control_rpc_domain_admin_job_release(flowie_control_rpc_domain_admin_job_t *job) {
+  if (!job || atomic_fetch_sub_explicit(&job->references, 1u, memory_order_acq_rel) != 1u) return;
+  (void)coro_wait_destroy(job->wait);
+  flowie_control_credential_wipe(job, sizeof(*job));
+  free(job);
+}
+
+static void flowie_control_rpc_domain_admin_job_run(void *arg) {
+  flowie_control_rpc_domain_admin_job_t *job = (flowie_control_rpc_domain_admin_job_t *)arg;
+  int wake_rc;
+  if (!job) return;
+  job->result = flowie_control_management_domain_admin_initialize(
+      job->service, &job->caller, &job->command, &job->command_result);
+  atomic_store_explicit(&job->completed, 1, memory_order_release);
+  while (atomic_load_explicit(&job->owner_state, memory_order_acquire) ==
+         FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_ARMED) {
+    wake_rc = coro_wait_interrupt(job->wait, TURBO_EINTR);
+    if (wake_rc != TURBO_EALREADY) break;
+    turbo_thread_yield();
+  }
+  flowie_control_rpc_domain_admin_job_release(job);
+}
+
+static int flowie_control_rpc_domain_admin_execute(
+    flowie_control_management_rpc_server_t *server,
+    const flowie_control_management_caller_t *caller,
+    const flowie_control_domain_admin_initialize_command_t *command,
+    flowie_control_command_result_t *result) {
+  flowie_control_rpc_domain_admin_job_t *job;
+  coro_context_t *context = coro_context_current();
+  int completed;
+  int wait_rc = TURBO_OK;
+  int rc;
+  if (!context)
+    return flowie_control_management_domain_admin_initialize(server->service, caller, command,
+                                                             result);
+  job = (flowie_control_rpc_domain_admin_job_t *)calloc(1u, sizeof(*job));
+  if (!job) return TURBO_ENOMEM;
+  job->wait = coro_wait_create(context);
+  if (!job->wait) {
+    free(job);
+    return TURBO_ENOMEM;
+  }
+  job->service = server->service;
+  job->caller = *caller;
+  job->command = *command;
+  job->command_result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  job->result = TURBO_EIO;
+  rc = flowie_control_rpc_policy_copy_text(job->caller_domain_id, sizeof(job->caller_domain_id),
+                                           caller->domain_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_policy_copy_text(job->actor, sizeof(job->actor), caller->actor);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_policy_copy_text(job->command_domain_id, sizeof(job->command_domain_id),
+                                             command->domain_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_policy_copy_text(job->principal_id, sizeof(job->principal_id),
+                                             command->principal_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_policy_copy_text(job->request_id, sizeof(job->request_id),
+                                             command->request_id);
+  if (rc == TURBO_OK)
+    memcpy(job->initial_password, command->initial_password, command->initial_password_size);
+  if (rc != TURBO_OK) {
+    (void)coro_wait_destroy(job->wait);
+    flowie_control_credential_wipe(job, sizeof(*job));
+    free(job);
+    return rc;
+  }
+  job->caller.domain_id = job->caller_domain_id;
+  job->caller.actor = job->actor;
+  job->command.domain_id = job->command_domain_id;
+  job->command.principal_id = job->principal_id;
+  job->command.initial_password = job->initial_password;
+  job->command.actor = job->actor;
+  job->command.request_id = job->request_id;
+  atomic_init(&job->references, 2u);
+  atomic_init(&job->completed, 0);
+  atomic_init(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_ARMED);
+  if (turbo_threadpool_try_submit(server->policy_executor, flowie_control_rpc_domain_admin_job_run,
+                                  job) != TURBO_OK) {
+    atomic_store_explicit(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_DONE,
+                          memory_order_release);
+    flowie_control_rpc_domain_admin_job_release(job);
+    flowie_control_rpc_domain_admin_job_release(job);
+    return TURBO_EBUSY;
+  }
+  completed = atomic_load_explicit(&job->completed, memory_order_acquire);
+  if (!completed) wait_rc = coro_wait_for(job->wait, server->policy_executor_deadline_ms);
+  atomic_store_explicit(&job->owner_state, FLOWIE_CONTROL_RPC_POLICY_JOB_OWNER_DONE,
+                        memory_order_release);
+  completed = atomic_load_explicit(&job->completed, memory_order_acquire);
+  if (completed) {
+    rc = job->result;
+    if (rc == TURBO_OK) *result = job->command_result;
+  } else {
+    /* The resumable command converges through its derived request IDs after a timeout. */
+    rc = wait_rc == TURBO_OK ? TURBO_ETIMEDOUT : wait_rc;
+  }
+  flowie_control_rpc_domain_admin_job_release(job);
+  return rc;
+}
+
 static void flowie_control_rpc_free_json_value(json_value_t *value) {
   turbo_json_doc_t *owned = (turbo_json_doc_t *)value;
   if (owned) turbo_free_json(&owned);
@@ -474,10 +597,7 @@ static int flowie_control_rpc_target_root(const json_value_t *params,
   rc = flowie_control_rpc_string(params, "domain_id", FLOWIE_SECURITY_ID_MAX, 0, &domain_id);
   if (rc != TURBO_OK) return rc;
   if (!domain_id) domain_id = caller->domain_id;
-  if (strcmp(domain_id, caller->domain_id) != 0 &&
-      ((caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) == 0u ||
-       strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0))
-    return TURBO_EPERM;
+  if (strcmp(domain_id, caller->domain_id) != 0) return TURBO_EPERM;
   *domain_id_out = domain_id;
   return TURBO_OK;
 }
@@ -518,6 +638,55 @@ static int flowie_control_rpc_domain_create(flowie_control_management_rpc_server
     if (command.occurred_at == 0u) rc = TURBO_EIO;
     else rc = flowie_control_management_domain_create(server->service, caller, &command, &result);
   }
+  turbo_free_json(&params);
+  return rc == TURBO_OK
+             ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
+             : flowie_control_rpc_error(response, rc);
+}
+
+static int
+flowie_control_rpc_domain_admin_initialize(flowie_control_management_rpc_server_t *server,
+                                           const flowie_control_management_caller_t *caller,
+                                           const rpc_request_t *request, rpc_response_t *response) {
+  static const char *const allowed[] = {"domain_id", "principal_id", "initial_password",
+                                        "request_id"};
+  turbo_json_doc_t *params = NULL;
+  flowie_control_domain_admin_initialize_command_t command =
+      FLOWIE_CONTROL_DOMAIN_ADMIN_INITIALIZE_COMMAND_INIT;
+  flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  const char *domain_id = NULL;
+  const char *principal_id = NULL;
+  const char *initial_password = NULL;
+  const char *request_id = NULL;
+  size_t password_size = 0u;
+  int rc = flowie_control_rpc_params(request, allowed, 4u, &params);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "domain_id", FLOWIE_SECURITY_ID_MAX, 1, &domain_id);
+  if (rc == TURBO_OK)
+    rc =
+        flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "initial_password", FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX,
+                                   1, &initial_password);
+  if (rc == TURBO_OK) {
+    password_size = turbo_json_string_len(turbo_json_object_get(params, "initial_password"));
+    if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE) rc = TURBO_EINVAL;
+  }
+  if (rc == TURBO_OK)
+    rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
+                                   &request_id);
+  if (rc == TURBO_OK) {
+    command.domain_id = domain_id;
+    command.principal_id = principal_id;
+    command.initial_password = initial_password;
+    command.initial_password_size = password_size;
+    command.actor = caller->actor;
+    command.request_id = request_id;
+    command.occurred_at = server->clock(server->clock_ctx);
+    if (command.occurred_at == 0u) rc = TURBO_EIO;
+    else rc = flowie_control_rpc_domain_admin_execute(server, caller, &command, &result);
+  }
+  if (initial_password) flowie_control_credential_wipe((void *)initial_password, password_size);
   turbo_free_json(&params);
   return rc == TURBO_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
@@ -802,7 +971,9 @@ static int flowie_control_rpc_external_https_stats(flowie_control_management_rpc
   int rc = flowie_control_rpc_params(request, NULL, 0u, &params);
   if (rc == TURBO_OK)
     rc = flowie_control_management_authorize(server->service, caller,
-                                             FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN);
+                                             FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN);
+  if (rc == TURBO_OK && strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0)
+    rc = TURBO_EPERM;
   if (rc == TURBO_OK) rc = server->external_https_stats(server->external_https_stats_ctx, &stats);
   turbo_free_json(&params);
   if (rc != TURBO_OK && rc != TURBO_ENOENT) return flowie_control_rpc_error(response, rc);
@@ -2065,6 +2236,8 @@ static int flowie_control_rpc_dispatch(flowie_control_management_rpc_server_t *s
     return flowie_control_rpc_external_https_stats(server, caller, request, response);
   if (strcmp(method, "control.domain.create") == 0)
     return flowie_control_rpc_domain_create(server, caller, request, response);
+  if (strcmp(method, "control.domain.admin.initialize") == 0)
+    return flowie_control_rpc_domain_admin_initialize(server, caller, request, response);
   if (strcmp(method, "control.domain.list") == 0)
     return flowie_control_rpc_domain_list(server, caller, request, response);
   if (strcmp(method, "control.user.get") == 0)

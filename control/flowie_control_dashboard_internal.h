@@ -15,6 +15,7 @@ extern "C" {
 #define FLOWIE_CONTROL_DASHBOARD_ROLES_PATH "/v2/control/dashboard/roles"
 #define FLOWIE_CONTROL_DASHBOARD_ACLS_PATH "/v2/control/dashboard/acls"
 #define FLOWIE_CONTROL_DASHBOARD_AUDIT_PATH "/v2/control/dashboard/audit"
+#define FLOWIE_CONTROL_DASHBOARD_INTEGRATION_PATH "/v2/control/dashboard/integration"
 #define FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH "/v2/control/dashboard/content"
 #define FLOWIE_CONTROL_DASHBOARD_ACTION_PATH "/v2/control/dashboard/action"
 #define FLOWIE_CONTROL_DASHBOARD_CSS_PATH "/v2/control/assets/control.css"
@@ -31,6 +32,7 @@ extern "C" {
 #define FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_MAX_QUEUE_CAPACITY 4096u
 #define FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_DEADLINE_MS 10000u
 #define FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_MAX_DEADLINE_MS 60000u
+#define FLOWIE_CONTROL_DASHBOARD_RPC_PATH_MAX 127u
 
 typedef struct flowie_control_dashboard_s flowie_control_dashboard_t;
 
@@ -41,7 +43,8 @@ typedef enum flowie_control_dashboard_section_e {
   FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS,
   FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES,
   FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS,
-  FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT
+  FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT,
+  FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION
 } flowie_control_dashboard_section_t;
 
 typedef struct flowie_control_dashboard_page_s {
@@ -58,15 +61,7 @@ typedef struct flowie_control_dashboard_page_s {
 } flowie_control_dashboard_page_t;
 
 #define FLOWIE_CONTROL_DASHBOARD_PAGE_INIT                                                         \
-  {sizeof(flowie_control_dashboard_page_t),                                                       \
-   {0},                                                                                            \
-   {0},                                                                                            \
-   {0},                                                                                            \
-   {0},                                                                                            \
-   0u,                                                                                             \
-   0,                                                                                              \
-   0u,                                                                                             \
-   0,                                                                                              \
+  {sizeof(flowie_control_dashboard_page_t), {0}, {0}, {0}, {0}, 0u, 0, 0u, 0,                      \
    FLOWIE_CONTROL_DASHBOARD_SECTION_ALL}
 
 typedef enum flowie_control_dashboard_action_kind_e {
@@ -84,8 +79,12 @@ typedef struct flowie_control_dashboard_action_result_s {
 } flowie_control_dashboard_action_result_t;
 
 #define FLOWIE_CONTROL_DASHBOARD_ACTION_RESULT_INIT                                                \
-  {sizeof(flowie_control_dashboard_action_result_t), FLOWIE_CONTROL_DASHBOARD_ACTION_NONE, {0},    \
-   {0}, {0}, 0u}
+  {sizeof(flowie_control_dashboard_action_result_t),                                               \
+   FLOWIE_CONTROL_DASHBOARD_ACTION_NONE,                                                           \
+   {0},                                                                                            \
+   {0},                                                                                            \
+   {0},                                                                                            \
+   0u}
 
 typedef int (*flowie_control_dashboard_resolve_session_fn)(
     void *ctx, const Req *request, flowie_control_management_caller_t *caller_out,
@@ -112,11 +111,12 @@ typedef struct flowie_control_dashboard_config_s {
   uint32_t login_executor_workers;
   size_t login_executor_queue_capacity;
   uint32_t login_executor_deadline_ms;
+  const char *rpc_path;
   const char *resource_directory;
 } flowie_control_dashboard_config_t;
 
 #define FLOWIE_CONTROL_DASHBOARD_CONFIG_INIT                                                       \
-  {sizeof(flowie_control_dashboard_config_t),                                                       \
+  {sizeof(flowie_control_dashboard_config_t),                                                      \
    NULL,                                                                                           \
    NULL,                                                                                           \
    NULL,                                                                                           \
@@ -130,6 +130,7 @@ typedef struct flowie_control_dashboard_config_s {
    FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_WORKERS,                                        \
    FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_QUEUE_CAPACITY,                                 \
    FLOWIE_CONTROL_DASHBOARD_LOGIN_EXECUTOR_DEFAULT_DEADLINE_MS,                                    \
+   NULL,                                                                                           \
    NULL}
 
 int flowie_control_dashboard_create(const flowie_control_dashboard_config_t *config,
@@ -137,6 +138,7 @@ int flowie_control_dashboard_create(const flowie_control_dashboard_config_t *con
 int flowie_control_dashboard_bind(flowie_control_dashboard_t *dashboard, iris_app_t *app);
 void flowie_control_dashboard_unbind(flowie_control_dashboard_t *dashboard);
 void flowie_control_dashboard_destroy(flowie_control_dashboard_t *dashboard);
+int flowie_control_dashboard_path_reserved(const char *path);
 
 /**
  * Execute a login through the configured bounded executor.
@@ -158,8 +160,7 @@ int flowie_control_dashboard_render_shell(flowie_control_dashboard_t *dashboard,
                                           const flowie_control_dashboard_page_t *page,
                                           char **html_out, size_t *html_size_out);
 int flowie_control_dashboard_render_login(flowie_control_dashboard_t *dashboard, int group_mode,
-                                          int show_error, char **html_out,
-                                          size_t *html_size_out);
+                                          int show_error, char **html_out, size_t *html_size_out);
 int flowie_control_dashboard_render_password(
     flowie_control_dashboard_t *dashboard,
     const char csrf_token[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u], char **html_out,
@@ -182,7 +183,8 @@ int flowie_control_dashboard_page_parse(const Req *request, flowie_control_dashb
 /** Dashboard content and action endpoints accept only strict HTMX requests. */
 int flowie_control_dashboard_request_is_htmx(const Req *request);
 
-/** Dashboard mutations accept an exact Origin, or same-origin Fetch Metadata for absent/opaque Origin. */
+/** Dashboard mutations accept an exact Origin, or same-origin Fetch Metadata for absent/opaque
+ * Origin. */
 int flowie_control_dashboard_request_is_same_origin(const Req *request);
 
 /** Execute one validated form body without performing socket I/O. */
@@ -194,8 +196,7 @@ int flowie_control_dashboard_process_form_result(
     flowie_control_dashboard_t *dashboard, const flowie_control_management_caller_t *caller,
     const char csrf_token[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u], const char *body,
     size_t body_size, flowie_control_dashboard_action_result_t *result_out);
-void flowie_control_dashboard_action_result_clear(
-    flowie_control_dashboard_action_result_t *result);
+void flowie_control_dashboard_action_result_clear(flowie_control_dashboard_action_result_t *result);
 
 #ifdef __cplusplus
 }

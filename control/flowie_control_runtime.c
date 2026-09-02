@@ -130,11 +130,6 @@ static int flowie_control_runtime_external_https_stats(
 }
 
 static int flowie_control_runtime_routes_valid(const flowie_control_config_t *config) {
-  static const char *const dashboard_paths[] = {
-      FLOWIE_CONTROL_DASHBOARD_PATH,        FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH,
-      FLOWIE_CONTROL_DASHBOARD_ACTION_PATH, FLOWIE_CONTROL_DASHBOARD_CSS_PATH,
-      FLOWIE_CONTROL_DASHBOARD_HTMX_PATH,   FLOWIE_CONTROL_DASHBOARD_LOGIN_PATH,
-      FLOWIE_CONTROL_DASHBOARD_LOGOUT_PATH};
   if (!config || !config->management.rpc_path[0]) return 0;
   if (strcmp(config->management.rpc_path, FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT) == 0) return 0;
   if (flowie_control_runtime_external_auth_enabled(config) && !config->auth.enabled) return 0;
@@ -144,11 +139,9 @@ static int flowie_control_runtime_routes_valid(const flowie_control_config_t *co
   if (config->auth.enabled &&
       strcmp(config->management.rpc_path, FLOWIE_CONTROL_ACL_HTTP_PATH) == 0)
     return 0;
-  if (config->dashboard_enabled) {
-    for (size_t index = 0u; index < sizeof(dashboard_paths) / sizeof(dashboard_paths[0]); ++index) {
-      if (strcmp(config->management.rpc_path, dashboard_paths[index]) == 0) return 0;
-    }
-  }
+  if (config->dashboard_enabled &&
+      flowie_control_dashboard_path_reserved(config->management.rpc_path))
+    return 0;
   return 1;
 }
 
@@ -815,6 +808,7 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
         runtime->config.management.login_executor_queue_capacity;
     dashboard_config.login_executor_deadline_ms =
         runtime->config.management.login_executor_deadline_ms;
+    dashboard_config.rpc_path = runtime->config.management.rpc_path;
     rc = flowie_control_dashboard_create(&dashboard_config, &runtime->dashboard);
     if (rc != TURBO_OK) goto fail;
     rc = flowie_control_dashboard_bind(runtime->dashboard, runtime->app);

@@ -1,5 +1,5 @@
-#include "flowie_control_dashboard_view_internal.h"
 #include "flowie_control_acl_internal.h"
+#include "flowie_control_dashboard_view_internal.h"
 
 #include "fmt.h"
 #include "http_common.h"
@@ -59,6 +59,8 @@ flowie_control_dashboard_section_name(flowie_control_dashboard_section_t section
     return "acls";
   case FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT:
     return "audit";
+  case FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION:
+    return "integration";
   default:
     return NULL;
   }
@@ -77,6 +79,8 @@ flowie_control_dashboard_section_title(flowie_control_dashboard_section_t sectio
     return "ACL rules | Flowie Control";
   case FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT:
     return "Audit | Flowie Control";
+  case FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION:
+    return "Integration | Flowie Control";
   default:
     return "Flowie Control";
   }
@@ -369,9 +373,9 @@ static int flowie_control_dashboard_navigation_url(const char *base,
 
 static int
 flowie_control_dashboard_add_domains(json_value_t *model,
-                                         flowie_control_management_service_t *service,
-                                         const flowie_control_management_caller_t *authority_caller,
-                                         const flowie_control_management_caller_t *scoped_caller) {
+                                     flowie_control_management_service_t *service,
+                                     const flowie_control_management_caller_t *authority_caller,
+                                     const flowie_control_management_caller_t *scoped_caller) {
   flowie_control_domain_view_t roots[FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT];
   json_value_t *array = turbo_json_create_array();
   size_t count = 0u;
@@ -381,11 +385,15 @@ flowie_control_dashboard_add_domains(json_value_t *model,
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT; ++index)
     roots[index] = (flowie_control_domain_view_t)FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
   rc = flowie_control_management_domain_list(service, authority_caller, NULL, roots,
-                                                 FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT, &count,
-                                                 &has_more);
+                                             FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT, &count,
+                                             &has_more);
   (void)has_more;
   for (size_t index = 0u; rc == TURBO_OK && index < count; ++index) {
     json_value_t *item = turbo_json_create_object();
+    if (strcmp(roots[index].domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0) {
+      flowie_control_dashboard_json_free(item);
+      continue;
+    }
     if (!item) {
       rc = TURBO_ENOMEM;
       break;
@@ -475,26 +483,21 @@ static int flowie_control_dashboard_add_group_option(json_value_t *array,
   item = turbo_json_create_object();
   if (!item) return TURBO_ENOMEM;
   rc = flowie_control_dashboard_json_u64(item, "row_index", row_index);
-  if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_string(item, "group_id", group->group_id);
+  if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(item, "group_id", group->group_id);
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_string(item, "parent_group_id", group->parent_group_id);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(item, "tree_label", label);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_u64(item, "depth", group->depth);
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_u64(item, "aria_level", (uint64_t)group->depth + 1u);
-  if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_bool(item, "enabled", group->enabled);
+  if (rc == TURBO_OK) rc = flowie_control_dashboard_json_bool(item, "enabled", group->enabled);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_bool(item, "is_root", 0);
   if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_bool(
-        item, "member_allowed", group->enabled);
+    rc = flowie_control_dashboard_json_bool(item, "member_allowed", group->enabled);
   if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_bool(
-        item, "delete_candidate", !has_children);
+    rc = flowie_control_dashboard_json_bool(item, "delete_candidate", !has_children);
   if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_bool(item, "add_disabled",
-                                            !group->enabled);
+    rc = flowie_control_dashboard_json_bool(item, "add_disabled", !group->enabled);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_bool(item, "remove_disabled", 0);
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_bool(
@@ -504,8 +507,8 @@ static int flowie_control_dashboard_add_group_option(json_value_t *array,
   return rc;
 }
 
-static int flowie_control_dashboard_group_has_children(
-    const flowie_control_group_view_t *groups, size_t count, const char *group_id) {
+static int flowie_control_dashboard_group_has_children(const flowie_control_group_view_t *groups,
+                                                       size_t count, const char *group_id) {
   if (!groups || !group_id) return 0;
   for (size_t index = 0u; index < count; ++index) {
     if (strcmp(groups[index].parent_group_id, group_id) == 0) return 1;
@@ -668,11 +671,11 @@ static int flowie_control_dashboard_add_users(json_value_t *model,
     if (rc == TURBO_OK)
       rc = flowie_control_dashboard_json_bool(item, "enabled", users[index].enabled);
     if (rc == TURBO_OK)
-      rc = flowie_control_dashboard_json_bool(
-          item, "is_service", strcmp(users[index].principal_type, "service") == 0);
+      rc = flowie_control_dashboard_json_bool(item, "is_service",
+                                              strcmp(users[index].principal_type, "service") == 0);
     if (rc == TURBO_OK)
-      rc = flowie_control_dashboard_json_bool(
-          item, "is_human", strcmp(users[index].principal_type, "human") == 0);
+      rc = flowie_control_dashboard_json_bool(item, "is_human",
+                                              strcmp(users[index].principal_type, "human") == 0);
     if (rc == TURBO_OK) rc = flowie_control_dashboard_json_array_take(array, item);
     else flowie_control_dashboard_json_free(item);
   }
@@ -724,9 +727,9 @@ static int flowie_control_dashboard_add_roles(json_value_t *model,
 }
 
 static int flowie_control_dashboard_add_rules(json_value_t *model,
-                                               flowie_control_management_service_t *service,
-                                               const flowie_control_management_caller_t *caller,
-                                               const flowie_control_dashboard_page_t *page) {
+                                              flowie_control_management_service_t *service,
+                                              const flowie_control_management_caller_t *caller,
+                                              const flowie_control_dashboard_page_t *page) {
   flowie_control_policy_subject_rule_view_t *rules = NULL;
   json_value_t *array = turbo_json_create_array();
   size_t count = 0u;
@@ -734,8 +737,8 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
   int has_more = 0;
   int rc = TURBO_OK;
   if (!array) return TURBO_ENOMEM;
-  rules = (flowie_control_policy_subject_rule_view_t *)calloc(
-      FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE, sizeof(*rules));
+  rules = (flowie_control_policy_subject_rule_view_t *)calloc(FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE,
+                                                              sizeof(*rules));
   if (!rules) {
     flowie_control_dashboard_json_free(array);
     return TURBO_ENOMEM;
@@ -763,8 +766,7 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
     }
     subject_kind_label = flowie_control_dashboard_subject_kind_label(document->subject_kind);
     subject_kind_value = flowie_control_dashboard_subject_kind_value(document->subject_kind);
-    if (!subject_kind_label || !subject_kind_value)
-      rc = TURBO_EPROTO;
+    if (!subject_kind_label || !subject_kind_value) rc = TURBO_EPROTO;
     else
       rc = flowie_control_acl_format(document, rule_document, sizeof(rule_document),
                                      &rule_document_size);
@@ -808,9 +810,9 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_take(model, "rules", array);
   else flowie_control_dashboard_json_free(array);
   if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_add_pager(
-        model, "policy_pager", page, FLOWIE_CONTROL_DASHBOARD_POLICY_CURSOR, count,
-        has_more && count > 0u, NULL, last_ordinal);
+    rc = flowie_control_dashboard_add_pager(model, "policy_pager", page,
+                                            FLOWIE_CONTROL_DASHBOARD_POLICY_CURSOR, count,
+                                            has_more && count > 0u, NULL, last_ordinal);
   free(rules);
   return rc;
 }
@@ -977,7 +979,7 @@ int flowie_control_dashboard_view_render_content(
     flowie_control_dashboard_view_t *view, flowie_control_management_service_t *service,
     const flowie_control_management_caller_t *authority_caller,
     const flowie_control_management_caller_t *caller,
-    const char csrf_token[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u],
+    const char csrf_token[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u], const char *rpc_path,
     const flowie_control_dashboard_page_t *page,
     const flowie_control_dashboard_action_result_t *action_result, char **html_out,
     size_t *html_size_out) {
@@ -990,7 +992,7 @@ int flowie_control_dashboard_view_render_content(
   char *roles_url = NULL;
   char *acls_url = NULL;
   char *audit_url = NULL;
-  int can_select_root;
+  char *integration_url = NULL;
   int can_create_domain;
   int can_user_admin;
   int can_security_admin;
@@ -1002,38 +1004,45 @@ int flowie_control_dashboard_view_render_content(
   int show_roles;
   int show_acls;
   int show_audit;
+  int show_integration;
+  int is_platform_workspace;
+  int is_domain_workspace;
   int rc;
   if (!view || !service || !authority_caller || !authority_caller->domain_id || !caller ||
-      !caller->domain_id || !csrf_token || !page)
+      !caller->domain_id || !csrf_token || !rpc_path || !page)
     return TURBO_EINVAL;
-  can_select_root =
-      strcmp(authority_caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0 &&
-      (authority_caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) != 0u;
+  is_platform_workspace = strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0;
+  is_domain_workspace = !is_platform_workspace;
   can_create_domain =
-      can_select_root && strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0;
-  can_user_admin = (caller->permissions & (FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN |
-                                           FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN |
-                                           FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN)) != 0u;
-  can_security_admin = (caller->permissions & (FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN |
-                                               FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN)) != 0u;
-  can_policy_admin = (caller->permissions & (FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN |
-                                             FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN |
-                                             FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN)) != 0u;
+      is_platform_workspace && (caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) != 0u;
+  can_user_admin = is_domain_workspace &&
+                   (caller->permissions & (FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN |
+                                           FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN)) != 0u;
+  can_security_admin =
+      is_domain_workspace && (caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN) != 0u;
+  can_policy_admin = is_domain_workspace &&
+                     (caller->permissions & (FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN |
+                                             FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN)) != 0u;
   can_audit_read = can_security_admin;
+  if (is_platform_workspace && page->section != FLOWIE_CONTROL_DASHBOARD_SECTION_ALL &&
+      page->section != FLOWIE_CONTROL_DASHBOARD_SECTION_OVERVIEW &&
+      page->section != FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION)
+    return TURBO_EPERM;
   if (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT && !can_audit_read)
     return TURBO_EPERM;
   show_overview = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
                   page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_OVERVIEW;
-  show_users = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
-               page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_USERS;
-  show_groups = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
-                page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS;
-  show_roles = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
-               page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES;
-  show_acls = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
-              page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS;
+  show_users = is_domain_workspace && (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
+                                       page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_USERS);
+  show_groups = is_domain_workspace && (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
+                                        page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS);
+  show_roles = is_domain_workspace && (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
+                                       page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES);
+  show_acls = is_domain_workspace && (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
+                                      page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS);
   show_audit = can_audit_read && (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ALL ||
                                   page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT);
+  show_integration = page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION;
   rc = flowie_control_management_system_status(service, caller, &status);
   if (rc != TURBO_OK) return rc;
   rc = flowie_control_dashboard_url(FLOWIE_CONTROL_DASHBOARD_ACTION_PATH, page, &action_url);
@@ -1055,6 +1064,9 @@ int flowie_control_dashboard_view_render_content(
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_navigation_url(FLOWIE_CONTROL_DASHBOARD_AUDIT_PATH, page,
                                                  &audit_url);
+  if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_navigation_url(FLOWIE_CONTROL_DASHBOARD_INTEGRATION_PATH, page,
+                                                 &integration_url);
   if (rc != TURBO_OK) goto done;
   model = turbo_json_create_object();
   if (!model) rc = TURBO_ENOMEM;
@@ -1062,6 +1074,7 @@ int flowie_control_dashboard_view_render_content(
     rc = flowie_control_dashboard_json_string(model, "domain_id", caller->domain_id);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "actor", caller->actor);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "csrf", csrf_token);
+  if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "rpc_path", rpc_path);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "action_url", action_url);
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_u64(model, "policy_version", status.policy.policy_version);
@@ -1083,10 +1096,12 @@ int flowie_control_dashboard_view_render_content(
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_bool(model, "can_audit_read", can_audit_read);
   if (rc == TURBO_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_select_root", can_select_root);
-  if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_bool(model, "can_create_domain", can_create_domain);
-  if (rc == TURBO_OK && can_select_root)
+  if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_json_bool(model, "is_platform_workspace", is_platform_workspace);
+  if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_json_bool(model, "is_domain_workspace", is_domain_workspace);
+  if (rc == TURBO_OK && can_create_domain)
     rc = flowie_control_dashboard_add_domains(model, service, authority_caller, caller);
   if (rc == TURBO_OK && action_result &&
       action_result->kind == FLOWIE_CONTROL_DASHBOARD_ACTION_CREDENTIAL_ISSUED) {
@@ -1111,6 +1126,8 @@ int flowie_control_dashboard_view_render_content(
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_bool(model, "show_acls", show_acls);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_bool(model, "show_audit", show_audit);
   if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_json_bool(model, "show_integration", show_integration);
+  if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_bool(
         model, "is_overview", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_OVERVIEW);
   if (rc == TURBO_OK)
@@ -1129,12 +1146,17 @@ int flowie_control_dashboard_view_render_content(
     rc = flowie_control_dashboard_json_bool(
         model, "is_audit", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT);
   if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_json_bool(
+        model, "is_integration", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION);
+  if (rc == TURBO_OK)
     rc = flowie_control_dashboard_json_string(model, "overview_path", overview_url);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "users_path", users_url);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "groups_path", groups_url);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "roles_path", roles_url);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "acls_path", acls_url);
   if (rc == TURBO_OK) rc = flowie_control_dashboard_json_string(model, "audit_path", audit_url);
+  if (rc == TURBO_OK)
+    rc = flowie_control_dashboard_json_string(model, "integration_path", integration_url);
   if (rc == TURBO_OK && (show_groups || show_acls || (show_users && can_user_admin)))
     rc = flowie_control_dashboard_add_group_options(model, service, caller);
   if (rc == TURBO_OK &&
@@ -1152,7 +1174,7 @@ int flowie_control_dashboard_view_render_content(
     rc = flowie_control_dashboard_add_audits(model, service, caller, page);
   if (rc == TURBO_OK)
     rc = flowie_control_dashboard_render_template(view->content_template, model, html_out,
-                                                   html_size_out);
+                                                  html_size_out);
 done:
   if (model) {
     json_value_t *secret = turbo_json_object_get(model, "credential_token");
@@ -1166,6 +1188,7 @@ done:
   tstr_free(roles_url);
   tstr_free(acls_url);
   tstr_free(audit_url);
+  tstr_free(integration_url);
   flowie_control_dashboard_json_free(model);
   return rc;
 }

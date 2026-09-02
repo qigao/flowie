@@ -217,11 +217,38 @@ spec("Flowie controller runtime") {
     check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
   }
 
-  it("rejects RPC routes that collide with fixed Dashboard routes") {
+  it("rejects every fixed Dashboard route as the Management RPC path") {
+    static const char *const dashboard_paths[] = {
+        "/v2/control/dashboard",             "/v2/control/dashboard/users",
+        "/v2/control/dashboard/groups",      "/v2/control/dashboard/roles",
+        "/v2/control/dashboard/acls",        "/v2/control/dashboard/audit",
+        "/v2/control/dashboard/integration", "/v2/control/dashboard/content",
+        "/v2/control/dashboard/action",      "/v2/control/assets/control.css",
+        "/v2/control/assets/control.js",     "/v2/control/assets/htmx-2.0.9.min.js",
+        "/v2/control/login",                 "/v2/control/password",
+        "/v2/control/logout"};
+    char cert_file[512] = {0};
+    char key_file[512] = {0};
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
-    memcpy(config.management.rpc_path, "/v2/control/dashboard", sizeof("/v2/control/dashboard"));
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
+    check_equal(
+        tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
+    (void)snprintf(config.listener.tls.cert_file, sizeof(config.listener.tls.cert_file), "%s",
+                   cert_file);
+    (void)snprintf(config.listener.tls.key_file, sizeof(config.listener.tls.key_file), "%s",
+                   key_file);
+    config.dashboard_enabled = 1;
+    memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
+    check_equal(flowie_control_runtime_validate(&config), TURBO_OK);
+    for (size_t index = 0u; index < sizeof(dashboard_paths) / sizeof(dashboard_paths[0]); ++index) {
+      (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
+                     dashboard_paths[index]);
+      check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    }
+
+    tls_test_remove_file(key_file);
+    tls_test_remove_file(cert_file);
   }
 
   it("rejects incomplete local auth configuration") {

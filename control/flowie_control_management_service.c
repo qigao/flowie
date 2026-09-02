@@ -103,10 +103,7 @@ int flowie_control_management_scope_caller(flowie_control_management_service_t *
     return TURBO_EINVAL;
   rc = flowie_control_management_authorize(service, caller, 0u);
   if (rc != TURBO_OK) return rc;
-  if (strcmp(target_domain_id, caller->domain_id) != 0 &&
-      (((caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) == 0u) ||
-       strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0))
-    return TURBO_EPERM;
+  if (strcmp(target_domain_id, caller->domain_id) != 0) return TURBO_EPERM;
   rc = service->repository.user->domain_get(service->repository.ctx, target_domain_id, &root);
   if (rc != TURBO_OK) return rc;
   scoped = *caller;
@@ -128,9 +125,7 @@ static int flowie_control_management_write(flowie_control_management_service_t *
   int rc = flowie_control_management_read(service, caller, permission);
   if (rc != TURBO_OK) return rc;
   if (!domain_id || !actor || strcmp(actor, caller->actor) != 0 ||
-      (strcmp(domain_id, caller->domain_id) != 0 &&
-       ((caller->permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) == 0u ||
-        strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0)))
+      strcmp(domain_id, caller->domain_id) != 0)
     return TURBO_EPERM;
   return TURBO_OK;
 }
@@ -161,6 +156,169 @@ int flowie_control_management_domain_list(flowie_control_management_service_t *s
   if (strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0) return TURBO_EPERM;
   return service->repository.user->domain_list(service->repository.ctx, after_domain_id, items,
                                                capacity, count_out, has_more_out);
+}
+
+static int flowie_control_domain_admin_request(char output[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u],
+                                               const char *request_id, const char *suffix) {
+  int count = snprintf(output, FLOWIE_CONTROL_REQUEST_ID_MAX + 1u, "%s%s", request_id, suffix);
+  return count > 0 && count <= FLOWIE_CONTROL_REQUEST_ID_MAX ? TURBO_OK : TURBO_EINVAL;
+}
+
+static int flowie_control_domain_admin_revision(flowie_control_management_service_t *service,
+                                                uint64_t *revision_out) {
+  return service->repository.auth->current_revision(service->repository.ctx, revision_out);
+}
+
+int flowie_control_management_domain_admin_initialize(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    const flowie_control_domain_admin_initialize_command_t *command,
+    flowie_control_command_result_t *result) {
+  static const char *const suffixes[] = {
+      ":user",          ":credential",          ":security-role",
+      ":password-role", ":security-assignment", ":password-assignment"};
+  flowie_control_domain_view_t domain = FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
+  flowie_control_user_view_t user_view = FLOWIE_CONTROL_USER_VIEW_INIT;
+  flowie_control_user_view_t existing_users[2] = {FLOWIE_CONTROL_USER_VIEW_INIT,
+                                                  FLOWIE_CONTROL_USER_VIEW_INIT};
+  flowie_control_user_create_command_t user = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
+  flowie_control_credential_issue_command_t credential =
+      FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
+  flowie_control_generated_credential_t generated = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
+  flowie_control_credential_verify_result_t verified = FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
+  flowie_control_role_create_command_t role = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
+  flowie_control_user_role_add_command_t assignment = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
+  flowie_control_command_result_t step = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  char request_id[FLOWIE_CONTROL_REQUEST_ID_MAX + 1u];
+  uint64_t revision = 0u;
+  size_t request_size;
+  size_t existing_user_count = 0u;
+  int existing_users_more = 0;
+  int all_replayed = 1;
+  int rc;
+  if (result && result->size >= sizeof(*result))
+    *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (!service || !caller || !command || command->size < sizeof(*command) || !result ||
+      result->size < sizeof(*result) ||
+      !flowie_control_text_valid(command->domain_id, FLOWIE_SECURITY_ID_MAX) ||
+      strcmp(command->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0 ||
+      !flowie_control_text_valid(command->principal_id, FLOWIE_SECURITY_ID_MAX) ||
+      !command->initial_password ||
+      command->initial_password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE ||
+      command->initial_password_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX || !command->actor ||
+      !command->request_id || command->occurred_at == 0u)
+    return TURBO_EINVAL;
+  request_size = strnlen(command->request_id, FLOWIE_CONTROL_REQUEST_ID_MAX + 1u);
+  if (request_size == 0u ||
+      request_size > FLOWIE_CONTROL_REQUEST_ID_MAX - (sizeof(":password-assignment") - 1u))
+    return TURBO_EINVAL;
+  rc = flowie_control_management_authorize(service, caller, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN);
+  if (rc != TURBO_OK || strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0 ||
+      strcmp(caller->actor, command->actor) != 0)
+    return TURBO_EPERM;
+  rc = service->repository.user->domain_get(service->repository.ctx, command->domain_id, &domain);
+  if (rc != TURBO_OK) return rc;
+  rc = service->repository.user->list(service->repository.ctx, command->domain_id, NULL,
+                                      existing_users, 2u, &existing_user_count,
+                                      &existing_users_more);
+  if (rc != TURBO_OK) return rc;
+  if (existing_users_more || existing_user_count > 1u ||
+      (existing_user_count == 1u &&
+       strcmp(existing_users[0].principal_id, command->principal_id) != 0))
+    return TURBO_EBUSY;
+
+  rc = flowie_control_domain_admin_revision(service, &revision);
+  if (rc == TURBO_OK)
+    rc = flowie_control_domain_admin_request(request_id, command->request_id, suffixes[0]);
+  user.domain_id = command->domain_id;
+  user.principal_id = command->principal_id;
+  user.principal_type = "human";
+  user.actor = command->actor;
+  user.request_id = request_id;
+  user.expected_revision = revision;
+  user.occurred_at = command->occurred_at;
+  if (rc == TURBO_OK) rc = service->repository.user->create(service->repository.ctx, &user, &step);
+  if (rc == TURBO_EALREADY) {
+    rc = service->repository.user->get(service->repository.ctx, command->domain_id,
+                                       command->principal_id, &user_view);
+    if (rc == TURBO_OK && (!user_view.enabled || strcmp(user_view.principal_type, "human") != 0))
+      rc = TURBO_EPROTO;
+  } else if (rc == TURBO_OK && !step.replayed) {
+    all_replayed = 0;
+  }
+  if (rc != TURBO_OK) goto done;
+
+  rc = flowie_control_domain_admin_revision(service, &revision);
+  if (rc == TURBO_OK)
+    rc = flowie_control_domain_admin_request(request_id, command->request_id, suffixes[1]);
+  credential.domain_id = command->domain_id;
+  credential.principal_id = command->principal_id;
+  credential.actor = command->actor;
+  credential.request_id = request_id;
+  credential.expected_revision = revision;
+  credential.occurred_at = command->occurred_at;
+  credential.initial_secret = command->initial_password;
+  credential.initial_secret_size = command->initial_password_size;
+  if (rc == TURBO_OK)
+    rc = service->repository.auth->credential_verify(
+        service->repository.ctx, command->domain_id, command->principal_id,
+        command->initial_password, command->initial_password_size, &verified);
+  if (rc == TURBO_EPERM) {
+    rc = service->repository.credential->generate(service->repository.ctx, &credential, &generated);
+    if (rc == TURBO_OK) all_replayed = 0;
+  }
+  flowie_control_generated_credential_wipe(&generated);
+  if (rc != TURBO_OK) goto done;
+
+  for (size_t index = 0u; index < 2u && rc == TURBO_OK; ++index) {
+    step = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    rc = flowie_control_domain_admin_revision(service, &revision);
+    if (rc == TURBO_OK)
+      rc = flowie_control_domain_admin_request(request_id, command->request_id,
+                                               suffixes[index + 2u]);
+    role = (flowie_control_role_create_command_t)FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
+    role.domain_id = command->domain_id;
+    role.role_id = index == 0u ? FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN
+                               : FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED;
+    role.actor = command->actor;
+    role.request_id = request_id;
+    role.expected_revision = revision;
+    role.occurred_at = command->occurred_at;
+    if (rc == TURBO_OK)
+      rc = service->repository.role->create(service->repository.ctx, &role, &step);
+    if (rc == TURBO_EALREADY) rc = TURBO_OK;
+    else if (rc == TURBO_OK && !step.replayed) all_replayed = 0;
+  }
+  if (rc != TURBO_OK) goto done;
+
+  for (size_t index = 0u; index < 2u && rc == TURBO_OK; ++index) {
+    step = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+    rc = flowie_control_domain_admin_revision(service, &revision);
+    if (rc == TURBO_OK)
+      rc = flowie_control_domain_admin_request(request_id, command->request_id,
+                                               suffixes[index + 4u]);
+    assignment = (flowie_control_user_role_add_command_t)FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
+    assignment.domain_id = command->domain_id;
+    assignment.principal_id = command->principal_id;
+    assignment.role_id = index == 0u ? FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN
+                                     : FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED;
+    assignment.actor = command->actor;
+    assignment.request_id = request_id;
+    assignment.expected_revision = revision;
+    assignment.occurred_at = command->occurred_at;
+    if (rc == TURBO_OK)
+      rc = service->repository.role->assignment_add(service->repository.ctx, &assignment, &step);
+    if (rc == TURBO_EALREADY) rc = TURBO_OK;
+    else if (rc == TURBO_OK && !step.replayed) all_replayed = 0;
+  }
+  if (rc == TURBO_OK) {
+    rc = flowie_control_domain_admin_revision(service, &result->revision);
+    result->replayed = all_replayed;
+  }
+
+done:
+  flowie_control_generated_credential_wipe(&generated);
+  if (rc != TURBO_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  return rc;
 }
 
 int flowie_control_management_password_change(

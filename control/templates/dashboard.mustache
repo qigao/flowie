@@ -13,12 +13,15 @@
   <a class="skip-link" href="#dashboard">Skip to control dashboard</a>
   <header class="topbar">
     <div class="topbar__inner">
-      <div>
-        <p class="eyebrow">Access control</p>
-        <h1>Flowie Control</h1>
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">F</span>
+        <div>
+          <p class="eyebrow">Platform &amp; Domain control</p>
+          <h1>Flowie Control</h1>
+        </div>
       </div>
       <div class="topbar__actions">
-        <span class="environment">Management plane</span>
+        <span class="environment"><span aria-hidden="true"></span>Management plane</span>
         <form method="post" action="/v2/control/logout">
           <button class="button--topbar" type="submit">Sign out</button>
         </form>

@@ -94,6 +94,20 @@ typedef struct flowie_control_password_set_command_s {
    0u,                                                                                             \
    0u}
 
+typedef struct flowie_control_domain_admin_initialize_command_s {
+  size_t size;
+  const char *domain_id;
+  const char *principal_id;
+  const void *initial_password;
+  size_t initial_password_size;
+  const char *actor;
+  const char *request_id;
+  uint64_t occurred_at;
+} flowie_control_domain_admin_initialize_command_t;
+
+#define FLOWIE_CONTROL_DOMAIN_ADMIN_INITIALIZE_COMMAND_INIT                                        \
+  {sizeof(flowie_control_domain_admin_initialize_command_t), NULL, NULL, NULL, 0u, NULL, NULL, 0u}
+
 #define FLOWIE_CONTROL_MANAGEMENT_STATUS_INIT                                                      \
   {sizeof(flowie_control_management_status_t), 0u, FLOWIE_CONTROL_POLICY_STATUS_INIT}
 
@@ -110,8 +124,8 @@ int flowie_control_management_authorize(flowie_control_management_service_t *ser
 /**
  * Resolve an authorized target Domain into a request-local caller view.
  *
- * The returned caller borrows `target_domain_id`. Same-Root access is unchanged; cross-Root
- * access requires a system_admin whose authenticated Domain is `system`.
+ * The returned caller borrows `target_domain_id`. The target must equal the authenticated
+ * caller's Domain; Platform authority does not grant access to Domain-owned state.
  */
 int flowie_control_management_scope_caller(flowie_control_management_service_t *service,
                                            const flowie_control_management_caller_t *caller,
@@ -135,6 +149,16 @@ int flowie_control_management_domain_list(flowie_control_management_service_t *s
                                           const char *after_domain_id,
                                           flowie_control_domain_view_t *items, size_t capacity,
                                           size_t *count_out, int *has_more_out);
+/**
+ * Initialize the first human security administrator for an existing Domain.
+ *
+ * This Platform lifecycle operation is resumable: each persisted step has a derived idempotency
+ * key, and any failure leaves a pending Domain that can be retried with the same inputs.
+ */
+int flowie_control_management_domain_admin_initialize(
+    flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
+    const flowie_control_domain_admin_initialize_command_t *command,
+    flowie_control_command_result_t *result);
 int flowie_control_management_password_change(
     flowie_control_management_service_t *service, const flowie_control_management_caller_t *caller,
     const flowie_control_password_change_command_t *command,
