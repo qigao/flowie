@@ -289,8 +289,8 @@ FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *c
  * Clients default to MQTT 5. An UNSPECIFIED packet version inherits this selection;
  * an explicit packet version must match it. This function performs no I/O.
  *
- * Returns TURBO_EINVAL for an unsupported version, TURBO_EALREADY after version
- * lock-in, or TURBO_ESHUTDOWN after shutdown begins.
+ * Returns TURBO_EINVAL for a NULL client, UNSPECIFIED, or an unsupported version;
+ * TURBO_EALREADY after version lock-in; or TURBO_ESHUTDOWN after shutdown begins.
  */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
                                                             flowie_mqtt_version_t version);
@@ -304,9 +304,9 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_c
  * matching config.on_xxx callback, except publish, which guarantees one
  * on_publish callback per topic in input order. A missing matching callback
  * returns TURBO_ENOTSUP.
- * Queue-full, shutdown, structurally invalid input, and invalid client state
- * fail immediately without invoking a callback. Protocol or network errors are
- * delivered through the matching callback.
+ * Queue-full, shutdown, structurally invalid input, a selected-version mismatch,
+ * and invalid client state fail immediately without invoking a callback. Other
+ * protocol or network errors are delivered through the matching callback.
  */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_connect(flowie_mqtt_client_t *client,
                                                         const flowie_mqtt_connect_packet_t *packet);

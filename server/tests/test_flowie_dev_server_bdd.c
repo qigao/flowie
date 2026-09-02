@@ -538,6 +538,12 @@ static int flowie_dev_run_scenario(flowie_mqtt_version_t version) {
   if (rc != TURBO_OK) goto cleanup;
   rc = flowie_mqtt_client_create(&publisher_config, &publisher);
   if (rc != TURBO_OK) goto cleanup;
+  rc = flowie_mqtt_client_set_version(subscriber_a, version);
+  if (rc != TURBO_OK) goto cleanup;
+  rc = flowie_mqtt_client_set_version(subscriber_b, version);
+  if (rc != TURBO_OK) goto cleanup;
+  rc = flowie_mqtt_client_set_version(publisher, version);
+  if (rc != TURBO_OK) goto cleanup;
   failure_stage = "CONNECT subscriber A";
   rc = flowie_dev_connect_client(subscriber_a, &subscriber_a_state, version, subscriber_a_id,
                                  sizeof(subscriber_a_id) - 1u);
@@ -665,6 +671,8 @@ static int flowie_dev_run_immediate_publisher_close_scenario(void) {
   failure_stage = "create and subscribe the receiving client";
   rc = flowie_dev_create_client(server.port, &subscriber_state, topic, sizeof(topic) - 1u,
                                 &subscriber);
+  if (rc != TURBO_OK) goto cleanup;
+  rc = flowie_mqtt_client_set_version(subscriber, FLOWIE_MQTT_VERSION_3_1_1);
   if (rc != TURBO_OK) goto cleanup;
   rc = flowie_dev_connect_client(subscriber, &subscriber_state, FLOWIE_MQTT_VERSION_3_1_1,
                                  subscriber_id, sizeof(subscriber_id) - 1u);

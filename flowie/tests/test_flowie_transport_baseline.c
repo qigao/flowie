@@ -368,6 +368,8 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
   }
   rc = flowie_mqtt_client_create(&client_config, &client);
   if (rc != TURBO_OK) goto done;
+  rc = flowie_mqtt_client_set_version(client, version);
+  if (rc != TURBO_OK) goto done;
 
   (void)snprintf(client_id, sizeof(client_id), "flowie-baseline-%u", client_number);
   connect.version = version;

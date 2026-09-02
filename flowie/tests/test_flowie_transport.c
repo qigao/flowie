@@ -707,6 +707,8 @@ static int flowie_transport_client_case(flowie_transport_t server_transport,
   client_config.user_data = &state;
   rc = flowie_mqtt_client_create(&client_config, &client);
   if (rc != TURBO_OK) goto done;
+  rc = flowie_mqtt_client_set_version(client, version);
+  if (rc != TURBO_OK) goto done;
   (void)snprintf(client_id, sizeof(client_id), "flowie-transport-%u", client_number);
   connect.version = version;
   connect.clean_start = 1u;

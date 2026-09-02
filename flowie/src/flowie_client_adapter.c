@@ -269,7 +269,6 @@ static int flowie_client_source_client_create(flowie_client_source_t *source) {
 static int flowie_client_source_connect(flowie_client_source_t *source) {
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   if (!source || !source->client) return TURBO_EINVAL;
-  connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = source->clean_start;
   connect.keep_alive = source->keep_alive;
   connect.client_id =
@@ -286,7 +285,6 @@ static int flowie_client_source_subscribe(flowie_client_source_t *source) {
   subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)source->topic_filter,
                                               tstr_len(source->topic_filter)};
   subscription.qos = source->qos;
-  subscribe.version = FLOWIE_MQTT_VERSION_5;
   subscribe.subscriptions = &subscription;
   subscribe.subscription_count = 1u;
   atomic_store_explicit(&source->state, FLOWIE_CLIENT_SOURCE_SUBSCRIBING,

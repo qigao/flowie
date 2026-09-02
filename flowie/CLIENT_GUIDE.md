@@ -97,20 +97,17 @@ int main(void) {
   rc = flowie_mqtt_client_create(&config, &client);
   if (rc != TURBO_OK) return 1;
 
-  connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
   connect.client_id =
       (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
   subscription.filter = (flowie_mqtt_span_t){filter, sizeof(filter) - 1u};
   subscription.qos = 1u;
-  subscribe.version = FLOWIE_MQTT_VERSION_5;
   subscribe.subscriptions = &subscription;
   subscribe.subscription_count = 1u;
   publish_topic.qos = 1u;
   publish_topic.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
   publish_topic.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
-  publish.version = FLOWIE_MQTT_VERSION_5;
   publish.data = &publish_topic;
   publish.count = 1u;
 
@@ -136,14 +133,43 @@ client 接管；协议或网络结果通过对应 callback 返回。
 
 ## 3. MQTT 版本
 
-通过 packet 的 `version` 字段选择：
+新建 client 默认选择 MQTT 5。由 `*_INIT` 宏初始化的 CONNECT、PUBLISH、SUBSCRIBE 和 UNSUBSCRIBE
+packet，其 `version` 为 `FLOWIE_MQTT_VERSION_UNSPECIFIED`，提交时会继承 client 的选择。因此上面的
+MQTT 5 示例不需要逐包填写版本。
 
-- `FLOWIE_MQTT_VERSION_3_1`
-- `FLOWIE_MQTT_VERSION_3_1_1`
-- `FLOWIE_MQTT_VERSION_5`
+需要 MQTT 3 时，在第一个上述 versioned command 被接管前显式选择版本；新项目优先使用 MQTT 3.1.1，
+只在兼容旧 broker 时选择 MQTT 3.1：
 
-同一个 client connection 只能使用一个协商版本。MQTT 3.x 不支持 MQTT 5 properties、AUTH 和 reason
-code；不要把 MQTT 5 packet 字段直接复用于 3.x。
+```c
+#include "flowie_mqtt_client.h"
+#include "turbo_error.h"
+
+int flowie_create_mqtt311(const flowie_mqtt_client_config_t *config,
+                          flowie_mqtt_client_t **out) {
+  int rc = flowie_mqtt_client_create(config, out);
+  if (rc != TURBO_OK) return rc;
+  rc = flowie_mqtt_client_set_version(*out, FLOWIE_MQTT_VERSION_3_1_1);
+  if (rc != TURBO_OK) {
+    flowie_mqtt_client_destroy(*out);
+    *out = NULL;
+  }
+  return rc;
+}
+```
+
+选择是 client 级单一事实源，并在首次成功接管 versioned command 后锁定：
+
+- `FLOWIE_MQTT_VERSION_3_1`、`FLOWIE_MQTT_VERSION_3_1_1` 和
+  `FLOWIE_MQTT_VERSION_5` 是仅有的可选具体版本。
+- setter 对空 client、`UNSPECIFIED` 或不支持的值返回 `TURBO_EINVAL`；锁定后返回
+  `TURBO_EALREADY`；shutdown 开始后返回 `TURBO_ESHUTDOWN`。
+- packet 可继续显式填写版本，但必须与 client 选择一致；不一致的命令在入队前返回
+  `TURBO_EPROTO`，不会自动降级或协商回退。
+- 自动重连与 `refresh_connect` 也沿用同一选择；刷新后的 CONNECT 不得切换版本。
+
+MQTT 3.x 不支持 MQTT 5 properties、AUTH 与 MQTT 5 reason-code 语义。packet-specific 字段仍由协议
+encoder 严格校验；不要把 MQTT 5 packet 字段直接复用于 3.x。MQTT 5 路径继续支持 properties、完整
+reason code、Enhanced AUTH，以及由 CONNACK 协商的发送能力限制。
 
 ## 4. MQTT 5 Enhanced AUTH
 
@@ -163,7 +189,7 @@ code；不要把 MQTT 5 packet 字段直接复用于 3.x。
 MQTT 3.1/3.1.1 调用 re-authentication 会通过 `on_auth` 返回 `TURBO_ENOTSUP`。
 
 配置结构没有本地 ABI 版本号，也不接受历史布局；`size` 必须精确匹配当前完整结构。
-MQTT 版本只来自 CONNECT packet 的 MQTT 3.1、3.1.1 或 5 协议字段。
+client 选择的版本决定 CONNECT 协议级别；显式 packet 版本仅用于一致性校验，不能覆盖 client 选择。
 
 ## 5. 自动重连与 CONNECT token 刷新
 
@@ -186,7 +212,8 @@ rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
 
 - CONNACK `0x88`（Server unavailable）、`0x89`（Server busy）及瞬态网络错误按指数退避重连。
 - CONNACK 或 DISCONNECT `0x86`/`0x87` 先调用 `refresh_connect`；回调必须返回一份完整的新 CONNECT，
-  client 会在回调返回前深拷贝它。JWT bearer 放在 CONNECT password 时，在这里替换 token。
+  client 会在回调返回前深拷贝它，并拒绝与 client 选择冲突的版本。JWT bearer 放在 CONNECT password
+  时，在这里替换 token。
 - DISCONNECT `0x89` 普通重连；`0x8e`（Session taken over）、协议错误及永久认证拒绝不重连。
 - 初始公开 CONNECT 仍只产生一次 `on_connect`；每次内部 attempt 由 `on_reconnect` 报告。
 - `max_attempts` 是每次掉线后的自动 attempt 上限，0 表示不限制；成功连接会重置 attempt 和退避。

@@ -2225,6 +2225,7 @@ spec("flowie mqtt callback client") {
     config.on_disconnect = flowie_mqtt_auth_disconnect_completion;
     config.user_data = &state;
     check_equal(flowie_mqtt_client_create(&config, &client), TURBO_OK);
+    check_equal(flowie_mqtt_client_set_version(client, FLOWIE_MQTT_VERSION_3_1_1), TURBO_OK);
     connect.version = FLOWIE_MQTT_VERSION_3_1_1;
     connect.clean_start = 1u;
     connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
