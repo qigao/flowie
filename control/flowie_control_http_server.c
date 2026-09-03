@@ -19,6 +19,8 @@ enum {
   FLOWIE_CONTROL_HTTP_CONNECTION_CAPACITY = 128,
   FLOWIE_CONTROL_HTTP_COMMAND_CAPACITY = 256,
   FLOWIE_CONTROL_HTTP_COMMAND_BUFFER_CAPACITY = 64 * 1024 * 1024,
+  FLOWIE_CONTROL_HTTP_EVENT_BUFFER_CAPACITY = 32 * 1024 * 1024,
+  FLOWIE_CONTROL_HTTP_PAYLOAD_BUFFER_CAPACITY = 192 * 1024 * 1024,
   FLOWIE_CONTROL_HTTP_REQUEST_CAPACITY = 256,
   FLOWIE_CONTROL_HTTP_COMPLETION_BATCH_CAPACITY = 64,
   FLOWIE_CONTROL_HTTP_EVENT_CAPACITY = 256,
@@ -769,6 +771,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   config.network.connection_capacity = FLOWIE_CONTROL_HTTP_CONNECTION_CAPACITY;
   config.network.command_capacity = FLOWIE_CONTROL_HTTP_COMMAND_CAPACITY;
   config.network.command_buffer_bytes = FLOWIE_CONTROL_HTTP_COMMAND_BUFFER_CAPACITY;
+  config.network.event_buffer_bytes = FLOWIE_CONTROL_HTTP_EVENT_BUFFER_CAPACITY;
   config.network.request_capacity = FLOWIE_CONTROL_HTTP_REQUEST_CAPACITY;
   config.network.completion_batch_capacity = FLOWIE_CONTROL_HTTP_COMPLETION_BATCH_CAPACITY;
   config.network.event_capacity = FLOWIE_CONTROL_HTTP_EVENT_CAPACITY;
@@ -803,6 +806,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   config.poll_slice_ms = FLOWIE_CONTROL_HTTP_POLL_SLICE_MS;
   config.tls = &tls_config;
   config.max_buffered_response_body_bytes = FLOWIE_CONTROL_HTTP_RESPONSE_BODY_CAPACITY;
+  config.buffer_capacity_bytes = FLOWIE_CONTROL_HTTP_PAYLOAD_BUFFER_CAPACITY;
   rc = chttp_server_init(&app->server, &config);
   if (rc != SALTS_OK) goto fail;
   app->initialized = 1;
