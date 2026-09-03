@@ -12,7 +12,7 @@ extern "C" {
 typedef struct flowie_cluster_raft_runtime_s flowie_cluster_raft_runtime_t;
 
 typedef int (*flowie_cluster_raft_payload_fn)(
-    void *ctx, const tr_raft_coronet_payload_t *payload);
+    void *ctx, const tr_raft_transport_payload_t *payload);
 
 typedef struct flowie_cluster_raft_runtime_config_s {
   flowie_cluster_raft_store_config_t store;
@@ -36,7 +36,7 @@ int flowie_cluster_raft_runtime_bind_payload_handler(
 int flowie_cluster_raft_runtime_unbind_payload_handler(
     flowie_cluster_raft_runtime_t *runtime, void *expected_payload_ctx);
 int flowie_cluster_raft_runtime_enqueue_adapter(
-    void *runtime, const tr_raft_coronet_payload_t *payload);
+    void *runtime, const tr_raft_transport_payload_t *payload);
 int flowie_cluster_raft_runtime_propose_adapter(
     void *runtime, const tr_raft_proposal_t *proposal);
 int flowie_cluster_raft_runtime_start(flowie_cluster_raft_runtime_t *runtime);
@@ -46,7 +46,7 @@ int flowie_cluster_raft_runtime_drive(
     tr_raft_flowmq_peer_service_step_result_t *out_step);
 int flowie_cluster_raft_runtime_enqueue_payload(
     flowie_cluster_raft_runtime_t *runtime,
-    const tr_raft_coronet_payload_t *payload);
+    const tr_raft_transport_payload_t *payload);
 int flowie_cluster_raft_runtime_propose(
     flowie_cluster_raft_runtime_t *runtime,
     const tr_raft_proposal_t *proposal,

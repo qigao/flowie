@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -58,7 +58,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t frame =
           flowie_cluster_peer_test_command(vstr_from_buf((const char *)payload, sizeof(payload)));
       tstr encoded = NULL;
-      check_equal(flowie_cluster_peer_frame_encode(&frame, 1024u, &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&frame, 1024u, &encoded), SALTS_OK);
       check_equal(tstr_len(encoded), sizeof(expected));
       check_equal(encoded, expected, sizeof(expected));
       tstr_free(encoded);
@@ -73,10 +73,10 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), SALTS_OK);
       check_equal(flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), sizeof(payload),
                                                     &output, &consumed),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(consumed, tstr_len(encoded));
       check_not_null(output.storage);
       check_equal(output.kind, FLOWIE_CLUSTER_PEER_FRAME_COMMAND);
@@ -98,7 +98,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 99u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
       check_equal(flowie_cluster_peer_frame_decode(encoded, FLOWIE_CLUSTER_PEER_HEADER_SIZE - 1u,
                                                     64u, &output, &consumed),
                    FLOWIE_CLUSTER_PEER_INCOMPLETE);
@@ -117,13 +117,13 @@ spec("flowie cluster peer wire protocol") {
       tstr encoded = NULL;
       tstr pair = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
       pair = tstr_new_len(NULL, tstr_len(encoded) * 2u);
       check_not_null(pair);
       memcpy(pair, encoded, tstr_len(encoded));
       memcpy(pair + tstr_len(encoded), encoded, tstr_len(encoded));
       check_equal(flowie_cluster_peer_frame_decode(pair, tstr_len(pair), 64u, &output, &consumed),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(consumed, tstr_len(encoded));
       flowie_cluster_peer_frame_cleanup(&output);
       tstr_free(pair);
@@ -139,14 +139,14 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), SALTS_OK);
       encoded[20] = 0u;
       encoded[21] = 0u;
       encoded[22] = 0u;
       encoded[23] = 3u;
       check_equal(flowie_cluster_peer_frame_decode(encoded, FLOWIE_CLUSTER_PEER_HEADER_SIZE, 2u,
                                                     &output, &consumed),
-                   TURBO_EMSGSIZE);
+                   SALTS_EMSGSIZE);
       check_null(output.storage);
       tstr_free(encoded);
     }
@@ -156,21 +156,21 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
       encoded[5] = 2;
       check_equal(
           flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), 64u, &output, &consumed),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       encoded[5] = FLOWIE_CLUSTER_PEER_WIRE_VERSION;
       encoded[15] = 1;
       check_equal(
           flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), 64u, &output, &consumed),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       encoded[15] = 0;
       encoded[19] = (uint8_t)(encoded[19] - 1u);
       check_equal(
           flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), 64u, &output, &consumed),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       tstr_free(encoded);
     }
 
@@ -181,12 +181,12 @@ spec("flowie cluster peer wire protocol") {
       tstr encoded = NULL;
       frame.owner_epoch = 0u;
       check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       frame =
           flowie_cluster_peer_test_command(vstr_from_buf((const char *)payload, sizeof(payload)));
       frame.connection_generation = 0u;
       check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       check_null(encoded);
     }
 
@@ -199,12 +199,12 @@ spec("flowie cluster peer wire protocol") {
       frame.operation = FLOWIE_CLUSTER_PEER_OPERATION_EVENT_DELIVER;
       frame.connection_id = 0u;
       frame.connection_generation = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded), TURBO_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded), SALTS_OK);
       tstr_free(encoded);
       encoded = NULL;
       frame.connection_id = 1u;
       check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       check_null(encoded);
     }
 
@@ -214,11 +214,11 @@ spec("flowie cluster peer wire protocol") {
       tstr encoded = NULL;
       frame.payload = vstr_from_buf((const char *)payload, sizeof(payload));
       check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       frame = flowie_cluster_peer_test_ping();
       frame.owner_epoch = 1u;
       check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       check_null(encoded);
     }
 
@@ -228,15 +228,15 @@ spec("flowie cluster peer wire protocol") {
       memcpy(boot_id, frame.target_boot_id, sizeof(boot_id));
       check_equal(flowie_cluster_peer_frame_require_target(&frame, vstr_from_cstr("cluster-a"),
                                                             vstr_from_cstr("node-b"), boot_id),
-                   TURBO_OK);
+                   SALTS_OK);
       boot_id[0] ^= 0xffu;
       check_equal(flowie_cluster_peer_frame_require_target(&frame, vstr_from_cstr("cluster-a"),
                                                             vstr_from_cstr("node-b"), boot_id),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
       check_equal(flowie_cluster_peer_frame_require_target(&frame, vstr_from_cstr("other"),
                                                             vstr_from_cstr("node-b"),
                                                             frame.target_boot_id),
-                   TURBO_EPROTO);
+                   SALTS_EPROTO);
     }
   }
 }

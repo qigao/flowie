@@ -5,7 +5,7 @@
 #include "flowie_control_credential_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -22,11 +22,11 @@ static int flowie_control_auth_contract_policy_version(void *ctx, const char *do
   flowie_control_policy_status_t status = FLOWIE_CONTROL_POLICY_STATUS_INIT;
   int rc;
   if (policy_version_out) *policy_version_out = 0u;
-  if (flowie_control_repository_validate(repository) != TURBO_OK || !domain_id ||
+  if (flowie_control_repository_validate(repository) != SALTS_OK || !domain_id ||
       !policy_version_out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = repository->policy->status(repository->ctx, domain_id, &status);
-  if (rc == TURBO_OK) *policy_version_out = status.policy_version;
+  if (rc == SALTS_OK) *policy_version_out = status.policy_version;
   return rc;
 }
 
@@ -76,13 +76,13 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   int cache_hit = -1;
 
   check_not_null(repository);
-  check_equal(flowie_control_repository_validate(repository), TURBO_OK);
+  check_equal(flowie_control_repository_validate(repository), SALTS_OK);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "auth-contract-root";
   root.occurred_at = 1000u;
-  check_equal(repository->user->domain_create(repository->ctx, &root, &result), TURBO_OK);
+  check_equal(repository->user->domain_create(repository->ctx, &root, &result), SALTS_OK);
 
   user.domain_id = "root-a";
   user.principal_id = "device-a";
@@ -91,7 +91,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   user.request_id = "auth-contract-user";
   user.expected_revision = 1u;
   user.occurred_at = 1001u;
-  check_equal(repository->user->create(repository->ctx, &user, &result), TURBO_OK);
+  check_equal(repository->user->create(repository->ctx, &user, &result), SALTS_OK);
 
   group.domain_id = "root-a";
   group.group_id = "engineering";
@@ -100,7 +100,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   group.request_id = "auth-contract-group";
   group.expected_revision = 2u;
   group.occurred_at = 1002u;
-  check_equal(repository->group->create(repository->ctx, &group, &result), TURBO_OK);
+  check_equal(repository->group->create(repository->ctx, &group, &result), SALTS_OK);
 
   membership.domain_id = "root-a";
   membership.principal_id = "device-a";
@@ -109,7 +109,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   membership.request_id = "auth-contract-membership";
   membership.expected_revision = 3u;
   membership.occurred_at = 1003u;
-  check_equal(repository->group->membership_add(repository->ctx, &membership, &result), TURBO_OK);
+  check_equal(repository->group->membership_add(repository->ctx, &membership, &result), SALTS_OK);
 
   role.domain_id = "root-a";
   role.role_id = "publisher";
@@ -117,7 +117,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   role.request_id = "auth-contract-role";
   role.expected_revision = 4u;
   role.occurred_at = 1004u;
-  check_equal(repository->role->create(repository->ctx, &role, &result), TURBO_OK);
+  check_equal(repository->role->create(repository->ctx, &role, &result), SALTS_OK);
 
   assignment.domain_id = "root-a";
   assignment.principal_id = "device-a";
@@ -126,7 +126,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   assignment.request_id = "auth-contract-assignment";
   assignment.expected_revision = 5u;
   assignment.occurred_at = 1005u;
-  check_equal(repository->role->assignment_add(repository->ctx, &assignment, &result), TURBO_OK);
+  check_equal(repository->role->assignment_add(repository->ctx, &assignment, &result), SALTS_OK);
 
   issue.domain_id = "root-a";
   issue.principal_id = "device-a";
@@ -134,18 +134,18 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   issue.request_id = "auth-contract-credential";
   issue.expected_revision = 6u;
   issue.occurred_at = 1006u;
-  check_equal(repository->credential->generate(repository->ctx, &issue, &credential), TURBO_OK);
+  check_equal(repository->credential->generate(repository->ctx, &issue, &credential), SALTS_OK);
 
   rule.domain_id = "root-a";
   rule.ordinal = 10u;
   check_equal(flowie_control_acl_parse(policy_rule, sizeof(policy_rule) - 1u, &policy_document),
-              TURBO_OK);
+              SALTS_OK);
   rule.document = &policy_document;
   rule.actor = "bootstrap";
   rule.request_id = "auth-contract-rule";
   rule.expected_revision = 7u;
   rule.occurred_at = 1007u;
-  check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &result), TURBO_OK);
+  check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &result), SALTS_OK);
 
   publish.domain_id = "root-a";
   publish.actor = "bootstrap";
@@ -153,7 +153,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   publish.expected_revision = 8u;
   publish.occurred_at = 1008u;
   publish.expires_at = 20000u;
-  check_equal(repository->policy->publish(repository->ctx, &publish, &published), TURBO_OK);
+  check_equal(repository->policy->publish(repository->ctx, &publish, &published), SALTS_OK);
   check_equal(published.policy_version, 1u);
 
   config.repository = repository;
@@ -161,7 +161,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   config.policy_version.current = flowie_control_auth_contract_policy_version;
   config.clock_seconds = flowie_control_auth_contract_clock;
   config.clock_ctx = &now_seconds;
-  check_equal(flowie_control_auth_service_create(&config, &service), TURBO_OK);
+  check_equal(flowie_control_auth_service_create(&config, &service), SALTS_OK);
   check_not_null(service);
 
   request.caller = &caller;
@@ -172,7 +172,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   request.protocol = "mqtt";
   request.remote_address = "192.0.2.10:1883";
   check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-               TURBO_OK);
+               SALTS_OK);
   check_false(cache_hit);
   check_equal(principal.domain_id, "root-a");
   check_equal(principal.principal_id, "device-a");
@@ -184,7 +184,7 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   check_equal(principal.roles[0], "publisher");
 
   check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-               TURBO_OK);
+               SALTS_OK);
   check_false(cache_hit);
 
   revoke.domain_id = "root-a";
@@ -193,11 +193,11 @@ flowie_control_auth_repository_contract_run(const flowie_control_repository_t *r
   revoke.request_id = "auth-contract-revoke";
   revoke.expected_revision = 9u;
   revoke.occurred_at = 1009u;
-  check_equal(repository->credential->revoke(repository->ctx, &revoke, &result), TURBO_OK);
+  check_equal(repository->credential->revoke(repository->ctx, &revoke, &result), SALTS_OK);
   check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-               TURBO_EPERM);
+               SALTS_EPERM);
   check_equal(principal.principal_id, "");
-  check_equal(repository->audit->count(repository->ctx, &audit_count), TURBO_OK);
+  check_equal(repository->audit->count(repository->ctx, &audit_count), SALTS_OK);
   check_equal(audit_count, 10u);
 
   flowie_control_auth_service_destroy(service);

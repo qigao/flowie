@@ -1,7 +1,7 @@
 #include "flowie_cluster_publish_egress_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -11,15 +11,15 @@ typedef struct flowie_publish_egress_test_s {
 } flowie_publish_egress_test_t;
 
 static int flowie_publish_egress_enqueue(
-    void *ctx, const tr_raft_coronet_payload_t *payload) {
+    void *ctx, const tr_raft_transport_payload_t *payload) {
   flowie_publish_egress_test_t *test =
       (flowie_publish_egress_test_t *)ctx;
   if (!test || !payload ||
       payload->kind != TR_RAFT_WIRE_PAYLOAD_DATA_CHUNK ||
       test->chunk_count >= 2u)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   test->chunks[test->chunk_count++] = payload->data.data_chunk;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static tr_raft_data_ack_t flowie_publish_egress_ack(
@@ -60,7 +60,7 @@ spec("flowie cluster publish egress transfer group") {
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){packet, sizeof(packet)}, 4096u,
                      &event),
-                 TURBO_OK);
+                 SALTS_OK);
     memset(&config, 0, sizeof(config));
     config.self_id = 1u;
     config.term = 7u;
@@ -77,28 +77,28 @@ spec("flowie cluster publish egress transfer group") {
     config.enqueue_ctx = &test;
     check_equal(flowie_cluster_publish_egress_create(&config, &event,
                                                        &egress),
-                 TURBO_OK);
+                 SALTS_OK);
     check_null(event);
     check_equal(flowie_cluster_publish_egress_mark_local_durable(egress),
-                 TURBO_OK);
-    check_equal(flowie_cluster_publish_egress_pump(egress), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_cluster_publish_egress_pump(egress), SALTS_OK);
     check_equal(test.chunk_count, 2u);
     check_not_equal(test.chunks[0].to, test.chunks[1].to);
     check_equal(flowie_cluster_publish_egress_make_proposal(
                      egress, 99u, descriptor, &proposal),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     ack = flowie_publish_egress_ack(&test.chunks[0]);
     check_equal(flowie_cluster_publish_egress_acknowledge(egress, &ack),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_publish_egress_make_proposal(
                      egress, 99u, descriptor, &proposal),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     ack = flowie_publish_egress_ack(&test.chunks[1]);
     check_equal(flowie_cluster_publish_egress_acknowledge(egress, &ack),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_publish_egress_make_proposal(
                      egress, 99u, descriptor, &proposal),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(proposal.command_id, 99u);
     check_equal(proposal.data_length,
                   TR_RAFT_DATA_DESCRIPTOR_ENCODED_SIZE);

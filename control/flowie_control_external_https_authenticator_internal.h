@@ -90,7 +90,7 @@ typedef struct flowie_control_external_https_authenticator_config_s {
  * Create an immutable HTTPS authenticator.
  *
  * Configuration strings are copied. key_provider callback state is borrowed until destroy.
- * verify() must run inside a CoroNet coroutine; each request owns an independent HTTP client.
+ * verify() runs on the CHTTP app worker; each request owns an independent HTTP client.
  * Concurrent verify() calls are bounded by max_in_flight. Destroy requires all calls to finish.
  */
 int flowie_control_external_https_authenticator_create(

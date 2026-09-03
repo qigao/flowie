@@ -35,17 +35,13 @@ sanitizer 持续 fuzz job。
 ### Transport 发布范围与 TODO
 
 当前 Flowie server 的发布基线仅为 **TCP/TLS/WS/WSS**。这四种 transport 必须通过真实连接、MQTT
-QoS 0/1/2、异常关闭、资源回收及对应安全门禁；不能用 CoroNet 或 runtime adapter 的底层测试替代
+QoS 0/1/2、异常关闭、资源回收及对应安全门禁；不能用 CNet 或 runtime adapter 的底层测试替代
 Flowie endpoint/server 的端到端证据。
 
-- **TODO — UDP**：CoroNet datagram 与 Flowie runtime adapter 的低层 round-trip 已验证，但 Flowie
+- **TODO — UDP**：CNet datagram 与 Flowie runtime adapter 的低层 round-trip 已验证，但 Flowie
   public endpoint 和 standalone server 尚未声明 UDP listener。进入发布范围前需先定义协议模型（例如
   MQTT-SN，而不是把标准 MQTT stream framing 直接套在 datagram 上）、配置/API、session/重传边界和
   端到端用例。
-- **TODO — Unix Pipe**：CoroNet pipe 与 Flowie runtime adapter 的低层 round-trip 已验证，Flowie
-  transport enum 也保留 `PIPE`，但 standalone server CLI 与当前 release gate 不启用。进入发布范围前
-  需补齐 listener 配置、跨平台命名/权限、backpressure/close 语义及 endpoint/server 回归用例。
-
 上述 TODO 不作为当前 Linux runbook 的成功条件，也不得标记为 Flowie server 已支持。
 
 ## 支持标签与验证证据
@@ -88,7 +84,7 @@ auth cache 对应 SEC；public HiveMQ/EMQX live suite 只作为可选公网连�
 - parser 失败不得暴露未验证 span，`consumed` 不得超过输入长度，输出对象保持调用前的无效态。
 - session owner 是连接、订阅、QoS、retained 和 Will 状态的唯一权威；Queue/store 只验证其明确
   拥有的记录。失败后必须从权威状态读取验证，不从日志推断。
-- 真实网络测试使用 CoroNet TCP/TLS/WS/WSS，保持 event-loop/socket 单 owner；不得用裸平台
+- 真实网络测试中 TCP/TLS 使用 CNet，WS/WSS 使用 CHTTP WebSocket，并保持 transport 单 owner；不得用裸平台
   socket 绕过生产传输路径。
 - 每例使用随机 client ID、topic prefix、数据库 namespace/schema；清理只删除该例资源。即使断言
   失败，也必须走 fixture teardown，关闭 socket、drain/stop owner 并释放证书和临时目录。
@@ -108,7 +104,7 @@ fuzz corpus 使用原始 `.bin` 与独立 metadata；soak/benchmark 明细可使
 |---|---|---:|---|
 | `mqtt-fast` | parser、codec、纯状态机 | 10 s/executable | 每次提交 |
 | `mqtt-negative` | 非法输入与边界拒绝 | 20 s/executable | 每次提交 |
-| `mqtt-transport` | 本地真实 CoroNet 传输 | 90 s/executable | 每次提交 |
+| `mqtt-transport` | 本地真实 CNet 传输 | 90 s/executable | 每次提交 |
 | `mqtt-persistence` | 重启、CAS、故障点、真实 backend | 180 s/executable | release |
 | `mqtt-security` | TLS/mTLS/auth/ACL 失败矩阵 | 180 s/executable | release |
 | `mqtt-interop` | 固定版本的外部 broker/client | 300 s/executable | nightly/release |
@@ -161,7 +157,7 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 ## C. 真实传输与生命周期
 
 当前发布基线由已注册的 `flowie/tests/test_flowie_transport_baseline.c` 提供，并按 transport 生成具名
-用例。测试使用仓库已有证书 fixture 与 CoroNet helper，验证真实握手和关闭，不以 YAML 解析成功代替
+用例。测试使用仓库已有证书 fixture 与 CNet helper，验证真实握手和关闭，不以 YAML 解析成功代替
 网络证据。更深的 framing、admission 和 shutdown 用例应继续迁移到当前 `flowie_endpoint_core` API。
 
 | ID | 优先级 | 支持/环境标签 | 前置条件与事件序列 | 预期 wire/错误 | 权威终态、隔离 | 标签/超时 |
@@ -262,7 +258,7 @@ P50/P95/P99、失败率、进程内存、线程/句柄数和 backend retry 次�
 | MQTT-ENDURANCE-004 | HIGH | `[🪟][🐧]` | 单 broker 实例；MQTT 5 QoS 2 持久订阅者分别在收到 PUBLISH 未发 PUBREC、收到 PUBREL 未发 PUBCOMP 时断线重连 | 首次恢复重放相同 packet ID 的 DUP PUBLISH；第二次恢复重放 PUBREL；完成后无额外投递 | broker-owned outbound QoS 2 阶段为事实源；drain 后 connection/inflight/queue 为零，session 保留 | `mqtt-endurance;mqtt-persistence` / 2 次恢复 |
 | MQTT-ENDURANCE-005 | HIGH | `[🪟][🐧]` | 单 broker 实例；异常断开后在 Will Delay 内以同 Client ID 重连；另一个连接设置 Will Delay 大于零且 Session Expiry=0 | 重连取消第一个 Will；第二个 Will 因 session 先 expiry 立即且仅发布一次 | pending Will/session deadline 为事实源；1.2 s 有界观察；drain 后 connection/inflight/queue 为零 | `mqtt-endurance;mqtt-persistence` / 2 个 Will 竞争 |
 | MQTT-ENDURANCE-006 | HIGH | `[🪟][🐧]` | 单 broker 实例；exact、`+`、`#` 与双成员 shared group 并存，exact 在固定轮次 unsubscribe/resubscribe，topic A/B 交替发布 | exact 仅收到 4 个 active+A 交集；`+`/`#` 各收到全部 16 条；每条 shared publication 恰有一个成员收到 | subscription index 为路由事实源；每轮同步 ACK 与负交付观察；drain 后 connection/inflight/queue/session 为零 | `mqtt-endurance;mqtt-persistence` / 16 轮 |
-| MQTT-ENDURANCE-007 | HIGH | `[🪟][🐧]` | 单 broker 实例同时保留未 PUBREC 的 QoS 2、离线 QoS 1、未 PUBACK inflight 和 delayed Will，再直接 stop | stop 在 3 s 上界内成功；不死锁、不依赖客户端补 ACK；connection/inflight/queue 为零 | task admission、session store 与 CoroNet execution 共同遵守 drain 协议；4 个持久 session 事实保留 | `mqtt-endurance;mqtt-persistence` / 4 类 admitted state |
+| MQTT-ENDURANCE-007 | HIGH | `[🪟][🐧]` | 单 broker 实例同时保留未 PUBREC 的 QoS 2、离线 QoS 1、未 PUBACK inflight 和 delayed Will，再直接 stop | stop 在 3 s 上界内成功；不死锁、不依赖客户端补 ACK；connection/inflight/queue 为零 | task admission、session store 与 Salts executor 共同遵守 drain 协议；4 个持久 session 事实保留 | `mqtt-endurance;mqtt-persistence` / 4 类 admitted state |
 | MQTT-SOAK-001 | MED | `[🪟][🐧][scheduled]` | reconnect storm + 相同/不同 client ID takeover | 无死锁/UAF；拒绝明确；结束后 connection/session 数符合 expiry | owner counters；停止后等待 drain | `mqtt-soak` / 30 min |
 | MQTT-SOAK-002 | MED | `[🪟][🐧][scheduled]` | 100k subscription add/remove 与并发 publish | topic index 结果正确，延迟无持续增长 | subscription owner；结束删除 sessions | `mqtt-soak` / 30 min |
 | MQTT-SOAK-003 | HIGH | `[🪟][🐧][scheduled]` | 一个慢 subscriber + 多个正常 subscriber，填满 send HWM | 慢连接被隔离/拒绝，正常连接持续前进，无无界内存 | per-connection Queue/HWM；内存回基线 | `mqtt-soak` / 30 min |
@@ -271,7 +267,7 @@ P50/P95/P99、失败率、进程内存、线程/句柄数和 backend retry 次�
 | MQTT-SOAK-006 | MED | `[🪟][🐧][scheduled]` | ingress command queue 与 worker Disruptor 分别达到 HWM，同时触发 shutdown | fail fast，无任务泄漏，accepted/durable 状态可解释 | 各边界 counters；drain 后为零 | `mqtt-soak` / 30 min |
 
 默认资源验收：warm-up 后 RSS 不持续单调增长；停止并完成 allocator/backend 延迟释放后，Flowie 自有
-allocation、连接、session、route、pending command 和 CoroNet handle 回到 fixture 基线。具体数值阈值需先
+allocation、连接、session、route、pending command 和 CNet handle 回到 fixture 基线。具体数值阈值需先
 由稳定 CI 主机建立 10 次基线，再以中位数和离散度固化，不能在代码中猜一个通用绝对值。
 
 ## I. 发布门禁与执行顺序
@@ -317,7 +313,7 @@ wire、owner 和持久化三类断言同时成立。
 - client 本地功能测试与可选公网 smoke 已分别在 `flowie/client/tests/test_flowie_mqtt_client.c` 与
   `test_flowie_mqtt_client_live.c`；发布兼容性证据来自固定 broker，不能依赖公网 endpoint 的可用性。
 
-新增 CTest target 时，先沿用相邻 `cmake_add_test(...)`、TinyTest fixture 和 CoroNet helper。只有 failure
+新增 CTest target 时，先沿用相邻 `cmake_add_test(...)`、TinyTest fixture 和 CNet helper。只有 failure
 domain 不同或需要 sanitizer/live backend 时才拆 executable。测试文件、证书、corpus 与 runner 都归属
 对应 `tests/` 或 `interop/`，不得把 mock/stub 或测试数据放入生产头文件。
 

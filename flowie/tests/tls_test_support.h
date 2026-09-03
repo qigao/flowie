@@ -70,52 +70,53 @@ static int tls_test_prepare_listener(test_socket_t *listen_socket, unsigned shor
 /* Test-only localhost keypair. It is never installed or used by production code. */
 static const char s_tls_test_cert_pem[] =
     "-----BEGIN CERTIFICATE-----\n"
-    "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\n"
+    "MIIC/TCCAeWgAwIBAgIUAOM/MuFKMgAn5TASMZSYCwKlNT8wDQYJKoZIhvcNAQEL\n"
+    "BQAwADAeFw0yNjA5MDMxNzIzMTRaFw0zNjA4MzExNzIzMTRaMAAwggEiMA0GCSqG\n"
+    "SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCbxmbRAj2Dwky7YxPq9sKAyTX/1qNmEivJ\n"
+    "hQLsZS1jsXrpF6C0xlZVjP4/8TKMljMht2LoZfMyJvo+qfOvxq/4n9zIhRyQIkVc\n"
+    "8qm2+PdmhAxcPH7SkUAJJBvKfrORo2i642QEQyWHoYo/CCb8Y82E15jmj0v6heW+\n"
+    "CDLGu7wzFCkms0EZgar5xnvK4230spoiMNxLTKR5Jp4rVd5nl7iyio2FLEYSnKWs\n"
+    "LQC+juQ9u59jSZ2B323hRJ+oe5fP61oSMMLC4HvjmKzPUdeBr/9cMxt9bPFWgsuR\n"
+    "NFigUWQRn5zgzVNkz5g8zYahwpN9uYKqcg7T2nKoLLo3K/w/IIjHAgMBAAGjbzBt\n"
+    "MB0GA1UdDgQWBBTgAcV62mFSFt/bo44sA4IctWxm6zAfBgNVHSMEGDAWgBTgAcV6\n"
+    "2mFSFt/bo44sA4IctWxm6zAPBgNVHRMBAf8EBTADAQH/MBoGA1UdEQQTMBGCCWxv\n"
+    "Y2FsaG9zdIcEfwAAATANBgkqhkiG9w0BAQsFAAOCAQEAPJBjaGa4hEJDS4P/iFoq\n"
+    "yhZI+ILck9YAQwjkj4DYJeeO7o3UXsLUu7CiM3NcSyuKR886Ro4boFc4Nsew3YVi\n"
+    "/PTsqlfGKaIE7ljQR22cx246Amg1YYW5UDQQ8PTcSF6gWCccdWA/ihkj/zZjJunZ\n"
+    "4+FLIspVTfq00fJgCkHZInYp/b+bCOom6iGtfo9XrTfYvtGQTSgQXW1XhKU76rs+\n"
+    "yl+JvWqRxLO3cA6wIjvzmro5tgTcTk7KNlRAD0LCt9yiRzKUoUoIVgy09WvAUARf\n"
+    "0zhWsU3ao+A2znm9uh2L11DMUF/ZyUT8G2stC1UGwlGjes85S8Y6Yme/69YBUvba\n"
+    "rQ==\n"
     "-----END CERTIFICATE-----\n";
 
 static const char s_tls_test_key_pem[] =
     "-----BEGIN PRIVATE KEY-----\n"
-    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC02661CVlWtcFb\n"
-    "3sdfkd8xdsyQRL2fZ6CVdBHNTtCDgyYq0CmumQFVIUd4C2LQ3I+BqyhqglMGLXEG\n"
-    "EOwZNZO2jRMlUeFblBxhI9FzzH9pxZA3EFIx1Z/xGn1DFtoQLJBtav5ANv9zVr1B\n"
-    "TR8YWe1AGct+T2UskbsxFPCDfy5+dKQ6qrIC1tPhXlnAiaQ6j0x0QJxky9ENie8f\n"
-    "Vq0hS8ZEjs7czjrqMZ77lY3gTjaHxU09InDYgG9sXF49nfIxamJVGRuxaWrWEkgc\n"
-    "a+cYP7gg8avacH8WZH4/3r0oWb+BK8Yv21gVHDfoJ9r5yfBYBg2kuynA5poBByl4\n"
-    "w3y0AYg/AgMBAAECggEAEJkoy4yexQp2mHaLAwZhiX9G/uaQJepeHoPsg6nRZoB0\n"
-    "JvG7zD5WlPgyQEjV5NKZM7lVmDt7Cydt0V9e4QwTERSZcToL3gUV0FnNMJIlZLuw\n"
-    "+fIRg76rUyFZ5aevPlTDXIdj64N1+6E2SqFH/UrOL1fZXoTthXhKdGgLkBtCqnA6\n"
-    "DlHQX3lehrnV+MG5fTxPc8lro/s4UVAoBMhc4dP5U1W5Xt5c6RsdcWYytidRYj8t\n"
-    "XMkyjST/F2NV80+8WGp/YFE0dHyxGWvLGNmkOUuI4EMwzzSadsIM+PQO/YP1KwHA\n"
-    "0DYHuEFvPCLjPsD+7IUnZgifQe45/FJoJMp5hSmzgQKBgQD7XEl2mLR3iqup2dF+\n"
-    "PD3zA2J48jdiJdbK7vRLXpdV5WP2/s90GZFKLadg7UWmx9zWkC4B92atNJV0/+8o\n"
-    "wE4Zd8PG62QZ3o1T4QpYMem9PAq5OxqwYBxMZ2Y5Mf+54Gp0SXB+AbXPlYI/LIwP\n"
-    "i/2Iq+bAjGmuGuloJNWD3Wl3DwKBgQC4MkMYvf5aSqbL8GE5ndKY06HzbxwcMoh3\n"
-    "Hia5LRMw5dG3J2JwdruiE4V3gQyqz0NzYrrqqkyYxh3aJW934qj6JVMVw/xWx2n5\n"
-    "xB4X4hcCKrO2piROmOuXBEt1T36C+fShNb8g+RNY0edoiw+OKTa3rzlQhggTkoGs\n"
-    "Iy7oyxtb0QKBgGKkgfP304LCOcHrSCppC8qtflyGebObs+Jpyhc15OABqKxKrTEb\n"
-    "w4e/yNrh4p6j+od9h4CgDXxVkX2b3sg4R6348SzEPcFlNENBomSgGeF4iaDNkBi9\n"
-    "bv2Q6m3xsDDK4BwIogvhMe9n9fhCzChhwLp8846GzAZWa1jCc8RPBM+DAoGAQxRy\n"
-    "4QDYL5O+OMka7zutpWB1O008hHxWvGKroYZr1cPsYvIh5GkpHfZUBdhmf5Ips0zC\n"
-    "W5GXgY+s8XPuq09NUIPlRSjxrbzDuGUWvIXm8TAR8LOCx2jja0TyIg/IN/TFhSwo\n"
-    "pd5vkEopJyZ1jMUvmydiDRQyvsX9GW5auAa3uPECgYBxuBJ6Vji7pxlqjG3aB0je\n"
-    "+JexLyzdckU7EKTxpTSU1o/p17QpT26KF+DPMc2kg+PBK+Sjm0m4Uxdzq/OXNMMA\n"
-    "zhR6Vjo1nPWsKgzK03hGzaJVMkHekgCidY9R+MZEeDAhHDIia9XyAS1qCoGAJ6WC\n"
-    "oYB4EuDLFhurWiLO+diuMg==\n"
+    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCbxmbRAj2Dwky7\n"
+    "YxPq9sKAyTX/1qNmEivJhQLsZS1jsXrpF6C0xlZVjP4/8TKMljMht2LoZfMyJvo+\n"
+    "qfOvxq/4n9zIhRyQIkVc8qm2+PdmhAxcPH7SkUAJJBvKfrORo2i642QEQyWHoYo/\n"
+    "CCb8Y82E15jmj0v6heW+CDLGu7wzFCkms0EZgar5xnvK4230spoiMNxLTKR5Jp4r\n"
+    "Vd5nl7iyio2FLEYSnKWsLQC+juQ9u59jSZ2B323hRJ+oe5fP61oSMMLC4HvjmKzP\n"
+    "UdeBr/9cMxt9bPFWgsuRNFigUWQRn5zgzVNkz5g8zYahwpN9uYKqcg7T2nKoLLo3\n"
+    "K/w/IIjHAgMBAAECggEACdePug3oe0SRjfD1GoFyIypTV8sLMnd2CvrB7aCsE2JS\n"
+    "/M4wdt6yW4Zke/+OLShb3UbI04K5fZMArAJKslgdC/OoKSBfGeybmFAZ3ZGLKnZJ\n"
+    "kTxRp2LKlA+srjvlT/YH0TyghM2fRE7P1sRGyxrp91/N083JXaM/Gdh+KMtGWUdU\n"
+    "y2CL+Y9BxTKSrSHPsfyS77x6HoUdCSVMEwzeX9yp7q+1Pw7WoBFDnUs5h++RfLOk\n"
+    "ppXP+hs+uXwYN1NVs72fbBrXlVJ3d5WTig1AVwcCid8PLEzJwGLme4TxR80HElyo\n"
+    "0U0Bu16Nx+ZwjjmEPRuN7qbMVE+ungRcHPd0357v3QKBgQDYvukY+YB28gS27oYU\n"
+    "1ivznom8lswrVrAbuxhpwEdB9m8YlQAVAi/g8s1XrhuWx9rVKKNQh+KvusPgB7nm\n"
+    "XiRQX1KiKmmP6RvuZv4TrYTj7yJIlH4Elngg2+USuROBqq4KDaYwiKVmJuObdJKq\n"
+    "j5PM8+VO9452u6Wtv6l1XJ+7BQKBgQC3/Ky/2Z7uGj8FwJfunOlBEhj0AdS2f65a\n"
+    "5fJS9PbqmTXnVFYz9qHMELyQUWqdXYXyYgQcTOAF5ACgwEv2tXZYhjURGSHbZmNm\n"
+    "b0CRl0LeYxfrLcjLQTqFg09cEKIeA8SMJNp+2fI427qLb6Hslr03Z1THuvW8bFi4\n"
+    "nI61zi42WwKBgGKOLJ/Wk7uCQPKNcxp2aHXWWPsP9raeLGXvpSIw9DXiQJIE7oye\n"
+    "+fZncUe1O4ZMSg0y9U/g+gq9+eMcoENH+2swbPqgHm/5p2G4Iz//XrXmPsiR/NtJ\n"
+    "MEaAtqDU1zHW0lxv6GmZONxCQqylTSuRLbu8C0DlADqtCKEAzaU4AMmhAoGAGj8E\n"
+    "UbX0sxixZturkNF3gN3ZC237bzFVqQfmgqkJVDwY8XAZf/4t5JN6osfKgrplskcD\n"
+    "ORpKVuzIniXwcDhAsq4qgc7pAohfo6w5NMu0MU9HiTgVzdD3TTaHKqYAynFVJ3zW\n"
+    "YoQqxqupt9xr5/k08uNdt8RW69M08Nj8jrjj5MMCgYAKj8TSJycv2s9WaNBaBtyI\n"
+    "xcsfp5fL6gkDehIpAKp1NAJgDrvQng9uG77ZLwV/5jOarPZ+9lQN9TnKiA2oZ7oZ\n"
+    "KWegXGWLNZjR+ODDhEHTzzVdjWo7z0Iwj8cDQkpfSjZ81DWcNDwFMun1Fns++G3r\n"
+    "haj7KDfY6jGKceBpTkYOzg==\n"
     "-----END PRIVATE KEY-----\n";
 
 static void tls_test_remove_file(const char *path) {
@@ -194,11 +195,11 @@ static int tls_test_write_server_files(char *cert_path, size_t cert_path_len,
 static int tls_test_set_ca_file_env(const char *path) {
   if (!path || path[0] == '\0') return -1;
 #ifdef _WIN32
-  if (_putenv_s("TURBONET_TLS_CA_FILE", path) != 0) return -1;
-  if (_putenv_s("TURBONET_TLS_CA_PATH", "") != 0) return -1;
+  if (_putenv_s("SALTS_TLS_CA_FILE", path) != 0) return -1;
+  if (_putenv_s("SALTS_TLS_CA_PATH", "") != 0) return -1;
 #else
-  if (setenv("TURBONET_TLS_CA_FILE", path, 1) != 0) return -1;
-  if (unsetenv("TURBONET_TLS_CA_PATH") != 0) return -1;
+  if (setenv("SALTS_TLS_CA_FILE", path, 1) != 0) return -1;
+  if (unsetenv("SALTS_TLS_CA_PATH") != 0) return -1;
 #endif
   return 0;
 }
@@ -206,32 +207,32 @@ static int tls_test_set_ca_file_env(const char *path) {
 static int tls_test_set_server_env(const char *cert_path, const char *key_path) {
   if (!cert_path || cert_path[0] == '\0' || !key_path || key_path[0] == '\0') return -1;
 #ifdef _WIN32
-  if (_putenv_s("TURBONET_TLS_CERT_FILE", cert_path) != 0) return -1;
-  if (_putenv_s("TURBONET_TLS_KEY_FILE", key_path) != 0) return -1;
+  if (_putenv_s("SALTS_TLS_CERT_FILE", cert_path) != 0) return -1;
+  if (_putenv_s("SALTS_TLS_KEY_FILE", key_path) != 0) return -1;
 #else
-  if (setenv("TURBONET_TLS_CERT_FILE", cert_path, 1) != 0) return -1;
-  if (setenv("TURBONET_TLS_KEY_FILE", key_path, 1) != 0) return -1;
+  if (setenv("SALTS_TLS_CERT_FILE", cert_path, 1) != 0) return -1;
+  if (setenv("SALTS_TLS_KEY_FILE", key_path, 1) != 0) return -1;
 #endif
   return 0;
 }
 
 static void tls_test_clear_ca_env(void) {
 #ifdef _WIN32
-  (void)_putenv_s("TURBONET_TLS_CA_FILE", "");
-  (void)_putenv_s("TURBONET_TLS_CA_PATH", "");
+  (void)_putenv_s("SALTS_TLS_CA_FILE", "");
+  (void)_putenv_s("SALTS_TLS_CA_PATH", "");
 #else
-  (void)unsetenv("TURBONET_TLS_CA_FILE");
-  (void)unsetenv("TURBONET_TLS_CA_PATH");
+  (void)unsetenv("SALTS_TLS_CA_FILE");
+  (void)unsetenv("SALTS_TLS_CA_PATH");
 #endif
 }
 
 static void tls_test_clear_server_env(void) {
 #ifdef _WIN32
-  (void)_putenv_s("TURBONET_TLS_CERT_FILE", "");
-  (void)_putenv_s("TURBONET_TLS_KEY_FILE", "");
+  (void)_putenv_s("SALTS_TLS_CERT_FILE", "");
+  (void)_putenv_s("SALTS_TLS_KEY_FILE", "");
 #else
-  (void)unsetenv("TURBONET_TLS_CERT_FILE");
-  (void)unsetenv("TURBONET_TLS_KEY_FILE");
+  (void)unsetenv("SALTS_TLS_CERT_FILE");
+  (void)unsetenv("SALTS_TLS_KEY_FILE");
 #endif
 }
 

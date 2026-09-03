@@ -1,7 +1,7 @@
 #include "flowie_control_config_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -160,7 +160,7 @@ static int parse_session_principal_limit(const char *limit, flowie_control_confi
                       "  session:\n"
                       "    max_sessions_per_principal: %s\n",
                       limit);
-  if (size < 0 || (size_t)size >= sizeof(yaml)) return TURBO_ERANGE;
+  if (size < 0 || (size_t)size >= sizeof(yaml)) return SALTS_ERANGE;
   return parse_config(yaml, config, error);
 }
 
@@ -180,7 +180,7 @@ static int parse_listener_stack_size(const char *stack_size, flowie_control_conf
                       "    options:\n"
                       "      filename: control.db\n",
                       stack_size);
-  if (size <= 0 || (size_t)size >= sizeof(yaml)) return TURBO_ENOMEM;
+  if (size <= 0 || (size_t)size >= sizeof(yaml)) return SALTS_ENOMEM;
   return flowie_control_config_parse_yaml(yaml, (size_t)size, config, error);
 }
 
@@ -208,7 +208,7 @@ spec("Flowie controller configuration") {
                                "management:\n"
                                "  session:\n"
                                "    capacity: 1024\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_OK);
+    check_equal(parse_config(yaml, &config, &error), SALTS_OK);
     check_equal(config.turbodb.driver, "sqlite");
     check_equal(config.turbodb.option_count, 2u);
     check_equal(config.turbodb.options[0].keyword, "filename");
@@ -226,7 +226,7 @@ spec("Flowie controller configuration") {
                                "storage:\n"
                                "  sqlite:\n"
                                "    path: control.db\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.sqlite");
   }
 
@@ -254,9 +254,9 @@ spec("Flowie controller configuration") {
                                     "      password: env://FLOWIE_CONTROL_DB_PASSWORD\n"
                                     "management: {}\n";
 
-    check_equal(parse_config(literal, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(literal, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.password");
-    check_equal(parse_config(reference, &config, &error), TURBO_OK);
+    check_equal(parse_config(reference, &config, &error), SALTS_OK);
     check_equal(config.turbodb.options[0].value, "env://FLOWIE_CONTROL_DB_PASSWORD");
   }
 
@@ -277,20 +277,20 @@ spec("Flowie controller configuration") {
         "sslpassword: 'env://FLOWIE_DB_SSL_PASSWORD', "
         "conninfo: 'env://FLOWIE_DB_CONNINFO'}}}\nmanagement: {}\n";
 
-    check_equal(parse_config(literal_sslpassword, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(literal_sslpassword, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.sslpassword");
-    check_equal(parse_config(literal_conninfo, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(literal_conninfo, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.conninfo");
-    check_equal(parse_config(malformed_reference, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(malformed_reference, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.password");
-    check_equal(parse_config(valid_references, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_references, &config, &error), SALTS_OK);
     check_equal(config.turbodb.option_count, 3u);
   }
 
 #ifdef FLOWIE_CONTROL_TEST_CONFIG_PATH
   it("keeps the shipped controller example inside the schema") {
     check_equal(flowie_control_config_load(FLOWIE_CONTROL_TEST_CONFIG_PATH, &config, &error),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.coroutine_stack_size,
                 FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
@@ -300,7 +300,7 @@ spec("Flowie controller configuration") {
 #endif
 
   it("loads a valid configuration with secure defaults") {
-    check_equal(parse_config(valid_config, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_config, &config, &error), SALTS_OK);
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.port, 8443);
     check_equal(config.listener.coroutine_stack_size,
@@ -327,32 +327,32 @@ spec("Flowie controller configuration") {
   }
 
   it("defaults each principal to five concurrent management sessions") {
-    check_equal(parse_config(valid_turbodb_config, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_turbodb_config, &config, &error), SALTS_OK);
     check_equal(config.management.session_max_sessions_per_principal, 5u);
   }
 
   it("rejects a listener coroutine stack below the safe minimum") {
-    check_equal(parse_listener_stack_size("262143", &config, &error), TURBO_ERANGE);
+    check_equal(parse_listener_stack_size("262143", &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.listener.coroutine_stack_size");
   }
 
   it("rejects a listener coroutine stack above the supported maximum") {
-    check_equal(parse_listener_stack_size("2097153", &config, &error), TURBO_ERANGE);
+    check_equal(parse_listener_stack_size("2097153", &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.listener.coroutine_stack_size");
   }
 
   it("rejects a zero per-principal management session limit") {
-    check_equal(parse_session_principal_limit("0", &config, &error), TURBO_ERANGE);
+    check_equal(parse_session_principal_limit("0", &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.management.session.max_sessions_per_principal");
   }
 
   it("rejects a per-principal management session limit above 65536") {
-    check_equal(parse_session_principal_limit("65537", &config, &error), TURBO_ERANGE);
+    check_equal(parse_session_principal_limit("65537", &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.management.session.max_sessions_per_principal");
   }
 
   it("rejects the legacy configurable bootstrap block") {
-    check_equal(parse_config(legacy_bootstrap_config, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(legacy_bootstrap_config, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.bootstrap");
   }
 
@@ -373,21 +373,21 @@ spec("Flowie controller configuration") {
         "management:\n"
         "  session:\n"
         "    capacity: 1024\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.control_store");
   }
 
   it("rejects unknown fields") {
     static const char yaml[] = "version: 1\n"
                                "unexpected: true\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.unexpected");
   }
 
   it("rejects duplicate mapping fields") {
     static const char yaml[] = "version: 1\n"
                                "version: 1\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$");
   }
 
@@ -402,7 +402,7 @@ spec("Flowie controller configuration") {
     memcpy(position, "literal-secret", sizeof("literal-secret") - 1u);
     memmove(position + sizeof("literal-secret") - 1u, position + strlen(reference),
             strlen(position + strlen(reference)) + 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.listener.tls.key_password_ref");
   }
 
@@ -428,7 +428,7 @@ spec("Flowie controller configuration") {
                                "    - service_id: broker-main\n"
                                "      token_ref: env://FLOWIE_BROKER_A_TOKEN\n"
                                "      domain: root-a\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.service_bindings");
   }
 
@@ -447,7 +447,7 @@ spec("Flowie controller configuration") {
                                "      filename: control.db\n"
                                "management:\n"
                                "  rpc_max_request_size: 8192\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_ERANGE);
+    check_equal(parse_config(yaml, &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.listener.limits.max_request_body_size");
   }
 
@@ -473,7 +473,7 @@ spec("Flowie controller configuration") {
                                "    workers: 6\n"
                                "    queue_capacity: 256\n"
                                "    deadline_ms: 12000\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_OK);
+    check_equal(parse_config(yaml, &config, &error), SALTS_OK);
     check_true(config.auth.enabled);
     check_false(config.auth.external_https.enabled);
     check_equal(config.auth.method, "password");
@@ -496,7 +496,7 @@ spec("Flowie controller configuration") {
     check_not_null(external);
     memmove(external + sizeof(executor) - 1u, external, strlen(external) + 1u);
     memcpy(external, executor, sizeof(executor) - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.local_executor");
   }
 
@@ -513,7 +513,7 @@ spec("Flowie controller configuration") {
     check_not_null(session);
     memmove(session + sizeof(executor) - 1u, session, strlen(session) + 1u);
     memcpy(session, executor, sizeof(executor) - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.management.login_executor");
   }
 
@@ -537,12 +537,12 @@ spec("Flowie controller configuration") {
                                "  method: password\n"
                                "  local_executor:\n"
                                "    deadline_ms: 60001\n";
-    check_equal(parse_config(yaml, &config, &error), TURBO_ERANGE);
+    check_equal(parse_config(yaml, &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.auth.local_executor.deadline_ms");
   }
 
   it("loads the bounded external HTTPS authentication configuration") {
-    check_equal(parse_config(valid_external_https_config, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_external_https_config, &config, &error), SALTS_OK);
     check_true(config.auth.external_https.enabled);
     check_equal(config.auth.external_https.url, "https://auth.example/v1/assert");
     check_equal(config.auth.external_https.service_token_ref,
@@ -566,7 +566,7 @@ spec("Flowie controller configuration") {
     memmove(limit + sizeof("2048") - 1u, limit + sizeof("32") - 1u,
             strlen(limit + sizeof("32") - 1u) + 1u);
     memcpy(limit, "2048", sizeof("2048") - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_ERANGE);
+    check_equal(parse_config(yaml, &config, &error), SALTS_ERANGE);
     check_equal(error.path, "$.auth.external_https.max_in_flight");
   }
 
@@ -580,7 +580,7 @@ spec("Flowie controller configuration") {
     memmove(scheme + sizeof("http://") - 1u, scheme + sizeof("https://") - 1u,
             strlen(scheme + sizeof("https://") - 1u) + 1u);
     memcpy(scheme, "http://", sizeof("http://") - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.external_https.url");
   }
 
@@ -595,7 +595,7 @@ spec("Flowie controller configuration") {
     line_end = strchr(key_line, '\n');
     check_not_null(line_end);
     memmove(key_line, line_end + 1u, strlen(line_end + 1u) + 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.external_https.tls");
   }
 
@@ -610,12 +610,12 @@ spec("Flowie controller configuration") {
     memmove(enabled + sizeof("false") - 1u, enabled + sizeof("true") - 1u,
             strlen(enabled + sizeof("true") - 1u) + 1u);
     memcpy(enabled, "false", sizeof("false") - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.external_https");
   }
 
   it("loads bounded JWT JWKS authentication configuration") {
-    check_equal(parse_config(valid_jwt_jwks_config, &config, &error), TURBO_OK);
+    check_equal(parse_config(valid_jwt_jwks_config, &config, &error), SALTS_OK);
     check_true(config.auth.jwt_jwks.enabled);
     check_false(config.auth.external_https.enabled);
     check_equal(config.auth.jwt_jwks.url, "https://identity.example/.well-known/jwks.json");
@@ -643,7 +643,7 @@ spec("Flowie controller configuration") {
     algorithm = strstr(yaml, "algorithm: EdDSA");
     check_not_null(algorithm);
     memcpy(algorithm + sizeof("algorithm: ") - 1u, "HS256", sizeof("HS256") - 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.jwt_jwks.algorithm");
   }
 
@@ -654,7 +654,7 @@ spec("Flowie controller configuration") {
     check_not_null(external);
     memcpy(yaml, valid_jwt_jwks_config, sizeof(valid_jwt_jwks_config));
     memcpy(yaml + sizeof(valid_jwt_jwks_config) - 1u, external, strlen(external) + 1u);
-    check_equal(parse_config(yaml, &config, &error), TURBO_EINVAL);
+    check_equal(parse_config(yaml, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.auth.jwt_jwks");
   }
 }

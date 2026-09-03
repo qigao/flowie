@@ -13,12 +13,13 @@ Domain，形成跨租户主体混淆。
 
 ## 候选方案
 
-1. 复制 `TurboHTTP/vendor/cjwt` 到 Flowie。实现直接，但会产生第二份版本、安全补丁和许可证
-   事实源，拒绝采用。
+1. 在 Flowie 内维护经裁剪的 cjwt 私有副本。该方案需要明确上游版本、许可证与本地补丁，但能彻底移除
+   TurboHTTP 包依赖；当前采用此方案，来源与修改记录见 `vendor/cjwt/PROVENANCE.md`。
 2. 每次认证远程调用 IdP introspection。密钥轮换简单，但每次认证都增加网络依赖；仓库已有
    `external_https` provider 承载这一模式。
-3. 通过已安装的 `TurboHttp::Cjwt` 验证 JWT，并从配置的 HTTPS JWKS endpoint 刷新公钥。
-   本方案采用此方式：签名验证本地完成，密钥和工作量均有硬上限。
+3. 继续通过已安装的 `TurboHttp::Cjwt` 验证 JWT。该方案会把已退役的 TurboHTTP 包重新带入控制面，
+   拒绝采用。当前签名验证由私有 cjwt target 完成，JWKS 则通过 Salts::CHTTP 获取；密钥和工作量均有
+   硬上限。
 
 ## 信任边界与声明契约
 
@@ -44,12 +45,12 @@ Domain，形成跨租户主体混淆。
 输入；只有完成 JSON/JWK 结构检查后才能在写锁下替换 snapshot。认证 worker 在读锁内借用当前
 snapshot，返回后借用失效。不存在第二份可独立推进的 key cache。
 
-网络 fetch 在当前 CoroNet owner lane 的 coroutine 中发起，使用 HTTPS、严格 peer verification、
-禁用 redirect/retry，并限制 timeout、header 和 body。JWKS 解析及每次签名验证提交到 provider
-拥有的有界 `turbo_threadpool`，不会在 owner lane 执行重型密码学函数。
+网络 fetch 通过 Salts::CHTTP 发起，使用 HTTPS、严格 peer verification、禁用 redirect/retry，并限制
+timeout、header 和 body。JWKS 解析及每次签名验证提交到 provider 拥有的有界
+`salts_threadpool`，不会阻塞 CHTTP 的网络所有者线程。
 
-任务 payload 由 job 自己复制并拥有；提交失败时创建方释放，提交成功后 worker 和等待 coroutine
-各持一个引用。队列满立即返回 `TURBO_EBUSY`，等待超时返回 `TURBO_ETIMEDOUT`；worker 可安全
+任务 payload 由 job 自己复制并拥有；提交失败时创建方释放，提交成功后 worker 和等待调用线程
+各持一个引用。队列满立即返回 `SALTS_EBUSY`，等待超时返回 `SALTS_ETIMEDOUT`；worker 可安全
 完成并释放最后一个引用，不借用已返回 HTTP request 的内存。
 
 一个 authenticator 允许多个认证 producer 和多个 worker consumer。JWKS 到期时仅一个请求成为
@@ -65,10 +66,10 @@ endpoint 不再套第二层 executor。未配置该块时，本地密码认证�
 JWKS 初次按需拉取。未取得有效 snapshot、snapshot 到期、未知 `kid`、签名或声明不匹配均拒绝
 认证；不会回退到本地密码、旧 key 或远程 introspection。
 
-Flowie 在 CONNECT 期间调用认证或 ACL provider 时，`TURBO_ETIMEDOUT` 与 `TURBO_EIO` 表示依赖
+Flowie 在 CONNECT 期间调用认证或 ACL provider 时，`SALTS_ETIMEDOUT` 与 `SALTS_EIO` 表示依赖
 暂时不可用：MQTT 5 返回 CONNACK `0x88`（Server unavailable），MQTT 3.1/3.1.1 返回 `0x03`。
-provider 明确返回 `TURBO_EBUSY` 时，MQTT 5 返回 `0x89`（Server busy），MQTT 3.1/3.1.1 同样返回
-`0x03`。凭据或权限拒绝仍使用既有拒绝码；`TURBO_EPROTO`、内存错误等内部故障继续关闭连接，不
+provider 明确返回 `SALTS_EBUSY` 时，MQTT 5 返回 `0x89`（Server busy），MQTT 3.1/3.1.1 同样返回
+`0x03`。凭据或权限拒绝仍使用既有拒绝码；`SALTS_EPROTO`、内存错误等内部故障继续关闭连接，不
 伪装成服务不可用。
 
 Flowie MQTT client 的自动行为是显式 opt-in：`flowie_mqtt_client_create()` 不变，

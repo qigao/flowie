@@ -6,13 +6,12 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "platform.h"
-#include "CoroNet/turbo_coro_context.h"
-#include "CoroNet/turbo_coro_socket.h"
 #include "base64_utils.h"
-#include "http_client.h"
+#include <chttp/chttp.h>
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_process.h"
+#include "salts_error.h"
+#include "salts_process.h"
+#include "salts_thread.h"
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -56,6 +55,303 @@
 #define CONTROL_INTEGRATION_POLICY_EXPIRES_AT UINT64_C(4102444800)
 #define CONTROL_INTEGRATION_SECRET_BASE64_CAPACITY 64u
 #define CONTROL_INTEGRATION_FORM_CAPACITY 1024u
+#define CONTROL_INTEGRATION_HTTP_HEADER_CAPACITY 8u
+#define CONTROL_INTEGRATION_HTTP_BUFFER_CAPACITY (1024u * 1024u)
+
+enum { HTTP_ERROR_NONE = 0 };
+#define HTTP_GET CHTTP_METHOD_GET
+#define HTTP_POST CHTTP_METHOD_POST
+
+typedef struct http_cookie_jar_s {
+  char name[128];
+  char value[512];
+} http_cookie_jar_t;
+
+typedef struct http_client_s {
+  chttp_client client;
+  chttp_tls_profile tls;
+  char *connection_uri;
+  char *authority;
+  http_cookie_jar_t *cookie_jar;
+  uint32_t timeout_ms;
+  int client_initialized;
+  int tls_initialized;
+} http_client_t;
+
+typedef struct http_response_s {
+  unsigned int status_code;
+  int error_code;
+  char *body;
+  chttp_response response;
+} http_response_t;
+
+static char *control_test_http_copy(const char *value) {
+  char *copy;
+  size_t size;
+  if (!value) return NULL;
+  size = strlen(value);
+  copy = (char *)malloc(size + 1u);
+  if (copy) memcpy(copy, value, size + 1u);
+  return copy;
+}
+
+static chttp_client_config control_test_http_client_config(void) {
+  chttp_client_config config = {0};
+#if defined(_WIN32)
+  config.network.backend = NATIVE_IO_BACKEND_IOCP;
+#elif defined(__linux__)
+  config.network.backend = NATIVE_IO_BACKEND_EPOLL;
+#else
+  config.network.backend = NATIVE_IO_BACKEND_KQUEUE;
+#endif
+  config.network.connection_capacity = 4u;
+  config.network.command_capacity = 16u;
+  config.network.request_capacity = 8u;
+  config.network.completion_batch_capacity = 8u;
+  config.network.event_capacity = 16u;
+  config.network.max_send_bytes = CONTROL_INTEGRATION_HTTP_BUFFER_CAPACITY;
+  config.network.receive_buffer_bytes = 64u * 1024u;
+  config.network.connect_timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
+  config.network.read_timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
+  config.network.write_timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
+  config.network.tls_io_buffer_bytes = 64u * 1024u;
+  config.network.tls_handshake_timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
+  config.request_capacity = 4u;
+  config.max_start_line_bytes = 4096u;
+  config.max_header_count = 64u;
+  config.max_header_bytes = 64u * 1024u;
+  config.max_request_body_bytes = CONTROL_INTEGRATION_HTTP_BUFFER_CAPACITY;
+  config.max_response_body_bytes = CONTROL_INTEGRATION_HTTP_BUFFER_CAPACITY;
+  config.max_informational_responses = 4u;
+  return config;
+}
+
+static http_client_t *http_client_create(const char *base_url) {
+  static const char prefix[] = "https://";
+  static const char localhost_prefix[] = "localhost:";
+  static const char loopback_prefix[] = "127.0.0.1:";
+  static const char loopback_uri_prefix[] = "tls://127.0.0.1:";
+  chttp_client_config config;
+  http_client_t *client;
+  size_t authority_size;
+  size_t connection_authority_size;
+  int uses_loopback = 0;
+  if (!base_url || strncmp(base_url, prefix, sizeof(prefix) - 1u) != 0) return NULL;
+  authority_size = strlen(base_url + sizeof(prefix) - 1u);
+  if (authority_size == 0u) return NULL;
+  client = (http_client_t *)calloc(1u, sizeof(*client));
+  if (!client) return NULL;
+  client->authority = control_test_http_copy(base_url + sizeof(prefix) - 1u);
+  if (client->authority &&
+      strncmp(client->authority, localhost_prefix, sizeof(localhost_prefix) - 1u) == 0) {
+    uses_loopback = 1;
+    connection_authority_size = sizeof(loopback_prefix) - 1u +
+                                strlen(client->authority + sizeof(localhost_prefix) - 1u);
+    client->connection_uri =
+        (char *)malloc(sizeof("tls://") - 1u + connection_authority_size + 1u);
+    if (client->connection_uri) {
+      memcpy(client->connection_uri, loopback_uri_prefix, sizeof(loopback_uri_prefix) - 1u);
+      memcpy(client->connection_uri + sizeof(loopback_uri_prefix) - 1u,
+             client->authority + sizeof(localhost_prefix) - 1u,
+             strlen(client->authority + sizeof(localhost_prefix) - 1u) + 1u);
+    }
+  } else {
+    connection_authority_size = authority_size;
+    client->connection_uri =
+        (char *)malloc(sizeof("tls://") - 1u + connection_authority_size + 1u);
+  }
+  if (!client->authority || !client->connection_uri) goto fail;
+  if (!uses_loopback) {
+    memcpy(client->connection_uri, "tls://", sizeof("tls://") - 1u);
+    memcpy(client->connection_uri + sizeof("tls://") - 1u, client->authority,
+           authority_size + 1u);
+  }
+  config = control_test_http_client_config();
+  if (chttp_client_init(&client->client, &config) != SALTS_OK) goto fail;
+  client->client_initialized = 1;
+  client->timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
+  return client;
+fail:
+  free(client->connection_uri);
+  free(client->authority);
+  free(client);
+  return NULL;
+}
+
+static void http_client_set_timeout(http_client_t *client, uint32_t timeout_ms) {
+  if (client && timeout_ms > 0u) client->timeout_ms = timeout_ms;
+}
+
+static void http_client_follow_redirects(http_client_t *client, int enabled) {
+  (void)client;
+  (void)enabled;
+}
+
+static void http_client_set_cookie_jar(http_client_t *client, http_cookie_jar_t *jar) {
+  if (client) client->cookie_jar = jar;
+}
+
+static int http_client_set_tls_client_config(http_client_t *client,
+                                             const cnet_tls_client_config *config) {
+  cnet_tls_client_config resolved;
+  int rc;
+  if (!client || !config) return SALTS_EINVAL;
+  if (client->tls_initialized) {
+    (void)chttp_tls_profile_destroy(&client->tls);
+    client->tls_initialized = 0;
+  }
+  resolved = *config;
+  if (!resolved.server_name) resolved.server_name = "localhost";
+  rc = chttp_tls_profile_init(&client->tls, &resolved);
+  if (rc == SALTS_OK) client->tls_initialized = 1;
+  return rc;
+}
+
+static void http_client_destroy(http_client_t *client) {
+  if (!client) return;
+  if (client->client_initialized)
+    (void)chttp_client_destroy(&client->client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
+  if (client->tls_initialized) (void)chttp_tls_profile_destroy(&client->tls);
+  free(client->connection_uri);
+  free(client->authority);
+  free(client);
+}
+
+static http_cookie_jar_t *http_cookie_jar_create(void) {
+  return (http_cookie_jar_t *)calloc(1u, sizeof(http_cookie_jar_t));
+}
+
+static const char *http_cookie_jar_get(const http_cookie_jar_t *jar, const char *name) {
+  return jar && name && strcmp(jar->name, name) == 0 && jar->value[0] ? jar->value : NULL;
+}
+
+static void http_cookie_jar_remove(http_cookie_jar_t *jar, const char *name) {
+  if (jar && name && strcmp(jar->name, name) == 0) memset(jar, 0, sizeof(*jar));
+}
+
+static void http_cookie_jar_destroy(http_cookie_jar_t *jar) {
+  if (!jar) return;
+  memset(jar, 0, sizeof(*jar));
+  free(jar);
+}
+
+static void control_test_http_capture_cookie(http_cookie_jar_t *jar,
+                                             const chttp_response *response) {
+  const char *set_cookie;
+  const char *equals;
+  const char *end;
+  size_t name_size;
+  size_t value_size;
+  if (!jar || !response) return;
+  set_cookie = chttp_response_header(response, "Set-Cookie");
+  if (!set_cookie) return;
+  equals = strchr(set_cookie, '=');
+  if (!equals) return;
+  end = strchr(equals + 1, ';');
+  if (!end) end = equals + 1 + strlen(equals + 1);
+  name_size = (size_t)(equals - set_cookie);
+  value_size = (size_t)(end - equals - 1);
+  if (name_size == 0u || name_size >= sizeof(jar->name) || value_size >= sizeof(jar->value)) return;
+  if (strstr(set_cookie, "Max-Age=0")) {
+    memset(jar, 0, sizeof(*jar));
+    return;
+  }
+  memcpy(jar->name, set_cookie, name_size);
+  jar->name[name_size] = '\0';
+  memcpy(jar->value, equals + 1, value_size);
+  jar->value[value_size] = '\0';
+}
+
+static http_response_t *http_request(http_client_t *client, chttp_method method, const char *target,
+                                     const char *const *header_lines, int header_count,
+                                     const void *body, size_t body_size) {
+  chttp_header headers[CONTROL_INTEGRATION_HTTP_HEADER_CAPACITY + 1u];
+  char names[CONTROL_INTEGRATION_HTTP_HEADER_CAPACITY][64];
+  char cookie_value[768];
+  chttp_options options = {0};
+  chttp_error error = {0};
+  http_response_t *result;
+  size_t count = 0u;
+  int rc;
+  if (!client || !target || header_count < 0 ||
+      (size_t)header_count > CONTROL_INTEGRATION_HTTP_HEADER_CAPACITY ||
+      (header_count > 0 && !header_lines) || (body_size > 0u && !body) ||
+      !client->tls_initialized)
+    return NULL;
+  memset(headers, 0, sizeof(headers));
+  memset(names, 0, sizeof(names));
+  for (int index = 0; index < header_count; ++index) {
+    const char *separator = strchr(header_lines[index], ':');
+    size_t name_size;
+    if (!separator) return NULL;
+    name_size = (size_t)(separator - header_lines[index]);
+    if (name_size == 0u || name_size >= sizeof(names[index])) return NULL;
+    memcpy(names[index], header_lines[index], name_size);
+    headers[count].name = names[index];
+    headers[count].value = separator + 1;
+    while (*headers[count].value == ' ') ++headers[count].value;
+    ++count;
+  }
+  if (client->cookie_jar && client->cookie_jar->name[0]) {
+    int written = snprintf(cookie_value, sizeof(cookie_value), "%s=%s", client->cookie_jar->name,
+                           client->cookie_jar->value);
+    if (written <= 0 || (size_t)written >= sizeof(cookie_value) || count >= sizeof(headers) / sizeof(headers[0]))
+      return NULL;
+    headers[count++] = (chttp_header){"Cookie", cookie_value};
+  }
+  options.connection_uri = client->connection_uri;
+  options.authority = client->authority;
+  options.target = target;
+  options.headers = headers;
+  options.header_count = count;
+  options.body = body;
+  options.body_size = body_size;
+  options.timeout_ms = client->timeout_ms;
+  options.tls = &client->tls;
+  options.protocol = CHTTP_HTTP_1_1;
+  result = (http_response_t *)calloc(1u, sizeof(*result));
+  if (!result) return NULL;
+  rc = method == CHTTP_METHOD_GET
+           ? chttp_get(&client->client, &options, &result->response, &error)
+           : chttp_post(&client->client, &options, &result->response, &error);
+  if (rc != SALTS_OK) {
+    fprintf(stderr, "CHTTP integration request failed: target=%s status=%d native=%d stage=%s\n",
+            target, rc, error.native_status, error.stage ? error.stage : "unknown");
+    chttp_response_destroy(&result->response);
+    free(result);
+    return NULL;
+  }
+  result->status_code = result->response.status_code;
+  result->error_code = HTTP_ERROR_NONE;
+  result->body = (char *)malloc(result->response.body_size + 1u);
+  if (!result->body) {
+    chttp_response_destroy(&result->response);
+    free(result);
+    return NULL;
+  }
+  if (result->response.body_size > 0u)
+    memcpy(result->body, result->response.body, result->response.body_size);
+  result->body[result->response.body_size] = '\0';
+  control_test_http_capture_cookie(client->cookie_jar, &result->response);
+  return result;
+}
+
+static http_response_t *http_post_json(http_client_t *client, const char *target,
+                                       const char *body) {
+  const char *headers[] = {"Content-Type: application/json"};
+  return body ? http_request(client, HTTP_POST, target, headers, 1, body, strlen(body)) : NULL;
+}
+
+static char *http_response_get_header(const http_response_t *response, const char *name) {
+  return response ? control_test_http_copy(chttp_response_header(&response->response, name)) : NULL;
+}
+
+static void http_response_free(http_response_t *response) {
+  if (!response) return;
+  free(response->body);
+  chttp_response_destroy(&response->response);
+  free(response);
+}
 
 typedef struct control_tls_material_s {
   EVP_PKEY *ca_key;
@@ -73,11 +369,10 @@ typedef struct control_tls_material_s {
   char *known_key_path;
   char *unknown_cert_path;
   char *unknown_key_path;
-  char known_fingerprint[CORO_TLS_PEER_CERT_SHA256_CAPACITY];
+  char known_fingerprint[FLOWIE_CONTROL_HTTP_PEER_CERTIFICATE_SHA256_CAPACITY];
 } control_tls_material_t;
 
 typedef struct control_http_state_s {
-  coro_context_t *context;
   const char *base_url;
   const char *ca_path;
   const char *known_cert_path;
@@ -250,7 +545,7 @@ static int control_test_write_key(const char *path, EVP_PKEY *key) {
 }
 
 static int control_test_fingerprint(X509 *certificate,
-                                    char output[CORO_TLS_PEER_CERT_SHA256_CAPACITY]) {
+                                    char output[FLOWIE_CONTROL_HTTP_PEER_CERTIFICATE_SHA256_CAPACITY]) {
   unsigned char digest[EVP_MAX_MD_SIZE];
   unsigned int digest_size = 0u;
   static const char hex[] = "0123456789abcdef";
@@ -358,26 +653,26 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
   flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
   uint64_t revision = 0u;
   int rc;
-  if (!secret_base64 || secret_base64_capacity == 0u) return TURBO_EINVAL;
+  if (!secret_base64 || secret_base64_capacity == 0u) return SALTS_EINVAL;
   secret_base64[0] = '\0';
   check_equal(flowie_control_test_turbodb_init(&test_database, database_path), 0);
   store_config.database = &test_database.config;
   rc = flowie_control_store_open(&store_config, &store);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc =
       flowie_control_bootstrap_apply(flowie_control_store_repository(store), &config.bootstrap,
                                      FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
                                      sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 1u);
-  if (rc == TURBO_OK) rc = flowie_control_store_current_revision(store, &revision);
+  if (rc == SALTS_OK) rc = flowie_control_store_current_revision(store, &revision);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "integration-root";
   root.expected_revision = revision;
   root.occurred_at = 1u;
-  if (rc == TURBO_OK) rc = flowie_control_store_domain_create(store, &root, &result);
+  if (rc == SALTS_OK) rc = flowie_control_store_domain_create(store, &root, &result);
   revision = result.revision;
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     user.domain_id = "root-a";
     user.principal_id = "admin-a";
     user.principal_type = "operator";
@@ -389,7 +684,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_create(store, &user, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     issue.domain_id = "root-a";
     issue.principal_id = "admin-a";
     issue.actor = "bootstrap";
@@ -401,12 +696,12 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_credential_generate(store, &issue, &generated);
     revision = generated.revision;
   }
-  if (rc == TURBO_OK && tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
+  if (rc == SALTS_OK && tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
                                              sizeof(CONTROL_INTEGRATION_ADMIN_PASSWORD) - 1u,
                                              secret_base64, secret_base64_capacity) != 0)
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
   flowie_control_generated_credential_wipe(&generated);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN;
     role.actor = "bootstrap";
@@ -417,7 +712,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     assignment.domain_id = "root-a";
     assignment.principal_id = "admin-a";
     assignment.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN;
@@ -429,7 +724,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_role_add(store, &assignment, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     group.domain_id = "root-a";
     group.group_id = "operators";
     group.parent_group_id = NULL;
@@ -441,7 +736,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_group_create(store, &group, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     static const char rule_text[] = "user admin-a allow {\n"
                                     "  read topic root-a/groups/operators/devices/+/heartbeat\n"
                                     "}";
@@ -454,10 +749,10 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rule.expected_revision = revision;
     rule.occurred_at = 6u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    if (rc == TURBO_OK) rc = flowie_control_store_policy_subject_rule_put(store, &rule, &result);
+    if (rc == SALTS_OK) rc = flowie_control_store_policy_subject_rule_put(store, &rule, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     publish.domain_id = "root-a";
     publish.actor = "bootstrap";
     publish.request_id = "integration-policy-publish";
@@ -467,7 +762,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_policy_publish(store, &publish, &published);
     revision = published.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     user = (flowie_control_user_create_command_t)FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     user.domain_id = "root-a";
     user.principal_id = "integration-broker";
@@ -480,7 +775,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_create(store, &user, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     issue = (flowie_control_credential_issue_command_t)FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
     issue.domain_id = "root-a";
     issue.principal_id = "integration-broker";
@@ -495,7 +790,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     revision = generated.revision;
     flowie_control_generated_credential_wipe(&generated);
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     role = (flowie_control_role_create_command_t)FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_SERVICE_ROLE_AUTH_CLIENT;
@@ -507,7 +802,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     role = (flowie_control_role_create_command_t)FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_SERVICE_ROLE_ACL_CLIENT;
@@ -519,7 +814,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     assignment = (flowie_control_user_role_add_command_t)FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     assignment.domain_id = "root-a";
     assignment.principal_id = "integration-broker";
@@ -532,7 +827,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_role_add(store, &assignment, &result);
     revision = result.revision;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     assignment = (flowie_control_user_role_add_command_t)FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     assignment.domain_id = "root-a";
     assignment.principal_id = "integration-broker";
@@ -592,16 +887,16 @@ static http_response_t *control_test_request(const control_http_state_t *state,
                                              const char *body) {
   http_client_t *client = NULL;
   http_response_t *response = NULL;
-  turbo_tls_client_config_t tls = {0};
+  cnet_tls_client_config tls = {0};
   if (!state || !state->base_url || !body) return NULL;
   client = http_client_create(state->base_url);
   if (!client) return NULL;
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
-  tls.verify_peer = 1;
+  tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
   tls.cert_file = cert_path;
   tls.key_file = key_path;
-  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
   response = http_post_json(client, "/v2/control/rpc", body);
 done:
   http_client_destroy(client);
@@ -614,7 +909,7 @@ static http_response_t *control_test_acl_request(const control_http_state_t *sta
                                                  const char *access, const char *topic) {
   http_client_t *client = NULL;
   http_response_t *response = NULL;
-  turbo_tls_client_config_t tls = {0};
+  cnet_tls_client_config tls = {0};
   const char *headers[4];
   char authorization[128];
   char body[2048];
@@ -638,11 +933,11 @@ static http_response_t *control_test_acl_request(const control_http_state_t *sta
   client = http_client_create(state->base_url);
   if (!client) return NULL;
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
-  tls.verify_peer = 1;
+  tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
   tls.cert_file = cert_path;
   tls.key_file = key_path;
-  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
   response = http_request(client, HTTP_POST, "/v4/acl/check", headers, 4, body, (size_t)body_size);
 done:
   memset(body, 0, sizeof(body));
@@ -657,7 +952,7 @@ static http_response_t *control_test_auth_request(const control_http_state_t *st
       "X-Flowie-Service-Id: integration-broker", "X-Flowie-Service-Domain: root-a"};
   http_client_t *client = NULL;
   http_response_t *response = NULL;
-  turbo_tls_client_config_t tls = {0};
+  cnet_tls_client_config tls = {0};
   char body[1024];
   int body_size;
   if (!state || !state->base_url || !secret_base64) return NULL;
@@ -671,9 +966,9 @@ static http_response_t *control_test_auth_request(const control_http_state_t *st
   client = http_client_create(state->base_url);
   if (!client) return NULL;
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
-  tls.verify_peer = 1;
+  tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
   response = http_request(client, HTTP_POST, "/v4/authenticate", headers,
                           (int)(sizeof(headers) / sizeof(headers[0])), body, (size_t)body_size);
 done:
@@ -786,7 +1081,7 @@ static int control_test_management_workflow(control_http_state_t *state) {
   http_client_t *client = NULL;
   http_cookie_jar_t *jar = NULL;
   http_response_t *response = NULL;
-  turbo_tls_client_config_t tls = {0};
+  cnet_tls_client_config tls = {0};
   char first_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
   char second_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
   char csrf[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u] = {0};
@@ -806,9 +1101,9 @@ static int control_test_management_workflow(control_http_state_t *state) {
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
   http_client_follow_redirects(client, 0);
   http_client_set_cookie_jar(client, jar);
-  tls.verify_peer = 1;
+  tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
 
   if (!control_test_management_login(state, client, jar, first_token)) goto done;
   response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_STATUS_RPC_BODY);
@@ -933,7 +1228,7 @@ static int control_test_bootstrap_password_rotation(control_http_state_t *state)
   http_client_t *client = NULL;
   http_cookie_jar_t *jar = NULL;
   http_response_t *response = NULL;
-  turbo_tls_client_config_t tls = {0};
+  cnet_tls_client_config tls = {0};
   char initial_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
   char rotated_token[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
   char csrf[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u] = {0};
@@ -953,9 +1248,9 @@ static int control_test_bootstrap_password_rotation(control_http_state_t *state)
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
   http_client_follow_redirects(client, 0);
   http_client_set_cookie_jar(client, jar);
-  tls.verify_peer = 1;
+  tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != TURBO_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
 
   response = control_test_management_login_request(
       state, client, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN,
@@ -1083,14 +1378,13 @@ done:
   return result;
 }
 
-static void control_test_http_task(coro_t *coroutine, void *arg) {
+static void control_test_http_task(void *arg) {
   control_http_state_t *state = (control_http_state_t *)arg;
   uint64_t deadline;
   http_response_t *response = NULL;
-  (void)coroutine;
-  if (!state || !state->context) return;
-  deadline = turbo_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
-  while (turbo_monotonic_ms() < deadline) {
+  if (!state) return;
+  deadline = salts_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
+  while (salts_monotonic_ms() < deadline) {
     response = control_test_auth_request(state, state->secret_base64);
     if (response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
         response->body && strstr(response->body, "\"authenticated\":true") != NULL) {
@@ -1103,7 +1397,7 @@ static void control_test_http_task(coro_t *coroutine, void *arg) {
     }
     http_response_free(response);
     response = NULL;
-    coro_sleep(state->context, 25u);
+    salts_sleep_ms(25u);
   }
   if (!state->ready) return;
 
@@ -1165,17 +1459,16 @@ static void control_test_http_task(coro_t *coroutine, void *arg) {
 static int control_test_run_network_gate(void) {
   control_tls_material_t material;
   control_http_state_t http_state;
-  turbo_process_options_t process_options;
-  turbo_process_result_t process_result;
-  turbo_process_t *process = NULL;
-  coro_context_t *context = NULL;
+  salts_process_options_t process_options;
+  salts_process_result_t process_result;
+  salts_process_t *process = NULL;
   char *database_path = NULL;
   char *config_path = NULL;
   char base_url[128];
   char secret_base64[CONTROL_INTEGRATION_SECRET_BASE64_CAPACITY] = {0};
   const char *process_args[] = {"--config", NULL, NULL};
   unsigned short port = 0u;
-  int rc = TURBO_EIO;
+  int rc = SALTS_EIO;
   const char *failure_stage = "initialization";
 
   memset(&material, 0, sizeof(material));
@@ -1191,25 +1484,21 @@ static int control_test_run_network_gate(void) {
   failure_stage = "generate TLS material";
   if (control_test_tls_material_open(&material) != 0) goto cleanup;
   failure_stage = "seed TurboDB store";
-  if (control_test_seed_store(database_path, secret_base64, sizeof(secret_base64)) != TURBO_OK)
+  if (control_test_seed_store(database_path, secret_base64, sizeof(secret_base64)) != SALTS_OK)
     goto cleanup;
   failure_stage = "write controller configuration";
   if (control_test_write_config(config_path, database_path, &material, port) != 0) goto cleanup;
   failure_stage = "spawn controller";
 
   process_args[1] = config_path;
-  turbo_process_options_init(&process_options);
+  salts_process_options_init(&process_options);
   process_options.program = FLOWIE_CONTROL_EXECUTABLE;
   process_options.args = process_args;
-  process_options.flags = TURBO_PROCESS_CAPTURE_STDOUT | TURBO_PROCESS_CAPTURE_STDERR;
+  process_options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   process_options.max_output_bytes = 65536u;
-  if (turbo_process_spawn(&process_options, &process) != TURBO_OK) goto cleanup;
+  if (salts_process_spawn(&process_options, &process) != SALTS_OK) goto cleanup;
 
-  failure_stage = "create client coroutine context";
   (void)snprintf(base_url, sizeof(base_url), "https://localhost:%u", (unsigned int)port);
-  context = coro_context_create(NULL);
-  if (!context) goto cleanup;
-  http_state.context = context;
   http_state.base_url = base_url;
   http_state.ca_path = material.ca_path;
   http_state.known_cert_path = material.known_cert_path;
@@ -1217,10 +1506,8 @@ static int control_test_run_network_gate(void) {
   http_state.unknown_cert_path = material.unknown_cert_path;
   http_state.unknown_key_path = material.unknown_key_path;
   http_state.secret_base64 = secret_base64;
-  failure_stage = "spawn client coroutine";
-  if (coro_context_spawn(context, control_test_http_task, &http_state) != TURBO_OK) goto cleanup;
   failure_stage = "complete HTTPS ACL requests";
-  coro_context_run(context, TURBO_RUN_DEFAULT);
+  control_test_http_task(&http_state);
   if (http_state.ready && http_state.unauthenticated_rpc_forbidden && http_state.session_rpc_ok &&
       http_state.dashboard_htmx_ok && http_state.dashboard_csrf_rejected &&
       http_state.dashboard_write_ok && http_state.dashboard_logout_ok &&
@@ -1231,10 +1518,10 @@ static int control_test_run_network_gate(void) {
       http_state.local_auth_bad_secret_forbidden && http_state.acl_decision_allowed &&
       http_state.acl_subscription_filter_allowed && http_state.acl_version_mismatch_denied &&
       http_state.acl_bad_token_forbidden && http_state.client_certificate_does_not_authenticate_rpc)
-    rc = TURBO_OK;
+    rc = SALTS_OK;
 
 cleanup:
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     (void)fprintf(stderr,
                   "flowie-control integration failed at %s: ready=%d rpc-denied=%d session=%d "
                   "dashboard-htmx=%d dashboard-csrf=%d dashboard-write=%d "
@@ -1256,13 +1543,12 @@ cleanup:
                   http_state.acl_version_mismatch_denied, http_state.acl_bad_token_forbidden,
                   http_state.client_certificate_does_not_authenticate_rpc);
   }
-  if (context) coro_context_destroy(context);
   if (process) {
-    if (turbo_process_poll(process, &process_result) == TURBO_EBUSY) {
-      (void)turbo_process_terminate(process);
-      (void)turbo_process_wait(process, &process_result);
+    if (salts_process_poll(process, &process_result) == SALTS_EBUSY) {
+      (void)salts_process_terminate(process);
+      (void)salts_process_wait(process, &process_result);
     }
-    if (rc != TURBO_OK) {
+    if (rc != SALTS_OK) {
       char child_output[4096];
       size_t child_output_size = 0u;
       char child_error[4096];
@@ -1270,23 +1556,23 @@ cleanup:
       (void)fprintf(stderr,
                     "flowie-control integration child result: state=%s pid=%d exit=%d "
                     "signal=%d error=%d\n",
-                    turbo_process_state_name(process_result.state), process_result.pid,
+                    salts_process_state_name(process_result.state), process_result.pid,
                     process_result.exit_code, process_result.term_signal,
                     process_result.error_code);
-      if (turbo_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
-                                    &child_output_size) == TURBO_OK &&
+      if (salts_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
+                                    &child_output_size) == SALTS_OK &&
           child_output_size > 0u) {
         child_output[child_output_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stdout: %s\n", child_output);
       }
-      if (turbo_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
-                                    &child_error_size) == TURBO_OK &&
+      if (salts_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
+                                    &child_error_size) == SALTS_OK &&
           child_error_size > 0u) {
         child_error[child_error_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stderr: %s\n", child_error);
       }
     }
-    turbo_process_destroy(process);
+    salts_process_destroy(process);
   }
   memset(secret_base64, 0, sizeof(secret_base64));
   control_test_tls_material_close(&material);
@@ -1303,6 +1589,6 @@ cleanup:
 
 spec("Flowie controller HTTPS integration") {
   it("serves scoped APIs and rotates the fixed bootstrap administrator password over TLS") {
-    check_equal(control_test_run_network_gate(), TURBO_OK);
+    check_equal(control_test_run_network_gate(), SALTS_OK);
   }
 }

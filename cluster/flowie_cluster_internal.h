@@ -139,7 +139,7 @@ FLOWIE_C_API int flowie_cluster_shard_for_key(uint32_t hash_version, flowie_clus
                                            const uint8_t *key, size_t key_size,
                                            uint32_t shard_count, uint32_t *out_shard);
 
-/** Validate one state transition. Same-state returns TURBO_EALREADY. */
+/** Validate one state transition. Same-state returns SALTS_EALREADY. */
 FLOWIE_C_API int flowie_cluster_node_transition_validate(flowie_cluster_node_state_t from,
                                                       flowie_cluster_node_state_t to);
 FLOWIE_C_API int flowie_cluster_shard_transition_validate(flowie_cluster_shard_state_t from,
@@ -149,7 +149,7 @@ FLOWIE_C_API int flowie_cluster_connection_transition_validate(flowie_cluster_co
 
 /**
  * Convert a database-returned lease validity into a conservative monotonic
- * deadline. Overflow returns TURBO_ERANGE and never saturates silently.
+ * deadline. Overflow returns SALTS_ERANGE and never saturates silently.
  */
 FLOWIE_C_API int flowie_cluster_lease_deadline_ns(uint64_t request_start_ns,
                                                uint64_t returned_validity_ms,
@@ -167,7 +167,7 @@ FLOWIE_C_API int flowie_cluster_owner_token_init(flowie_cluster_owner_token_t *o
                                               size_t node_id_size,
                                               const uint8_t boot_id[FLOWIE_CLUSTER_BOOT_ID_SIZE]);
 
-/** Exact token match is required; a well-formed stale token returns TURBO_EBUSY. */
+/** Exact token match is required; a well-formed stale token returns SALTS_EBUSY. */
 FLOWIE_C_API int flowie_cluster_owner_token_require(const flowie_cluster_owner_token_t *expected,
                                                  const flowie_cluster_owner_token_t *presented);
 

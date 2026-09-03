@@ -63,6 +63,10 @@ if(FLOWIE_BUILD_TESTS)
       -DFLOWIE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
       -DFLOWIE_VCPKG_INSTALLED_DIR=${VCPKG_INSTALLED_DIR}
       -DFLOWIE_VCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}
+      -DFLOWIE_SALTS_ROOT=$ENV{SALTS_ROOT}
+      -DFLOWIE_SALTS_UTILS_ROOT=$ENV{SALTS_UTILS_ROOT}
+      -DFLOWIE_TURBONET_ROOT=$ENV{TURBONET_ROOT}
+      -DFLOWIE_TURBODB_ROOT=$ENV{TURBODB_ROOT}
       -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyDefaultNoCluster.cmake)
   set_tests_properties(
     flowie_default_no_cluster_configure
@@ -70,27 +74,35 @@ if(FLOWIE_BUILD_TESTS)
 endif()
 
  
-find_package(Rocida 1.1 CONFIG REQUIRED
-             PATHS "$ENV{ROCIDA_ROOT}" NO_DEFAULT_PATH) 
-find_package(TurboParser CONFIG REQUIRED
-             PATHS "$ENV{TURBOPARSER_ROOT}" NO_DEFAULT_PATH)
+if(NOT DEFINED ENV{SALTS_ROOT} OR "$ENV{SALTS_ROOT}" STREQUAL "")
+  message(FATAL_ERROR "SALTS_ROOT must name the installed Salts profile")
+endif()
+if(NOT IS_DIRECTORY "$ENV{SALTS_ROOT}")
+  message(FATAL_ERROR "SALTS_ROOT is not a directory: $ENV{SALTS_ROOT}")
+endif()
+find_package(Salts CONFIG REQUIRED
+             PATHS "$ENV{SALTS_ROOT}" NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(TurboNet CONFIG REQUIRED
-             PATHS "$ENV{TURBONET_ROOT}" NO_DEFAULT_PATH)
+if(FLOWIE_BUILD_CONTROL)
+  if(NOT DEFINED ENV{TURBONET_ROOT} OR "$ENV{TURBONET_ROOT}" STREQUAL "")
+    message(FATAL_ERROR "TURBONET_ROOT is required for the legacy Ed448 crypto archive")
+  endif()
+  find_library(FLOWIE_ED448_CRYPTO_LIBRARY NAMES turbo_crypto
+               PATHS "$ENV{TURBONET_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+  add_library(flowie_ed448_crypto STATIC IMPORTED GLOBAL)
+  add_library(Flowie::Ed448Crypto ALIAS flowie_ed448_crypto)
+  set_target_properties(flowie_ed448_crypto PROPERTIES
+                        IMPORTED_LOCATION "${FLOWIE_ED448_CRYPTO_LIBRARY}")
+endif()
 find_package(xxHash CONFIG REQUIRED)
 find_package(Orm CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
-if(TARGET TurboParser::DataBind AND NOT TARGET Rocida::DataBind)
-  add_library(Rocida::DataBind ALIAS TurboParser::DataBind)
-endif()
-find_package(TurboHttp CONFIG REQUIRED
-             PATHS "$ENV{TURBOHTTP_ROOT}" NO_DEFAULT_PATH)
 if(FLOWIE_BUILD_CLUSTER)
   find_package(FlowMQ CONFIG REQUIRED
                PATHS "$ENV{FLOWMQ_ROOT}" NO_DEFAULT_PATH)
   find_package(
-    TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage ServiceOwner DataStream FlowMQ
+    TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage DataStream FlowMQ
     PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
 endif()
 add_subdirectory(tools)

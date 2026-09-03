@@ -4,7 +4,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -52,12 +52,12 @@ static int auth_service_policy_version(void *ctx, const char *domain_id,
                                        uint64_t *policy_version_out) {
   auth_service_policy_fixture_t *fixture = (auth_service_policy_fixture_t *)ctx;
   if (policy_version_out) *policy_version_out = 0u;
-  if (!fixture || !domain_id || !policy_version_out) return TURBO_EINVAL;
-  if (fixture->result != TURBO_OK) return fixture->result;
+  if (!fixture || !domain_id || !policy_version_out) return SALTS_EINVAL;
+  if (fixture->result != SALTS_OK) return fixture->result;
   if (strcmp(domain_id, "root-a") == 0) *policy_version_out = fixture->root_a_version;
   else if (strcmp(domain_id, "root-b") == 0) *policy_version_out = fixture->root_b_version;
-  else return TURBO_EPERM;
-  return TURBO_OK;
+  else return SALTS_EPERM;
+  return SALTS_OK;
 }
 
 static uint64_t auth_service_clock(void *ctx) { return *(const uint64_t *)ctx; }
@@ -69,7 +69,7 @@ static int auth_service_external_verify(void *ctx,
   flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   if (!fixture || !request || request->size < sizeof(*request) || !assertion_out ||
       assertion_out->size < sizeof(*assertion_out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   fixture->saw_transport_context =
       request->domain_id[0] == '\0' &&
       strcmp(request->presented_identity, "external-device") == 0 &&
@@ -78,7 +78,7 @@ static int auth_service_external_verify(void *ctx,
       strcmp(request->peer_certificate_sha256, AUTH_SERVICE_CLIENT_CERT) == 0 &&
       request->secret_size == sizeof("signed-token") - 1u &&
       memcmp(request->secret, "signed-token", sizeof("signed-token") - 1u) == 0;
-  if (fixture->verify_result != TURBO_OK) return fixture->verify_result;
+  if (fixture->verify_result != SALTS_OK) return fixture->verify_result;
   memcpy(assertion.issuer, "https://idp.example", sizeof("https://idp.example"));
   memcpy(assertion.domain_id, fixture->assertion_domain_id,
          strlen(fixture->assertion_domain_id) + 1u);
@@ -93,7 +93,7 @@ static int auth_service_external_verify(void *ctx,
   assertion.external_group_count = 1u;
   memcpy(assertion.external_groups[0], "idp-administrators", sizeof("idp-administrators"));
   *assertion_out = assertion;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int auth_service_external_map(void *ctx,
@@ -104,7 +104,7 @@ static int auth_service_external_map(void *ctx,
       FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAP_RESULT_INIT;
   if (!fixture || !request || request->size < sizeof(*request) || !request->assertion ||
       !result_out || result_out->size < sizeof(*result_out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   fixture->saw_mapping_context =
       strcmp(request->domain_id, request->assertion->domain_id) == 0 &&
       strcmp(request->presented_identity, "external-device") == 0 &&
@@ -112,10 +112,10 @@ static int auth_service_external_map(void *ctx,
       strcmp(request->assertion->subject, "tenant-42/device-a") == 0 &&
       request->assertion->external_group_count == 1u &&
       strcmp(request->assertion->external_groups[0], "idp-administrators") == 0;
-  if (fixture->map_result != TURBO_OK) return fixture->map_result;
+  if (fixture->map_result != SALTS_OK) return fixture->map_result;
   memcpy(result.principal_id, "device-a", sizeof("device-a"));
   *result_out = result;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static flowie_control_store_t *auth_service_store_open(char **path_out) {
@@ -126,7 +126,7 @@ static flowie_control_store_t *auth_service_store_open(char **path_out) {
   check_not_null(*path_out);
   check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+  check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
   check_not_null(store);
   return store;
 }
@@ -291,7 +291,7 @@ static flowie_control_auth_service_t *auth_service_create(flowie_control_store_t
   config.policy_version.current = auth_service_policy_version;
   config.clock_seconds = auth_service_clock;
   config.clock_ctx = now_seconds;
-  check_equal(flowie_control_auth_service_create(&config, &service), TURBO_OK);
+  check_equal(flowie_control_auth_service_create(&config, &service), SALTS_OK);
   check_not_null(service);
   return service;
 }
@@ -316,7 +316,7 @@ spec("Flowie control trusted authentication service") {
     flowie_control_store_t *store = auth_service_store_open(&path);
     flowie_control_generated_credential_t root_a = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
     flowie_control_generated_credential_t root_b = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
-    auth_service_policy_fixture_t policy = {11u, 12u, TURBO_OK};
+    auth_service_policy_fixture_t policy = {11u, 12u, SALTS_OK};
     uint64_t now_seconds = 10000u;
     flowie_control_auth_service_t *service;
     flowie_control_verified_caller_t caller = {sizeof(flowie_control_verified_caller_t),
@@ -330,12 +330,12 @@ spec("Flowie control trusted authentication service") {
     flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
     int cache_hit = -1;
 
-    check_equal(auth_service_domain_create(store, "root-a", "request-root-a", 0u), TURBO_OK);
-    check_equal(auth_service_domain_create(store, "root-b", "request-root-b", 1u), TURBO_OK);
-    check_equal(auth_service_user_create(store, "root-a", "request-user-a", 2u), TURBO_OK);
+    check_equal(auth_service_domain_create(store, "root-a", "request-root-a", 0u), SALTS_OK);
+    check_equal(auth_service_domain_create(store, "root-b", "request-root-b", 1u), SALTS_OK);
+    check_equal(auth_service_user_create(store, "root-a", "request-user-a", 2u), SALTS_OK);
     check_equal(
         auth_service_credential_generate(store, "root-a", "request-credential-a", 3u, &root_a),
-        TURBO_OK);
+        SALTS_OK);
     service = auth_service_create(store, &policy, &now_seconds);
 
     request.caller = &caller;
@@ -344,40 +344,40 @@ spec("Flowie control trusted authentication service") {
     request.secret = (const uint8_t *)root_a.token;
     request.secret_size = root_a.token_size;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_OK);
+                SALTS_OK);
     check_false(cache_hit);
     check_equal(principal.principal_id, "device-a");
     check_equal(principal.domain_id, "root-a");
     check_equal(principal.policy_version, 11u);
 
-    check_equal(auth_service_user_create(store, "root-b", "request-user-b", 4u), TURBO_OK);
+    check_equal(auth_service_user_create(store, "root-b", "request-user-b", 4u), SALTS_OK);
     check_equal(
         auth_service_credential_generate(store, "root-b", "request-credential-b", 5u, &root_b),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_false(cache_hit);
     check_equal(principal.principal_id, "");
 
     request.secret = (const uint8_t *)root_b.token;
     request.secret_size = root_b.token_size;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(principal.policy_version, 0u);
     caller.domain_id = "root-b";
     caller.service_id = "broker-b";
     caller.peer_certificate_sha256 = AUTH_SERVICE_CERT_B;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(principal.principal_id, "");
 
     caller.domain_id = "";
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_EPERM);
+                SALTS_EPERM);
     caller.domain_id = "root-b";
     caller.authenticated = 0;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, &cache_hit),
-                TURBO_EPERM);
+                SALTS_EPERM);
 
     flowie_control_auth_service_destroy(service);
     flowie_control_generated_credential_wipe(&root_a);
@@ -389,7 +389,7 @@ spec("Flowie control trusted authentication service") {
     char *path = NULL;
     flowie_control_store_t *store = auth_service_store_open(&path);
     flowie_control_generated_credential_t generated = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
-    auth_service_policy_fixture_t policy = {21u, 0u, TURBO_EIO};
+    auth_service_policy_fixture_t policy = {21u, 0u, SALTS_EIO};
     uint64_t now_seconds = 9000u;
     flowie_control_auth_service_t *service;
     flowie_control_verified_caller_t caller = {sizeof(flowie_control_verified_caller_t),
@@ -402,11 +402,11 @@ spec("Flowie control trusted authentication service") {
     flowie_control_authenticate_request_t request = FLOWIE_CONTROL_AUTHENTICATE_REQUEST_INIT;
     flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
 
-    check_equal(auth_service_domain_create(store, "root-a", "request-root-a", 0u), TURBO_OK);
-    check_equal(auth_service_user_create(store, "root-a", "request-user-a", 1u), TURBO_OK);
+    check_equal(auth_service_domain_create(store, "root-a", "request-root-a", 0u), SALTS_OK);
+    check_equal(auth_service_user_create(store, "root-a", "request-user-a", 1u), SALTS_OK);
     check_equal(
         auth_service_credential_generate(store, "root-a", "request-credential-a", 2u, &generated),
-        TURBO_OK);
+        SALTS_OK);
     service = auth_service_create(store, &policy, &now_seconds);
     request.caller = &caller;
     request.identity = "device-a";
@@ -415,18 +415,18 @@ spec("Flowie control trusted authentication service") {
     request.secret_size = generated.token_size;
 
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EIO);
+                SALTS_EIO);
     check_equal(principal.policy_version, 0u);
-    policy.result = TURBO_OK;
+    policy.result = SALTS_OK;
     policy.root_a_version = 0u;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     policy.root_a_version = 21u;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_OK);
-    check_equal(auth_service_credential_revoke(store, 3u), TURBO_OK);
+                SALTS_OK);
+    check_equal(auth_service_credential_revoke(store, 3u), SALTS_OK);
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EPERM);
+                SALTS_EPERM);
 
     flowie_control_auth_service_destroy(service);
     flowie_control_generated_credential_wipe(&generated);
@@ -436,8 +436,8 @@ spec("Flowie control trusted authentication service") {
   it("uses the signed assertion Domain instead of the Broker service Domain") {
     char *path = NULL;
     flowie_control_store_t *store = auth_service_store_open(&path);
-    auth_service_policy_fixture_t policy = {31u, 32u, TURBO_OK};
-    auth_service_external_fixture_t external = {TURBO_OK, TURBO_OK, 10120u, 1, "root-a", 0, 0};
+    auth_service_policy_fixture_t policy = {31u, 32u, SALTS_OK};
+    auth_service_external_fixture_t external = {SALTS_OK, SALTS_OK, 10120u, 1, "root-a", 0, 0};
     flowie_control_external_authenticator_t authenticator =
         FLOWIE_CONTROL_EXTERNAL_AUTHENTICATOR_INIT;
     flowie_control_external_identity_mapper_t mapper = FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAPPER_INIT;
@@ -454,11 +454,11 @@ spec("Flowie control trusted authentication service") {
     flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
     uint64_t now_seconds = 10000u;
 
-    check_equal(auth_service_domain_create(store, "root-a", "request-external-root", 0u), TURBO_OK);
-    check_equal(auth_service_user_create(store, "root-a", "request-external-user", 1u), TURBO_OK);
+    check_equal(auth_service_domain_create(store, "root-a", "request-external-root", 0u), SALTS_OK);
+    check_equal(auth_service_user_create(store, "root-a", "request-external-user", 1u), SALTS_OK);
     check_equal(auth_service_domain_create(store, "root-b", "request-external-root-b", 2u),
-                TURBO_OK);
-    check_equal(auth_service_user_create(store, "root-b", "request-external-user-b", 3u), TURBO_OK);
+                SALTS_OK);
+    check_equal(auth_service_user_create(store, "root-b", "request-external-user-b", 3u), SALTS_OK);
 
     authenticator.capabilities = FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES |
                                  FLOWIE_CONTROL_EXTERNAL_AUTH_GROUP_CLAIMS;
@@ -474,10 +474,10 @@ spec("Flowie control trusted authentication service") {
     config.external_authenticator = &authenticator;
     config.clock_seconds = auth_service_clock;
     config.clock_ctx = &now_seconds;
-    check_equal(flowie_control_auth_service_create(&config, &service), TURBO_EINVAL);
+    check_equal(flowie_control_auth_service_create(&config, &service), SALTS_EINVAL);
     check_null(service);
     config.external_identity_mapper = &mapper;
-    check_equal(flowie_control_auth_service_create(&config, &service), TURBO_OK);
+    check_equal(flowie_control_auth_service_create(&config, &service), SALTS_OK);
     check_not_null(service);
 
     request.caller = &caller;
@@ -489,7 +489,7 @@ spec("Flowie control trusted authentication service") {
     request.remote_address = "192.0.2.10:1883";
     request.peer_certificate_sha256 = AUTH_SERVICE_CLIENT_CERT;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(principal.domain_id, "root-a");
     check_equal(principal.principal_id, "device-a");
     check_true(external.saw_transport_context);
@@ -497,11 +497,11 @@ spec("Flowie control trusted authentication service") {
 
     external.assertion_domain_id = "root-b";
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(principal.domain_id, "root-b");
     check_equal(flowie_control_auth_service_authenticate_root(service, "root-a", "management-login",
                                                               &request, 0, NULL, &principal, NULL),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(principal.principal_id, "");
 
     flowie_control_auth_service_destroy(service);
@@ -512,7 +512,7 @@ spec("Flowie control trusted authentication service") {
     char *path = NULL;
     flowie_control_store_t *store = auth_service_store_open(&path);
     flowie_control_generated_credential_t generated = FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
-    auth_service_policy_fixture_t policy = {1u, 0u, TURBO_OK};
+    auth_service_policy_fixture_t policy = {1u, 0u, SALTS_OK};
     flowie_control_auth_service_config_t config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
     flowie_control_auth_service_t *service = NULL;
     flowie_control_verified_caller_t caller = {sizeof(flowie_control_verified_caller_t),
@@ -527,11 +527,11 @@ spec("Flowie control trusted authentication service") {
     uint64_t now_ms = 100u;
     static const uint8_t wrong_secret[] = "wrong-secret";
 
-    check_equal(auth_service_domain_create(store, "root-a", "request-rate-root", 0u), TURBO_OK);
-    check_equal(auth_service_user_create(store, "root-a", "request-rate-user", 1u), TURBO_OK);
+    check_equal(auth_service_domain_create(store, "root-a", "request-rate-root", 0u), SALTS_OK);
+    check_equal(auth_service_user_create(store, "root-a", "request-rate-user", 1u), SALTS_OK);
     check_equal(auth_service_credential_generate(store, "root-a", "request-rate-credential", 2u,
                                                  &generated),
-                TURBO_OK);
+                SALTS_OK);
     config.repository = flowie_control_store_repository(store);
     config.policy_version.ctx = &policy;
     config.policy_version.current = auth_service_policy_version;
@@ -543,21 +543,21 @@ spec("Flowie control trusted authentication service") {
     config.rate_limiter.identity_burst = 2u;
     config.rate_limiter.clock_ms = auth_service_clock;
     config.rate_limiter.clock_ctx = &now_ms;
-    check_equal(flowie_control_auth_service_create(&config, &service), TURBO_OK);
+    check_equal(flowie_control_auth_service_create(&config, &service), SALTS_OK);
     request.caller = &caller;
     request.identity = "device-a";
     request.method = "password";
     request.secret = wrong_secret;
     request.secret_size = sizeof(wrong_secret) - 1u;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EBUSY);
+                SALTS_EBUSY);
     now_ms = 1100u;
     check_equal(flowie_control_auth_service_authenticate(service, &request, &principal, NULL),
-                TURBO_EPERM);
+                SALTS_EPERM);
 
     flowie_control_auth_service_destroy(service);
     flowie_control_generated_credential_wipe(&generated);

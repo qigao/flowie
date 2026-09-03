@@ -3,7 +3,7 @@
 #include "flowie_cluster_peer_wire_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 spec("flowie cluster durable PUBLISH event codec") {
   it("round trips exact publisher edge and MQTT identity") {
@@ -19,9 +19,9 @@ spec("flowie cluster durable PUBLISH event codec") {
                      1000u, vstr_from_cstr("edge-a"), edge_boot,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){publish, sizeof(publish)}, 1024u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_publish_event_decode(encoded, tstr_len(encoded), 1024u, &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.requested_settlement, FLOWIE_PROTOCOL_SETTLE_DURABLE);
     check_equal(decoded.connection_id, 3u);
     check_equal(decoded.connection_generation, 4u);
@@ -51,7 +51,7 @@ spec("flowie cluster durable PUBLISH event codec") {
                      1000u, vstr_from_cstr("edge-a"), edge_boot,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){publish, sizeof(publish)}, 1024u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     legacy = tstr_new_len(NULL, tstr_len(encoded) - 8u);
     check_not_null(legacy);
     memcpy(legacy, encoded, 72u);
@@ -61,7 +61,7 @@ spec("flowie cluster durable PUBLISH event codec") {
                                        FLOWIE_CLUSTER_PUBLISH_EVENT_V1_HEADER_SIZE);
     flowie_cluster_peer_wire_write_u32((uint8_t *)legacy + 8u, (uint32_t)tstr_len(legacy));
     check_equal(flowie_cluster_publish_event_decode(legacy, tstr_len(legacy), 1024u, &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.accepted_at_epoch_seconds, 0u);
     check_equal(decoded.publish.client_id.data, client_id, sizeof(client_id) - 1u);
     tstr_free(legacy);
@@ -81,23 +81,23 @@ spec("flowie cluster durable PUBLISH event codec") {
                      0u, vstr_from_cstr("edge-a"), edge_boot,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){publish, sizeof(publish)}, 1024u, &encoded),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_equal(flowie_cluster_publish_event_encode(
                      FLOWIE_MQTT_VERSION_5, FLOWIE_PROTOCOL_SETTLE_DURABLE, 3u, 4u, 5u, 6u,
                      1000u, vstr_from_cstr("edge-a"), edge_boot,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){publish, sizeof(publish)}, 1024u, &encoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_null(encoded);
     check_equal(flowie_cluster_publish_event_encode(
                      FLOWIE_MQTT_VERSION_5, FLOWIE_PROTOCOL_SETTLE_RECEIVED, 3u, 4u, 5u, 6u,
                      1000u, vstr_from_cstr("edge-a"), edge_boot,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){publish, sizeof(publish)}, 1024u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     encoded[17] = 1;
     check_equal(flowie_cluster_publish_event_decode(encoded, tstr_len(encoded), 1024u, &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_free(encoded);
   }
 }

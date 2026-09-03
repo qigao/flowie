@@ -1,15 +1,15 @@
 #include "flowie_stl_error_internal.h"
 
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
 
 #include "flowie_cluster_peer_authority_internal.h"
 
-#include "turbo_error.h"
-#include "turbo_thread.h"
-#include <rocida/stl.h>
+#include "salts_error.h"
+#include "salts_thread.h"
+#include <cstl.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +35,7 @@ struct flowie_cluster_peer_authority_s {
   vec_t scratch;
   size_t max_peers;
   uint64_t revision;
-  turbo_mutex_t mutex;
+  salts_mutex_t mutex;
   int mutex_initialized;
   int pins_initialized;
   int active_initialized;
@@ -91,7 +91,7 @@ static int flowie_cluster_peer_authority_pin_find(
   size_t first = 0u;
   size_t count;
   if (out) *out = NULL;
-  if (!authority || !node_id.data || node_id.len == 0u || !out) return TURBO_EINVAL;
+  if (!authority || !node_id.data || node_id.len == 0u || !out) return SALTS_EINVAL;
   count = vec_size(&authority->pins);
   while (count != 0u) {
     size_t step = count / 2u;
@@ -113,10 +113,10 @@ static int flowie_cluster_peer_authority_pin_find(
     if (flowie_cluster_peer_authority_view_compare(
             flowie_cluster_peer_authority_view(pin->node_id, pin->node_id_size), node_id) == 0) {
       *out = pin;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_ENOENT;
+  return SALTS_ENOENT;
 }
 
 static void flowie_cluster_peer_authority_free(flowie_cluster_peer_authority_t *authority) {
@@ -124,7 +124,7 @@ static void flowie_cluster_peer_authority_free(flowie_cluster_peer_authority_t *
   if (authority->scratch_initialized) vec_destroy(&authority->scratch);
   if (authority->active_initialized) vec_destroy(&authority->active);
   if (authority->pins_initialized) vec_destroy(&authority->pins);
-  if (authority->mutex_initialized) turbo_mutex_destroy(&authority->mutex);
+  if (authority->mutex_initialized) salts_mutex_destroy(&authority->mutex);
   free(authority);
 }
 
@@ -138,25 +138,25 @@ int flowie_cluster_peer_authority_create(const flowie_cluster_peer_authority_con
       config->abi_version != FLOWIE_CLUSTER_PEER_AUTHORITY_ABI_V1 || !out ||
       config->max_peers == 0u || config->max_peers > FLOWIE_CLUSTER_NODE_COUNT_MAX ||
       config->pin_count == 0u || config->pin_count > FLOWIE_CLUSTER_NODE_COUNT_MAX || !config->pins)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   authority = (flowie_cluster_peer_authority_t *)calloc(1u, sizeof(*authority));
-  if (!authority) return TURBO_ENOMEM;
+  if (!authority) return SALTS_ENOMEM;
   authority->max_peers = config->max_peers;
-  turbo_mutex_init(&authority->mutex);
+  salts_mutex_init(&authority->mutex);
   authority->mutex_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&authority->pins, sizeof(flowie_cluster_peer_authority_pin_t), _Alignof(flowie_cluster_peer_authority_pin_t), SIZE_MAX));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   authority->pins_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&authority->active, sizeof(flowie_cluster_peer_authority_member_t), _Alignof(flowie_cluster_peer_authority_member_t), SIZE_MAX));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   authority->active_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&authority->scratch, sizeof(flowie_cluster_peer_authority_member_t), _Alignof(flowie_cluster_peer_authority_member_t), SIZE_MAX));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   authority->scratch_initialized = 1;
   rc = flowie_stl_error(vec_reserve(&authority->pins, config->pin_count));
-  if (rc == TURBO_OK) rc = flowie_stl_error(vec_reserve(&authority->active, config->max_peers));
-  if (rc == TURBO_OK) rc = flowie_stl_error(vec_reserve(&authority->scratch, config->max_peers));
-  if (rc != TURBO_OK) goto fail;
+  if (rc == SALTS_OK) rc = flowie_stl_error(vec_reserve(&authority->active, config->max_peers));
+  if (rc == SALTS_OK) rc = flowie_stl_error(vec_reserve(&authority->scratch, config->max_peers));
+  if (rc != SALTS_OK) goto fail;
   for (index = 0u; index < config->pin_count; ++index) {
     const flowie_cluster_peer_certificate_pin_t *source = &config->pins[index];
     flowie_cluster_peer_authority_pin_t pin = {0};
@@ -165,7 +165,7 @@ int flowie_cluster_peer_authority_create(const flowie_cluster_peer_authority_con
         source->node_id.len == 0u || source->node_id.len > FLOWIE_CLUSTER_NODE_ID_MAX ||
         memchr(source->node_id.data, '\0', source->node_id.len) ||
         !flowie_cluster_peer_authority_fingerprint_valid(source->certificate_sha256)) {
-      rc = TURBO_EINVAL;
+      rc = SALTS_EINVAL;
       goto fail;
     }
     memcpy(pin.node_id, source->node_id.data, source->node_id.len);
@@ -173,7 +173,7 @@ int flowie_cluster_peer_authority_create(const flowie_cluster_peer_authority_con
     memcpy(pin.certificate_sha256, source->certificate_sha256,
            sizeof(pin.certificate_sha256));
     rc = flowie_stl_error(vec_push(&authority->pins, &pin));
-    if (rc != TURBO_OK) goto fail;
+    if (rc != SALTS_OK) goto fail;
   }
   qsort(vec_data(&authority->pins), vec_size(&authority->pins),
         sizeof(flowie_cluster_peer_authority_pin_t), flowie_cluster_peer_authority_pin_compare);
@@ -184,12 +184,12 @@ int flowie_cluster_peer_authority_create(const flowie_cluster_peer_authority_con
     const flowie_cluster_peer_authority_pin_t *current =
         (const flowie_cluster_peer_authority_pin_t *)vec_at_const(&authority->pins, index);
     if (strcmp(previous->node_id, current->node_id) == 0) {
-      rc = TURBO_EINVAL;
+      rc = SALTS_EINVAL;
       goto fail;
     }
   }
   *out = authority;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   flowie_cluster_peer_authority_free(authority);
@@ -201,10 +201,10 @@ int flowie_cluster_peer_authority_replace(flowie_cluster_peer_authority_t *autho
                                           size_t peer_count, uint64_t revision) {
   vstr previous_id = {NULL, 0u};
   size_t index;
-  int rc = TURBO_OK;
+  int rc = SALTS_OK;
   if (!authority || peer_count > authority->max_peers ||
       (peer_count != 0u && !peers))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   vec_clear(&authority->scratch);
   for (index = 0u; index < peer_count; ++index) {
     const flowie_cluster_topology_peer_t *peer = &peers[index];
@@ -220,9 +220,9 @@ int flowie_cluster_peer_authority_replace(flowie_cluster_peer_authority_t *autho
         !flowie_cluster_peer_authority_boot_nonzero(peer->boot_id) ||
         (index != 0u &&
          flowie_cluster_peer_authority_view_compare(previous_id, peer->node_id) >= 0))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     rc = flowie_cluster_peer_authority_pin_find(authority, peer->node_id, &pin);
-    if (rc != TURBO_OK) return TURBO_EPERM;
+    if (rc != SALTS_OK) return SALTS_EPERM;
     memcpy(member.node_id, peer->node_id.data, peer->node_id.len);
     member.node_id_size = peer->node_id.len;
     memcpy(member.boot_id, peer->boot_id, sizeof(member.boot_id));
@@ -232,19 +232,19 @@ int flowie_cluster_peer_authority_replace(flowie_cluster_peer_authority_t *autho
     memcpy(member.certificate_sha256, pin->certificate_sha256,
            sizeof(member.certificate_sha256));
     rc = flowie_stl_error(vec_push(&authority->scratch, &member));
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
     previous_id = peer->node_id;
   }
-  turbo_mutex_lock(&authority->mutex);
+  salts_mutex_lock(&authority->mutex);
   {
     vec_t old = authority->active;
     authority->active = authority->scratch;
     authority->scratch = old;
     authority->revision = revision;
   }
-  turbo_mutex_unlock(&authority->mutex);
+  salts_mutex_unlock(&authority->mutex);
   vec_clear(&authority->scratch);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_authority_snapshot(flowie_cluster_peer_authority_t *authority,
@@ -255,12 +255,12 @@ int flowie_cluster_peer_authority_snapshot(flowie_cluster_peer_authority_t *auth
   size_t index;
   if (out_count) *out_count = 0u;
   if (out_revision) *out_revision = 0u;
-  if (!authority || !out_count || !out_revision) return TURBO_EINVAL;
-  turbo_mutex_lock(&authority->mutex);
+  if (!authority || !out_count || !out_revision) return SALTS_EINVAL;
+  salts_mutex_lock(&authority->mutex);
   count = vec_size(&authority->active);
   if (capacity < count || (count != 0u && !storage)) {
-    turbo_mutex_unlock(&authority->mutex);
-    return capacity < count ? TURBO_ENOSPC : TURBO_EINVAL;
+    salts_mutex_unlock(&authority->mutex);
+    return capacity < count ? SALTS_ENOSPC : SALTS_EINVAL;
   }
   for (index = 0u; index < count; ++index) {
     const flowie_cluster_peer_authority_member_t *member =
@@ -276,8 +276,8 @@ int flowie_cluster_peer_authority_snapshot(flowie_cluster_peer_authority_t *auth
   }
   *out_count = count;
   *out_revision = authority->revision;
-  turbo_mutex_unlock(&authority->mutex);
-  return TURBO_OK;
+  salts_mutex_unlock(&authority->mutex);
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_authority_authorize(
@@ -287,11 +287,11 @@ int flowie_cluster_peer_authority_authorize(
   flowie_cluster_peer_authority_t *authority = (flowie_cluster_peer_authority_t *)ctx;
   size_t first = 0u;
   size_t count;
-  int rc = TURBO_EPERM;
+  int rc = SALTS_EPERM;
   if (!authority || !peer_node_id.data || peer_node_id.len == 0u ||
       !peer_boot_id || !peer_certificate_sha256)
-    return TURBO_EINVAL;
-  turbo_mutex_lock(&authority->mutex);
+    return SALTS_EINVAL;
+  salts_mutex_lock(&authority->mutex);
   count = vec_size(&authority->active);
   while (count != 0u) {
     size_t step = count / 2u;
@@ -317,9 +317,9 @@ int flowie_cluster_peer_authority_authorize(
                                                peer_node_id) == 0 &&
         memcmp(member->boot_id, peer_boot_id, sizeof(member->boot_id)) == 0 &&
         strcmp(member->certificate_sha256, peer_certificate_sha256) == 0)
-      rc = TURBO_OK;
+      rc = SALTS_OK;
   }
-  turbo_mutex_unlock(&authority->mutex);
+  salts_mutex_unlock(&authority->mutex);
   return rc;
 }
 

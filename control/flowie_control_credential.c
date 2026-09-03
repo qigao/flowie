@@ -3,7 +3,7 @@
 #include "base64_utils.h"
 #include "platform.h"
 #include "monocypher.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,15 +48,15 @@ static int flowie_control_credential_derive(const void *secret, size_t secret_si
   crypto_argon2_inputs inputs;
   void *work_area = NULL;
   size_t work_size;
-  int rc = TURBO_OK;
+  int rc = SALTS_OK;
   if ((!secret && secret_size != 0u) || !salt || !out ||
       !flowie_control_credential_params_valid(params) || secret_size > UINT32_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if ((size_t)params->memory_blocks > SIZE_MAX / FLOWIE_CONTROL_ARGON2_BLOCK_SIZE)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   work_size = (size_t)params->memory_blocks * FLOWIE_CONTROL_ARGON2_BLOCK_SIZE;
   work_area = malloc(work_size);
-  if (!work_area) return TURBO_ENOMEM;
+  if (!work_area) return SALTS_ENOMEM;
   config.algorithm = params->algorithm;
   config.nb_blocks = params->memory_blocks;
   config.nb_passes = params->passes;
@@ -82,17 +82,17 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
   size_t index;
   int rc;
   if (!token || !salt || !verifier || !flowie_control_credential_params_valid(params))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(token, 0, FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY);
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = turbo_secure_random(entropy, sizeof(entropy));
-  if (rc == TURBO_OK &&
+  rc = salts_secure_random(entropy, sizeof(entropy));
+  if (rc == SALTS_OK &&
       (tn_base64_encode_buf(entropy, sizeof(entropy), encoded, sizeof(encoded)) != 0 ||
        strlen(encoded) != FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE + 1u ||
        encoded[FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE] != '='))
-    rc = TURBO_EIO;
-  if (rc == TURBO_OK) {
+    rc = SALTS_EIO;
+  if (rc == SALTS_OK) {
     memcpy(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX,
            FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX_SIZE);
     for (index = 0u; index < FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE; ++index) {
@@ -102,11 +102,11 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
     }
     token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE] = '\0';
   }
-  if (rc == TURBO_OK) rc = turbo_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK) rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  if (rc == SALTS_OK)
     rc = flowie_control_credential_derive(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, salt, params,
                                           verifier);
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     crypto_wipe(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY);
     crypto_wipe(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
     crypto_wipe(verifier, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
@@ -123,13 +123,13 @@ int flowie_control_credential_hash(const void *secret, size_t secret_size,
   int rc;
   if (!secret || secret_size == 0u || secret_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX || !salt ||
       !verifier || !flowie_control_credential_params_valid(params))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = turbo_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
-  if (rc == TURBO_OK)
+  rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  if (rc == SALTS_OK)
     rc = flowie_control_credential_derive(secret, secret_size, salt, params, verifier);
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     crypto_wipe(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
     crypto_wipe(verifier, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
   }
@@ -142,9 +142,9 @@ int flowie_control_credential_verify(
     const flowie_control_credential_kdf_params_t *params) {
   uint8_t actual[FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE] = {0};
   int rc;
-  if ((!secret && secret_size != 0u) || !salt || !verifier) return TURBO_EINVAL;
+  if ((!secret && secret_size != 0u) || !salt || !verifier) return SALTS_EINVAL;
   rc = flowie_control_credential_derive(secret, secret_size, salt, params, actual);
-  if (rc == TURBO_OK && crypto_verify32(actual, verifier) != 0) rc = TURBO_EPERM;
+  if (rc == SALTS_OK && crypto_verify32(actual, verifier) != 0) rc = SALTS_EPERM;
   crypto_wipe(actual, sizeof(actual));
   return rc;
 }

@@ -2,7 +2,7 @@
 #define FLOWIE_CONTROL_AUTH_IRIS_ADAPTER_INTERNAL_H
 
 #include "flowie_control_auth_service_internal.h"
-#include "iris/router.h"
+#include "flowie_control_http_server_internal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,11 +27,12 @@ int flowie_control_auth_iris_adapter_create(const flowie_control_auth_iris_adapt
 void flowie_control_auth_iris_adapter_destroy(flowie_control_auth_iris_adapter_t *adapter);
 
 /**
- * Copy the optional canonical SHA-256 identity from Iris/CoroNet's verified TLS peer.
+ * Copy the optional canonical SHA-256 identity from CHTTP/CNet's verified TLS peer.
  * A TLS request without a client certificate succeeds with an empty output.
  */
 int flowie_control_auth_iris_adapter_optional_verified_peer_certificate(
-    const Req *http_request, char peer_certificate_sha256[CORO_TLS_PEER_CERT_SHA256_CAPACITY]);
+    const Req *http_request,
+    char peer_certificate_sha256[FLOWIE_CONTROL_HTTP_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
 /**
  * Authenticate fields after the owner lane has already extracted the verified

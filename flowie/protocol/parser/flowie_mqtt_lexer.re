@@ -1,7 +1,7 @@
 // re2c $INPUT -o $OUTPUT
 #include "flowie_mqtt_grammar_gen.h"
 #include "flowie_mqtt_internal.h"
-#include <turbo_vstr.h>
+#include <salts_vstr.h>
 
 #include <ctype.h>
 #include <string.h>

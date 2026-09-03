@@ -2,8 +2,8 @@
 #include "flowie_rule_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_str.h"
+#include "salts_error.h"
+#include "salts_str.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -38,16 +38,16 @@ static int flowie_ingress_capture_stage(turbo_flow_msg_t *msg, void *ctx) {
     capture->projection_bound[index] =
         turbo_flow_msg_content_state(msg) == TURBO_FLOW_CONTENT_SCHEMA_BOUND;
     capture->packets[index] = tstr_new_len(msg->payload.data, msg->payload.len);
-    if (!capture->packets[index]) return TURBO_ENOMEM;
+    if (!capture->packets[index]) return SALTS_ENOMEM;
     if (msg->type == FLOWIE_MQTT_PACKET_PUBLISH) {
       const turbo_flow_expr_value_t *values = NULL;
       size_t value_count = 0u;
       int rc = flowie_mqtt_rule_facts_provider(msg, flowie_mqtt_rule_schema(), &values,
                                                &value_count, NULL);
-      if (rc != TURBO_OK) return rc;
-      if (value_count == 0u || values[0].type != TURBO_FLOW_EXPR_TYPE_STRING) return TURBO_EPROTO;
+      if (rc != SALTS_OK) return rc;
+      if (value_count == 0u || values[0].type != TURBO_FLOW_EXPR_TYPE_STRING) return SALTS_EPROTO;
       capture->topics[index] = tstr_from_v(values[0].as.string);
-      if (!capture->topics[index]) return TURBO_ENOMEM;
+      if (!capture->topics[index]) return SALTS_ENOMEM;
     }
   }
   return capture->result;
@@ -70,7 +70,7 @@ static int flowie_ingress_completion(void *ctx, flowie_ingress_t *ingress,
                                      const turbo_flow_publish_result_t *result) {
   flowie_ingress_completion_probe_t *probe = (flowie_ingress_completion_probe_t *)ctx;
   (void)ingress;
-  if (!probe || !message || !result) return TURBO_EINVAL;
+  if (!probe || !message || !result) return SALTS_EINVAL;
   probe->calls += 1u;
   probe->captured_before_callback = probe->capture->calls;
   probe->status = result->status;
@@ -89,9 +89,9 @@ static turbo_flow_t *flowie_ingress_flow(const char *stage_declaration,
                     stage_declaration);
   if (length < 0 || (size_t)length >= sizeof(graph) ||
       turbo_flow_register_stage_ex(flow, "capture", flowie_ingress_capture_stage, capture, NULL) !=
-          TURBO_OK ||
-      turbo_flow_parse_string(flow, graph, (size_t)length) != TURBO_OK ||
-      turbo_flow_compile(flow) != TURBO_OK || turbo_flow_start(flow) != TURBO_OK) {
+          SALTS_OK ||
+      turbo_flow_parse_string(flow, graph, (size_t)length) != SALTS_OK ||
+      turbo_flow_compile(flow) != SALTS_OK || turbo_flow_start(flow) != SALTS_OK) {
     turbo_flow_destroy(flow);
     return NULL;
   }
@@ -124,9 +124,9 @@ spec("flowie MQTT connection ingress") {
     message.payload = vstr_from_buf((const char *)mqtt5_publish, sizeof(mqtt5_publish));
     check_equal(flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, mqtt5_publish[0] & 0x0fu,
                                                   &message.flags),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_mqtt_rule_facts_provider(&message, schema, &values, &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(value_count, 15u);
     check_equal(values[0].type, TURBO_FLOW_EXPR_TYPE_STRING);
     check_equal(values[0].as.string.data, "t", 1u);
@@ -145,9 +145,9 @@ spec("flowie MQTT connection ingress") {
     message.payload = vstr_from_buf((const char *)mqtt311_publish, sizeof(mqtt311_publish));
     check_equal(flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_3_1_1,
                                                   mqtt311_publish[0] & 0x0fu, &message.flags),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_mqtt_rule_facts_provider(&message, schema, &values, &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(values[0].as.string.data, "v", 1u);
     check_equal(values[1].as.string.data, "z", 1u);
     check_equal(values[2].as.i64, 1);
@@ -165,17 +165,17 @@ spec("flowie MQTT connection ingress") {
     value_count = 0u;
     check_equal(
         flowie_mqtt_rule_facts_provider(&message, &missing_schema, &values, &value_count, NULL),
-        TURBO_ENOENT);
+        SALTS_ENOENT);
     check_null(values);
     check_equal(value_count, 0u);
     message.flags = 0u;
     check_equal(flowie_mqtt_rule_facts_provider(&message, schema, &values, &value_count, NULL),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_equal(
         flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_UNSPECIFIED, 0u, &message.flags),
-        TURBO_EINVAL);
+        SALTS_EINVAL);
     check_equal(flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, 0x10u, &message.flags),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     turbo_flow_msg_cleanup(&message);
   }
 
@@ -264,11 +264,11 @@ spec("flowie MQTT connection ingress") {
     message.payload = vstr_from_buf((const char *)wire, wire_size);
     check_equal(
         flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, wire[0] & 0x0fu, &message.flags),
-        TURBO_OK);
+        SALTS_OK);
     message.flags |= FLOWIE_MQTT_MESSAGE_BROKER_WILL;
     check_equal(flowie_mqtt_rule_facts_provider(&message, flowie_mqtt_rule_schema(), &values,
                                                  &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(value_count, 15u);
     check_equal(values[8].type, TURBO_FLOW_EXPR_TYPE_I64);
     check_equal(values[8].as.i64, 1);
@@ -307,14 +307,14 @@ spec("flowie MQTT connection ingress") {
     message.type = FLOWIE_MQTT_PACKET_PUBLISH;
     check_equal(flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, source_packet[0] & 0x0fu,
                                                   &message.flags),
-                 TURBO_OK);
+                 SALTS_OK);
     message.buffer = mem_get_buffer(mem_global(), sizeof(source_packet));
     check_not_null(message.buffer);
     memcpy(mem_buffer_data(message.buffer), source_packet, sizeof(source_packet));
     mem_set_used(message.buffer, sizeof(source_packet));
     message.payload = vstr_from_buf(mem_buffer_data(message.buffer), sizeof(source_packet));
 
-    check_equal(flowie_mqtt_rule_bind_projection(&message, &packet), TURBO_OK);
+    check_equal(flowie_mqtt_rule_bind_projection(&message, &packet), SALTS_OK);
     source_projection = turbo_flow_msg_projection(&message, &projection_schema);
     check_not_null(source_projection);
     check_not_null(projection_schema);
@@ -322,11 +322,11 @@ spec("flowie MQTT connection ingress") {
     memset(source_packet, 0, sizeof(source_packet));
     check_equal(flowie_mqtt_rule_facts_provider(&message, flowie_mqtt_rule_schema(), &values,
                                                  &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(values[0].as.string.data, "t", 1u);
     check_equal(values[1].as.string.data, "xy", 2u);
 
-    check_equal(turbo_flow_msg_clone(&clone, &message), TURBO_OK);
+    check_equal(turbo_flow_msg_clone(&clone, &message), SALTS_OK);
     clone_projection = turbo_flow_msg_projection(&clone, NULL);
     check_not_null(clone_projection);
     check_true(clone_projection != source_projection);
@@ -335,18 +335,18 @@ spec("flowie MQTT connection ingress") {
     value_count = 0u;
     check_equal(flowie_mqtt_rule_facts_provider(&clone, flowie_mqtt_rule_schema(), &values,
                                                  &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(values[0].as.string.data, "t", 1u);
     check_equal(values[1].as.string.data, "xy", 2u);
 
     clone.payload = vstr_from_buf((const char *)replacement_packet, sizeof(replacement_packet));
     check_equal(flowie_mqtt_rule_facts_provider(&clone, flowie_mqtt_rule_schema(), &values,
                                                  &value_count, NULL),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     turbo_flow_msg_clear_projection(&clone);
     check_equal(flowie_mqtt_rule_facts_provider(&clone, flowie_mqtt_rule_schema(), &values,
                                                  &value_count, NULL),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(values[0].as.string.data, "r", 1u);
     check_equal(values[1].as.string.data, "z", 1u);
     turbo_flow_msg_cleanup(&clone);
@@ -365,17 +365,17 @@ spec("flowie MQTT connection ingress") {
 
     check_not_null(flow);
     check_not_null(ingress);
-    check_equal(flowie_ingress_feed(ingress, connect, sizeof(connect), &published), TURBO_OK);
+    check_equal(flowie_ingress_feed(ingress, connect, sizeof(connect), &published), SALTS_OK);
     check_equal(published, 1u);
     check_equal(flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, 0u, &expected_flags),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(capture.flags[0], expected_flags);
-    check_equal(flowie_ingress_feed(ingress, packet, 3u, &published), TURBO_OK);
+    check_equal(flowie_ingress_feed(ingress, packet, 3u, &published), SALTS_OK);
     check_equal(published, 0u);
     check_equal(capture.calls, 1u);
     check_equal(flowie_ingress_buffered_bytes(ingress), 3u);
     check_equal(flowie_ingress_feed(ingress, packet + 3u, sizeof(packet) - 3u, &published),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(published, 1u);
     check_equal(capture.calls, 2u);
     check_equal(capture.types[1], FLOWIE_MQTT_PACKET_PUBLISH);
@@ -390,7 +390,7 @@ spec("flowie MQTT connection ingress") {
 
     flowie_ingress_destroy(ingress);
     check_equal(capture.packets[1], packet, sizeof(packet));
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }
@@ -406,7 +406,7 @@ spec("flowie MQTT connection ingress") {
 
     check_not_null(flow);
     check_not_null(ingress);
-    check_equal(flowie_ingress_feed(ingress, packets, sizeof(packets), &published), TURBO_OK);
+    check_equal(flowie_ingress_feed(ingress, packets, sizeof(packets), &published), SALTS_OK);
     check_equal(published, 3u);
     check_equal(capture.calls, 3u);
     check_equal(capture.types[0], FLOWIE_MQTT_PACKET_CONNECT);
@@ -416,7 +416,7 @@ spec("flowie MQTT connection ingress") {
     check_equal(capture.packets[2], packets + sizeof(packets) - 2u, 2u);
 
     flowie_ingress_destroy(ingress);
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }
@@ -433,18 +433,18 @@ spec("flowie MQTT connection ingress") {
 
     check_not_null(flow);
     check_not_null(ingress);
-    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), TURBO_OK);
+    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), SALTS_OK);
     check_equal(published, 1u);
     check_equal(capture.calls, 1u);
     check_equal(capture.buffer_backed[0], 1);
     check_equal(capture.owned_payload[0], 0);
-    check_equal(turbo_flow_pool_snapshot_at(flow, 0u, &pool), TURBO_OK);
+    check_equal(turbo_flow_pool_snapshot_at(flow, 0u, &pool), SALTS_OK);
     check_equal(pool.submitted, 1u);
     check_equal(pool.completed, 1u);
     check_equal(capture.packets[0], packet, sizeof(packet));
 
     flowie_ingress_destroy(ingress);
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }
@@ -454,7 +454,7 @@ spec("flowie MQTT connection ingress") {
                                      0x02, 0x00, 0x3c, 0x07, 0x15, 0x00, 0x04, 'n', 'o',
                                      'n',  'e',  0x00, 0x03, 'c',  'l',  'i'};
     flowie_ingress_capture_t capture = {0};
-    flowie_ingress_completion_probe_t probe = {&capture, 0u, 0u, TURBO_EINVAL};
+    flowie_ingress_completion_probe_t probe = {&capture, 0u, 0u, SALTS_EINVAL};
     flowie_ingress_config_t config = FLOWIE_INGRESS_CONFIG_INIT;
     turbo_flow_t *flow = flowie_ingress_flow(" worker 1 capacity 8", &capture);
     flowie_ingress_t *ingress;
@@ -468,14 +468,14 @@ spec("flowie MQTT connection ingress") {
     config.prepare_ctx = &probe;
     ingress = flowie_ingress_create(&config);
     check_not_null(ingress);
-    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), TURBO_OK);
+    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), SALTS_OK);
     check_equal(published, 1u);
     check_equal(probe.calls, 1u);
     check_equal(probe.captured_before_callback, 1u);
-    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.status, SALTS_OK);
 
     flowie_ingress_destroy(ingress);
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }
@@ -485,14 +485,14 @@ spec("flowie MQTT connection ingress") {
                                      0x02, 0x00, 0x3c, 0x07, 0x15, 0x00, 0x04, 'n', 'o',
                                      'n',  'e',  0x00, 0x03, 'c',  'l',  'i'};
     flowie_ingress_capture_t capture = {0};
-    flowie_ingress_completion_probe_t probe = {&capture, 0u, 0u, TURBO_OK};
+    flowie_ingress_completion_probe_t probe = {&capture, 0u, 0u, SALTS_OK};
     flowie_ingress_config_t config = FLOWIE_INGRESS_CONFIG_INIT;
     turbo_flow_t *flow = flowie_ingress_flow(" worker 1 capacity 8", &capture);
     flowie_ingress_t *ingress;
     size_t published = 0u;
 
     check_not_null(flow);
-    capture.result = TURBO_EIO;
+    capture.result = SALTS_EIO;
     config.dispatch = flowie_ingress_graph_dispatch;
     config.dispatch_ctx = flow;
     config.max_packet_size = sizeof(packet);
@@ -500,14 +500,14 @@ spec("flowie MQTT connection ingress") {
     config.prepare_ctx = &probe;
     ingress = flowie_ingress_create(&config);
     check_not_null(ingress);
-    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), TURBO_EIO);
+    check_equal(flowie_ingress_feed(ingress, packet, sizeof(packet), &published), SALTS_EIO);
     check_equal(published, 0u);
     check_equal(probe.calls, 1u);
     check_equal(probe.captured_before_callback, 1u);
-    check_equal(probe.status, TURBO_EIO);
+    check_equal(probe.status, SALTS_EIO);
 
     flowie_ingress_destroy(ingress);
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }
@@ -523,23 +523,23 @@ spec("flowie MQTT connection ingress") {
     check_not_null(flow);
     check_not_null(ingress);
     check_equal(flowie_ingress_feed(ingress, oversized, sizeof(oversized), &published),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     check_equal(published, 0u);
     check_equal(capture.calls, 0u);
     flowie_ingress_destroy(ingress);
 
     ingress = flowie_ingress_for(flow, 8u);
     check_not_null(ingress);
-    capture.result = TURBO_EIO;
-    check_equal(flowie_ingress_feed(ingress, pings, sizeof(pings), &published), TURBO_EPROTO);
+    capture.result = SALTS_EIO;
+    check_equal(flowie_ingress_feed(ingress, pings, sizeof(pings), &published), SALTS_EPROTO);
     check_equal(published, 0u);
     check_equal(capture.calls, 0u);
-    capture.result = TURBO_OK;
-    check_equal(flowie_ingress_feed(ingress, pings, 2u, &published), TURBO_EPROTO);
+    capture.result = SALTS_OK;
+    check_equal(flowie_ingress_feed(ingress, pings, 2u, &published), SALTS_EPROTO);
     check_equal(capture.calls, 0u);
 
     flowie_ingress_destroy(ingress);
-    check_equal(turbo_flow_stop(flow), TURBO_OK);
+    check_equal(turbo_flow_stop(flow), SALTS_OK);
     turbo_flow_destroy(flow);
     flowie_ingress_capture_cleanup(&capture);
   }

@@ -1,7 +1,7 @@
 #include "flowie_control_service_credential_internal.h"
 
 #include "monocypher.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -45,14 +45,14 @@ int flowie_control_service_credential_resolver_create(
   if (!config || config->size < sizeof(*config) ||
       !flowie_control_service_credential_text_valid(config->listener_id,
                                                     FLOWIE_SECURITY_ID_MAX) ||
-      flowie_control_repository_validate(config->repository) != TURBO_OK || !out)
-    return TURBO_EINVAL;
+      flowie_control_repository_validate(config->repository) != SALTS_OK || !out)
+    return SALTS_EINVAL;
   resolver = (flowie_control_service_credential_resolver_t *)calloc(1u, sizeof(*resolver));
-  if (!resolver) return TURBO_ENOMEM;
+  if (!resolver) return SALTS_ENOMEM;
   resolver->repository = *config->repository;
   memcpy(resolver->listener_id, config->listener_id, strlen(config->listener_id) + 1u);
   *out = resolver;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void flowie_control_service_credential_resolver_destroy(
@@ -80,15 +80,15 @@ int flowie_control_service_credential_resolve(
       memchr(token, '\0', token_size) || memchr(token, '\r', token_size) ||
       memchr(token, '\n', token_size) || required_permission == 0u || !caller_out ||
       caller_out->size < sizeof(*caller_out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = resolver->repository.auth->credential_verify(
       resolver->repository.ctx, service_domain, service_id, token, token_size, &verified);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = resolver->repository.auth->principal_snapshot(
       resolver->repository.ctx, service_domain, service_id, &verified, &snapshot);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   permissions = flowie_control_service_permissions(&snapshot);
-  if ((permissions & required_permission) != required_permission) return TURBO_EPERM;
+  if ((permissions & required_permission) != required_permission) return SALTS_EPERM;
   memcpy(caller_out->resolved_listener_id, resolver->listener_id,
          strlen(resolver->listener_id) + 1u);
   memcpy(caller_out->resolved_service_id, service_id, strlen(service_id) + 1u);
@@ -98,5 +98,5 @@ int flowie_control_service_credential_resolve(
   caller_out->domain_id = caller_out->resolved_domain_id;
   caller_out->permissions = permissions;
   caller_out->authenticated = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }

@@ -32,7 +32,7 @@ FLOWIE_C_API int flowie_bitmap_index_contains(const flowie_bitmap_index_t *index
                                                 uint64_t member, int *out);
 FLOWIE_C_API int flowie_bitmap_index_count(const flowie_bitmap_index_t *index, size_t *out);
 
-/** Select the zero-based member rank in ascending order; an invalid rank returns TURBO_ERANGE. */
+/** Select the zero-based member rank in ascending order; an invalid rank returns SALTS_ERANGE. */
 FLOWIE_C_API int flowie_bitmap_index_select(const flowie_bitmap_index_t *index, size_t rank,
                                               uint64_t *out);
 

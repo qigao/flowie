@@ -4,7 +4,7 @@
 #include "flowie_control_identity_internal.h"
 #include "flowie_control_security_limits_internal.h"
 #include "flowie_security.h"
-#include "turbo_fs.h"
+#include "salts_fs.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -84,9 +84,9 @@ typedef struct flowie_control_config_error_s {
 #define FLOWIE_CONTROL_CONFIG_ERROR_INIT {sizeof(flowie_control_config_error_t), 0, {0}, {0}}
 
 typedef struct flowie_control_config_tls_s {
-  char cert_file[TURBO_FS_MAX_PATH];
-  char key_file[TURBO_FS_MAX_PATH];
-  char client_ca_file[TURBO_FS_MAX_PATH];
+  char cert_file[SALTS_FS_MAX_PATH];
+  char key_file[SALTS_FS_MAX_PATH];
+  char client_ca_file[SALTS_FS_MAX_PATH];
   char key_password_ref[FLOWIE_CONTROL_CONFIG_SECRET_REF_MAX + 1u];
   int client_auth_required;
 } flowie_control_config_tls_t;
@@ -124,9 +124,9 @@ typedef struct flowie_control_config_management_s {
 } flowie_control_config_management_t;
 
 typedef struct flowie_control_config_external_https_tls_s {
-  char ca_file[TURBO_FS_MAX_PATH];
-  char client_cert_file[TURBO_FS_MAX_PATH];
-  char client_key_file[TURBO_FS_MAX_PATH];
+  char ca_file[SALTS_FS_MAX_PATH];
+  char client_cert_file[SALTS_FS_MAX_PATH];
+  char client_key_file[SALTS_FS_MAX_PATH];
   char client_key_password_ref[FLOWIE_CONTROL_CONFIG_SECRET_REF_MAX + 1u];
 } flowie_control_config_external_https_tls_t;
 
@@ -156,7 +156,7 @@ typedef struct flowie_control_config_jwt_jwks_s {
   char audience[FLOWIE_SECURITY_ID_MAX + 1u];
   char subject_type[FLOWIE_SECURITY_TYPE_MAX + 1u];
   char algorithm[FLOWIE_CONTROL_CONFIG_JWT_JWKS_ALGORITHM_MAX + 1u];
-  char ca_file[TURBO_FS_MAX_PATH];
+  char ca_file[SALTS_FS_MAX_PATH];
   uint32_t timeout_ms;
   size_t max_response_size;
   uint32_t max_keys;

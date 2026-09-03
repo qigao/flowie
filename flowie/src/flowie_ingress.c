@@ -1,8 +1,8 @@
 #include "flowie_ingress_internal.h"
 
-#include "turbo_bytes.h"
-#include "turbo_error.h"
-#include "turbo_str.h"
+#include "salts_bytes.h"
+#include "salts_error.h"
+#include "salts_str.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +11,7 @@ struct flowie_ingress_s {
   flowie_ingress_dispatch_fn dispatch;
   void *dispatch_ctx;
   flowie_mqtt_parse_options_t parse_options;
-  turbo_bytes_t framing;
+  salts_bytes_t framing;
   flowie_protocol_route_t route;
   flowie_ingress_prepare_fn prepare;
   flowie_ingress_publish_complete_fn publish_complete;
@@ -40,15 +40,15 @@ static uint8_t flowie_ingress_parse_disconnect_reason(int parse_rc) {
 static int flowie_ingress_parse_error(int parse_rc) {
   switch (parse_rc) {
   case FLOWIE_MQTT_PARSE_NO_MEMORY:
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   case FLOWIE_MQTT_PARSE_TOO_LARGE:
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   case FLOWIE_MQTT_PARSE_INVALID_ARGUMENT:
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   case FLOWIE_MQTT_PARSE_MALFORMED:
   case FLOWIE_MQTT_PARSE_PROTOCOL_ERROR:
   default:
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
 }
 
@@ -61,40 +61,40 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
   msg->type = (uint32_t)packet->type;
   rc = flowie_mqtt_message_flags_encode(ingress->parse_options.version, packet->flags,
                                         &msg->flags);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   msg->buffer = mem_get_buffer(mem_global(), packet_size);
-  if (!msg->buffer) return TURBO_ENOMEM;
+  if (!msg->buffer) return SALTS_ENOMEM;
   if (packet_size > 0u) memcpy(mem_buffer_data(msg->buffer), bytes, packet_size);
   mem_set_used(msg->buffer, packet_size);
   msg->payload = vstr_from_buf(mem_buffer_data(msg->buffer), packet_size);
   if (ingress->has_route) {
     rc = flowie_message_set_protocol_route(msg, &ingress->route);
-    if (rc != TURBO_OK) {
+    if (rc != SALTS_OK) {
       flowie_message_cleanup(msg);
       return rc;
     }
   }
   if (ingress->has_protocol_settlement) {
     rc = flowie_message_set_protocol_settlement(msg, &ingress->protocol_settlement);
-    if (rc != TURBO_OK) {
+    if (rc != SALTS_OK) {
       flowie_message_cleanup(msg);
       return rc;
     }
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
   int rc;
   for (;;) {
-    turbo_bytes_view_t bytes;
+    salts_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     flowie_message_t msg;
     size_t consumed = 0u;
     int stop_after_publish = 0;
-    rc = turbo_bytes_view(&ingress->framing, &bytes);
-    if (rc != TURBO_OK) return rc;
+    rc = salts_bytes_view(&ingress->framing, &bytes);
+    if (rc != SALTS_OK) return rc;
     if (bytes.size == 0u) break;
     rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &ingress->parse_options, &packet,
                                   &consumed, &error);
@@ -105,19 +105,19 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
     }
     if (consumed == 0u || consumed > bytes.size) {
       ingress->disconnect_reason = UINT8_C(0x81);
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     }
     if (ingress->parse_options.version == FLOWIE_MQTT_VERSION_UNSPECIFIED) {
       flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
       if (packet.type != FLOWIE_MQTT_PACKET_CONNECT ||
           flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK) {
         ingress->disconnect_reason = UINT8_C(0x82);
-        return TURBO_EPROTO;
+        return SALTS_EPROTO;
       }
       ingress->parse_options.version = connect.version;
     } else if (packet.type == FLOWIE_MQTT_PACKET_CONNECT) {
       ingress->disconnect_reason = UINT8_C(0x82);
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     }
 
     if (ingress->prepare) {
@@ -125,18 +125,18 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       int stop_pump = 0;
       ingress->has_protocol_settlement = 0;
       rc = ingress->prepare(ingress->prepare_ctx, ingress, &packet, &publish_packet, &stop_pump);
-      if (rc != TURBO_OK) {
-        if (rc == TURBO_EPROTO)
+      if (rc != SALTS_OK) {
+        if (rc == SALTS_EPROTO)
           ingress->disconnect_reason = UINT8_C(0x82);
-        else if (rc == TURBO_EMSGSIZE)
+        else if (rc == SALTS_EMSGSIZE)
           ingress->disconnect_reason = UINT8_C(0x95);
         tstr_freep(&ingress->publish_packet_override);
         return rc;
       }
       if (!publish_packet) {
         tstr_freep(&ingress->publish_packet_override);
-        rc = turbo_bytes_consume(&ingress->framing, consumed);
-        if (rc != TURBO_OK) return rc;
+        rc = salts_bytes_consume(&ingress->framing, consumed);
+        if (rc != SALTS_OK) return rc;
         if (stop_pump) break;
         continue;
       }
@@ -152,28 +152,28 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
         &msg);
     tstr_freep(&ingress->publish_packet_override);
     ingress->has_protocol_settlement = 0;
-    if (rc != TURBO_OK) return rc;
-    rc = turbo_bytes_consume(&ingress->framing, consumed);
+    if (rc != SALTS_OK) return rc;
+    rc = salts_bytes_consume(&ingress->framing, consumed);
     {
       flowie_publish_result_t result = FLOWIE_PUBLISH_RESULT_INIT;
-      if (rc == TURBO_OK)
+      if (rc == SALTS_OK)
         rc = ingress->dispatch(ingress->dispatch_ctx, &msg, &result);
       else result.status = rc;
       if (ingress->publish_complete) {
         int completion_rc = ingress->publish_complete(ingress->prepare_ctx, ingress, &msg, &result);
-        if (rc == TURBO_OK) rc = completion_rc;
+        if (rc == SALTS_OK) rc = completion_rc;
       }
     }
     flowie_message_cleanup(&msg);
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
     ++*published;
     if (stop_after_publish) break;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_ingress_terminal(flowie_ingress_t *ingress, int rc) {
-  if (rc != TURBO_OK && rc != FLOWIE_MQTT_PARSE_NEED_MORE) ingress->terminal_error = rc;
+  if (rc != SALTS_OK && rc != FLOWIE_MQTT_PARSE_NEED_MORE) ingress->terminal_error = rc;
   return rc;
 }
 
@@ -203,13 +203,13 @@ flowie_ingress_t *flowie_ingress_create(const flowie_ingress_config_t *config) {
     flowie_message_init(&route_probe);
     rc = flowie_message_set_protocol_route(&route_probe, &config->route);
     flowie_message_cleanup(&route_probe);
-    if (rc != TURBO_OK) goto fail;
+    if (rc != SALTS_OK) goto fail;
     ingress->route = config->route;
     ingress->route.size = sizeof(ingress->route);
     ingress->has_route = 1;
   }
-  rc = turbo_bytes_init(&ingress->framing, max_packet_size);
-  if (rc != TURBO_OK) goto fail;
+  rc = salts_bytes_init(&ingress->framing, max_packet_size);
+  if (rc != SALTS_OK) goto fail;
   return ingress;
 
 fail:
@@ -219,7 +219,7 @@ fail:
 
 void flowie_ingress_destroy(flowie_ingress_t *ingress) {
   if (!ingress) return;
-  turbo_bytes_destroy(&ingress->framing);
+  salts_bytes_destroy(&ingress->framing);
   tstr_freep(&ingress->publish_packet_override);
   free(ingress);
 }
@@ -229,40 +229,40 @@ int flowie_ingress_feed(flowie_ingress_t *ingress, const void *data, size_t size
   const uint8_t *cursor = (const uint8_t *)data;
   size_t remaining = size;
   int rc;
-  if (!ingress || (!data && size != 0u) || !published) return TURBO_EINVAL;
+  if (!ingress || (!data && size != 0u) || !published) return SALTS_EINVAL;
   *published = 0u;
-  if (ingress->terminal_error != TURBO_OK) return ingress->terminal_error;
+  if (ingress->terminal_error != SALTS_OK) return ingress->terminal_error;
   while (remaining != 0u) {
-    size_t writable = turbo_bytes_available(&ingress->framing);
+    size_t writable = salts_bytes_available(&ingress->framing);
     size_t chunk;
     if (writable == 0u) {
       rc = flowie_ingress_pump(ingress, published);
-      if (rc != TURBO_OK) return flowie_ingress_terminal(ingress, rc);
-      writable = turbo_bytes_available(&ingress->framing);
-      if (writable == 0u) return flowie_ingress_terminal(ingress, TURBO_EMSGSIZE);
+      if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
+      writable = salts_bytes_available(&ingress->framing);
+      if (writable == 0u) return flowie_ingress_terminal(ingress, SALTS_EMSGSIZE);
     }
     chunk = remaining < writable ? remaining : writable;
-    rc = turbo_bytes_append(&ingress->framing, cursor, chunk);
-    if (rc != TURBO_OK) return flowie_ingress_terminal(ingress, rc);
+    rc = salts_bytes_append(&ingress->framing, cursor, chunk);
+    if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
     cursor += chunk;
     remaining -= chunk;
     rc = flowie_ingress_pump(ingress, published);
-    if (rc != TURBO_OK) return flowie_ingress_terminal(ingress, rc);
+    if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_ingress_resume(flowie_ingress_t *ingress, size_t *published) {
   int rc;
-  if (!ingress || !published) return TURBO_EINVAL;
+  if (!ingress || !published) return SALTS_EINVAL;
   *published = 0u;
-  if (ingress->terminal_error != TURBO_OK) return ingress->terminal_error;
+  if (ingress->terminal_error != SALTS_OK) return ingress->terminal_error;
   rc = flowie_ingress_pump(ingress, published);
-  return rc == TURBO_OK ? TURBO_OK : flowie_ingress_terminal(ingress, rc);
+  return rc == SALTS_OK ? SALTS_OK : flowie_ingress_terminal(ingress, rc);
 }
 
 size_t flowie_ingress_buffered_bytes(const flowie_ingress_t *ingress) {
-  return ingress ? turbo_bytes_size(&ingress->framing) : 0u;
+  return ingress ? salts_bytes_size(&ingress->framing) : 0u;
 }
 
 flowie_mqtt_version_t flowie_ingress_version(const flowie_ingress_t *ingress) {
@@ -276,37 +276,37 @@ uint8_t flowie_ingress_disconnect_reason(const flowie_ingress_t *ingress) {
 int flowie_ingress_set_route(flowie_ingress_t *ingress, const flowie_protocol_route_t *route) {
   flowie_message_t probe;
   int rc;
-  if (!ingress || !route) return TURBO_EINVAL;
+  if (!ingress || !route) return SALTS_EINVAL;
   flowie_message_init(&probe);
   rc = flowie_message_set_protocol_route(&probe, route);
   flowie_message_cleanup(&probe);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   ingress->route = *route;
   ingress->route.size = sizeof(ingress->route);
   ingress->has_route = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_ingress_set_protocol_settlement(
     flowie_ingress_t *ingress, const flowie_protocol_settlement_envelope_t *settlement) {
   if (!ingress || !settlement || settlement->size < sizeof(*settlement) ||
       settlement->contract_version != FLOWIE_PROTOCOL_CONTRACT_VERSION ||
-      flowie_protocol_message_validate(&settlement->message) != TURBO_OK ||
+      flowie_protocol_message_validate(&settlement->message) != SALTS_OK ||
       settlement->settled_point != 0)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   ingress->protocol_settlement = *settlement;
   ingress->protocol_settlement.size = sizeof(ingress->protocol_settlement);
   ingress->has_protocol_settlement = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_ingress_set_publish_packet(flowie_ingress_t *ingress, const void *packet,
                                       size_t packet_size) {
   tstr replacement;
   if (!ingress || !packet || packet_size == 0u || ingress->publish_packet_override)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   replacement = tstr_new_len(packet, packet_size);
-  if (!replacement) return TURBO_ENOMEM;
+  if (!replacement) return SALTS_ENOMEM;
   ingress->publish_packet_override = replacement;
-  return TURBO_OK;
+  return SALTS_OK;
 }

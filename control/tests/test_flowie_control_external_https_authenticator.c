@@ -1,12 +1,11 @@
 #include "flowie_control_external_https_authenticator_internal.h"
 
-#include "CoroNet/turbo_coro_context.h"
 #include "mtls_test_server.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "turbo_coro.h"
-#include "turbo_error.h"
-#include "turbo_parser.h"
+#include <json_parser.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -16,8 +15,8 @@
   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 typedef struct external_https_secret_fixture_s {
-  int acquire_calls;
-  int release_calls;
+  atomic_int acquire_calls;
+  atomic_int release_calls;
   int acquire_status;
   const uint8_t *token;
   size_t token_size;
@@ -70,19 +69,20 @@ static int external_https_secret_acquire(void *ctx, const char *reference,
   static const uint8_t default_token[] = "service-token";
   external_https_secret_fixture_t *fixture = (external_https_secret_fixture_t *)ctx;
   if (!fixture || !reference || strcmp(reference, "env://EXTERNAL_AUTH_TOKEN") != 0 || !lease)
-    return TURBO_ENOENT;
-  ++fixture->acquire_calls;
-  if (fixture->acquire_status != TURBO_OK) return fixture->acquire_status;
+    return SALTS_ENOENT;
+  (void)atomic_fetch_add_explicit(&fixture->acquire_calls, 1, memory_order_relaxed);
+  if (fixture->acquire_status != SALTS_OK) return fixture->acquire_status;
   lease->bytes = fixture->token ? fixture->token : default_token;
   lease->byte_count = fixture->token ? fixture->token_size : sizeof(default_token) - 1u;
   lease->version = fixture->token ? fixture->token_version : 1u;
   lease->provider_lease = fixture;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void external_https_secret_release(void *ctx, flowie_security_secret_lease_t *lease) {
   external_https_secret_fixture_t *fixture = (external_https_secret_fixture_t *)ctx;
-  if (fixture) ++fixture->release_calls;
+  if (fixture)
+    (void)atomic_fetch_add_explicit(&fixture->release_calls, 1, memory_order_relaxed);
   if (lease) *lease = (flowie_security_secret_lease_t)FLOWIE_SECURITY_SECRET_LEASE_INIT;
 }
 
@@ -113,9 +113,8 @@ external_https_config(external_https_secret_fixture_t *fixture) {
   return config;
 }
 
-static void external_https_verify_task(coro_t *coroutine, void *arg) {
+static void external_https_verify_task(void *arg) {
   external_https_task_t *task = (external_https_task_t *)arg;
-  (void)coroutine;
   task->status =
       task->authenticator->verify(task->authenticator->ctx, &task->request, &task->assertion);
   atomic_store_explicit(&task->done, 1, memory_order_release);
@@ -164,20 +163,23 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
   flowie_control_external_https_authenticator_t *authenticator = NULL;
   external_https_task_t task;
-  coro_context_t *context = NULL;
-  int rc = TURBO_EIO;
+  salts_thread_t worker = {0};
+  int worker_started = 0;
+  int rc = SALTS_EIO;
 
   if (!options || (!options->response && options->response_size != 0u) ||
       options->timeout_ms == 0u || options->max_in_flight == 0u || !options->creation_token ||
       options->creation_token_size == 0u || !options->request_token ||
       options->request_token_size == 0u || !result)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(result, 0, sizeof(*result));
   memset(&fixture, 0, sizeof(fixture));
+  atomic_init(&fixture.acquire_calls, 0);
+  atomic_init(&fixture.release_calls, 0);
   fixture.token = options->creation_token;
   fixture.token_size = options->creation_token_size;
   fixture.token_version = 1u;
-  result->status = TURBO_EIO;
+  result->status = SALTS_EIO;
   result->assertion =
       (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   result->stats = (flowie_control_external_https_authenticator_stats_t)
@@ -185,7 +187,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   memset(&server, 0, sizeof(server));
   memset(&task, 0, sizeof(task));
   atomic_init(&task.done, 0);
-  task.status = TURBO_EBUSY;
+  task.status = SALTS_EBUSY;
   if (tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)) != 0)
     goto done;
   if (flow_mtls_test_server_start_delayed(&server, (const uint8_t *)options->response,
@@ -200,7 +202,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   config.tls.client_cert_file = options->configure_client_identity ? cert_file : NULL;
   config.tls.client_key_file = options->configure_client_identity ? key_file : NULL;
   rc = flowie_control_external_https_authenticator_create(&config, &authenticator);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   fixture.token = options->request_token;
   fixture.token_size = options->request_token_size;
   fixture.token_version = 3u;
@@ -208,35 +210,30 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   task.request = external_https_request();
   task.assertion =
       (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  context = coro_context_create(NULL);
-  if (!context) {
-    rc = TURBO_ENOMEM;
-    goto done;
-  }
-  rc = coro_context_spawn(context, external_https_verify_task, &task);
-  if (rc != TURBO_OK) goto done;
-  while (!atomic_load_explicit(&task.done, memory_order_acquire)) {
-    rc = coro_context_run(context, TURBO_RUN_ONCE);
-    if (rc != TURBO_OK) goto done;
-  }
+  rc = salts_thread_create(&worker, external_https_verify_task, &task);
+  if (rc != SALTS_OK) goto done;
+  worker_started = 1;
+  rc = salts_thread_join(&worker);
+  worker_started = 0;
+  if (rc != SALTS_OK) goto done;
   result->status = task.status;
   result->assertion = task.assertion;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
-  if (context) coro_context_destroy(context);
+  if (worker_started) (void)salts_thread_join(&worker);
   if (authenticator &&
       flowie_control_external_https_authenticator_get_stats(authenticator, &result->stats) !=
-          TURBO_OK &&
-      rc == TURBO_OK)
-    rc = TURBO_EIO;
+          SALTS_OK &&
+      rc == SALTS_OK)
+    rc = SALTS_EIO;
   flowie_control_external_https_authenticator_destroy(authenticator);
   flow_mtls_test_server_join(&server);
   result->peer_verified = server.peer_verified;
   result->request_size = server.request_size;
   if (server.request_size != 0u) memcpy(result->request, server.request, server.request_size + 1u);
-  result->acquire_calls = fixture.acquire_calls;
-  result->release_calls = fixture.release_calls;
+  result->acquire_calls = atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed);
+  result->release_calls = atomic_load_explicit(&fixture.release_calls, memory_order_relaxed);
   tls_test_remove_file(key_file);
   tls_test_remove_file(cert_file);
   return rc;
@@ -251,7 +248,7 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(flowie_control_external_https_decode_response(
                     EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
                     "oidc-token", &assertion),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(assertion.issuer, "https://idp.example");
     check_equal(assertion.domain_id, "root-a");
     check_equal(assertion.subject, "tenant-42/device-a");
@@ -268,7 +265,7 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_equal(flowie_control_external_https_decode_response(denied, sizeof(denied) - 1u,
                                                               "oidc-token", &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(assertion.subject, "");
   }
 
@@ -290,60 +287,62 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_equal(flowie_control_external_https_decode_response(unknown, sizeof(unknown) - 1u,
                                                               "oidc-token", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
                     duplicate_field, sizeof(duplicate_field) - 1u, "oidc-token", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
                     duplicate_group, sizeof(duplicate_group) - 1u, "oidc-token", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
                     EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
                     "password", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_external_https_decode_response(
                     leading_zero, sizeof(leading_zero) - 1u, "oidc-token", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_external_https_decode_response(overflow, sizeof(overflow) - 1u,
                                                               "oidc-token", &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
   }
 
   it("encodes only the bounded versioned request fields") {
     flowie_control_external_auth_request_t request = external_https_request();
-    turbo_json_doc_t *document = NULL;
+    json_value_t *document = NULL;
     char *body = NULL;
     size_t body_size = 0u;
 
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(body);
-    check_equal(turbo_parse_json((const uint8_t *)body, body_size, &document), TURBO_OK);
+    document = json_parse(body, body_size);
     check_not_null(document);
-    check_equal(turbo_json_object_size(document), 8u);
-    check_within(turbo_json_number(turbo_json_object_get(document, "version")), 3.0, 0.001);
-    check_equal(turbo_json_string(turbo_json_object_get(document, "domain")), "root-a");
-    check_equal(turbo_json_string(turbo_json_object_get(document, "identity")), "external-device");
-    check_equal(turbo_json_string(turbo_json_object_get(document, "secret_base64")),
+    check_not_null(document);
+    check_equal(json_object_size(document), 8u);
+    check_within(json_number(json_object_get(document, "version")), 3.0, 0.001);
+    check_equal(json_string(json_object_get(document, "domain")), "root-a");
+    check_equal(json_string(json_object_get(document, "identity")), "external-device");
+    check_equal(json_string(json_object_get(document, "secret_base64")),
                 "c2lnbmVkLXRva2Vu");
-    check_equal(turbo_json_string(turbo_json_object_get(document, "protocol")), "mqtt");
-    check_equal(turbo_json_string(turbo_json_object_get(document, "remote_address")),
+    check_equal(json_string(json_object_get(document, "protocol")), "mqtt");
+    check_equal(json_string(json_object_get(document, "remote_address")),
                 "192.0.2.10:1883");
-    check_equal(turbo_json_string(turbo_json_object_get(document, "peer_certificate_sha256")),
+    check_equal(json_string(json_object_get(document, "peer_certificate_sha256")),
                 EXTERNAL_HTTPS_CLIENT_CERT);
 
-    turbo_free_json(&document);
-    turbo_json_serialize_free(body);
+    json_free(document);
+    json_serialize_free(body);
     document = NULL;
     body = NULL;
     body_size = 0u;
     request.domain_id = "";
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                TURBO_OK);
-    check_equal(turbo_parse_json((const uint8_t *)body, body_size, &document), TURBO_OK);
-    check_equal(turbo_json_string(turbo_json_object_get(document, "domain")), "");
-    turbo_free_json(&document);
-    turbo_json_serialize_free(body);
+                SALTS_OK);
+    document = json_parse(body, body_size);
+    check_not_null(document);
+    check_equal(json_string(json_object_get(document, "domain")), "");
+    json_free(document);
+    json_serialize_free(body);
   }
 
   it("rejects a non-canonical MQTT client certificate fingerprint before HTTPS") {
@@ -354,12 +353,12 @@ spec("Flowie control external HTTPS authenticator") {
     request.peer_certificate_sha256 =
         "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(body);
     check_equal(body_size, 0u);
   }
 
-  it("fails fast on insecure URLs, incomplete TLS identity, and non-coroutine use") {
+  it("fails fast on insecure URLs, incomplete TLS identity, and invalid requests") {
     external_https_secret_fixture_t fixture = {0};
     external_https_secret_fixture_t invalid_tls_fixture = {0};
     flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
@@ -371,49 +370,51 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
 
+    atomic_init(&fixture.acquire_calls, 0);
+    atomic_init(&fixture.release_calls, 0);
+    atomic_init(&invalid_tls_fixture.acquire_calls, 0);
+    atomic_init(&invalid_tls_fixture.release_calls, 0);
+
     config.url = "http://idp.example/v1/authenticate";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(authenticator);
     config = external_https_config(&invalid_tls_fixture);
     config.tls.client_cert_file = "missing-client-cert.pem";
     config.tls.client_key_file = "missing-client-key.pem";
     config.tls.client_key_password_ref = "env://EXTERNAL_AUTH_TOKEN";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_EIO);
+                SALTS_EIO);
     check_null(authenticator);
-    check_equal(invalid_tls_fixture.acquire_calls, 2u);
-    check_equal(invalid_tls_fixture.release_calls, 2u);
+    check_equal(atomic_load_explicit(&invalid_tls_fixture.acquire_calls, memory_order_relaxed), 2);
+    check_equal(atomic_load_explicit(&invalid_tls_fixture.release_calls, memory_order_relaxed), 2);
     config = external_https_config(&fixture);
     config.tls.client_cert_file = "client.pem";
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(authenticator);
     config = external_https_config(&fixture);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(authenticator);
     interface = flowie_control_external_https_authenticator_interface(authenticator);
     check_not_null(interface);
-    check_equal(flowie_control_external_authenticator_validate(interface), TURBO_OK);
+    check_equal(flowie_control_external_authenticator_validate(interface), SALTS_OK);
     request.protocol = NULL;
-    check_equal(interface->verify(interface->ctx, &request, &assertion), TURBO_EINVAL);
-    check_equal(fixture.acquire_calls, 1u);
-    request = external_https_request();
-    check_equal(interface->verify(interface->ctx, &request, &assertion), TURBO_ENOTSUP);
-    check_equal(fixture.acquire_calls, 1u);
-    check_equal(fixture.release_calls, 1u);
+    check_equal(interface->verify(interface->ctx, &request, &assertion), SALTS_EINVAL);
+    check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&fixture.release_calls, memory_order_relaxed), 1);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(stats.started_requests, 0u);
     stats.size = 0u;
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
 
     flowie_control_external_https_authenticator_destroy(authenticator);
   }
 
-  it("performs one coroutine-first mTLS request and returns the remote assertion") {
+  it("performs one CHTTP mTLS request and returns the remote assertion") {
     char response[4096];
     external_https_network_result_t result;
     external_https_network_options_t options;
@@ -423,8 +424,8 @@ spec("Flowie control external HTTPS authenticator") {
                                                  "application/json", EXTERNAL_HTTPS_RESPONSE_BODY);
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_OK);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_OK);
     check_true(result.peer_verified);
     check_equal(result.assertion.subject, "tenant-42/device-a");
     check_equal(result.assertion.external_group_count, 2u);
@@ -442,8 +443,8 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EPERM);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EPERM);
     check_true(result.peer_verified);
     check_equal(result.stats.started_requests, 1u);
     check_equal(result.stats.denied, 1u);
@@ -456,8 +457,8 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EBUSY);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EBUSY);
     check_true(result.peer_verified);
     check_equal(result.acquire_calls, 2u);
     check_equal(result.stats.remote_overload, 1u);
@@ -470,8 +471,8 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EIO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_equal(result.stats.remote_server_failures, 1u);
     check_equal(result.stats.protocol_failures, 0u);
@@ -487,8 +488,8 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EPROTO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EPROTO);
     check_true(result.peer_verified);
     check_equal(result.stats.protocol_failures, 1u);
   }
@@ -504,8 +505,8 @@ spec("Flowie control external HTTPS authenticator") {
     options = external_https_network_options(response, (size_t)response_size);
     options.response_delay_ms = 250u;
     options.timeout_ms = 50u;
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EIO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_equal(result.stats.transport_failures, 1u);
   }
@@ -514,8 +515,8 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_result_t result;
     external_https_network_options_t options = external_https_network_options(NULL, 0u);
 
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EIO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_greater(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
@@ -531,8 +532,8 @@ spec("Flowie control external HTTPS authenticator") {
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
     options.configure_client_identity = 0;
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EIO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
     check_false(result.peer_verified);
     check_equal(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
@@ -548,8 +549,8 @@ spec("Flowie control external HTTPS authenticator") {
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
     options.configure_ca = 0;
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_EIO);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
     check_equal(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
   }
@@ -569,8 +570,8 @@ spec("Flowie control external HTTPS authenticator") {
     options.creation_token_size = sizeof(creation_token) - 1u;
     options.request_token = request_token;
     options.request_token_size = sizeof(request_token) - 1u;
-    check_equal(external_https_run_mtls(&options, &result), TURBO_OK);
-    check_equal(result.status, TURBO_OK);
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_OK);
     check_equal(result.acquire_calls, 2u);
     check_contains((const char *)result.request, "Authorization: Bearer rotated-token\r\n");
     check_null(strstr((const char *)result.request, "Authorization: Bearer initial-token"));
@@ -581,36 +582,34 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t task;
-    coro_context_t *context = NULL;
+    salts_thread_t worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
 
     memset(&task, 0, sizeof(task));
+    atomic_init(&fixture.acquire_calls, 0);
+    atomic_init(&fixture.release_calls, 0);
     atomic_init(&task.done, 0);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(authenticator);
-    fixture.acquire_status = TURBO_EIO;
+    fixture.acquire_status = SALTS_EIO;
     task.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
     task.request = external_https_request();
     task.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    context = coro_context_create(NULL);
-    check_not_null(context);
-    check_equal(coro_context_spawn(context, external_https_verify_task, &task), TURBO_OK);
-    while (!atomic_load_explicit(&task.done, memory_order_acquire))
-      check_equal(coro_context_run(context, TURBO_RUN_ONCE), TURBO_OK);
+    check_equal(salts_thread_create(&worker, external_https_verify_task, &task), SALTS_OK);
+    check_equal(salts_thread_join(&worker), SALTS_OK);
 
-    check_equal(task.status, TURBO_EIO);
+    check_equal(task.status, SALTS_EIO);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(stats.started_requests, 1u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.local_failures, 1u);
     check_equal(stats.transport_failures, 0u);
-    check_equal(fixture.acquire_calls, 2u);
+    check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
 
-    coro_context_destroy(context);
     flowie_control_external_https_authenticator_destroy(authenticator);
   }
 
@@ -625,7 +624,8 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t first;
     external_https_task_t second;
-    coro_context_t *context = NULL;
+    salts_thread_t first_worker = {0};
+    salts_thread_t second_worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
     int response_size;
@@ -633,10 +633,12 @@ spec("Flowie control external HTTPS authenticator") {
     memset(&server, 0, sizeof(server));
     memset(&first, 0, sizeof(first));
     memset(&second, 0, sizeof(second));
+    atomic_init(&fixture.acquire_calls, 0);
+    atomic_init(&fixture.release_calls, 0);
     atomic_init(&first.done, 0);
     atomic_init(&second.done, 0);
-    first.status = TURBO_EIO;
-    second.status = TURBO_EIO;
+    first.status = SALTS_EIO;
+    second.status = SALTS_EIO;
     response_size = external_https_http_response(response, sizeof(response), 200, "OK",
                                                  "application/json", EXTERNAL_HTTPS_RESPONSE_BODY);
     check_greater(response_size, 0);
@@ -653,7 +655,7 @@ spec("Flowie control external HTTPS authenticator") {
     config.tls.client_cert_file = cert_file;
     config.tls.client_key_file = key_file;
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(authenticator);
     first.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
     first.request = external_https_request();
@@ -663,32 +665,28 @@ spec("Flowie control external HTTPS authenticator") {
     second.request = external_https_request();
     second.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    context = coro_context_create(NULL);
-    check_not_null(context);
-    check_equal(coro_context_spawn(context, external_https_verify_task, &first), TURBO_OK);
-    while (fixture.acquire_calls < 2 && !atomic_load_explicit(&first.done, memory_order_acquire))
-      check_equal(coro_context_run(context, TURBO_RUN_ONCE), TURBO_OK);
+    check_equal(salts_thread_create(&first_worker, external_https_verify_task, &first), SALTS_OK);
+    while (atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed) < 2 &&
+           !atomic_load_explicit(&first.done, memory_order_acquire))
+      salts_thread_yield();
     check_false(atomic_load_explicit(&first.done, memory_order_acquire));
-    check_equal(fixture.acquire_calls, 2u);
-    check_equal(coro_context_spawn(context, external_https_verify_task, &second), TURBO_OK);
-    while (!atomic_load_explicit(&second.done, memory_order_acquire))
-      check_equal(coro_context_run(context, TURBO_RUN_ONCE), TURBO_OK);
-    check_equal(second.status, TURBO_EBUSY);
-    check_equal(fixture.acquire_calls, 2u);
-    while (!atomic_load_explicit(&first.done, memory_order_acquire))
-      check_equal(coro_context_run(context, TURBO_RUN_ONCE), TURBO_OK);
-    check_equal(first.status, TURBO_OK);
+    check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
+    check_equal(salts_thread_create(&second_worker, external_https_verify_task, &second), SALTS_OK);
+    check_equal(salts_thread_join(&second_worker), SALTS_OK);
+    check_equal(second.status, SALTS_EBUSY);
+    check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
+    check_equal(salts_thread_join(&first_worker), SALTS_OK);
+    check_equal(first.status, SALTS_OK);
     check_true(server.peer_verified);
-    check_equal(fixture.acquire_calls, 2u);
-    check_equal(fixture.release_calls, 2u);
+    check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
+    check_equal(atomic_load_explicit(&fixture.release_calls, memory_order_relaxed), 2);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(stats.started_requests, 2u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.succeeded, 1u);
     check_equal(stats.local_overload, 1u);
 
-    coro_context_destroy(context);
     flowie_control_external_https_authenticator_destroy(authenticator);
     flow_mtls_test_server_join(&server);
     tls_test_remove_file(key_file);

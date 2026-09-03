@@ -3,8 +3,8 @@
 #include "flowie_session_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_parser.h"
+#include "salts_error.h"
+#include <ltv_parser.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -59,16 +59,16 @@ static size_t flowie_test_legacy_delivery_record(uint8_t minor, const uint8_t *p
   flowie_test_write_u16(delivery, 1u);
   delivery[2] = 1u;
   delivery[3] = FLOWIE_TEST_DELIVERY_WAIT_ACK;
-  written = turbo_ltv_build(1u, header, sizeof(header), out + offset, capacity - offset);
+  written = ltv_build(1u, header, sizeof(header), out + offset, capacity - offset);
   if (written == 0u) return 0u;
   offset += written;
-  written = turbo_ltv_build(2u, metadata, sizeof(metadata), out + offset, capacity - offset);
+  written = ltv_build(2u, metadata, sizeof(metadata), out + offset, capacity - offset);
   if (written == 0u) return 0u;
   offset += written;
-  written = turbo_ltv_build(6u, delivery, sizeof(delivery), out + offset, capacity - offset);
+  written = ltv_build(6u, delivery, sizeof(delivery), out + offset, capacity - offset);
   if (written == 0u) return 0u;
   offset += written;
-  written = turbo_ltv_build(7u, packet, packet_size, out + offset, capacity - offset);
+  written = ltv_build(7u, packet, packet_size, out + offset, capacity - offset);
   if (written == 0u) return 0u;
   return offset + written;
 }
@@ -82,16 +82,16 @@ static int flowie_test_owner_round_trip(flowie_session_owner_t *owner,
   uint8_t *record = NULL;
   size_t record_size = 0u;
   int rc;
-  if (!owner || !config || !restored_out) return TURBO_EINVAL;
+  if (!owner || !config || !restored_out) return SALTS_EINVAL;
   *restored_out = NULL;
   rc = flowie_session_owner_snapshot(owner, &snapshot);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_session_owner_record_encode(owner, NULL, 0u, &record_size);
-  if (rc != TURBO_ENOSPC || record_size == 0u) return rc == TURBO_OK ? TURBO_EPROTO : rc;
+  if (rc != SALTS_ENOSPC || record_size == 0u) return rc == SALTS_OK ? SALTS_EPROTO : rc;
   record = (uint8_t *)malloc(record_size);
-  if (!record) return TURBO_ENOMEM;
+  if (!record) return SALTS_ENOMEM;
   rc = flowie_session_owner_record_encode(owner, record, record_size, &record_size);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     restored_config = *config;
     restored_config.owner_instance_id = owner_instance_id;
     rc = flowie_session_owner_record_restore(&restored_config, client_id,
@@ -112,7 +112,7 @@ spec("flowie application bridges") {
     bindings.size = FLOWIE_ENDPOINT_BINDINGS_V1_SIZE - 1u;
     bindings.persistence = &persistence;
     check_equal(flowie_register_bound_endpoint(flow, "mqtt.endpoint", &config, &bindings),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     turbo_flow_destroy(flow);
   }
 
@@ -129,8 +129,8 @@ spec("flowie application bridges") {
     publish.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
 
     check_equal(flowie_publish_message_map(&publish, FLOWIE_MQTT_VERSION_5, 7u, 9u, 11u, &message),
-                 TURBO_OK);
-    check_equal(turbo_flow_protocol_message_validate(&message.metadata), TURBO_OK);
+                 SALTS_OK);
+    check_equal(turbo_flow_protocol_message_validate(&message.metadata), SALTS_OK);
     check_equal(message.metadata.protocol, TURBO_FLOW_PROTOCOL_MQTT);
     check_equal(message.metadata.packet_id, 42u);
     check_equal(message.route.owner_instance_id, 7u);
@@ -140,7 +140,7 @@ spec("flowie application bridges") {
 
     message = (flowie_publish_message_view_t)FLOWIE_PUBLISH_MESSAGE_VIEW_INIT;
     check_equal(flowie_publish_message_map(&publish, FLOWIE_MQTT_VERSION_5, 7u, 9u, 0u, &message),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
   }
 
   it("injects MQTT topic-filter semantics into SecurityRealm") {
@@ -165,14 +165,14 @@ spec("flowie application bridges") {
     rule.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
     rule.match_kind = TURBO_FLOW_SECURITY_MATCH_ADAPTER;
     flowie_copy(rule.pattern, sizeof(rule.pattern), "root-a/+/events/#");
-    check_equal(flowie_mqtt_security_matcher_init(&matcher), TURBO_OK);
+    check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
     config.resource_uid = "security:flowie";
     config.owner_name = "flowie.security";
     config.policy_version = 3u;
     config.rules = &rule;
     config.rule_count = 1u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), TURBO_OK);
+    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
@@ -182,72 +182,72 @@ spec("flowie application bridges") {
     principal.role_count = 1u;
     flowie_copy(principal.roles[0], sizeof(principal.roles[0]), "writer");
     principal.policy_version = 3u;
-    check_equal(flowie_security_principal_validate(&principal), TURBO_OK);
+    check_equal(flowie_security_principal_validate(&principal), SALTS_OK);
     request.principal = &principal;
     request.domain_id = "root-a";
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
     request.resource = "root-a/device-1/events/temperature";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     check_equal(decision.effect, TURBO_FLOW_SECURITY_ALLOW);
 
     request.resource = "root-a/device-1/commands/reboot";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_EPERM);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
 
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
     request.protocol_context = &context;
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/+/events/temperature";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/device-1/events";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/#";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_EPERM);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
 
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.protocol_context = NULL;
     request.resource = "root-a/+/events/temperature";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/#/invalid";
     request.protocol_context = &context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     context.kind = (flowie_mqtt_security_resource_kind_t)99;
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.resource = "root-a/device-1/events/temperature";
     request.protocol_context = &context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     context = (flowie_mqtt_security_context_t)FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
     context.size = sizeof(context.size);
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
 
     request.protocol_context = NULL;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     expected = decision;
     validated_resource = tstr_new_len("root-a/device-1/events/temperature",
                                       sizeof("root-a/device-1/events/temperature") - 1u);
     check_not_null(validated_resource);
     check_equal(flowie_mqtt_validated_security_context_init(
                      &validated_context, FLOWIE_MQTT_SECURITY_TOPIC, validated_resource),
-                 TURBO_OK);
+                 SALTS_OK);
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
@@ -256,7 +256,7 @@ spec("flowie application bridges") {
     validated_context.provenance = NULL;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_freep(&validated_resource);
 
     context = (flowie_mqtt_security_context_t)FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
@@ -265,19 +265,19 @@ spec("flowie application bridges") {
     request.resource = "root-a/+/events/temperature";
     request.protocol_context = &context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     expected = decision;
     validated_resource =
         tstr_new_len("root-a/+/events/temperature", sizeof("root-a/+/events/temperature") - 1u);
     check_not_null(validated_resource);
     check_equal(flowie_mqtt_validated_security_context_init(
                      &validated_context, FLOWIE_MQTT_SECURITY_TOPIC_FILTER, validated_resource),
-                 TURBO_OK);
+                 SALTS_OK);
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
@@ -311,14 +311,14 @@ spec("flowie application bridges") {
     rules[1].action_mask = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     flowie_copy(rules[1].pattern, sizeof(rules[1].pattern),
                 "root-a/groups/operators/devices/%c/command");
-    check_equal(flowie_mqtt_security_matcher_init(&matcher), TURBO_OK);
+    check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
     config.resource_uid = "security:placeholders";
     config.owner_name = "flowie.security";
     config.policy_version = 4u;
     config.rules = rules;
     config.rule_count = 2u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), TURBO_OK);
+    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
@@ -335,26 +335,26 @@ spec("flowie application bridges") {
 
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.resource = "root-a/groups/operators/devices/mqtt-user/event";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/groups/operators/devices/device-1/event";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
 
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/groups/operators/devices/client-a/command";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), TURBO_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/groups/operators/devices/+/command";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     context.client_id = (flowie_mqtt_span_t){NULL, 0u};
     request.resource = "root-a/groups/operators/devices/client-a/command";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     turbo_flow_security_realm_destroy(realm);
   }
 }
@@ -422,8 +422,8 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   flowie_session_owner_t *owner = NULL;
   size_t active_count = 0u;
   size_t step = 0u;
-  int rc = TURBO_OK;
-  if ((!events && event_count != 0u) || !failed_index) return TURBO_EINVAL;
+  int rc = SALTS_OK;
+  if ((!events && event_count != 0u) || !failed_index) return SALTS_EINVAL;
   *failed_index = SIZE_MAX;
   memset(model, 0, sizeof(model));
   config.owner_instance_id = 101u;
@@ -433,16 +433,16 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   config.settlement.qos1 = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
   config.settlement.qos2 = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
   owner = flowie_session_owner_create(&config);
-  if (!owner) return TURBO_ENOMEM;
+  if (!owner) return SALTS_ENOMEM;
   rc = flowie_session_owner_open(owner, &connect);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   rc = flowie_session_owner_route(owner, &route);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
 #define FLOWIE_OWNER_MODEL_REQUIRE(condition)                                                      \
   do {                                                                                             \
     if (!(condition)) {                                                                            \
-      rc = TURBO_EPROTO;                                                                           \
+      rc = SALTS_EPROTO;                                                                           \
       goto done;                                                                                   \
     }                                                                                              \
   } while (0)
@@ -467,15 +467,15 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
             (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
         rc = flowie_session_owner_publish_begin(owner, &publish, &begin);
         if (entry->active) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_OK && !begin.admit_graph);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && !begin.admit_graph);
           if (entry->pubrec_sent)
             FLOWIE_OWNER_MODEL_REQUIRE(begin.has_ack &&
                                        begin.ack.kind == FLOWIE_SESSION_ACK_PUBREC &&
                                        begin.ack.packet_id == packet_id);
         } else if (active_count == FLOWIE_OWNER_MODEL_HWM) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_ENOSPC);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_ENOSPC);
         } else {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_OK && begin.admit_graph && !begin.has_ack);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && begin.admit_graph && !begin.has_ack);
           entry->begin = begin;
           entry->active = 1u;
           entry->qos = publish.qos;
@@ -491,9 +491,9 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
           flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
           settlement.message = entry->begin.message.metadata;
           settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-          settlement.status = TURBO_OK;
+          settlement.status = SALTS_OK;
           rc = flowie_session_owner_publish_settle(owner, &route, &settlement, &ack);
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_OK && ack.packet_id == packet_id);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && ack.packet_id == packet_id);
           if (entry->qos == 1u) {
             FLOWIE_OWNER_MODEL_REQUIRE(ack.kind == FLOWIE_SESSION_ACK_PUBACK);
             entry->active = 0u;
@@ -508,12 +508,12 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
         rc = flowie_session_owner_qos2_release(owner, &route, packet_id, &ack);
         if (entry->active && entry->qos == 2u && entry->pubrec_sent) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_OK && ack.kind == FLOWIE_SESSION_ACK_PUBCOMP &&
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && ack.kind == FLOWIE_SESSION_ACK_PUBCOMP &&
                                      ack.packet_id == packet_id);
           entry->active = 0u;
           --active_count;
         } else {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc != TURBO_OK && ack.kind == FLOWIE_SESSION_ACK_NONE);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc != SALTS_OK && ack.kind == FLOWIE_SESSION_ACK_NONE);
         }
         break;
       }
@@ -525,22 +525,22 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         invalid.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
         invalid.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
         FLOWIE_OWNER_MODEL_REQUIRE(
-            flowie_session_owner_publish_begin(owner, &invalid, &begin) != TURBO_OK);
+            flowie_session_owner_publish_begin(owner, &invalid, &begin) != SALTS_OK);
         break;
       }
       default:
         FLOWIE_OWNER_MODEL_REQUIRE(0);
     }
     rc = flowie_session_owner_snapshot(owner, &snapshot);
-    FLOWIE_OWNER_MODEL_REQUIRE(rc == TURBO_OK && snapshot.inflight_count == active_count &&
+    FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && snapshot.inflight_count == active_count &&
                                snapshot.inflight_count <= FLOWIE_OWNER_MODEL_HWM);
   }
 
 done:
-  if (rc != TURBO_OK) *failed_index = step;
+  if (rc != SALTS_OK) *failed_index = step;
   if (owner) {
     int close_rc = flowie_session_owner_close(owner);
-    if (rc == TURBO_OK && close_rc != TURBO_OK) rc = close_rc;
+    if (rc == SALTS_OK && close_rc != SALTS_OK) rc = close_rc;
     flowie_session_owner_destroy(owner);
   }
 #undef FLOWIE_OWNER_MODEL_REQUIRE
@@ -562,7 +562,7 @@ static size_t flowie_owner_model_shrink(flowie_owner_model_event_t *events, size
       memcpy(candidate + start, events + start + removed,
              (event_count - start - removed) * sizeof(*events));
       rc = flowie_owner_model_replay(candidate, candidate_count, failed_index);
-      if (rc == TURBO_EPROTO) {
+      if (rc == SALTS_EPROTO) {
         memcpy(events, candidate, candidate_count * sizeof(*events));
         event_count = candidate_count;
         reduced = 1;
@@ -616,7 +616,7 @@ spec("flowie internal session owner") {
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
 
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_true(result.accepted);
     check_false(result.close_after_reply);
     check_false(result.session_present);
@@ -625,23 +625,23 @@ spec("flowie internal session owner") {
     check_equal(result.route.session_generation, 1u);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_false(result.accepted);
     check_true(result.close_after_reply);
     check_equal(result.reply.reason_code, 0x89u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_true(result.accepted);
     check_true(result.session_present);
     check_true(result.reply.session_present);
     check_equal(result.route.session_generation, 2u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
 
     connect = flowie_test_connect(FLOWIE_MQTT_VERSION_5, "", 1, 0u);
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_false(result.accepted);
     check_true(result.close_after_reply);
     check_equal(result.reply.reason_code, 0x85u);
@@ -662,19 +662,19 @@ spec("flowie internal session owner") {
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
 
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_true(result.accepted);
     check_false(result.session_present);
     check_false(result.reply.session_present);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), TURBO_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
     check_true(result.accepted);
     check_true(result.session_present);
     check_false(result.reply.session_present);
     check_equal(result.reply.version, FLOWIE_MQTT_VERSION_3_1);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -693,17 +693,17 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_EALREADY);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_EALREADY);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.active, 1);
     check_equal(snapshot.session_expiry_interval, 60u);
     check_equal(snapshot.client_id.size, strlen("device-1"));
-    check_equal(flowie_session_owner_route(owner, &first), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_route(owner, &second), TURBO_EBUSY);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_route(owner, &second), TURBO_OK);
+    check_equal(flowie_session_owner_route(owner, &first), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_route(owner, &second), SALTS_EBUSY);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_route(owner, &second), SALTS_OK);
     check_equal(second.session_generation, first.session_generation + 1u);
     flowie_session_owner_destroy(owner);
   }
@@ -736,54 +736,54 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
 
     flowie_test_subscription_packet(&packet, &subscribe, entries, sizeof(entries), 2u, 41u);
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), TURBO_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
     check_equal(result.packet_id, 41u);
     check_equal(result.accepted_count, 2u);
     check_equal(result.changed, 1);
-    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), TURBO_OK);
+    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), SALTS_OK);
     check_equal(subscription.filter.size, 5u);
     check_equal(subscription.qos, 1);
-    check_equal(flowie_session_owner_snapshot(owner, &before), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
 
     flowie_test_subscription_packet(&packet, &subscribe, overflow, sizeof(overflow), 1u, 42u);
     result = (flowie_session_subscribe_result_t)FLOWIE_SESSION_SUBSCRIBE_RESULT_INIT;
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), TURBO_ENOSPC);
-    check_equal(flowie_session_owner_snapshot(owner, &after), TURBO_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_ENOSPC);
+    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
     check_equal(after.subscription_count, before.subscription_count);
     check_equal(after.resource_generation, before.resource_generation);
 
     flowie_test_subscription_packet(&packet, &subscribe, update, sizeof(update), 1u, 43u);
     result = (flowie_session_subscribe_result_t)FLOWIE_SESSION_SUBSCRIBE_RESULT_INIT;
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), TURBO_OK);
-    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), TURBO_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
+    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), SALTS_OK);
     check_equal(subscription.qos, 2);
-    check_equal(flowie_session_owner_snapshot(owner, &after), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
     check_equal(after.subscription_count, 2u);
     check_equal(after.inflight_count, 0u);
 
     flowie_test_unsubscribe_packet(&packet, &unsubscribe, remove, sizeof(remove), 2u, 44u);
-    check_equal(flowie_session_owner_snapshot(owner, &before), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
     check_equal(flowie_session_owner_unsubscribe(owner, &packet, &unsubscribe, reasons, 1u,
                                                   &unsubscribe_result),
-                 TURBO_ENOSPC);
+                 SALTS_ENOSPC);
     check_equal(reasons[0], 0xa5u);
-    check_equal(flowie_session_owner_snapshot(owner, &after), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
     check_equal(after.subscription_count, before.subscription_count);
     check_equal(after.resource_generation, before.resource_generation);
 
     check_equal(flowie_session_owner_unsubscribe(owner, &packet, &unsubscribe, reasons,
                                                   sizeof(reasons), &unsubscribe_result),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(unsubscribe_result.packet_id, 44u);
     check_equal(unsubscribe_result.filter_count, 2u);
     check_equal(unsubscribe_result.removed_count, 1u);
     check_true(unsubscribe_result.changed);
     check_equal(reasons[0], 0x00u);
     check_equal(reasons[1], 0x11u);
-    check_equal(flowie_session_owner_snapshot(owner, &after), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
     check_equal(after.subscription_count, 1u);
 
     flowie_session_owner_destroy(owner);
@@ -808,16 +808,16 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &persistent), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &persistent), SALTS_OK);
     flowie_test_subscription_packet(&packet, &subscribe, entry, sizeof(entry), 1u, 51u);
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.subscription_count, 1u);
-    check_equal(flowie_session_owner_open(owner, &clean), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &clean), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.subscription_count, 0u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -844,29 +844,29 @@ spec("flowie internal session owner") {
     config.settlement.qos2 = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_route(owner, &route), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
 
     publish.qos = 1u;
     publish.packet_id = 71u;
     publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
     publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
     publish.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     check_equal(begin.admit_graph, 1);
     check_equal(begin.has_ack, 0);
     settlement.message = begin.message.metadata;
-    settlement.status = TURBO_EIO;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), TURBO_EIO);
+    settlement.status = SALTS_EIO;
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_EIO);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_NONE);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 1u);
-    settlement.status = TURBO_OK;
+    settlement.status = SALTS_OK;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_RECEIVED;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), TURBO_OK);
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBACK);
     check_equal(ack.packet_id, 71u);
     {
@@ -875,7 +875,7 @@ spec("flowie internal session owner") {
       uint8_t encoded[8];
       size_t written = 0u;
       check_equal(flowie_session_ack_control_packet(&ack, FLOWIE_MQTT_VERSION_5, &control),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                    FLOWIE_MQTT_PARSE_OK);
       check_equal(written, sizeof(expected));
@@ -884,53 +884,53 @@ spec("flowie internal session owner") {
 
     publish.packet_id = 73u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     settlement.message = begin.message.metadata;
-    settlement.status = TURBO_ETIMEDOUT;
+    settlement.status = SALTS_ETIMEDOUT;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
-                 TURBO_ETIMEDOUT);
+                 SALTS_ETIMEDOUT);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_NONE);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 1u);
-    settlement.status = TURBO_OK;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), TURBO_OK);
+    settlement.status = SALTS_OK;
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBACK);
     check_equal(ack.packet_id, 73u);
 
     publish.qos = 2u;
     publish.packet_id = 72u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     settlement.message = begin.message.metadata;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), TURBO_OK);
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBREC);
 
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), TURBO_EBUSY);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), SALTS_EBUSY);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
-    check_equal(flowie_session_owner_route(owner, &route), TURBO_OK);
+    check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
     publish.duplicate = 1u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     check_equal(begin.admit_graph, 0);
     check_equal(begin.has_ack, 1);
     check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), TURBO_OK);
+    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBCOMP);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
 
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -962,57 +962,57 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &qos1_id), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &qos1_id), SALTS_OK);
     check_equal(qos1_id, 1u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, qos1_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-                 TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &qos2_id), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &qos2_id), SALTS_OK);
     check_equal(qos2_id, 2u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, qos2_id, (flowie_mqtt_span_t){publish_qos2, sizeof(publish_qos2)}, 0u),
-                 TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &rejected_id), TURBO_ENOSPC);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &rejected_id), SALTS_ENOSPC);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 2u);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data[0], 0x3au);
 
     options.version = FLOWIE_MQTT_VERSION_5;
     check_equal(flowie_mqtt_packet_parse(puback, sizeof(puback), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_NONE);
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubrec, sizeof(pubrec), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
     check_equal(reply.packet_id, qos2_id);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.size, sizeof(expected_pubrel));
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubcomp, sizeof(pubcomp), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1042,60 +1042,60 @@ spec("flowie internal session owner") {
     config.max_inflight = 4u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &packet_id), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &packet_id), SALTS_OK);
     check_equal(packet_id, 1u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, packet_id,
                      (flowie_mqtt_span_t){outbound_publish, sizeof(outbound_publish)}, 0u),
-                 TURBO_OK);
+                 SALTS_OK);
 
     /* Committed PUBLISH: restore retransmits the one owned packet with DUP set. */
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 107u, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.size, sizeof(outbound_publish));
     check_equal(pending.data[0], 0x3cu);
 
     options.version = FLOWIE_MQTT_VERSION_5;
     check_equal(flowie_mqtt_packet_parse(pubrec, sizeof(pubrec), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
 
     /* Committed PUBREC and emitted PUBREL share one durable WAIT_PUBCOMP state. */
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 109u, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 113u, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubcomp, sizeof(pubcomp), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 127u, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(owner);
 
@@ -1104,7 +1104,7 @@ spec("flowie internal session owner") {
     config.session_id = 137u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     {
       flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
       flowie_session_publish_begin_result_t begin = FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
@@ -1115,38 +1115,38 @@ spec("flowie internal session owner") {
       publish.packet_id = 77u;
       publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
       publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
-      check_equal(flowie_session_owner_route(owner, &route), TURBO_OK);
-      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+      check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
+      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
       check_true(begin.admit_graph);
       settlement.message = begin.message.metadata;
-      settlement.status = TURBO_OK;
+      settlement.status = SALTS_OK;
       settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
       check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &reply),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREC);
       check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 139u, &restored),
-                   TURBO_OK);
+                   SALTS_OK);
       flowie_session_owner_destroy(owner);
       owner = restored;
       restored = NULL;
-      check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+      check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
       publish.duplicate = 1u;
       begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), TURBO_OK);
+      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
       check_false(begin.admit_graph);
       check_true(begin.has_ack);
       check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
       route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
-      check_equal(flowie_session_owner_route(owner, &route), TURBO_OK);
+      check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
       reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-      check_equal(flowie_session_owner_qos2_release(owner, &route, 77u, &reply), TURBO_OK);
+      check_equal(flowie_session_owner_qos2_release(owner, &route, 77u, &reply), SALTS_OK);
       check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBCOMP);
       check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 149u, &restored),
-                   TURBO_OK);
+                   SALTS_OK);
       flowie_session_owner_destroy(owner);
       owner = restored;
       restored = NULL;
-      check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+      check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
       check_equal(snapshot.inflight_count, 0u);
     }
     flowie_session_owner_destroy(owner);
@@ -1173,22 +1173,22 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.session_expiry_interval, 60u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
     check_equal(packet_id, 1u);
     check_equal(
         flowie_session_owner_delivery_commit_queued(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-        TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+        SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 TURBO_OK);
+                 SALTS_OK);
     restored_config = config;
     restored_config.owner_instance_id = 47u;
     restored_config.session_id = 1u;
@@ -1196,20 +1196,20 @@ spec("flowie internal session owner") {
                      &restored_config,
                      (flowie_mqtt_span_t){connect.client_id.data, connect.client_id.size},
                      snapshot.resource_generation, record, record_size, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     free(record);
     check_not_null(restored);
-    check_equal(flowie_session_owner_open(restored, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_open(restored, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
     check_equal(pending.data[0], 0x3au);
-    check_equal(flowie_session_owner_close(restored), TURBO_OK);
+    check_equal(flowie_session_owner_close(restored), SALTS_OK);
     flowie_session_owner_destroy(restored);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.data[0], 0x32u);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
     check_equal(pending.data[0], 0x3au);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1249,7 +1249,7 @@ spec("flowie internal session owner") {
     config.max_inflight = 4u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     flowie_test_subscription_packet(&subscribe_packet, &subscribe, subscription_entry,
                                     sizeof(subscription_entry), 1u, 17u);
     subscribe.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
@@ -1271,28 +1271,28 @@ spec("flowie internal session owner") {
                  FLOWIE_MQTT_PARSE_NEED_MORE);
     check_equal(
         flowie_session_owner_subscribe(owner, &subscribe_packet, &subscribe, &subscribe_result),
-        TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), TURBO_OK);
+        SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-        TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+        SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     clone = flowie_session_owner_clone(owner);
     check_not_null(clone);
-    check_equal(flowie_session_owner_snapshot(clone, &restored_snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(clone, &restored_snapshot), SALTS_OK);
     check_equal(restored_snapshot.resource_generation, snapshot.resource_generation);
-    check_equal(flowie_session_owner_delivery_pending_at(clone, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(clone, 0u, &pending), SALTS_OK);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data + 1u, publish_qos1 + 1u, sizeof(publish_qos1) - 1u);
     flowie_session_owner_destroy(clone);
 
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     check_true(record_size > 0u);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 TURBO_OK);
+                 SALTS_OK);
     restored_config = config;
     restored_config.owner_instance_id = 61u;
     restored_config.session_id = 1u;
@@ -1300,9 +1300,9 @@ spec("flowie internal session owner") {
                      &restored_config,
                      (flowie_mqtt_span_t){connect.client_id.data, connect.client_id.size},
                      snapshot.resource_generation, record, record_size, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     check_not_null(restored);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
     check_false(restored_snapshot.active);
     check_equal(restored_snapshot.owner_instance_id, restored_config.owner_instance_id);
     check_equal(restored_snapshot.session_id, snapshot.session_id);
@@ -1311,9 +1311,9 @@ spec("flowie internal session owner") {
     check_equal(restored_snapshot.inflight_count, 1u);
     check_equal(restored_snapshot.subscription_count, 1u);
     check_equal(flowie_session_owner_subscription_at(restored, 0u, &restored_subscription),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(restored_subscription.subscription_identifier, 42u);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
     check_equal(pending.data[0], 0x3au);
     flowie_session_owner_destroy(restored);
     restored = NULL;
@@ -1322,7 +1322,7 @@ spec("flowie internal session owner") {
                      &restored_config,
                      (flowie_mqtt_span_t){connect.client_id.data, connect.client_id.size},
                      snapshot.resource_generation, record, record_size, &restored),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_null(restored);
     free(record);
     flowie_session_owner_destroy(owner);
@@ -1343,7 +1343,7 @@ spec("flowie internal session owner") {
     flowie_session_snapshot_t after = FLOWIE_SESSION_SNAPSHOT_INIT;
     flowie_session_owner_t *owner;
     flowie_session_owner_t *restored = NULL;
-    turbo_ltv_message_t *header_message = NULL;
+    ltv_message_t header_message = {0};
     flowie_mqtt_span_t pending = {0};
     uint8_t legacy_record[128];
     uint8_t *record;
@@ -1361,17 +1361,17 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
     check_equal(flowie_session_owner_delivery_commit_queued(
                      owner, packet_id,
                      (flowie_mqtt_span_t){expiring_publish, sizeof(expiring_publish)}, 110u),
-                 TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &before), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
     check_equal(flowie_session_owner_delivery_pending_at_ex(owner, 0u, 105u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(pending_packet_id, packet_id);
     check_equal(expiry_at, 110u);
     check_equal(pending.data[9], 0u);
@@ -1379,20 +1379,18 @@ spec("flowie internal session owner") {
     check_equal(pending.data[11], 0u);
     check_equal(pending.data[12], 5u);
 
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 TURBO_OK);
-    check_equal(turbo_parse_ltv(record, record_size, &header_message), TURBO_OK);
-    check_not_null(header_message);
-    check_equal(turbo_ltv_type(header_message), 1u);
-    check_equal(turbo_ltv_value_len(header_message), 8u);
-    header = turbo_ltv_value(header_message);
+                 SALTS_OK);
+    check_equal(ltv_parse(record, record_size, &header_message), LTV_PARSE_OK);
+    check_equal(header_message.type, 1u);
+    check_equal(header_message.value_size, 8u);
+    header = header_message.value;
     check_equal(header, "FSES", 4u);
     check_equal(header[5], 1u);
     check_equal(header[7], 3u);
-    turbo_free_ltv(&header_message);
 
     restored_config = config;
     restored_config.owner_instance_id = 73u;
@@ -1400,18 +1398,18 @@ spec("flowie internal session owner") {
     check_equal(flowie_session_owner_record_restore(&restored_config, connect.client_id,
                                                      before.resource_generation, record,
                                                      record_size, &restored),
-                 TURBO_OK);
+                 SALTS_OK);
     free(record);
     check_not_null(restored);
     check_equal(flowie_session_owner_delivery_pending_at_ex(restored, 0u, 107u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(expiry_at, 110u);
     check_equal(pending.data[12], 3u);
-    check_equal(flowie_session_owner_snapshot(restored, &before), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_expire(restored, 110u, &removed_count), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &before), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_expire(restored, 110u, &removed_count), SALTS_OK);
     check_equal(removed_count, 1u);
-    check_equal(flowie_session_owner_snapshot(restored, &after), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &after), SALTS_OK);
     check_equal(after.resource_generation, before.resource_generation + 1u);
     check_equal(after.inflight_count, 0u);
     flowie_session_owner_destroy(restored);
@@ -1425,9 +1423,9 @@ spec("flowie internal session owner") {
             &restored_config,
             (flowie_mqtt_span_t){(const uint8_t *)"legacy-expiry", sizeof("legacy-expiry") - 1u},
             2u, legacy_record, legacy_size, &restored),
-        TURBO_OK);
+        SALTS_OK);
     check_not_null(restored);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
     check_equal(pending.data[12], 10u);
     flowie_session_owner_destroy(restored);
     restored = NULL;
@@ -1440,7 +1438,7 @@ spec("flowie internal session owner") {
             &restored_config,
             (flowie_mqtt_span_t){(const uint8_t *)"legacy-expiry", sizeof("legacy-expiry") - 1u},
             2u, legacy_record, legacy_size, &restored),
-        TURBO_EPROTO);
+        SALTS_EPROTO);
     check_null(restored);
     flowie_session_owner_destroy(owner);
   }
@@ -1460,13 +1458,13 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 110u),
-        TURBO_EPROTO);
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+        SALTS_EPROTO);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1488,23 +1486,23 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 110u),
-        TURBO_OK);
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+        SALTS_OK);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     check_true(record_size != 0u);
     check_equal(flowie_session_owner_delivery_pending_at_ex(owner, 0u, 107u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(pending_packet_id, packet_id);
     check_equal(expiry_at, 110u);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data[0], 0x3au);
     check_equal(pending.data + 1u, publish_qos1 + 1u, sizeof(publish_qos1) - 1u);
-    check_equal(flowie_session_owner_delivery_expire(owner, 110u, &removed_count), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_expire(owner, 110u, &removed_count), SALTS_OK);
     check_equal(removed_count, 1u);
     flowie_session_owner_destroy(owner);
   }
@@ -1540,10 +1538,10 @@ spec("flowie internal session owner") {
     connect.will_properties.values = (flowie_mqtt_span_t){will_properties, sizeof(will_properties)};
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     will_topic[0] = 'X';
     will_payload[0] = 0x55u;
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_true(snapshot.has_will);
     check_false(snapshot.will_pending);
     check_equal(snapshot.will_qos, 2u);
@@ -1552,59 +1550,59 @@ spec("flowie internal session owner") {
     check_equal(snapshot.will_topic.size, sizeof(will_topic) - 1u);
     check_equal(snapshot.will_topic.data, "status/device", sizeof(will_topic) - 1u);
     check_equal(snapshot.will_payload.data, "\x00\xff\x7f", sizeof(will_payload));
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_true(snapshot.will_pending);
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_session_owner_record_restore(&config, reconnect.client_id,
                                                      snapshot.resource_generation, record,
                                                      record_size, &restored),
-                 TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
     check_true(restored_snapshot.will_pending);
     check_equal(restored_snapshot.will_delay_interval, 2u);
     generation = restored_snapshot.resource_generation;
-    check_equal(flowie_session_owner_will_complete(restored), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_will_complete(restored), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
     check_false(restored_snapshot.has_will);
     check_false(restored_snapshot.will_pending);
     check_equal(restored_snapshot.resource_generation, generation + 1u);
-    check_equal(flowie_session_owner_will_complete(restored), TURBO_ENOENT);
+    check_equal(flowie_session_owner_will_complete(restored), SALTS_ENOENT);
     flowie_session_owner_destroy(restored);
     restored = NULL;
     free(record);
     record = NULL;
 
-    check_equal(flowie_session_owner_open(owner, &reconnect), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &reconnect), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_false(snapshot.has_will);
     check_false(snapshot.will_pending);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
 
     connect.will_topic.data = (const uint8_t *)"status/device";
     connect.will_payload.data = (const uint8_t *)"offline";
     connect.will_payload.size = strlen("offline");
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     disconnect.version = FLOWIE_MQTT_VERSION_5;
     disconnect.type = FLOWIE_MQTT_PACKET_DISCONNECT;
     disconnect.reason_code = 0u;
     disconnect.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     disconnect.properties.values.data = will_properties;
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_false(snapshot.has_will);
     check_false(snapshot.will_pending);
 
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     disconnect.reason_code = 0x04u;
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_true(snapshot.has_will);
     check_true(snapshot.will_pending);
     flowie_session_owner_destroy(owner);
@@ -1625,23 +1623,23 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     disconnect.version = FLOWIE_MQTT_VERSION_5;
     disconnect.type = FLOWIE_MQTT_PACKET_DISCONNECT;
     disconnect.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     disconnect.properties.values = (flowie_mqtt_span_t){expiry_one, sizeof(expiry_one)};
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.session_expiry_interval, 1u);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
 
     connect = flowie_test_connect(FLOWIE_MQTT_VERSION_5, "expiry-zero", 1, 0u);
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), TURBO_EPROTO);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_EPROTO);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1704,21 +1702,21 @@ spec("flowie internal session owner") {
 
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    check_equal(flowie_session_owner_close(owner), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_true(snapshot.will_pending);
-    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), TURBO_ENOSPC);
+    check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     check_greater(record_size, STORE_BOUNDARY_PAYLOAD_SIZE);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_session_owner_record_restore(
                      &config, connect.client_id, snapshot.resource_generation, record,
                      record_size, &restored),
-                 TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), TURBO_OK);
+                 SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
     check_equal(restored_snapshot.client_id.size, STORE_BOUNDARY_UTF8_SIZE);
     check_equal(restored_snapshot.client_id.data, client_id, STORE_BOUNDARY_UTF8_SIZE);
     check_equal(restored_snapshot.will_topic.size, STORE_BOUNDARY_UTF8_SIZE);
@@ -1759,12 +1757,12 @@ spec("flowie internal session owner") {
     }
     info("seed=0x%08x events=%u", (unsigned)initial_seed, (unsigned)MODEL_STEPS);
     rc = flowie_owner_model_replay(events, MODEL_STEPS, &failed_index);
-    if (rc == TURBO_EPROTO) {
+    if (rc == SALTS_EPROTO) {
       original_failed_index = failed_index;
       reduced_count = flowie_owner_model_shrink(events, MODEL_STEPS, candidate, &failed_index);
       info("first_failed=%zu minimized_events=%zu minimized_failed=%zu", original_failed_index,
            reduced_count, failed_index);
     }
-    check_equal(rc, TURBO_OK);
+    check_equal(rc, SALTS_OK);
   }
 }

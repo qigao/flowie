@@ -18,7 +18,7 @@ void flowie_control_principal_cache_destroy(flowie_control_principal_cache_t *ca
 /**
  * Look up a snapshot only when every fact-source revision still matches.
  *
- * A miss, expiry, or revision mismatch returns TURBO_ENOENT and never exposes stale data.
+ * A miss, expiry, or revision mismatch returns SALTS_ENOENT and never exposes stale data.
  */
 int flowie_control_principal_cache_get(
     flowie_control_principal_cache_t *cache, const char *domain_id,

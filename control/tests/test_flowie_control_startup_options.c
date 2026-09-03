@@ -1,7 +1,7 @@
 #include "flowie_control_startup_options_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +28,7 @@ spec("Flowie control startup options") {
     flowie_control_startup_options_t options = FLOWIE_CONTROL_STARTUP_OPTIONS_INIT;
     char *argv[] = {"flowie-control"};
 
-    check_equal(flowie_control_startup_options_parse(1, argv, &options), TURBO_EINVAL);
+    check_equal(flowie_control_startup_options_parse(1, argv, &options), SALTS_EINVAL);
     check_equal(options.config_path, "");
     check_false(options.check_only);
   }
@@ -42,7 +42,7 @@ spec("Flowie control startup options") {
 
     check_not_null(path);
     check_equal(tt_write_file(path, content, sizeof(content) - 1u), 0);
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), TURBO_OK);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_OK);
     check_equal(options.config_path, "dotenv-control.yml");
     check_equal(options.env_file, path);
     check_true(options.check_only);
@@ -59,7 +59,7 @@ spec("Flowie control startup options") {
     check_not_null(path);
     check_equal(tt_write_file(path, content, sizeof(content) - 1u), 0);
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CONFIG, "process-control.yml"), 0);
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), TURBO_OK);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_OK);
     check_equal(options.config_path, "process-control.yml");
     check_equal(options.env_file, path);
     check_equal(tt_remove_file(path), 0);
@@ -72,7 +72,7 @@ spec("Flowie control startup options") {
 
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CONFIG, "process-control.yml"), 0);
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CHECK, "false"), 0);
-    check_equal(flowie_control_startup_options_parse(4, argv, &options), TURBO_OK);
+    check_equal(flowie_control_startup_options_parse(4, argv, &options), SALTS_OK);
     check_equal(options.config_path, "cli-control.yml");
     check_true(options.check_only);
   }
@@ -84,7 +84,7 @@ spec("Flowie control startup options") {
 
     check_not_null(path);
     check_equal(tt_remove_file(path), 0);
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), TURBO_EIO);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_EIO);
     check_equal(options.config_path, "");
     check_equal(options.env_file, "");
     free(path);
@@ -92,12 +92,12 @@ spec("Flowie control startup options") {
 
   it("rejects configuration paths that exceed the bounded result") {
     flowie_control_startup_options_t options = FLOWIE_CONTROL_STARTUP_OPTIONS_INIT;
-    char overlong[TURBO_FS_MAX_PATH + 1u];
+    char overlong[SALTS_FS_MAX_PATH + 1u];
     char *argv[] = {"flowie-control", "--config", overlong};
 
     memset(overlong, 'a', sizeof(overlong) - 1u);
     overlong[sizeof(overlong) - 1u] = '\0';
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), TURBO_ENAMETOOLONG);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_ENAMETOOLONG);
     check_equal(options.config_path, "");
   }
 }

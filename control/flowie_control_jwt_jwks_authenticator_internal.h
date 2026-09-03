@@ -91,8 +91,8 @@ const flowie_control_external_authenticator_t *flowie_control_jwt_jwks_authentic
  * Validate and install one immutable JWKS snapshot.
  *
  * Parsing performs bounded JSON and public-key validation and may be CPU intensive. Production
- * callers must execute it through the authenticator's bounded worker path, not on a CoroNet owner
- * lane. This direct entry exists for startup validation and focused contract tests.
+ * callers must execute it through the bounded CHTTP worker path, not on the listener owner thread.
+ * This direct entry exists for startup validation and focused contract tests.
  */
 int flowie_control_jwt_jwks_authenticator_install(
     flowie_control_jwt_jwks_authenticator_t *authenticator, const char *jwks_json, size_t jwks_size,

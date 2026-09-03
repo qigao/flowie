@@ -49,7 +49,7 @@ FLOWIE_C_API flowie_ingress_t *flowie_ingress_create(const flowie_ingress_config
 FLOWIE_C_API void flowie_ingress_destroy(flowie_ingress_t *ingress);
 
 /**
- * Connection-owner receive path. Socket, framing, and parsing must share one CoroNet lane.
+ * Connection-owner receive path. CNet delivery, framing, and parsing must share one owner lane.
  * A valid CONNECT must be first; it fixes the MQTT version for later packets.
  * Complete packets are dispatched through the required injected sink.
  * `published` counts only successful dispatches from this call.

@@ -2,18 +2,18 @@
 
 #include "flowie_stl_error_internal.h"
 
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
 
 #include "flowie_control_credential_internal.h"
 
 #include "monocypher.h"
 #include "platform.h"
-#include "turbo_error.h"
-#include <rocida/stl.h>
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include <cstl.h>
+#include "salts_thread.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ typedef struct flowie_control_auth_rate_entry_s {
 struct flowie_control_auth_rate_limiter_s {
   hash_map_t callers;
   hash_map_t identities;
-  turbo_mutex_t lock;
+  salts_mutex_t lock;
   uint8_t digest_key[FLOWIE_CONTROL_AUTH_RATE_KEY_SIZE];
   size_t caller_capacity;
   size_t identity_capacity;
@@ -50,7 +50,7 @@ struct flowie_control_auth_rate_limiter_s {
 
 static uint64_t flowie_control_auth_rate_default_clock(void *ctx) {
   (void)ctx;
-  return turbo_monotonic_ms();
+  return salts_monotonic_ms();
 }
 
 static int flowie_control_auth_rate_text_valid(const char *value, size_t maximum) {
@@ -97,7 +97,7 @@ static uint64_t flowie_control_auth_rate_next_sequence(
 static void flowie_control_auth_rate_remove_locked(
     hash_map_t *entries, const uint8_t digest[FLOWIE_CONTROL_AUTH_RATE_DIGEST_SIZE]) {
   flowie_control_auth_rate_entry_t removed = {0};
-  if (flowie_stl_error(hash_map_remove(entries, digest, &removed)) == TURBO_OK)
+  if (flowie_stl_error(hash_map_remove(entries, digest, &removed)) == SALTS_OK)
     flowie_control_credential_wipe(&removed, sizeof(removed));
 }
 
@@ -131,7 +131,7 @@ static int flowie_control_auth_rate_entry_get_locked(
   entry = (flowie_control_auth_rate_entry_t *)hash_map_get(entries, digest);
   if (entry) {
     *entry_out = entry;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   if (hash_map_size(entries) >= capacity) flowie_control_auth_rate_evict_locked(entries);
   initial.available_units = (uint64_t)burst * FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS;
@@ -139,9 +139,9 @@ static int flowie_control_auth_rate_entry_get_locked(
   initial.last_used = flowie_control_auth_rate_next_sequence(limiter);
   rc = flowie_stl_error(hash_map_put(entries, digest, &initial));
   flowie_control_credential_wipe(&initial, sizeof(initial));
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   *entry_out = (flowie_control_auth_rate_entry_t *)hash_map_get(entries, digest);
-  return *entry_out ? TURBO_OK : TURBO_EIO;
+  return *entry_out ? SALTS_OK : SALTS_EIO;
 }
 
 static int flowie_control_auth_rate_refill(flowie_control_auth_rate_entry_t *entry,
@@ -150,7 +150,7 @@ static int flowie_control_auth_rate_refill(flowie_control_auth_rate_entry_t *ent
   uint64_t maximum = (uint64_t)burst * FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS;
   uint64_t elapsed;
   uint64_t added;
-  if (now_ms < entry->last_refill_ms) return TURBO_EIO;
+  if (now_ms < entry->last_refill_ms) return SALTS_EIO;
   elapsed = now_ms - entry->last_refill_ms;
   added = elapsed > UINT64_MAX / per_second ? UINT64_MAX : elapsed * per_second;
   if (added >= maximum - entry->available_units)
@@ -158,7 +158,7 @@ static int flowie_control_auth_rate_refill(flowie_control_auth_rate_entry_t *ent
   else
     entry->available_units += added;
   entry->last_refill_ms = now_ms;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_control_auth_rate_limiter_create(
@@ -178,9 +178,9 @@ int flowie_control_auth_rate_limiter_create(
       config->caller_burst == 0u || config->caller_burst > FLOWIE_CONTROL_AUTH_RATE_MAX_BURST ||
       config->identity_burst == 0u ||
       config->identity_burst > FLOWIE_CONTROL_AUTH_RATE_MAX_BURST)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   limiter = (flowie_control_auth_rate_limiter_t *)calloc(1u, sizeof(*limiter));
-  if (!limiter) return TURBO_ENOMEM;
+  if (!limiter) return SALTS_ENOMEM;
   limiter->caller_capacity = config->caller_capacity;
   limiter->identity_capacity = config->identity_capacity;
   limiter->caller_per_second = config->caller_per_second;
@@ -189,25 +189,25 @@ int flowie_control_auth_rate_limiter_create(
   limiter->identity_burst = config->identity_burst;
   limiter->clock_ms = config->clock_ms ? config->clock_ms : flowie_control_auth_rate_default_clock;
   limiter->clock_ctx = config->clock_ctx;
-  rc = turbo_secure_random(limiter->digest_key, sizeof(limiter->digest_key));
-  if (rc != TURBO_OK) goto fail;
+  rc = salts_secure_random(limiter->digest_key, sizeof(limiter->digest_key));
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_init_bytes(
       &limiter->callers, FLOWIE_CONTROL_AUTH_RATE_DIGEST_SIZE, _Alignof(unsigned char),
       sizeof(flowie_control_auth_rate_entry_t), _Alignof(flowie_control_auth_rate_entry_t),
       limiter->caller_capacity, hash_bytes, hash_key_equal, NULL));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_reserve(&limiter->callers, limiter->caller_capacity));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_init_bytes(
       &limiter->identities, FLOWIE_CONTROL_AUTH_RATE_DIGEST_SIZE, _Alignof(unsigned char),
       sizeof(flowie_control_auth_rate_entry_t), _Alignof(flowie_control_auth_rate_entry_t),
       limiter->identity_capacity, hash_bytes, hash_key_equal, NULL));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_reserve(&limiter->identities, limiter->identity_capacity));
-  if (rc != TURBO_OK) goto fail;
-  turbo_mutex_init(&limiter->lock);
+  if (rc != SALTS_OK) goto fail;
+  salts_mutex_init(&limiter->lock);
   *out = limiter;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   hash_map_destroy(&limiter->identities);
@@ -219,11 +219,11 @@ fail:
 
 void flowie_control_auth_rate_limiter_destroy(flowie_control_auth_rate_limiter_t *limiter) {
   if (!limiter) return;
-  turbo_mutex_lock(&limiter->lock);
+  salts_mutex_lock(&limiter->lock);
   hash_map_clear(&limiter->identities);
   hash_map_clear(&limiter->callers);
-  turbo_mutex_unlock(&limiter->lock);
-  turbo_mutex_destroy(&limiter->lock);
+  salts_mutex_unlock(&limiter->lock);
+  salts_mutex_destroy(&limiter->lock);
   hash_map_destroy(&limiter->identities);
   hash_map_destroy(&limiter->callers);
   flowie_control_credential_wipe(limiter, sizeof(*limiter));
@@ -245,7 +245,7 @@ int flowie_control_auth_rate_limiter_acquire(flowie_control_auth_rate_limiter_t 
                                            FLOWIE_CONTROL_AUTH_CERT_SHA256_TEXT_SIZE) ||
       !flowie_control_auth_rate_text_valid(domain_id, FLOWIE_SECURITY_ID_MAX) ||
       !flowie_control_auth_rate_text_valid(principal_id, FLOWIE_SECURITY_ID_MAX))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   flowie_control_auth_rate_digest(limiter, FLOWIE_CONTROL_AUTH_RATE_CALLER_SCOPE,
                                   peer_certificate_sha256, domain_id, principal_id,
                                   caller_digest);
@@ -253,32 +253,32 @@ int flowie_control_auth_rate_limiter_acquire(flowie_control_auth_rate_limiter_t 
                                   peer_certificate_sha256, domain_id, principal_id,
                                   identity_digest);
   now_ms = limiter->clock_ms(limiter->clock_ctx);
-  turbo_mutex_lock(&limiter->lock);
+  salts_mutex_lock(&limiter->lock);
   rc = flowie_control_auth_rate_entry_get_locked(
       limiter, &limiter->callers, limiter->caller_capacity, caller_digest,
       limiter->caller_burst, now_ms, &caller);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_control_auth_rate_entry_get_locked(
         limiter, &limiter->identities, limiter->identity_capacity, identity_digest,
         limiter->identity_burst, now_ms, &identity);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_control_auth_rate_refill(caller, limiter->caller_per_second,
                                          limiter->caller_burst, now_ms);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_control_auth_rate_refill(identity, limiter->identity_per_second,
                                          limiter->identity_burst, now_ms);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     caller->last_used = flowie_control_auth_rate_next_sequence(limiter);
     identity->last_used = flowie_control_auth_rate_next_sequence(limiter);
     if (caller->available_units < FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS ||
         identity->available_units < FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS)
-      rc = TURBO_EBUSY;
+      rc = SALTS_EBUSY;
     else {
       caller->available_units -= FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS;
       identity->available_units -= FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS;
     }
   }
-  turbo_mutex_unlock(&limiter->lock);
+  salts_mutex_unlock(&limiter->lock);
   flowie_control_credential_wipe(identity_digest, sizeof(identity_digest));
   flowie_control_credential_wipe(caller_digest, sizeof(caller_digest));
   return rc;
@@ -296,18 +296,18 @@ void flowie_control_auth_rate_limiter_record_success(
     return;
   flowie_control_auth_rate_digest(limiter, FLOWIE_CONTROL_AUTH_RATE_IDENTITY_SCOPE,
                                   peer_certificate_sha256, domain_id, principal_id, digest);
-  turbo_mutex_lock(&limiter->lock);
+  salts_mutex_lock(&limiter->lock);
   flowie_control_auth_rate_remove_locked(&limiter->identities, digest);
-  turbo_mutex_unlock(&limiter->lock);
+  salts_mutex_unlock(&limiter->lock);
   flowie_control_credential_wipe(digest, sizeof(digest));
 }
 
 size_t flowie_control_auth_rate_limiter_caller_size(flowie_control_auth_rate_limiter_t *limiter) {
   size_t size;
   if (!limiter) return 0u;
-  turbo_mutex_lock(&limiter->lock);
+  salts_mutex_lock(&limiter->lock);
   size = hash_map_size(&limiter->callers);
-  turbo_mutex_unlock(&limiter->lock);
+  salts_mutex_unlock(&limiter->lock);
   return size;
 }
 
@@ -315,8 +315,8 @@ size_t flowie_control_auth_rate_limiter_identity_size(
     flowie_control_auth_rate_limiter_t *limiter) {
   size_t size;
   if (!limiter) return 0u;
-  turbo_mutex_lock(&limiter->lock);
+  salts_mutex_lock(&limiter->lock);
   size = hash_map_size(&limiter->identities);
-  turbo_mutex_unlock(&limiter->lock);
+  salts_mutex_unlock(&limiter->lock);
   return size;
 }

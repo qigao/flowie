@@ -2,7 +2,7 @@
 #define FLOWIE_CONTROL_DATA_OPTIONS_INTERNAL_H
 
 #include "flowie_security.h"
-#include "turbo_fs.h"
+#include "salts_fs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,10 +17,10 @@ typedef enum flowie_control_data_command_e {
 typedef struct flowie_control_data_options_s {
   size_t size;
   flowie_control_data_command_t command;
-  char config_path[TURBO_FS_MAX_PATH];
-  char env_file[TURBO_FS_MAX_PATH];
+  char config_path[SALTS_FS_MAX_PATH];
+  char env_file[SALTS_FS_MAX_PATH];
   char domain_id[FLOWIE_SECURITY_ID_MAX + 1u];
-  char data_path[TURBO_FS_MAX_PATH];
+  char data_path[SALTS_FS_MAX_PATH];
   int dry_run;
 } flowie_control_data_options_t;
 

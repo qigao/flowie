@@ -118,7 +118,7 @@ Token 失效、撤销、重新启用、用户禁用和 Token wipe。缓存测试
 
 - **HIGH**：在 HTTPS 认证服务、防爆破和管理权限完成前，不得把内部 store API 直接暴露到公网。
 - **MED**：credential 正向缓存、事务化 principal snapshot 和内部 auth service 已完成；最终 principal
-  cache、Iris/CoroNet server mTLS identity 接入和已连接 session 的撤销策略尚未实现，不能据此宣称即时
+  cache、Iris/CNet server mTLS identity 接入和已连接 session 的撤销策略尚未实现，不能据此宣称即时
   全局注销。
 - **MED**：发布 gate 仍需真实并发轮换/验证压力测试、故障注入和 ASan/UBSan 验证。
 - **LOW**：默认 KDF 参数为当前基线；部署前仍应在目标硬件上测量延迟和内存预算，并通过显式控制面配置

@@ -95,7 +95,7 @@ typedef struct flowie_mqtt_client_topic_handler_s {
 
 /**
  * Caller-owned map view; duplicate filters are invalid. Every matching handler
- * is called in map order, stopping on the first non-TURBO_OK result.
+ * is called in map order, stopping on the first non-SALTS_OK result.
  */
 typedef struct flowie_mqtt_client_topic_handler_map_s {
   const flowie_mqtt_client_topic_handler_t *data;
@@ -148,9 +148,9 @@ typedef int (*flowie_mqtt_client_auth_challenge_fn)(
 
 /**
  * Replace the retained CONNECT after an authentication rejection. The current
- * packet and all of its spans are borrowed for this callback. On TURBO_OK,
+ * packet and all of its spans are borrowed for this callback. On SALTS_OK,
  * refreshed must be a complete valid CONNECT packet; the client deep-copies it
- * before the callback returns. This callback runs on the DLL worker coroutine
+ * before the callback returns. This callback runs on the DLL worker thread
  * and must not perform blocking or heavyweight work.
  */
 typedef int (*flowie_mqtt_client_refresh_connect_fn)(
@@ -223,8 +223,8 @@ typedef struct flowie_mqtt_client_config_s {
   /** Completion for flowie_mqtt_client_authenticate(). */
   flowie_mqtt_client_completion_fn on_auth;
   /**
-   * Capacity of each of the two CoroNet user-space receive buffers.
-   * 0 keeps the CoroNet default.
+   * Capacity of the CNet user-space receive buffer.
+   * 0 selects the Flowie client default.
    */
   size_t stream_recv_buffer_bytes;
   /** Requested OS SO_RCVBUF bytes; 0 preserves the OS default. */
@@ -261,7 +261,7 @@ typedef struct flowie_mqtt_client_config_s {
    0u}
 
 /**
- * Create a callback-driven client. The DLL owns its CoroNet context, worker
+ * Create a callback-driven client. The DLL owns its CNet/CHTTP transport, worker
  * thread, receive loop, and bounded command queue. On failure, out is set to
  * NULL.
  */
@@ -280,7 +280,7 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create_ex(
 /**
  * Destroy the client outside its callbacks. Destruction stops admission,
  * interrupts current I/O, completes accepted queued commands with
- * TURBO_ESHUTDOWN, and joins its worker.
+ * SALTS_ESHUTDOWN, and joins its worker.
  */
 FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
 
@@ -289,8 +289,8 @@ FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *c
  * Clients default to MQTT 5. An UNSPECIFIED packet version inherits this selection;
  * an explicit packet version must match it. This function performs no I/O.
  *
- * Returns TURBO_EINVAL for a NULL client, UNSPECIFIED, or an unsupported version;
- * TURBO_EALREADY after version lock-in; or TURBO_ESHUTDOWN after shutdown begins.
+ * Returns SALTS_EINVAL for a NULL client, UNSPECIFIED, or an unsupported version;
+ * SALTS_EALREADY after version lock-in; or SALTS_ESHUTDOWN after shutdown begins.
  */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
                                                             flowie_mqtt_version_t version);
@@ -299,11 +299,24 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_version(flowie_mqtt_client_t
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_client_t *client);
 
 /**
- * Callback-driven operations. Returning TURBO_OK transfers a deep copy of the
+ * Read the MQTT 5 reason from the server DISCONNECT that caused the callback
+ * currently in progress. This is intended for on_error and failed operation
+ * completion callbacks on the client worker thread. Returns SALTS_OK and
+ * writes reason when present, SALTS_ENOENT when the failure did not originate
+ * from an MQTT 5 DISCONNECT, SALTS_EBUSY outside a client callback, or
+ * SALTS_EINVAL for invalid arguments. The reason is borrowed event state and
+ * must not be used to drive a second reconnect loop when create_ex resilience
+ * already owns reconnection.
+ */
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_server_disconnect_reason(const flowie_mqtt_client_t *client, uint8_t *reason);
+
+/**
+ * Callback-driven operations. Returning SALTS_OK transfers a deep copy of the
  * complete packet description to the client. Each command guarantees one
  * matching config.on_xxx callback, except publish, which guarantees one
  * on_publish callback per topic in input order. A missing matching callback
- * returns TURBO_ENOTSUP.
+ * returns SALTS_ENOTSUP.
  * Queue-full, shutdown, structurally invalid input, a selected-version mismatch,
  * and invalid client state fail immediately without invoking a callback. Other
  * protocol or network errors are delivered through the matching callback.

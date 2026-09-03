@@ -2,7 +2,7 @@
 #include "flowie_security_internal.h"
 #include "flowie_topic_index_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +19,7 @@ int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
       (!publish->topic.data && publish->topic.size != 0u) ||
       (!publish->payload.data && publish->payload.size != 0u) ||
       !flowie_mqtt_version_is_supported(version) || publish->qos > 2u) {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   mapped.metadata.protocol = FLOWIE_PROTOCOL_MQTT;
   mapped.metadata.protocol_version = (uint32_t)version;
@@ -30,7 +30,7 @@ int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
   mapped.metadata.duplicate = publish->duplicate;
   mapped.metadata.retain = publish->retain;
   rc = flowie_protocol_message_validate(&mapped.metadata);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   mapped.route.protocol = FLOWIE_PROTOCOL_MQTT;
   mapped.route.owner_instance_id = owner_instance_id;
   mapped.route.session_id = session_id;
@@ -39,7 +39,7 @@ int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
   mapped.properties = publish->properties;
   mapped.payload = publish->payload;
   *out = mapped;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 typedef struct flowie_mqtt_security_leaf_s {
@@ -58,9 +58,9 @@ static const uint8_t FLOWIE_MQTT_VALIDATED_SECURITY_PROVENANCE = 0u;
 static int flowie_security_principal_text_validate(const char *value, size_t capacity,
                                                    int required) {
   const char *end;
-  if (!value || capacity == 0u) return TURBO_EINVAL;
+  if (!value || capacity == 0u) return SALTS_EINVAL;
   end = (const char *)memchr(value, '\0', capacity);
-  return !end || (required && end == value) ? TURBO_EPROTO : TURBO_OK;
+  return !end || (required && end == value) ? SALTS_EPROTO : SALTS_OK;
 }
 
 int flowie_security_principal_validate(const flowie_security_principal_t *principal) {
@@ -71,27 +71,27 @@ int flowie_security_principal_validate(const flowie_security_principal_t *princi
       principal->role_count > FLOWIE_SECURITY_MAX_ROLES ||
       principal->group_count > FLOWIE_SECURITY_MAX_GROUPS || principal->policy_version == 0u ||
       flowie_security_principal_text_validate(principal->principal_id,
-                                              sizeof(principal->principal_id), 1) != TURBO_OK ||
+                                              sizeof(principal->principal_id), 1) != SALTS_OK ||
       flowie_security_principal_text_validate(principal->principal_type,
-                                              sizeof(principal->principal_type), 1) != TURBO_OK ||
+                                              sizeof(principal->principal_type), 1) != SALTS_OK ||
       flowie_security_principal_text_validate(
           principal->domain_id, sizeof(principal->domain_id),
-          principal->scope != FLOWIE_SECURITY_SCOPE_SYSTEM) != TURBO_OK ||
+          principal->scope != FLOWIE_SECURITY_SCOPE_SYSTEM) != SALTS_OK ||
       flowie_security_principal_text_validate(principal->auth_method,
-                                              sizeof(principal->auth_method), 1) != TURBO_OK)
-    return TURBO_EPROTO;
+                                              sizeof(principal->auth_method), 1) != SALTS_OK)
+    return SALTS_EPROTO;
   for (uint32_t index = 0u; index < principal->role_count; ++index)
     if (flowie_security_principal_text_validate(principal->roles[index],
-                                                sizeof(principal->roles[index]), 1) != TURBO_OK)
-      return TURBO_EPROTO;
+                                                sizeof(principal->roles[index]), 1) != SALTS_OK)
+      return SALTS_EPROTO;
   for (uint32_t index = 0u; index < principal->group_count; ++index) {
     if (flowie_security_principal_text_validate(principal->groups[index],
-                                                sizeof(principal->groups[index]), 1) != TURBO_OK)
-      return TURBO_EPROTO;
+                                                sizeof(principal->groups[index]), 1) != SALTS_OK)
+      return SALTS_EPROTO;
     for (uint32_t prior = 0u; prior < index; ++prior)
-      if (strcmp(principal->groups[index], principal->groups[prior]) == 0) return TURBO_EPROTO;
+      if (strcmp(principal->groups[index], principal->groups[prior]) == 0) return SALTS_EPROTO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_context_t *out,
@@ -101,13 +101,13 @@ int flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_c
       FLOWIE_MQTT_VALIDATED_SECURITY_CONTEXT_INIT;
   if (!out || (kind != FLOWIE_MQTT_SECURITY_TOPIC && kind != FLOWIE_MQTT_SECURITY_TOPIC_FILTER) ||
       !parser_validated_resource || tstr_len(parser_validated_resource) == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   initialized.public_context.kind = kind;
   initialized.resource = (flowie_mqtt_span_t){(const uint8_t *)parser_validated_resource,
                                               tstr_len(parser_validated_resource)};
   initialized.provenance = &FLOWIE_MQTT_VALIDATED_SECURITY_PROVENANCE;
   *out = initialized;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_security_resource(const flowie_security_request_t *request,
@@ -121,13 +121,13 @@ static int flowie_mqtt_security_resource(const flowie_security_request_t *reques
   int validated = 0;
   if (!request || !request->resource || !resource_out || !kind_out || !validated_out ||
       !context_out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   context = (const flowie_mqtt_security_context_t *)request->protocol_context;
   if (context) {
-    if (context->size < offsetof(flowie_mqtt_security_context_t, username)) return TURBO_EPROTO;
+    if (context->size < offsetof(flowie_mqtt_security_context_t, username)) return SALTS_EPROTO;
     kind = context->kind;
     if (kind != FLOWIE_MQTT_SECURITY_TOPIC && kind != FLOWIE_MQTT_SECURITY_TOPIC_FILTER)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     if (context->size == sizeof(flowie_mqtt_validated_security_context_t)) {
       const flowie_mqtt_validated_security_context_t *trusted =
           (const flowie_mqtt_validated_security_context_t *)context;
@@ -135,7 +135,7 @@ static int flowie_mqtt_security_resource(const flowie_security_request_t *reques
           trusted->provenance != &FLOWIE_MQTT_VALIDATED_SECURITY_PROVENANCE ||
           trusted->resource.data != (const uint8_t *)request->resource ||
           trusted->resource.size == 0u) {
-        return TURBO_EPROTO;
+        return SALTS_EPROTO;
       }
       resource = trusted->resource;
       validated = 1;
@@ -150,7 +150,7 @@ static int flowie_mqtt_security_resource(const flowie_security_request_t *reques
   *kind_out = kind;
   *validated_out = validated;
   *context_out = context;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter_out,
@@ -161,7 +161,7 @@ static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter
   int uses_placeholders = 0;
   if (!pattern || !pattern[0] || !filter_out || filter_capacity == 0u ||
       !uses_placeholders_out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   cursor = pattern;
   while (*cursor) {
     const char *end = strchr(cursor, '/');
@@ -172,17 +172,17 @@ static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter
       segment_size = 1u;
       uses_placeholders = 1;
     }
-    if (segment_size > filter_capacity - 1u - written) return TURBO_ENOSPC;
+    if (segment_size > filter_capacity - 1u - written) return SALTS_ENOSPC;
     memcpy(filter_out + written, segment, segment_size);
     written += segment_size;
     if (!end) break;
-    if (written >= filter_capacity - 1u) return TURBO_ENOSPC;
+    if (written >= filter_capacity - 1u) return SALTS_ENOSPC;
     filter_out[written++] = '/';
     cursor = end + 1u;
   }
   filter_out[written] = '\0';
   *uses_placeholders_out = uses_placeholders;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_security_identity_segment_valid(flowie_mqtt_span_t value) {
@@ -258,17 +258,17 @@ static int flowie_mqtt_security_compile_leaf(void *ctx,
   if (compiled_leaf_out) *compiled_leaf_out = NULL;
   if (!input || input->size < sizeof(*input) || !input->rules || input->rule_count == 0u ||
       !input->candidate_rule_indices || input->candidate_count == 0u || !compiled_leaf_out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   compiled = (flowie_mqtt_security_leaf_t *)calloc(1u, sizeof(*compiled));
-  if (!compiled) return TURBO_ENOMEM;
+  if (!compiled) return SALTS_ENOMEM;
   rc = flowie_topic_index_init(&compiled->topics);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     compiled->candidates = (flowie_mqtt_security_candidate_t *)calloc(
         input->candidate_count, sizeof(*compiled->candidates));
-    if (!compiled->candidates) rc = TURBO_ENOMEM;
+    if (!compiled->candidates) rc = SALTS_ENOMEM;
   }
   compiled->candidate_count = input->candidate_count;
-  for (size_t position = 0u; rc == TURBO_OK && position < input->candidate_count; ++position) {
+  for (size_t position = 0u; rc == SALTS_OK && position < input->candidate_count; ++position) {
     size_t rule_index = input->candidate_rule_indices[position];
     const flowie_security_rule_t *rule =
         rule_index < input->rule_count ? &input->rules[rule_index] : NULL;
@@ -277,29 +277,29 @@ static int flowie_mqtt_security_compile_leaf(void *ctx,
     if (!rule || rule->size < sizeof(*rule) || rule->abi_version != FLOWIE_SECURITY_ABI_V3 ||
         rule->match_kind != FLOWIE_SECURITY_MATCH_ADAPTER ||
         rule->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       break;
     }
     rc = flowie_mqtt_security_filter_compile(
         rule->pattern, compiled_filter, sizeof(compiled_filter),
         &compiled->candidates[position].uses_placeholders);
-    if (rc != TURBO_OK) break;
+    if (rc != SALTS_OK) break;
     compiled->candidates[position].pattern = rule->pattern;
     filter = (flowie_mqtt_span_t){(const uint8_t *)compiled_filter, strlen(compiled_filter)};
     if (!flowie_mqtt_topic_filter_validate(filter)) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       break;
     }
     rc = flowie_topic_index_insert(&compiled->topics, filter, position);
   }
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     flowie_topic_index_destroy(&compiled->topics);
     free(compiled->candidates);
     free(compiled);
     return rc;
   }
   *compiled_leaf_out = compiled;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 typedef struct flowie_mqtt_security_emit_context_s {
@@ -314,12 +314,12 @@ static int flowie_mqtt_security_emit_candidate(void *ctx, size_t candidate_posit
   flowie_mqtt_security_emit_context_t *state = (flowie_mqtt_security_emit_context_t *)ctx;
   const flowie_mqtt_security_candidate_t *candidate;
   if (!state || !state->leaf || candidate_position >= state->leaf->candidate_count)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   candidate = &state->leaf->candidates[candidate_position];
   if (candidate->uses_placeholders &&
       !flowie_mqtt_security_placeholders_match(candidate->pattern, state->resource,
                                                state->security))
-    return TURBO_OK;
+    return SALTS_OK;
   return state->emit(state->emit_ctx, candidate_position);
 }
 
@@ -336,18 +336,18 @@ static int flowie_mqtt_security_evaluate_leaf(void *ctx, const void *compiled_le
   int rc;
   (void)ctx;
   if (!compiled || !request || request->size < sizeof(*request) || !emit || !request->resource)
-    return TURBO_EINVAL;
-  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return TURBO_OK;
+    return SALTS_EINVAL;
+  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return SALTS_OK;
   rc = flowie_mqtt_security_resource(request, &resource, &kind, &validated, &security_context);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   emit_context = (flowie_mqtt_security_emit_context_t){compiled, security_context, resource, emit,
                                                        emit_ctx};
   if (kind == FLOWIE_MQTT_SECURITY_TOPIC_FILTER) {
-    if (!validated && !flowie_mqtt_topic_filter_validate(resource)) return TURBO_EPROTO;
+    if (!validated && !flowie_mqtt_topic_filter_validate(resource)) return SALTS_EPROTO;
     return flowie_topic_index_visit_validated_containing_filters(
         &compiled->topics, resource, flowie_mqtt_security_emit_candidate, &emit_context);
   }
-  if (!validated && !flowie_mqtt_topic_name_validate(resource)) return TURBO_EPROTO;
+  if (!validated && !flowie_mqtt_topic_name_validate(resource)) return SALTS_EPROTO;
   return flowie_topic_index_visit_validated_topic(
       &compiled->topics, resource, flowie_mqtt_security_emit_candidate, &emit_context);
 }
@@ -363,10 +363,10 @@ static void flowie_mqtt_security_destroy_leaf(void *ctx, void *compiled_leaf) {
 
 int flowie_mqtt_security_matcher_init(flowie_security_matcher_t *out) {
   flowie_security_matcher_t matcher = FLOWIE_SECURITY_MATCHER_INIT;
-  if (!out || out->size < sizeof(*out)) return TURBO_EINVAL;
+  if (!out || out->size < sizeof(*out)) return SALTS_EINVAL;
   matcher.compile_leaf = flowie_mqtt_security_compile_leaf;
   matcher.evaluate_leaf = flowie_mqtt_security_evaluate_leaf;
   matcher.destroy_leaf = flowie_mqtt_security_destroy_leaf;
   *out = matcher;
-  return TURBO_OK;
+  return SALTS_OK;
 }

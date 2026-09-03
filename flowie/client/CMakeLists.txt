@@ -23,7 +23,7 @@ target_include_directories(
   PRIVATE ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(
   ${TARGET_NAME}
-  PRIVATE Flowie::Protocol TurboNet::CoroNet Rocida::Core Rocida::STL
+  PRIVATE Flowie::Protocol Salts::Core Salts::CSTL Salts::CNet Salts::CHTTP
           monocypher)
 
 install(FILES ${FLOWIE_CLIENT_HEADERS} DESTINATION include)

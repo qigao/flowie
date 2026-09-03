@@ -1,7 +1,7 @@
 #ifndef FLOWIE_CONTROL_HTTP_REQUEST_INTERNAL_H
 #define FLOWIE_CONTROL_HTTP_REQUEST_INTERNAL_H
 
-#include "iris/router.h"
+#include "flowie_control_http_server_internal.h"
 
 #include <stddef.h>
 

@@ -3,9 +3,9 @@
 #include "flowie_mqtt_client.h"
 #include "flowie_mqtt_protocol.h"
 #include "flowie_rule_internal.h"
-#include "turbo_error.h"
-#include "turbo_str.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_str.h"
+#include "salts_thread.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -44,7 +44,7 @@ typedef struct flowie_client_source_s {
   uint32_t reconnect_initial_ms;
   uint32_t reconnect_max_ms;
   flowie_mqtt_client_t *client;
-  turbo_thread_t supervisor;
+  salts_thread_t supervisor;
   int supervisor_started;
   turbo_flow_t *flow;
   tstr source_name;
@@ -112,17 +112,17 @@ static int flowie_client_source_error(turbo_flow_config_error_t *error, int stat
 static int flowie_client_source_parse_status(int status) {
   switch (status) {
   case FLOWIE_MQTT_PARSE_OK:
-    return TURBO_OK;
+    return SALTS_OK;
   case FLOWIE_MQTT_PARSE_NO_MEMORY:
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   case FLOWIE_MQTT_PARSE_TOO_LARGE:
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   case FLOWIE_MQTT_PARSE_INVALID_ARGUMENT:
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   case FLOWIE_MQTT_PARSE_MALFORMED:
   case FLOWIE_MQTT_PARSE_PROTOCOL_ERROR:
   default:
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
 }
 
@@ -152,21 +152,21 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
   if (!source || !publish ||
       !atomic_load_explicit(&source->started, memory_order_acquire) || !source->flow ||
       !source->source_name)
-    return TURBO_ESHUTDOWN;
+    return SALTS_ESHUTDOWN;
   (void)atomic_fetch_add_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   capacity = flowie_client_source_wire_capacity(publish);
   if (capacity == 0u)
-    rc = TURBO_ERANGE;
+    rc = SALTS_ERANGE;
   else if (capacity > source->max_packet_size)
-    rc = TURBO_EMSGSIZE;
+    rc = SALTS_EMSGSIZE;
   else
-    rc = TURBO_OK;
+    rc = SALTS_OK;
   turbo_flow_msg_init(&message);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     message.buffer = mem_get_buffer(mem_global(), capacity);
-    if (!message.buffer) rc = TURBO_ENOMEM;
+    if (!message.buffer) rc = SALTS_ENOMEM;
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     packet.version = FLOWIE_MQTT_VERSION_5;
     packet.qos = publish->qos;
     packet.retain = publish->retain;
@@ -178,7 +178,7 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
     rc = flowie_client_source_parse_status(flowie_mqtt_publish_packet_encode(
         &packet, (uint8_t *)mem_buffer_data(message.buffer), capacity, &written));
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     mem_set_used(message.buffer, written);
     message.type = FLOWIE_MQTT_PACKET_PUBLISH;
     fixed_flags = (uint8_t)((publish->duplicate ? 0x08u : 0u) |
@@ -186,11 +186,11 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
                             (publish->retain ? 0x01u : 0u));
     rc = flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, fixed_flags, &message.flags);
   }
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     message.payload = vstr_from_buf(mem_buffer_data(message.buffer), written);
     rc = flowie_mqtt_rule_bind_projection(&message, NULL);
   }
-  if (rc == TURBO_OK) rc = turbo_flow_publish(source->flow, source->source_name, &message);
+  if (rc == SALTS_OK) rc = turbo_flow_publish(source->flow, source->source_name, &message);
   turbo_flow_msg_cleanup(&message);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   return rc;
@@ -206,7 +206,7 @@ static void flowie_client_source_connect_complete(
   (void)atomic_fetch_add_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   atomic_store_explicit(&source->last_status, status, memory_order_release);
   atomic_store_explicit(&source->state,
-                        status == TURBO_OK ? FLOWIE_CLIENT_SOURCE_CONNECTED
+                        status == SALTS_OK ? FLOWIE_CLIENT_SOURCE_CONNECTED
                                            : FLOWIE_CLIENT_SOURCE_FAILED,
                         memory_order_release);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
@@ -222,7 +222,7 @@ static void flowie_client_source_subscribe_complete(
   (void)atomic_fetch_add_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   atomic_store_explicit(&source->last_status, status, memory_order_release);
   atomic_store_explicit(&source->state,
-                        status == TURBO_OK ? FLOWIE_CLIENT_SOURCE_READY
+                        status == SALTS_OK ? FLOWIE_CLIENT_SOURCE_READY
                                            : FLOWIE_CLIENT_SOURCE_FAILED,
                         memory_order_release);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
@@ -242,7 +242,7 @@ static void flowie_client_source_background_error(flowie_mqtt_client_t *client, 
 static int flowie_client_source_client_create(flowie_client_source_t *source) {
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_client_topic_handler_t handler;
-  if (!source || source->client) return TURBO_EINVAL;
+  if (!source || source->client) return SALTS_EINVAL;
   memset(&handler, 0, sizeof(handler));
   handler.filter = (flowie_mqtt_span_t){(const uint8_t *)source->topic_filter,
                                         tstr_len(source->topic_filter)};
@@ -268,7 +268,7 @@ static int flowie_client_source_client_create(flowie_client_source_t *source) {
 
 static int flowie_client_source_connect(flowie_client_source_t *source) {
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
-  if (!source || !source->client) return TURBO_EINVAL;
+  if (!source || !source->client) return SALTS_EINVAL;
   connect.clean_start = source->clean_start;
   connect.keep_alive = source->keep_alive;
   connect.client_id =
@@ -280,7 +280,7 @@ static int flowie_client_source_connect(flowie_client_source_t *source) {
 static int flowie_client_source_subscribe(flowie_client_source_t *source) {
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
   flowie_mqtt_subscription_t subscription;
-  if (!source || !source->client) return TURBO_EINVAL;
+  if (!source || !source->client) return SALTS_EINVAL;
   memset(&subscription, 0, sizeof(subscription));
   subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)source->topic_filter,
                                               tstr_len(source->topic_filter)};
@@ -296,17 +296,17 @@ static int flowie_client_source_wait(flowie_client_source_t *source, uint32_t de
   uint32_t elapsed = 0u;
   while (elapsed < delay_ms) {
     uint32_t step = delay_ms - elapsed;
-    if (!atomic_load_explicit(&source->started, memory_order_acquire)) return TURBO_ESHUTDOWN;
+    if (!atomic_load_explicit(&source->started, memory_order_acquire)) return SALTS_ESHUTDOWN;
     if (step > FLOWIE_CLIENT_SOURCE_POLL_MS) step = FLOWIE_CLIENT_SOURCE_POLL_MS;
-    turbo_sleep_ms(step);
+    salts_sleep_ms(step);
     elapsed += step;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void flowie_client_source_wait_callbacks(flowie_client_source_t *source) {
   while (atomic_load_explicit(&source->callback_depth, memory_order_acquire) != 0u)
-    turbo_thread_yield();
+    salts_thread_yield();
 }
 
 static void flowie_client_source_supervise(void *ctx) {
@@ -315,10 +315,10 @@ static void flowie_client_source_supervise(void *ctx) {
   while (atomic_load_explicit(&source->started, memory_order_acquire)) {
     flowie_client_source_state_t state =
         (flowie_client_source_state_t)atomic_load_explicit(&source->state, memory_order_acquire);
-    int rc = TURBO_OK;
+    int rc = SALTS_OK;
     if (state == FLOWIE_CLIENT_SOURCE_CONNECTED) {
       rc = flowie_client_source_subscribe(source);
-      if (rc != TURBO_OK) {
+      if (rc != SALTS_OK) {
         atomic_store_explicit(&source->last_status, rc, memory_order_release);
         atomic_store_explicit(&source->state, FLOWIE_CLIENT_SOURCE_FAILED, memory_order_release);
       }
@@ -333,13 +333,13 @@ static void flowie_client_source_supervise(void *ctx) {
       (void)flowie_client_source_wait(source, FLOWIE_CLIENT_SOURCE_POLL_MS);
       continue;
     }
-    if (flowie_client_source_wait(source, reconnect_delay) != TURBO_OK) break;
+    if (flowie_client_source_wait(source, reconnect_delay) != SALTS_OK) break;
     flowie_client_source_wait_callbacks(source);
     flowie_mqtt_client_destroy(source->client);
     source->client = NULL;
     rc = flowie_client_source_client_create(source);
-    if (rc == TURBO_OK) rc = flowie_client_source_connect(source);
-    if (rc != TURBO_OK) {
+    if (rc == SALTS_OK) rc = flowie_client_source_connect(source);
+    if (rc != SALTS_OK) {
       atomic_store_explicit(&source->last_status, rc, memory_order_release);
       atomic_store_explicit(&source->state, FLOWIE_CLIENT_SOURCE_FAILED, memory_order_release);
     }
@@ -360,19 +360,19 @@ static int flowie_client_source_start(void *ctx, turbo_flow_t *flow,
   int rc;
   if (!source || !flow || !stage || !stage->is_source ||
       atomic_load_explicit(&source->started, memory_order_acquire))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   source->source_name = tstr_dup(stage->name);
-  if (!source->source_name) return TURBO_ENOMEM;
+  if (!source->source_name) return SALTS_ENOMEM;
   source->flow = flow;
   rc = flowie_client_source_client_create(source);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   atomic_store_explicit(&source->started, 1, memory_order_release);
   rc = flowie_client_source_connect(source);
-  if (rc != TURBO_OK) goto fail_started;
-  rc = turbo_thread_create(&source->supervisor, flowie_client_source_supervise, source);
-  if (rc != TURBO_OK) goto fail_started;
+  if (rc != SALTS_OK) goto fail_started;
+  rc = salts_thread_create(&source->supervisor, flowie_client_source_supervise, source);
+  if (rc != SALTS_OK) goto fail_started;
   source->supervisor_started = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail_started:
   atomic_store_explicit(&source->started, 0, memory_order_release);
@@ -393,7 +393,7 @@ static void flowie_client_source_stop(void *ctx, turbo_flow_t *flow,
   if (!source) return;
   atomic_store_explicit(&source->started, 0, memory_order_release);
   if (source->supervisor_started) {
-    (void)turbo_thread_join(&source->supervisor);
+    (void)salts_thread_join(&source->supervisor);
     source->supervisor_started = 0;
   } else if (source->client) {
     flowie_client_source_wait_callbacks(source);
@@ -418,13 +418,13 @@ static void flowie_client_source_shutdown(void *ctx) {
 
 static int flowie_client_source_transport(const char *text,
                                           flowie_mqtt_client_transport_t *out) {
-  if (!text || !out) return TURBO_EINVAL;
+  if (!text || !out) return SALTS_EINVAL;
   if (strcmp(text, "tcp") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_TCP;
   else if (strcmp(text, "tls") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
   else if (strcmp(text, "ws") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_WS;
   else if (strcmp(text, "wss") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_WSS;
-  else return TURBO_ENOTSUP;
-  return TURBO_OK;
+  else return SALTS_ENOTSUP;
+  return SALTS_OK;
 }
 
 int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
@@ -443,13 +443,13 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   int clean_start;
   int rc;
   if (!flow || !name || !name[0] || !resolved || !error || error->size < sizeof(*error))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *error = (turbo_flow_config_error_t)TURBO_FLOW_CONFIG_ERROR_INIT;
   rc = turbo_flow_resolved_config_adapter(resolved, name, &view);
-  if (rc != TURBO_OK)
+  if (rc != SALTS_OK)
     return flowie_client_source_error(error, rc, name, NULL, "adapter is not resolved");
   if (strcmp(view.kind, "flowie_client") != 0)
-    return flowie_client_source_error(error, TURBO_EINVAL, name, NULL,
+    return flowie_client_source_error(error, SALTS_EINVAL, name, NULL,
                                       "adapter kind must be flowie_client");
   for (size_t i = 0u; i < turbo_flow_resolved_adapter_field_count(&view); ++i) {
     const char *field = turbo_flow_resolved_adapter_field_name(&view, i);
@@ -462,47 +462,47 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
       }
     }
     if (!known)
-      return flowie_client_source_error(error, TURBO_EINVAL, name, field,
+      return flowie_client_source_error(error, SALTS_EINVAL, name, field,
                                         "unknown Flowie client field");
   }
-  if (turbo_flow_resolved_adapter_get_string(&view, "host", &host) != TURBO_OK || !host[0] ||
-      turbo_flow_resolved_adapter_get_string(&view, "transport", &transport) != TURBO_OK ||
-      turbo_flow_resolved_adapter_get_string(&view, "client_id", &client_id) != TURBO_OK ||
+  if (turbo_flow_resolved_adapter_get_string(&view, "host", &host) != SALTS_OK || !host[0] ||
+      turbo_flow_resolved_adapter_get_string(&view, "transport", &transport) != SALTS_OK ||
+      turbo_flow_resolved_adapter_get_string(&view, "client_id", &client_id) != SALTS_OK ||
       !client_id[0] ||
-      turbo_flow_resolved_adapter_get_string(&view, "topic_filter", &topic_filter) != TURBO_OK ||
+      turbo_flow_resolved_adapter_get_string(&view, "topic_filter", &topic_filter) != SALTS_OK ||
       !topic_filter[0] || strlen(client_id) > UINT16_MAX || strlen(topic_filter) > UINT16_MAX)
-    return flowie_client_source_error(error, TURBO_EINVAL, name, NULL,
+    return flowie_client_source_error(error, SALTS_EINVAL, name, NULL,
                                       "required Flowie client string is invalid");
   source = (flowie_client_source_t *)calloc(1u, sizeof(*source));
-  if (!source) return TURBO_ENOMEM;
+  if (!source) return SALTS_ENOMEM;
   atomic_init(&source->started, 0);
   atomic_init(&source->state, FLOWIE_CLIENT_SOURCE_DISCONNECTED);
-  atomic_init(&source->last_status, TURBO_OK);
+  atomic_init(&source->last_status, SALTS_OK);
   atomic_init(&source->callback_depth, 0u);
   source->host = tstr_dup(host);
   source->client_id = tstr_dup(client_id);
   source->topic_filter = tstr_dup(topic_filter);
   rc = flowie_client_source_transport(transport, &source->transport);
-  if (rc != TURBO_OK) goto invalid;
+  if (rc != SALTS_OK) goto invalid;
   rc = turbo_flow_resolved_adapter_get_string(&view, "path", &path);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     source->path = tstr_dup(path);
-  else if (rc != TURBO_ENOENT)
+  else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_string(&view, "ca_file", &ca_file);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     source->ca_file = tstr_dup(ca_file);
-  else if (rc != TURBO_ENOENT)
+  else if (rc != SALTS_ENOENT)
     goto invalid;
   if (!source->host || !source->client_id || !source->topic_filter ||
       (path && !source->path) || (ca_file && !source->ca_file)) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto invalid;
   }
 #define FLOWIE_CLIENT_GET_U64(field_name, target, maximum)                                         \
   do {                                                                                             \
     rc = turbo_flow_resolved_adapter_get_u64(&view, field_name, &value);                           \
-    if (rc != TURBO_OK || value > (uint64_t)(maximum)) goto invalid;                               \
+    if (rc != SALTS_OK || value > (uint64_t)(maximum)) goto invalid;                               \
     target = value;                                                                                \
   } while (0)
   FLOWIE_CLIENT_GET_U64("port", source->port, 65535u);
@@ -515,25 +515,25 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   FLOWIE_CLIENT_GET_U64("reconnect_max_ms", source->reconnect_max_ms, UINT32_MAX);
 #undef FLOWIE_CLIENT_GET_U64
   rc = turbo_flow_resolved_adapter_get_bool(&view, "clean_start", &clean_start);
-  if (rc != TURBO_OK) goto invalid;
+  if (rc != SALTS_OK) goto invalid;
   source->clean_start = clean_start ? 1u : 0u;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "stream_recv_buffer_bytes", &value);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     if (value > SIZE_MAX) goto invalid_range;
     source->stream_recv_buffer_bytes = (size_t)value;
-  } else if (rc != TURBO_ENOENT)
+  } else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "socket_recv_buffer_bytes", &value);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     if (value > INT_MAX) goto invalid_range;
     source->socket_recv_buffer_bytes = (size_t)value;
-  } else if (rc != TURBO_ENOENT)
+  } else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "socket_send_buffer_bytes", &value);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     if (value > INT_MAX) goto invalid_range;
     source->socket_send_buffer_bytes = (size_t)value;
-  } else if (rc != TURBO_ENOENT)
+  } else if (rc != SALTS_ENOENT)
     goto invalid;
   if (source->port == 0 || source->timeout_ms == 0u || source->max_packet_size < 2u ||
       source->reconnect_initial_ms < FLOWIE_CLIENT_SOURCE_RECONNECT_MIN_MS ||
@@ -544,7 +544,7 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
       ((source->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TCP ||
         source->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS) &&
        source->path)) {
-    rc = TURBO_EINVAL;
+    rc = SALTS_EINVAL;
     goto invalid;
   }
   memset(&ops, 0, sizeof(ops));
@@ -553,13 +553,13 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   ops.shutdown = flowie_client_source_shutdown;
   rc = turbo_flow_register_adapter_with_resources(flow, name, &ops, source,
                                                   &FLOWIE_CLIENT_SOURCE_SCHEMA, NULL, 0u);
-  if (rc == TURBO_OK) return TURBO_OK;
+  if (rc == SALTS_OK) return SALTS_OK;
 
 invalid:
   flowie_client_source_shutdown(source);
   return flowie_client_source_error(error, rc, name, NULL,
                                     "Flowie client configuration validation failed");
 invalid_range:
-  rc = TURBO_ERANGE;
+  rc = SALTS_ERANGE;
   goto invalid;
 }

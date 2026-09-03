@@ -1,7 +1,7 @@
 #include "flowie_cluster_state_machine_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -18,13 +18,13 @@ static int flowie_state_machine_publish(
     uint64_t command_id, const tr_raft_data_descriptor_t *descriptor) {
   flowie_state_machine_capture_t *capture =
       (flowie_state_machine_capture_t *)ctx;
-  if (!capture || !descriptor) return TURBO_EINVAL;
+  if (!capture || !descriptor) return SALTS_EINVAL;
   ++capture->count;
   capture->index = index;
   capture->term = term;
   capture->command_id = command_id;
   capture->descriptor = *descriptor;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static flowie_cluster_owner_directory_t *flowie_state_machine_directory(void) {
@@ -35,7 +35,7 @@ static flowie_cluster_owner_directory_t *flowie_state_machine_directory(void) {
   config.cluster_id = vstr_from_cstr("cluster-a");
   config.listener_id = vstr_from_cstr("mqtt");
   check_equal(flowie_cluster_owner_directory_create(&config, &directory),
-               TURBO_OK);
+               SALTS_OK);
   return directory;
 }
 
@@ -64,7 +64,7 @@ spec("flowie cluster unified Raft state machine") {
     check_equal(flowie_cluster_owner_command_encode(
                      &owner_command, entries[0].data, sizeof(entries[0].data),
                      &entries[0].data_length),
-                 TURBO_OK);
+                 SALTS_OK);
 
     descriptor.stream_id = 71u;
     descriptor.stream_size = 4096u;
@@ -75,14 +75,14 @@ spec("flowie cluster unified Raft state machine") {
     check_equal(tr_raft_data_descriptor_encode(
                      &descriptor, entries[1].data, sizeof(entries[1].data),
                      &encoded_size),
-                 TURBO_OK);
+                 SALTS_OK);
     entries[1].data_length = encoded_size;
 
     check_equal(flowie_cluster_state_machine_apply_batch(&state, entries, 2u),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_owner_directory_resolve_shard(directory, 1u,
                                                                &owner),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(owner.owner_epoch, 9u);
     check_equal(capture.count, 1u);
     check_equal(capture.index, 11u);
@@ -103,7 +103,7 @@ spec("flowie cluster unified Raft state machine") {
     entry.data_length = 4u;
     entry.index = 1u;
     check_equal(flowie_cluster_state_machine_apply_batch(&state, &entry, 1u),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_equal(capture.count, 0u);
     flowie_cluster_owner_directory_destroy(directory);
   }

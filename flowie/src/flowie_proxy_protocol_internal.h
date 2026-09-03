@@ -4,9 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "CoroNet.h"
 #include "flowie.h"
-#include "turbo_str.h"
+#include "salts_str.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,14 +19,6 @@ extern "C" {
 #define FLOWIE_PROXY_PROTOCOL_INCOMPLETE 1
 
 typedef struct flowie_proxy_protocol_policy_s flowie_proxy_protocol_policy_t;
-
-/** Handler-lifetime addresses established by trusted PROXY admission. */
-typedef struct flowie_proxy_protocol_connection_context_s {
-  char remote_address[CORO_SOCKET_ADDRESS_TEXT_CAPACITY];
-  char transport_peer_address[CORO_SOCKET_ADDRESS_TEXT_CAPACITY];
-  /** Owned exact TLV block; values remain opaque advisory metadata. */
-  tstr tlvs;
-} flowie_proxy_protocol_connection_context_t;
 
 typedef enum flowie_proxy_protocol_command_e {
   FLOWIE_PROXY_PROTOCOL_COMMAND_LOCAL = 0,
@@ -112,9 +103,9 @@ typedef struct flowie_proxy_protocol_v2_tlv_cursor_s {
  * Incrementally parse exactly one mandatory PROXY v2 header. The caller must
  * enable this parser only after authenticating the direct peer as trusted.
  *
- * Returns TURBO_OK with *consumed set to the exact header size,
+ * Returns SALTS_OK with *consumed set to the exact header size,
  * FLOWIE_PROXY_PROTOCOL_INCOMPLETE for a valid prefix that needs more bytes,
- * TURBO_EMSGSIZE when the advertised header exceeds max_header_size, or a
+ * SALTS_EMSGSIZE when the advertised header exceeds max_header_size, or a
  * protocol error for any invalid/missing v2 header. Bytes after *consumed are
  * application/TLS bytes and are never inspected.
  */
@@ -126,7 +117,7 @@ int flowie_proxy_protocol_v2_tlv_cursor_init(
     const flowie_proxy_protocol_v2_view_t *view,
     flowie_proxy_protocol_v2_tlv_cursor_t *cursor);
 
-/** Return the next TLV, or TURBO_ENOENT after the last TLV. */
+/** Return the next TLV, or SALTS_ENOENT after the last TLV. */
 int flowie_proxy_protocol_v2_tlv_next(flowie_proxy_protocol_v2_tlv_cursor_t *cursor,
                                       flowie_proxy_protocol_v2_tlv_t *out);
 
@@ -136,11 +127,6 @@ int flowie_proxy_protocol_policy_create(
     flowie_proxy_protocol_policy_t **out);
 
 void flowie_proxy_protocol_policy_destroy(flowie_proxy_protocol_policy_t *policy);
-
-/** Export the immutable policy as a CoroNet pre-TLS admission configuration. */
-int flowie_proxy_protocol_policy_coronet_config(
-    flowie_proxy_protocol_policy_t *policy,
-    coro_server_pre_tls_admission_config_t *out);
 
 #ifdef __cplusplus
 }

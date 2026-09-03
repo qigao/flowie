@@ -1,7 +1,7 @@
 #include "flowie_cluster_owner_projection_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -13,7 +13,7 @@ static flowie_cluster_owner_directory_t *flowie_owner_projection_directory(void)
   config.cluster_id = vstr_from_cstr("cluster-a");
   config.listener_id = vstr_from_cstr("mqtt");
   check_equal(flowie_cluster_owner_directory_create(&config, &directory),
-               TURBO_OK);
+               SALTS_OK);
   return directory;
 }
 
@@ -34,35 +34,35 @@ spec("flowie cluster Raft owner projection") {
     command.boot_id[0] = 9u;
     check_equal(flowie_cluster_owner_command_encode(
                      &command, entry.data, sizeof(entry.data), &encoded_size),
-                 TURBO_OK);
+                 SALTS_OK);
     entry.index = 11u;
     entry.data_length = encoded_size;
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_owner_directory_resolve_shard(directory, 1u,
                                                                &owner),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(owner.owner_epoch, 7u);
     check_equal(owner.node_id, "node-b", strlen("node-b"));
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_OK);
+                 SALTS_OK);
 
     memset(&command, 0, sizeof(command));
     command.kind = FLOWIE_CLUSTER_OWNER_COMMAND_REVOKE;
     command.shard_id = 1u;
     check_equal(flowie_cluster_owner_command_encode(
                      &command, entry.data, sizeof(entry.data), &encoded_size),
-                 TURBO_OK);
+                 SALTS_OK);
     entry.index = 12u;
     entry.data_length = encoded_size;
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_owner_directory_resolve_shard(directory, 1u,
                                                                &owner),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     flowie_cluster_owner_directory_destroy(directory);
   }
 
@@ -77,21 +77,21 @@ spec("flowie cluster Raft owner projection") {
     command.shard_id = 0u;
     check_equal(flowie_cluster_owner_command_encode(
                      &command, entry.data, sizeof(entry.data), &encoded_size),
-                 TURBO_OK);
+                 SALTS_OK);
     entry.index = 3u;
     entry.data_length = encoded_size;
     entry.data[6] = 1u;
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     entry.data[6] = 0u;
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_OK);
+                 SALTS_OK);
     entry.data[5] = FLOWIE_CLUSTER_OWNER_COMMAND_ASSIGN;
     check_equal(flowie_cluster_owner_projection_apply_batch(&projection,
                                                               &entry, 1u),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     flowie_cluster_owner_directory_destroy(directory);
   }
 }

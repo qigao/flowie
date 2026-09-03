@@ -1,6 +1,6 @@
 #include "flowie_control_external_authenticator_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -31,16 +31,16 @@ int flowie_control_external_authenticator_validate(
           FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES ||
       !external_auth_text_valid(authenticator->method, FLOWIE_SECURITY_TYPE_MAX) ||
       !authenticator->verify)
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 int flowie_control_external_identity_mapper_validate(
     const flowie_control_external_identity_mapper_t *mapper) {
   if (!mapper || mapper->size < sizeof(*mapper) ||
       mapper->version != FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAPPER_VERSION || !mapper->map)
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 int flowie_control_external_auth_assertion_validate(
@@ -60,24 +60,24 @@ int flowie_control_external_auth_assertion_validate(
       assertion->assurance_level < FLOWIE_CONTROL_EXTERNAL_ASSURANCE_SINGLE_FACTOR ||
       assertion->assurance_level > FLOWIE_CONTROL_EXTERNAL_ASSURANCE_HARDWARE_BOUND ||
       assertion->external_group_count > FLOWIE_SECURITY_MAX_GROUPS)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
 
   for (uint32_t index = 0u; index < assertion->external_group_count; ++index) {
     if (!external_auth_text_valid(assertion->external_groups[index], FLOWIE_SECURITY_ID_MAX))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     for (uint32_t previous = 0u; previous < index; ++previous)
       if (strcmp(assertion->external_groups[previous], assertion->external_groups[index]) == 0)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_control_external_identity_map_result_validate(
     const flowie_control_external_identity_map_result_t *result) {
   if (!result || result->size < sizeof(*result) ||
       !external_auth_text_valid(result->principal_id, FLOWIE_SECURITY_ID_MAX))
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 static int external_subject_map(void *ctx,
@@ -94,19 +94,19 @@ static int external_subject_map(void *ctx,
       !external_auth_text_valid(request->presented_identity, FLOWIE_SECURITY_ID_MAX) ||
       !request->assertion || request->assertion->size < sizeof(*request->assertion) ||
       !result_out || result_out->size < sizeof(*result_out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (!external_auth_text_valid(request->assertion->issuer, FLOWIE_CONTROL_EXTERNAL_ISSUER_MAX) ||
       !external_auth_text_valid(request->assertion->subject_type, FLOWIE_SECURITY_TYPE_MAX))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   if (strcmp(request->assertion->issuer, mapper->trusted_issuer) != 0 ||
       strcmp(request->assertion->subject_type, mapper->subject_type) != 0)
-    return TURBO_EPERM;
+    return SALTS_EPERM;
   if (!external_auth_text_valid(request->assertion->subject, FLOWIE_SECURITY_ID_MAX))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   subject_size = strlen(request->assertion->subject);
   memcpy(result.principal_id, request->assertion->subject, subject_size + 1u);
   *result_out = result;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_control_external_subject_mapper_create(
@@ -119,9 +119,9 @@ int flowie_control_external_subject_mapper_create(
   if (!config || config->size < sizeof(*config) || !out ||
       !external_auth_text_valid(config->trusted_issuer, FLOWIE_CONTROL_EXTERNAL_ISSUER_MAX) ||
       !external_auth_text_valid(config->subject_type, FLOWIE_SECURITY_TYPE_MAX))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   mapper = (flowie_control_external_subject_mapper_t *)calloc(1u, sizeof(*mapper));
-  if (!mapper) return TURBO_ENOMEM;
+  if (!mapper) return SALTS_ENOMEM;
   issuer_size = strlen(config->trusted_issuer);
   type_size = strlen(config->subject_type);
   memcpy(mapper->trusted_issuer, config->trusted_issuer, issuer_size + 1u);
@@ -131,7 +131,7 @@ int flowie_control_external_subject_mapper_create(
   mapper->interface.ctx = mapper;
   mapper->interface.map = external_subject_map;
   *out = mapper;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void flowie_control_external_subject_mapper_destroy(

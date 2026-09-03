@@ -1,7 +1,7 @@
 #include "flowie_rule_internal.h"
 
-#include "turbo_error.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_thread.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -85,25 +85,25 @@ int flowie_mqtt_message_flags_encode(flowie_mqtt_version_t version, uint8_t fixe
                                      uint32_t *flags_out) {
   if (!flags_out || !flowie_mqtt_version_is_supported(version) ||
       (fixed_flags & FLOWIE_MQTT_MESSAGE_FIXED_FLAGS_INVALID_MASK) != 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *flags_out = ((uint32_t)version << FLOWIE_MQTT_MESSAGE_VERSION_SHIFT) | fixed_flags;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 const turbo_flow_expr_schema_t *flowie_mqtt_rule_schema(void) { return &FLOWIE_MQTT_RULE_SCHEMA; }
 
 int flowie_mqtt_message_flags_version(uint32_t flags, flowie_mqtt_version_t *version_out) {
   uint32_t encoded;
-  if (!version_out) return TURBO_EINVAL;
+  if (!version_out) return SALTS_EINVAL;
   encoded = (flags & FLOWIE_MQTT_MESSAGE_VERSION_MASK) >> FLOWIE_MQTT_MESSAGE_VERSION_SHIFT;
-  if (!flowie_mqtt_version_is_supported((flowie_mqtt_version_t)encoded)) return TURBO_EPROTO;
+  if (!flowie_mqtt_version_is_supported((flowie_mqtt_version_t)encoded)) return SALTS_EPROTO;
   *version_out = (flowie_mqtt_version_t)encoded;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_message_version(const turbo_flow_msg_t *message,
                                        flowie_mqtt_version_t *version_out) {
-  return message ? flowie_mqtt_message_flags_version(message->flags, version_out) : TURBO_EINVAL;
+  return message ? flowie_mqtt_message_flags_version(message->flags, version_out) : SALTS_EINVAL;
 }
 
 static uint64_t flowie_mqtt_rule_fact_bit(uint32_t fact_id) {
@@ -125,10 +125,10 @@ static int flowie_mqtt_projection_materialize_properties(flowie_mqtt_projection_
   turbo_flow_expr_value_t value;
   size_t user_property_count = 0u;
   int rc;
-  if (!projection) return TURBO_EINVAL;
+  if (!projection) return SALTS_EINVAL;
   if (version == FLOWIE_MQTT_VERSION_5) {
     rc = flowie_mqtt_property_iterator_init(&projection->publish.properties, &iterator);
-    if (rc != FLOWIE_MQTT_PARSE_OK) return TURBO_EPROTO;
+    if (rc != FLOWIE_MQTT_PARSE_OK) return SALTS_EPROTO;
     while ((rc = flowie_mqtt_property_iterator_next(&iterator, &property)) ==
            FLOWIE_MQTT_PARSE_OK) {
       memset(&value, 0, sizeof(value));
@@ -160,14 +160,14 @@ static int flowie_mqtt_projection_materialize_properties(flowie_mqtt_projection_
         flowie_mqtt_projection_commit(projection, FLOWIE_MQTT_RULE_CORRELATION_DATA, &value);
         break;
       case FLOWIE_MQTT_PROPERTY_USER_PROPERTY:
-        if (user_property_count == INT64_MAX) return TURBO_ERANGE;
+        if (user_property_count == INT64_MAX) return SALTS_ERANGE;
         user_property_count += 1u;
         break;
       default:
         break;
       }
     }
-    if (rc != FLOWIE_MQTT_PARSE_NEED_MORE) return TURBO_EPROTO;
+    if (rc != FLOWIE_MQTT_PARSE_NEED_MORE) return SALTS_EPROTO;
   }
 
   memset(&value, 0, sizeof(value));
@@ -175,7 +175,7 @@ static int flowie_mqtt_projection_materialize_properties(flowie_mqtt_projection_
   value.as.i64 = (int64_t)user_property_count;
   flowie_mqtt_projection_commit(projection, FLOWIE_MQTT_RULE_USER_PROPERTY_COUNT, &value);
   projection->parsed_bits |= FLOWIE_MQTT_RULE_ALL_FACTS;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_projection_materialize(flowie_mqtt_projection_t *projection,
@@ -183,9 +183,9 @@ static int flowie_mqtt_projection_materialize(flowie_mqtt_projection_t *projecti
                                               uint32_t message_flags) {
   const flowie_mqtt_publish_view_t *publish;
   turbo_flow_expr_value_t value;
-  if (!projection) return TURBO_EINVAL;
+  if (!projection) return SALTS_EINVAL;
   publish = &projection->publish;
-  if (publish->payload.size > INT64_MAX) return TURBO_ERANGE;
+  if (publish->payload.size > INT64_MAX) return SALTS_ERANGE;
 
   memset(&value, 0, sizeof(value));
   value.type = TURBO_FLOW_EXPR_TYPE_STRING;
@@ -232,15 +232,15 @@ static int flowie_mqtt_projection_packet(const turbo_flow_msg_t *message,
                                          flowie_mqtt_packet_view_t *packet_out) {
   flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
   size_t consumed = 0u;
-  if (!message || !packet_out) return TURBO_EINVAL;
+  if (!message || !packet_out) return SALTS_EINVAL;
   if (!packet_hint) {
     options.version = version;
     options.max_packet_size = message->payload.len;
     if (flowie_mqtt_packet_parse((const uint8_t *)message->payload.data, message->payload.len,
                                  &options, packet_out, &consumed, NULL) != FLOWIE_MQTT_PARSE_OK ||
         consumed != message->payload.len)
-      return TURBO_EPROTO;
-    return TURBO_OK;
+      return SALTS_EPROTO;
+    return SALTS_OK;
   }
   if (packet_hint->size < sizeof(*packet_hint) ||
       packet_hint->abi_version != FLOWIE_MQTT_PROTOCOL_ABI_V1 || packet_hint->version != version ||
@@ -248,21 +248,21 @@ static int flowie_mqtt_projection_packet(const turbo_flow_msg_t *message,
       (message->flags & FLOWIE_MQTT_MESSAGE_FIXED_FLAGS_MASK) != packet_hint->flags ||
       packet_hint->packet.size != message->payload.len || !packet_hint->packet.data ||
       !packet_hint->body.data)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   {
     uintptr_t packet_address = (uintptr_t)packet_hint->packet.data;
     uintptr_t body_address = (uintptr_t)packet_hint->body.data;
     size_t body_offset;
-    if (body_address < packet_address) return TURBO_EINVAL;
+    if (body_address < packet_address) return SALTS_EINVAL;
     body_offset = (size_t)(body_address - packet_address);
     if (body_offset > packet_hint->packet.size ||
         packet_hint->body.size > packet_hint->packet.size - body_offset)
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     *packet_out = *packet_hint;
     packet_out->packet.data = (const uint8_t *)message->payload.data;
     packet_out->body.data = packet_out->packet.data + body_offset;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_projection_decode(const turbo_flow_msg_t *message,
@@ -273,38 +273,38 @@ static int flowie_mqtt_projection_decode(const turbo_flow_msg_t *message,
   if (!message || !projection ||
       (message->type != 0u && message->type != FLOWIE_MQTT_PACKET_PUBLISH) ||
       message->payload.len == 0u || !message->payload.data)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(projection, 0, sizeof(*projection));
   projection->packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
   projection->publish = (flowie_mqtt_publish_view_t)FLOWIE_MQTT_PUBLISH_VIEW_INIT;
   rc = flowie_mqtt_message_version(message, &version);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_mqtt_projection_packet(message, packet_hint, version, &projection->packet);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   if (projection->packet.type != FLOWIE_MQTT_PACKET_PUBLISH ||
       flowie_mqtt_publish_parse(&projection->packet, &projection->publish) != FLOWIE_MQTT_PARSE_OK)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   rc = flowie_mqtt_projection_materialize(projection, version, message->flags);
-  if (rc != TURBO_OK) return rc;
-  if (projection->parsed_bits != FLOWIE_MQTT_RULE_ALL_FACTS) return TURBO_EPROTO;
+  if (rc != SALTS_OK) return rc;
+  if (projection->parsed_bits != FLOWIE_MQTT_RULE_ALL_FACTS) return SALTS_EPROTO;
   projection->wire_data = message->payload.data;
   projection->wire_size = message->payload.len;
   projection->generation = UINT64_C(1);
   projection->message_type = message->type;
   projection->message_flags = message->flags;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_mqtt_projection_clone(const void *value, void *ctx, void **out) {
   flowie_mqtt_projection_t *copy;
   (void)ctx;
   if (out) *out = NULL;
-  if (!value || !out) return TURBO_EINVAL;
+  if (!value || !out) return SALTS_EINVAL;
   copy = (flowie_mqtt_projection_t *)malloc(sizeof(*copy));
-  if (!copy) return TURBO_ENOMEM;
+  if (!copy) return SALTS_ENOMEM;
   *copy = *(const flowie_mqtt_projection_t *)value;
   *out = copy;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void flowie_mqtt_projection_destroy(void *value, void *ctx) {
@@ -329,46 +329,46 @@ int flowie_mqtt_rule_bind_projection(turbo_flow_msg_t *message,
   size_t buffer_size;
   int rc;
   if (!message || !message->buffer || !message->payload.data || message->payload.len == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   buffer_address = (uintptr_t)mem_buffer_const_data(message->buffer);
   payload_address = (uintptr_t)message->payload.data;
   buffer_size = mem_buffer_used(message->buffer);
-  if (payload_address < buffer_address) return TURBO_EINVAL;
+  if (payload_address < buffer_address) return SALTS_EINVAL;
   payload_offset = (size_t)(payload_address - buffer_address);
   if (payload_offset > buffer_size || message->payload.len > buffer_size - payload_offset)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   projection = (flowie_mqtt_projection_t *)malloc(sizeof(*projection));
-  if (!projection) return TURBO_ENOMEM;
+  if (!projection) return SALTS_ENOMEM;
   rc = flowie_mqtt_projection_decode(message, packet_hint, projection);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = turbo_flow_msg_bind_projection(message, &FLOWIE_MQTT_PROJECTION_SCHEMA, projection,
                                         flowie_mqtt_projection_clone,
                                         flowie_mqtt_projection_destroy, NULL);
-  if (rc != TURBO_OK) free(projection);
+  if (rc != SALTS_OK) free(projection);
   return rc;
 }
 
 static int flowie_mqtt_rule_values(const flowie_mqtt_projection_t *projection,
                                    const turbo_flow_expr_schema_t *schema,
                                    turbo_flow_expr_value_t *values) {
-  if (!projection || !schema || !values) return TURBO_EINVAL;
+  if (!projection || !schema || !values) return SALTS_EINVAL;
   for (size_t i = 0u; i < schema->field_count; ++i) {
     const turbo_flow_expr_schema_field_t *field = &schema->fields[i];
     const turbo_flow_expr_schema_field_t *expected;
     size_t value_index;
     uint64_t bit;
-    if (!field->path) return TURBO_EINVAL;
+    if (!field->path) return SALTS_EINVAL;
     if (field->field_id < FLOWIE_MQTT_RULE_TOPIC || field->field_id > FLOWIE_MQTT_RULE_BROKER_WILL)
-      return TURBO_ENOENT;
+      return SALTS_ENOENT;
     value_index = field->field_id - FLOWIE_MQTT_RULE_TOPIC;
     expected = &FLOWIE_MQTT_RULE_FIELDS[value_index];
-    if (field->type != expected->type) return TURBO_ENOENT;
+    if (field->type != expected->type) return SALTS_ENOENT;
     bit = flowie_mqtt_rule_fact_bit(field->field_id);
-    if ((projection->parsed_bits & bit) == 0u) return TURBO_EPROTO;
+    if ((projection->parsed_bits & bit) == 0u) return SALTS_EPROTO;
     if ((projection->present_bits & bit) != 0u) values[i] = projection->values[value_index];
     else memset(&values[i], 0, sizeof(values[i]));
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_mqtt_payload_view(const turbo_flow_msg_t *message, vstr *payload_out, void *ctx) {
@@ -378,27 +378,27 @@ int flowie_mqtt_payload_view(const turbo_flow_msg_t *message, vstr *payload_out,
   int rc;
 
   (void)ctx;
-  if (!message || !payload_out) return TURBO_EINVAL;
+  if (!message || !payload_out) return SALTS_EINVAL;
   *payload_out = (vstr){0};
   projection =
       (const flowie_mqtt_projection_t *)turbo_flow_msg_projection(message, &projection_schema);
   if (projection && projection_schema == &FLOWIE_MQTT_PROJECTION_SCHEMA) {
-    if (!flowie_mqtt_projection_matches(projection, message)) return TURBO_EPROTO;
+    if (!flowie_mqtt_projection_matches(projection, message)) return SALTS_EPROTO;
   } else {
     rc = flowie_mqtt_projection_decode(message, NULL, &decoded);
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
     projection = &decoded;
   }
   *payload_out = vstr_from_buf((const char *)projection->publish.payload.data,
                                  projection->publish.payload.size);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_mqtt_rule_facts_provider(const turbo_flow_msg_t *message,
                                     const turbo_flow_expr_schema_t *schema,
                                     const turbo_flow_expr_value_t **values_out,
                                     size_t *value_count_out, void *ctx) {
-  static TURBO_THREAD_LOCAL turbo_flow_expr_value_t values[FLOWIE_MQTT_RULE_FACT_COUNT];
+  static SALTS_THREAD_LOCAL turbo_flow_expr_value_t values[FLOWIE_MQTT_RULE_FACT_COUNT];
   flowie_mqtt_projection_t decoded;
   const turbo_flow_data_schema_t *projection_schema = NULL;
   const flowie_mqtt_projection_t *projection;
@@ -408,21 +408,21 @@ int flowie_mqtt_rule_facts_provider(const turbo_flow_msg_t *message,
       schema->field_count > FLOWIE_MQTT_RULE_FACT_COUNT ||
       (schema->field_count != 0u && !schema->fields) || message->payload.len == 0u ||
       !message->payload.data)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *values_out = NULL;
   *value_count_out = 0u;
   projection =
       (const flowie_mqtt_projection_t *)turbo_flow_msg_projection(message, &projection_schema);
   if (projection && projection_schema == &FLOWIE_MQTT_PROJECTION_SCHEMA) {
-    if (!flowie_mqtt_projection_matches(projection, message)) return TURBO_EPROTO;
+    if (!flowie_mqtt_projection_matches(projection, message)) return SALTS_EPROTO;
   } else {
     rc = flowie_mqtt_projection_decode(message, NULL, &decoded);
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
     projection = &decoded;
   }
   rc = flowie_mqtt_rule_values(projection, schema, values);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   *values_out = values;
   *value_count_out = schema->field_count;
-  return TURBO_OK;
+  return SALTS_OK;
 }

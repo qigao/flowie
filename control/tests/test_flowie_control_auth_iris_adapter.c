@@ -4,10 +4,10 @@
 #include "flowie_control_store_internal.h"
 #include "flowie_control_test_turbodb.h"
 
-#include "CoroNet.h"
+#include "salts_coro.h"
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_parser.h"
+#include "salts_error.h"
+#include <json_parser.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -62,7 +62,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   user.request_id = "auth-endpoint-service";
   user.expected_revision = revision;
   user.occurred_at = 1100u + revision;
-  check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+  check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
   revision = result.revision;
 
   issue.domain_id = "root-a";
@@ -71,7 +71,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   issue.request_id = "auth-endpoint-service-credential";
   issue.expected_revision = revision;
   issue.occurred_at = 1200u + revision;
-  check_equal(flowie_control_store_credential_generate(store, &issue, credential), TURBO_OK);
+  check_equal(flowie_control_store_credential_generate(store, &issue, credential), SALTS_OK);
   revision = credential->revision;
 
   role.domain_id = "root-a";
@@ -80,7 +80,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   role.request_id = "auth-endpoint-service-role";
   role.expected_revision = revision;
   role.occurred_at = 1300u + revision;
-  check_equal(flowie_control_store_role_create(store, &role, &result), TURBO_OK);
+  check_equal(flowie_control_store_role_create(store, &role, &result), SALTS_OK);
   revision = result.revision;
 
   assignment.domain_id = "root-a";
@@ -90,7 +90,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   assignment.request_id = "auth-endpoint-service-assignment";
   assignment.expected_revision = revision;
   assignment.occurred_at = 1400u + revision;
-  check_equal(flowie_control_store_user_role_add(store, &assignment, &result), TURBO_OK);
+  check_equal(flowie_control_store_user_role_add(store, &assignment, &result), SALTS_OK);
   return result.revision;
 }
 
@@ -109,20 +109,20 @@ static void auth_endpoint_service_fixture_open(auth_endpoint_service_fixture_t *
   check_not_null(fixture->database_path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture->database_path), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, &fixture->store), TURBO_OK);
+  check_equal(flowie_control_store_open(&store_config, &fixture->store), SALTS_OK);
 
   domain.domain_id = "root-a";
   domain.actor = "bootstrap";
   domain.request_id = "auth-endpoint-domain";
   domain.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(fixture->store, &domain, &result), TURBO_OK);
+  check_equal(flowie_control_store_domain_create(fixture->store, &domain, &result), SALTS_OK);
   (void)auth_endpoint_service_create(fixture->store, result.revision, &fixture->credential);
 
   resolver_config.listener_id = "broker-https";
   resolver_config.repository = flowie_control_store_repository(fixture->store);
   check_equal(
       flowie_control_service_credential_resolver_create(&resolver_config, &fixture->resolver),
-      TURBO_OK);
+      SALTS_OK);
 }
 
 static void auth_endpoint_service_fixture_close(auth_endpoint_service_fixture_t *fixture) {
@@ -145,7 +145,7 @@ static int auth_endpoint_make_endpoint(flowie_control_auth_iris_adapter_t *adapt
 
 static void auth_endpoint_request_init(Req *request, char *body, size_t body_size,
                                        request_item_t *headers, int header_count,
-                                       coro_socket_t *client) {
+                                       void *client) {
   memset(request, 0, sizeof(*request));
   request->method = "POST";
   request->path = FLOWIE_CONTROL_AUTH_HTTP_PATH;
@@ -165,9 +165,9 @@ static int auth_executor_policy_version(void *ctx, const char *domain_id,
                                         uint64_t *policy_version_out) {
   (void)ctx;
   if (policy_version_out) *policy_version_out = 0u;
-  if (!domain_id || strcmp(domain_id, "root-a") != 0 || !policy_version_out) return TURBO_EINVAL;
+  if (!domain_id || strcmp(domain_id, "root-a") != 0 || !policy_version_out) return SALTS_EINVAL;
   *policy_version_out = 1u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_t workers,
@@ -195,14 +195,14 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   check_not_null(fixture->database_path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture->database_path), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, &fixture->store), TURBO_OK);
+  check_equal(flowie_control_store_open(&store_config, &fixture->store), SALTS_OK);
   check_not_null(fixture->store);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "executor-root";
   root.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(fixture->store, &root, &result), TURBO_OK);
+  check_equal(flowie_control_store_domain_create(fixture->store, &root, &result), SALTS_OK);
 
   user.domain_id = "root-a";
   user.principal_id = "device-a";
@@ -211,7 +211,7 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   user.request_id = "executor-user";
   user.expected_revision = 1u;
   user.occurred_at = 1001u;
-  check_equal(flowie_control_store_user_create(fixture->store, &user, &result), TURBO_OK);
+  check_equal(flowie_control_store_user_create(fixture->store, &user, &result), SALTS_OK);
 
   issue.domain_id = "root-a";
   issue.principal_id = "device-a";
@@ -221,26 +221,26 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   issue.occurred_at = 1002u;
   check_equal(
       flowie_control_store_credential_generate(fixture->store, &issue, &fixture->credential),
-      TURBO_OK);
+      SALTS_OK);
   (void)auth_endpoint_service_create(fixture->store, fixture->credential.revision,
                                      &fixture->service_credential);
 
   service_config.repository = flowie_control_store_repository(fixture->store);
   service_config.policy_version.current = auth_executor_policy_version;
   service_config.clock_seconds = auth_executor_clock;
-  check_equal(flowie_control_auth_service_create(&service_config, &fixture->service), TURBO_OK);
+  check_equal(flowie_control_auth_service_create(&service_config, &fixture->service), SALTS_OK);
   check_not_null(fixture->service);
 
   adapter_config.service = fixture->service;
   check_equal(flowie_control_auth_iris_adapter_create(&adapter_config, &fixture->adapter),
-              TURBO_OK);
+              SALTS_OK);
   check_not_null(fixture->adapter);
 
   credential_config.listener_id = "broker-https";
   credential_config.repository = flowie_control_store_repository(fixture->store);
   check_equal(flowie_control_service_credential_resolver_create(&credential_config,
                                                                 &fixture->service_credentials),
-              TURBO_OK);
+              SALTS_OK);
   endpoint_config.adapter = fixture->adapter;
   endpoint_config.service_credentials = fixture->service_credentials;
   endpoint_config.local_executor_enabled = 1;
@@ -248,7 +248,7 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   endpoint_config.local_executor_queue_capacity = queue_capacity;
   endpoint_config.local_executor_deadline_ms = deadline_ms;
   check_equal(flowie_control_auth_iris_endpoint_create(&endpoint_config, &fixture->endpoint),
-              TURBO_OK);
+              SALTS_OK);
   check_not_null(fixture->endpoint);
 }
 
@@ -299,29 +299,21 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_iris_adapter_config_t config = FLOWIE_CONTROL_AUTH_IRIS_ADAPTER_CONFIG_INIT;
     flowie_control_auth_iris_adapter_t *adapter = NULL;
 
-    check_equal(flowie_control_auth_iris_adapter_create(&config, &adapter), TURBO_EINVAL);
+    check_equal(flowie_control_auth_iris_adapter_create(&config, &adapter), SALTS_EINVAL);
     check_null(adapter);
   }
 
   it("treats a connection without a client certificate as an empty optional identity") {
-    coro_context_t *context = coro_context_create(NULL);
-    coro_socket_t *plain;
     Req request;
-    char fingerprint[CORO_TLS_PEER_CERT_SHA256_CAPACITY];
+    char fingerprint[FLOWIE_CONTROL_HTTP_PEER_CERTIFICATE_SHA256_CAPACITY];
 
-    check_not_null(context);
-    plain = coro_socket_create(context, CORO_SOCKET_TCP_V4);
-    check_not_null(plain);
     memset(&request, 0, sizeof(request));
-    request.client = plain;
     memset(fingerprint, 0xa5, sizeof(fingerprint));
     check_equal(
         flowie_control_auth_iris_adapter_optional_verified_peer_certificate(&request, fingerprint),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(fingerprint, "");
 
-    coro_socket_destroy(plain);
-    coro_context_destroy(context);
   }
 
   it("strictly decodes the versioned request and wipes decoded credentials") {
@@ -333,7 +325,7 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_http_request_t zero = {0};
 
     check_equal(flowie_control_auth_http_decode_request(body, sizeof(body) - 1u, 4096u, &request),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(request.identity, "device-a");
     check_equal(request.method, "password");
     check_equal(request.protocol, "mqtt");
@@ -352,7 +344,7 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_http_request_t request;
 
     check_equal(flowie_control_auth_http_decode_request(body, sizeof(body) - 1u, 4096u, &request),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(request.secret_size, 0u);
   }
 
@@ -364,7 +356,7 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_http_request_t request;
 
     check_equal(flowie_control_auth_http_decode_request(body, sizeof(body) - 1u, 4096u, &request),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(request.secret_size, 0u);
   }
 
@@ -378,13 +370,13 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_http_request_t request;
 
     check_equal(flowie_control_auth_http_decode_request(body, sizeof(body) - 1u, 4096u, &request),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(request.secret_size, 0u);
   }
 
   it("encodes a complete principal response with version 3") {
     flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
-    turbo_json_doc_t *document = NULL;
+    json_value_t *document = NULL;
     json_value_t *principal_json;
     char *body = NULL;
     size_t body_size = 0u;
@@ -401,18 +393,19 @@ spec("flowie control auth iris adapter") {
     principal.expires_at = 100u;
     principal.policy_version = 7u;
 
-    check_equal(flowie_control_auth_http_encode_principal(&principal, &body, &body_size), TURBO_OK);
+    check_equal(flowie_control_auth_http_encode_principal(&principal, &body, &body_size), SALTS_OK);
     check_not_null(body);
-    check_equal(turbo_parse_json((const uint8_t *)body, body_size, &document), TURBO_OK);
-    check_within(turbo_json_number(turbo_json_object_get(document, "version")), 3.0, 0.001);
-    check_true(turbo_json_bool(turbo_json_object_get(document, "authenticated")));
-    principal_json = turbo_json_object_get(document, "principal");
+    document = json_parse(body, body_size);
+    check_not_null(document);
+    check_within(json_number(json_object_get(document, "version")), 3.0, 0.001);
+    check_true(json_bool(json_object_get(document, "authenticated")));
+    principal_json = json_object_get(document, "principal");
     check_not_null(principal_json);
-    check_equal(turbo_json_get_string(principal_json, "domain"), "root-a");
-    check_within(turbo_json_number(turbo_json_object_get(principal_json, "policy_version")), 7.0,
+    check_equal(json_get_string(principal_json, "domain"), "root-a");
+    check_within(json_number(json_object_get(principal_json, "policy_version")), 7.0,
                  0.001);
-    turbo_free_json(&document);
-    turbo_json_serialize_free(body);
+    json_free(document);
+    json_serialize_free(body);
   }
 
   it("rejects a principal with an unterminated domain") {
@@ -428,7 +421,7 @@ spec("flowie control auth iris adapter") {
     principal.policy_version = 1u;
 
     check_equal(flowie_control_auth_http_encode_principal(&principal, &body, &body_size),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(body);
     check_equal(body_size, 0u);
   }
@@ -449,16 +442,16 @@ spec("flowie control auth iris adapter") {
     size_t response_size = 0u;
 
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), TURBO_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), TURBO_OK);
+    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
     memcpy(mutable_body, body, sizeof(body));
     auth_endpoint_request_init(&request, mutable_body, sizeof(body) - 1u, headers, 1, NULL);
     check_equal(flowie_control_auth_iris_endpoint_process(endpoint, &request, &status, &response,
                                                           &response_size),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(status, FORBIDDEN);
     check_equal(mutable_body, (char[sizeof(body)]){0}, sizeof(body));
-    turbo_json_serialize_free(response);
+    json_serialize_free(response);
     flowie_control_auth_iris_endpoint_destroy(endpoint);
     flowie_control_auth_iris_adapter_destroy(adapter);
     auth_endpoint_service_fixture_close(&service_fixture);
@@ -485,18 +478,18 @@ spec("flowie control auth iris adapter") {
     size_t response_size = 0u;
 
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), TURBO_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), TURBO_OK);
+    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
     memcpy(mutable_body, body, sizeof(body));
     auth_endpoint_request_init(&request, mutable_body, sizeof(body) - 1u, headers, 4, NULL);
     check_equal(flowie_control_auth_iris_endpoint_process(endpoint, &request, &status, &response,
                                                           &response_size),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(status, FORBIDDEN);
     check_not_null(response);
     check_equal(mutable_body, (char[sizeof(body)]){0}, sizeof(body));
     check_equal(authorization, (char[sizeof(authorization)]){0}, sizeof(authorization));
-    turbo_json_serialize_free(response);
+    json_serialize_free(response);
     flowie_control_auth_iris_endpoint_destroy(endpoint);
     flowie_control_auth_iris_adapter_destroy(adapter);
     auth_endpoint_service_fixture_close(&service_fixture);
@@ -506,9 +499,9 @@ spec("flowie control auth iris adapter") {
     auth_executor_fixture_t fixture;
     flowie_control_auth_http_request_t request;
     auth_executor_task_t task;
-    coro_context_t *context = coro_context_create(NULL);
+    coro_scheduler_t *scheduler = coro_scheduler_create();
 
-    check_not_null(context);
+    check_not_null(scheduler);
     auth_executor_fixture_open(&fixture, 1u, 1u, 1u);
     request = auth_executor_request(&fixture);
     task.endpoint = fixture.endpoint;
@@ -516,15 +509,15 @@ spec("flowie control auth iris adapter") {
     memset(&task.principal, 0, sizeof(task.principal));
     task.principal.size = sizeof(task.principal);
     task.principal.abi_version = FLOWIE_SECURITY_ABI_V3;
-    task.result = TURBO_EALREADY;
-    check_equal(coro_context_spawn(context, auth_executor_authenticate_task, &task), TURBO_OK);
-    check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
-    check_equal(task.result, TURBO_ETIMEDOUT);
+    task.result = SALTS_EALREADY;
+    check_not_null(coro_spawn(scheduler, auth_executor_authenticate_task, &task, NULL));
+    coro_scheduler_run(scheduler);
+    check_equal(task.result, SALTS_ETIMEDOUT);
     check_equal(task.principal.principal_id, "");
 
     auth_executor_fixture_close(&fixture);
     flowie_control_auth_http_request_clear(&request);
-    coro_context_destroy(context);
+    coro_scheduler_destroy(scheduler);
   }
 
   it("rejects excess local authentication work without blocking the owner lane") {
@@ -532,11 +525,11 @@ spec("flowie control auth iris adapter") {
     auth_executor_fixture_t fixture;
     flowie_control_auth_http_request_t request;
     auth_executor_task_t tasks[TASK_COUNT];
-    coro_context_t *context = coro_context_create(NULL);
+    coro_scheduler_t *scheduler = coro_scheduler_create();
     int succeeded = 0;
     int overloaded = 0;
 
-    check_not_null(context);
+    check_not_null(scheduler);
     auth_executor_fixture_open(&fixture, 1u, 1u, 10000u);
     request = auth_executor_request(&fixture);
     memset(tasks, 0, sizeof(tasks));
@@ -546,19 +539,18 @@ spec("flowie control auth iris adapter") {
       memset(&tasks[index].principal, 0, sizeof(tasks[index].principal));
       tasks[index].principal.size = sizeof(tasks[index].principal);
       tasks[index].principal.abi_version = FLOWIE_SECURITY_ABI_V3;
-      tasks[index].result = TURBO_EALREADY;
-      check_equal(coro_context_spawn(context, auth_executor_authenticate_task, &tasks[index]),
-                  TURBO_OK);
+      tasks[index].result = SALTS_EALREADY;
+      check_not_null(coro_spawn(scheduler, auth_executor_authenticate_task, &tasks[index], NULL));
     }
-    check_equal(coro_context_run(context, TURBO_RUN_DEFAULT), TURBO_OK);
+    coro_scheduler_run(scheduler);
     for (size_t index = 0u; index < TASK_COUNT; ++index) {
-      if (tasks[index].result == TURBO_OK) {
+      if (tasks[index].result == SALTS_OK) {
         ++succeeded;
         check_equal(tasks[index].principal.principal_id, "device-a");
-      } else if (tasks[index].result == TURBO_EBUSY) {
+      } else if (tasks[index].result == SALTS_EBUSY) {
         ++overloaded;
       } else {
-        check_equal(tasks[index].result, TURBO_OK);
+        check_equal(tasks[index].result, SALTS_OK);
       }
     }
     check_greater(succeeded, 0);
@@ -566,26 +558,26 @@ spec("flowie control auth iris adapter") {
 
     auth_executor_fixture_close(&fixture);
     flowie_control_auth_http_request_clear(&request);
-    coro_context_destroy(context);
+    coro_scheduler_destroy(scheduler);
   }
 
   it("binds one fixed endpoint path and unbinds without a dangling context") {
     auth_endpoint_service_fixture_t service_fixture;
     flowie_control_auth_iris_adapter_t *adapter = NULL;
     flowie_control_auth_iris_endpoint_t *endpoint = NULL;
-    iris_app_t *app = iris_app_create();
+    flowie_control_http_app_t *app = flowie_control_http_app_create();
 
     check_not_null(app);
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), TURBO_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), TURBO_OK);
-    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), TURBO_OK);
-    check_equal(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH), endpoint);
-    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), TURBO_EINVAL);
+    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
+    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), SALTS_OK);
+    check_equal(flowie_control_http_app_lookup_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH), endpoint);
+    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), SALTS_EINVAL);
     flowie_control_auth_iris_endpoint_destroy(endpoint);
-    check_null(iris_app_lookup_rpc_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH));
+    check_null(flowie_control_http_app_lookup_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH));
     flowie_control_auth_iris_adapter_destroy(adapter);
     auth_endpoint_service_fixture_close(&service_fixture);
-    iris_app_destroy(app);
+    flowie_control_http_app_destroy(app);
   }
 }

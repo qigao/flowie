@@ -2,15 +2,16 @@
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_INTERNAL_H
 
 #include "flowie_control_external_https_authenticator_internal.h"
+#include "flowie_control_http_server_internal.h"
 #include "flowie_control_management_service_internal.h"
-#include "iris/iris_app.h"
-#include "iris/rpc_server.h"
+#include "flowie_control_rpc_internal.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_REQUEST_MAX 65536u
+#define FLOWIE_CONTROL_MANAGEMENT_RPC_RESPONSE_MAX (16u * 1024u * 1024u)
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_WORKERS 4u
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_MAX_WORKERS 64u
 #define FLOWIE_CONTROL_MANAGEMENT_RPC_POLICY_EXECUTOR_DEFAULT_QUEUE_CAPACITY 128u
@@ -61,9 +62,9 @@ int flowie_control_management_rpc_server_create(
     const flowie_control_management_rpc_server_config_t *config,
     flowie_control_management_rpc_server_t **out);
 
-/** Bind to one explicit Iris app. The app must stop before server destruction. */
+/** Bind to one explicit CHTTP app. The app must stop before server destruction. */
 int flowie_control_management_rpc_server_bind(flowie_control_management_rpc_server_t *server,
-                                              iris_app_t *app);
+                                              flowie_control_http_app_t *app);
 void flowie_control_management_rpc_server_unbind(flowie_control_management_rpc_server_t *server);
 void flowie_control_management_rpc_server_destroy(flowie_control_management_rpc_server_t *server);
 

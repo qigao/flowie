@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -22,7 +22,7 @@ spec("flowie cluster peer MQTT command codec") {
                      (flowie_mqtt_span_t){FLOWIE_CLUSTER_PEER_MQTT_TEST_PUBLISH,
                                           sizeof(FLOWIE_CLUSTER_PEER_MQTT_TEST_PUBLISH)},
                      128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_not_null(encoded);
     check_equal(tstr_len(encoded), 35u);
     check_equal(encoded, expected_header, sizeof(expected_header));
@@ -30,7 +30,7 @@ spec("flowie cluster peer MQTT command codec") {
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                          encoded, tstr_len(encoded), 128u,
                                                          &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.operation, FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH);
     check_equal(decoded.mqtt_version, FLOWIE_MQTT_VERSION_5);
     check_equal(decoded.client_id.data, client_id, decoded.client_id.size);
@@ -72,10 +72,10 @@ spec("flowie cluster peer MQTT command codec") {
                        (flowie_mqtt_span_t){client_id, sizeof(client_id)},
                        (flowie_mqtt_span_t){cases[index].packet, cases[index].packet_size}, 128u,
                        &encoded),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(flowie_cluster_peer_mqtt_command_decode(cases[index].operation, encoded,
                                                            tstr_len(encoded), 128u, &decoded),
-                   TURBO_OK);
+                   SALTS_OK);
       check_equal(decoded.packet.type, cases[index].packet_type);
       check_equal(decoded.packet.packet.size, cases[index].packet_size);
       check_equal(decoded.packet.packet.data, cases[index].packet, cases[index].packet_size);
@@ -93,29 +93,29 @@ spec("flowie cluster peer MQTT command codec") {
                      (flowie_mqtt_span_t){FLOWIE_CLUSTER_PEER_MQTT_TEST_PUBLISH,
                                           sizeof(FLOWIE_CLUSTER_PEER_MQTT_TEST_PUBLISH)},
                      128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(
         flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_SUBSCRIBE,
                                                 encoded, tstr_len(encoded), 128u, &decoded),
-        TURBO_EPROTO);
+        SALTS_EPROTO);
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_CONNECT_BIND,
                                                          encoded, tstr_len(encoded), 128u,
                                                          &decoded),
-                 TURBO_ENOTSUP);
+                 SALTS_ENOTSUP);
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                          encoded, tstr_len(encoded), 4u, &decoded),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     encoded[0] = 'X';
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                          encoded, tstr_len(encoded), 128u,
                                                          &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     encoded[0] = 'T';
     encoded[19] = 1;
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                          encoded, tstr_len(encoded), 128u,
                                                          &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_free(encoded);
   }
 
@@ -129,11 +129,11 @@ spec("flowie cluster peer MQTT command codec") {
                      FLOWIE_CLUSTER_PEER_OPERATION_MQTT_ACK, FLOWIE_MQTT_VERSION_5,
                      (flowie_mqtt_span_t){client_id, sizeof(client_id)},
                      (flowie_mqtt_span_t){ack, sizeof(ack)}, 128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_mqtt_command_decode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_ACK,
                                                          encoded, tstr_len(encoded), 128u,
                                                          &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.packet.type, FLOWIE_MQTT_PACKET_PUBACK);
     tstr_free(encoded);
     encoded = NULL;
@@ -141,7 +141,7 @@ spec("flowie cluster peer MQTT command codec") {
                      FLOWIE_CLUSTER_PEER_OPERATION_MQTT_ACK, FLOWIE_MQTT_VERSION_5,
                      (flowie_mqtt_span_t){invalid_client_id, sizeof(invalid_client_id)},
                      (flowie_mqtt_span_t){ack, sizeof(ack)}, 128u, &encoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_null(encoded);
   }
 }

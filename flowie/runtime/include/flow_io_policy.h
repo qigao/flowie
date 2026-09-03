@@ -1,7 +1,7 @@
 #ifndef FLOW_IO_POLICY_H
 #define FLOW_IO_POLICY_H
 
-#include "turbo_thread.h"
+#include "salts_thread.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -39,8 +39,8 @@ typedef struct tf_io_budget_snapshot_s {
  * the two limits. The owner must close admission before destroying the budget.
  */
 typedef struct tf_io_budget_s {
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
   size_t messages;
   size_t bytes;
   size_t max_messages;

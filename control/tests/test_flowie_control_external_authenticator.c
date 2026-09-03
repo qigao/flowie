@@ -1,7 +1,7 @@
 #include "flowie_control_external_authenticator_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -10,7 +10,7 @@ static int external_auth_verify(void *ctx, const flowie_control_external_auth_re
   (void)ctx;
   (void)request;
   (void)assertion_out;
-  return TURBO_EPERM;
+  return SALTS_EPERM;
 }
 
 static int external_identity_map(void *ctx,
@@ -19,7 +19,7 @@ static int external_identity_map(void *ctx,
   (void)ctx;
   (void)request;
   (void)result_out;
-  return TURBO_EPERM;
+  return SALTS_EPERM;
 }
 
 static flowie_control_external_auth_assertion_t valid_assertion(void) {
@@ -50,56 +50,56 @@ spec("Flowie control external authenticator contract") {
     authenticator.method = "oidc-token";
     authenticator.verify = external_auth_verify;
     mapper.map = external_identity_map;
-    check_equal(flowie_control_external_authenticator_validate(&authenticator), TURBO_OK);
-    check_equal(flowie_control_external_identity_mapper_validate(&mapper), TURBO_OK);
+    check_equal(flowie_control_external_authenticator_validate(&authenticator), SALTS_OK);
+    check_equal(flowie_control_external_identity_mapper_validate(&mapper), SALTS_OK);
 
     authenticator.capabilities &= ~FLOWIE_CONTROL_EXTERNAL_AUTH_ACCOUNT_STATE;
-    check_equal(flowie_control_external_authenticator_validate(&authenticator), TURBO_EINVAL);
+    check_equal(flowie_control_external_authenticator_validate(&authenticator), SALTS_EINVAL);
     authenticator.capabilities = FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES;
     authenticator.version++;
-    check_equal(flowie_control_external_authenticator_validate(&authenticator), TURBO_EINVAL);
+    check_equal(flowie_control_external_authenticator_validate(&authenticator), SALTS_EINVAL);
     mapper.map = NULL;
-    check_equal(flowie_control_external_identity_mapper_validate(&mapper), TURBO_EINVAL);
+    check_equal(flowie_control_external_identity_mapper_validate(&mapper), SALTS_EINVAL);
   }
 
   it("accepts only bounded, enabled, current, non-ambiguous authentication facts") {
     flowie_control_external_auth_assertion_t assertion = valid_assertion();
 
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_OK);
+                SALTS_OK);
     assertion.domain_id[0] = '\0';
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     assertion = valid_assertion();
     assertion.account_enabled = 0;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     assertion = valid_assertion();
     assertion.expires_at = 150u;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     assertion = valid_assertion();
     assertion.issued_at = 151u;
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     assertion = valid_assertion();
     memcpy(assertion.external_groups[1], assertion.external_groups[0],
            sizeof(assertion.external_groups[1]));
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     assertion = valid_assertion();
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "password", 150u),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
   }
 
   it("requires the mapper to return one bounded local principal id") {
     flowie_control_external_identity_map_result_t result =
         FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAP_RESULT_INIT;
-    check_equal(flowie_control_external_identity_map_result_validate(&result), TURBO_EINVAL);
+    check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_EINVAL);
     memcpy(result.principal_id, "device-a", sizeof("device-a"));
-    check_equal(flowie_control_external_identity_map_result_validate(&result), TURBO_OK);
+    check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_OK);
     result.principal_id[0] = '\n';
-    check_equal(flowie_control_external_identity_map_result_validate(&result), TURBO_EINVAL);
+    check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_EINVAL);
   }
 
   it("maps only the configured issuer and subject type to a local principal id") {
@@ -115,22 +115,22 @@ spec("Flowie control external authenticator contract") {
 
     config.trusted_issuer = "https://idp.example";
     config.subject_type = "device";
-    check_equal(flowie_control_external_subject_mapper_create(&config, &mapper), TURBO_OK);
+    check_equal(flowie_control_external_subject_mapper_create(&config, &mapper), SALTS_OK);
     check_not_null(mapper);
     interface = flowie_control_external_subject_mapper_interface(mapper);
-    check_equal(flowie_control_external_identity_mapper_validate(interface), TURBO_OK);
+    check_equal(flowie_control_external_identity_mapper_validate(interface), SALTS_OK);
     request.domain_id = "root-a";
     request.presented_identity = "device@example";
     request.assertion = &assertion;
-    check_equal(interface->map(interface->ctx, &request, &result), TURBO_OK);
+    check_equal(interface->map(interface->ctx, &request, &result), SALTS_OK);
     check_equal(result.principal_id, "tenant-42/device-a");
 
     memcpy(assertion.issuer, "https://other.example", sizeof("https://other.example"));
-    check_equal(interface->map(interface->ctx, &request, &result), TURBO_EPERM);
+    check_equal(interface->map(interface->ctx, &request, &result), SALTS_EPERM);
     check_equal(result.principal_id, "");
     assertion = valid_assertion();
     memcpy(assertion.subject_type, "operator", sizeof("operator"));
-    check_equal(interface->map(interface->ctx, &request, &result), TURBO_EPERM);
+    check_equal(interface->map(interface->ctx, &request, &result), SALTS_EPERM);
 
     flowie_control_external_subject_mapper_destroy(mapper);
   }

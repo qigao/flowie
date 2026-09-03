@@ -1,7 +1,7 @@
 #include "flowie_security.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdio.h>
 
@@ -28,14 +28,14 @@ static int flowie_test_authorize(void *ctx, const flowie_security_request_t *req
   (void)now_epoch_seconds;
   if (!fixture || !request || !request->principal || !decision_out ||
       decision_out->size < sizeof(*decision_out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   fixture->calls += 1u;
   decision_out->effect = fixture->effect;
   decision_out->reason = fixture->effect == FLOWIE_SECURITY_ALLOW
                              ? FLOWIE_SECURITY_REASON_ALLOW_RULE
                              : FLOWIE_SECURITY_REASON_DENY_RULE;
   decision_out->policy_version = request->principal->policy_version;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_test_remote_authorize(flowie_security_effect_t effect,
@@ -51,9 +51,9 @@ static int flowie_test_remote_authorize(flowie_security_effect_t effect,
 
   config.policy_source = "acl.remote";
   rc = flowie_security_realm_create(&config, &realm);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_security_realm_bind_authorization_provider(realm, &provider);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     request.principal = &principal;
     request.domain_id = principal.domain_id;
     request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
@@ -70,7 +70,7 @@ spec("Flowie security authorization boundary") {
   it("maps a remote deny decision to permission denied") {
     flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
 
-    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_DENY, &decision), TURBO_EPERM);
+    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_DENY, &decision), SALTS_EPERM);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     check_equal(decision.reason, FLOWIE_SECURITY_REASON_DENY_RULE);
     check_equal(decision.policy_version, UINT64_C(7));
@@ -79,7 +79,7 @@ spec("Flowie security authorization boundary") {
   it("preserves a remote allow decision") {
     flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
 
-    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_ALLOW, &decision), TURBO_OK);
+    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_ALLOW, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
     check_equal(decision.reason, FLOWIE_SECURITY_REASON_ALLOW_RULE);
   }
@@ -92,13 +92,13 @@ spec("Flowie security authorization boundary") {
     flowie_security_realm_t *realm = NULL;
 
     config.policy_version = 11u;
-    check_equal(flowie_security_realm_create(&config, &realm), TURBO_OK);
+    check_equal(flowie_security_realm_create(&config, &realm), SALTS_OK);
     request.principal = &principal;
     request.domain_id = principal.domain_id;
     request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
     request.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
     request.resource = "booth/devices/device-1/event";
-    check_equal(flowie_security_realm_authorize(realm, &request, 1u, &decision), TURBO_EPERM);
+    check_equal(flowie_security_realm_authorize(realm, &request, 1u, &decision), SALTS_EPERM);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     check_equal(decision.reason, FLOWIE_SECURITY_REASON_DEFAULT_DENY);
     flowie_security_realm_destroy(realm);

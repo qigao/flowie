@@ -5,7 +5,8 @@ add_executable(
   flowie_server_http_security.c
   flowie_server_turbodb_config.c)
 target_link_libraries(
-  flowie_server PRIVATE Flowie::App Orm::C TurboHttp::TurboHttp TurboParser::Parser)
+  flowie_server PRIVATE Flowie::App Orm::C Salts::CHTTP Salts::CmdParser
+                        Salts::CYaml Salts::JsonParser Salts::UriParser)
 cmake_target_enable_boringssl_linkage(flowie_server)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
@@ -13,8 +14,8 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_config
     SOURCES tests/test_flowie_server_config.c flowie_server_config.c
-    LIBS Flowie::Protocol Orm::C TurboNet::CoroNet TurboParser::Parser Rocida::Core
-         Rocida::TinyTest
+    LIBS Flowie::Protocol Orm::C Salts::CYaml Salts::Core
+         Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
   target_compile_definitions(
@@ -28,14 +29,20 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_http_security
     SOURCES tests/test_flowie_server_http_security.c flowie_server_http_security.c
-    LIBS Flowie::Protocol Orm::C TurboHttp::TurboHttp TurboNet::CoroNet TurboParser::Parser
-         Rocida::Core Rocida::TinyTest
+    LIBS Flowie::Protocol Orm::C Salts::CHTTP Salts::JsonParser Salts::UriParser
+         Salts::Core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
   set_tests_properties(
     test_flowie_server_http_security
     PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
   cmake_target_enable_boringssl_linkage(test_flowie_server_http_security)
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_server_http_security
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+  endif()
 
   add_test(
     NAME flowie_server_check_native_https_security
@@ -46,13 +53,13 @@ if(FLOWIE_BUILD_TESTS)
   set_tests_properties(
     flowie_server_check_native_https_security
     PROPERTIES
-      LABELS "flowie;flowie-release;product-contract;security-contract;coronet"
+      LABELS "flowie;flowie-release;product-contract;security-contract;cnet"
       ENVIRONMENT "FLOWIE_AUTH_SERVICE_TOKEN=test-only-token")
 
   cmake_add_test(
     test_flowie_server_turbodb_config
     SOURCES tests/test_flowie_server_turbodb_config.c flowie_server_turbodb_config.c
-    LIBS Orm::C TurboParser::Parser Rocida::TinyTest
+    LIBS Orm::C Salts::JsonParser Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/server/tests")
   set_tests_properties(

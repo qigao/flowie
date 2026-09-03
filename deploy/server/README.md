@@ -33,15 +33,15 @@ security realm、endpoint 与 TurboDB 初始化检查，但不打开网络 liste
 `0/1/false/true/no/yes/off/on`。endpoint 的 host、port、transport 与容量全部来自 `flowie.yml`，环境变量
 不再维护第二份配置；修改 YAML 或 token 后需要重启 broker。
 
-YAML 解析、环境变量读取、TLS/TurboHTTP client 创建均发生在启动阶段。安全 endpoint 与两个出站 HTTP
-client 借用同一个 host-owned `coro_context`；MQTT 认证/授权热路径只做有界协议转换、可挂起的
-`turbo_http_request()` 和响应解析，不创建 client、线程，也不执行同步网络请求。
+YAML 解析、环境变量读取、TLS/CHTTP client 创建均发生在启动阶段。MQTT endpoint 的 TCP/TLS 由 CNet
+承载，WS/WSS 由 CHTTP WebSocket 承载；两个出站 HTTP client 复用启动时创建的 CHTTP 资源。MQTT
+认证/授权热路径只做有界协议转换、可挂起的 CHTTP 请求和响应解析，不重复创建 client 或线程。
 
 连接、session、subscription、inflight 和 retained 分别是并发连接、受管会话总数、单会话订阅数、单会话
 待确认 QoS 消息数和 endpoint retained 总数的独立边界。`FLOWIE_SEND_HWM_BYTES` 是每连接待发送字节的
-高水位，不是启动时预分配内存；慢连接耗尽该预算时按既有背压策略断开。私有 CoroNet 上下文的 coroutine
-pool 容量上界为 `2 × max_connections + 8`，每个 coroutine 都有独立 stack；stream receive buffer
-则为每个连接使用的两个 chunk。因此提高连接数、stack 或 receive buffer 前必须计算内存上界并用 RSS
+高水位，不是启动时预分配内存；慢连接耗尽该预算时按既有背压策略断开。私有 Salts executor 的 coroutine
+pool 容量上界为 `2 × max_connections + 8`，每个 coroutine 都有独立 stack；CNet stream receive buffer
+则按连接配置。因此提高连接数、stack 或 receive buffer 前必须计算内存上界并用 RSS
 实测校验。socket buffer 只是向内核提出的请求，内核可能按平台策略调整实际值。
 
 `reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数。建议先用
@@ -87,16 +87,15 @@ credential 与对应 Role。
 
 ## 构建
 
-默认源码布局包含 Flowie 和五个依赖仓库：
+默认源码布局包含 Flowie 和四个依赖仓库：
 
 ```text
 cpp/
-  TurboHTTP/
   turbodb/
   turbonet/
-    turbo-utils/
-    turbo-parser/
-    turbonet/
+    salts/
+    salts-utils/
+    turbonet/        # 仅提供现存 Ed448 静态库
     flowie/
 ```
 
@@ -108,18 +107,17 @@ export FLOWIE_SERVER_IMAGE="flowie-server:local"
 
 docker buildx build \
   --file deploy/server/Dockerfile \
-  --build-context turbo_utils=../turbo-utils \
-  --build-context turbo_parser=../turbo-parser \
+  --build-context salts=../salts \
+  --build-context salts_utils=../salts-utils \
   --build-context turbo_net=../turbonet \
   --build-context turbo_db=../../turbodb \
-  --build-context turbo_http=../../TurboHTTP \
   --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
   --tag "${FLOWIE_SERVER_IMAGE}" \
   --load \
   .
 ```
 
-Dockerfile 分别构建并安装五个依赖 SDK，然后从当前 Flowie 源码安装 `flowie_server`、
+Dockerfile 分别构建并安装 Salts、SaltsUtils、TurboNet（仅保留 Ed448 archive）和 TurboDB，然后从当前 Flowie 源码安装 `flowie_server`、
 `flowie-control` 和 `flowie-control-data`。Standalone 镜像固定使用 `FLOWIE_BUILD_CLUSTER=OFF`，构建图和
 运行层均不引用 FlowMQ/TurboRaft。构建层与最终运行层分别对三个 executable 执行 `ldd`，任一动态库缺失
 都会使镜像构建失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest
@@ -256,7 +254,7 @@ ctest --preset linux-dev-user --output-on-failure \
   -R '^test_flowie_control_(acl|store|management_service|management_rpc)$'
 ```
 
-`test_flowie_control_management_rpc` 会在真实 CoroNet coroutine 内提交包含四个 topic entry 的
+`test_flowie_control_management_rpc` 会在真实 Salts coroutine 内提交包含四个 topic entry 的
 `control.policy.subject_rule.put`，用于约束 Control 请求路径的 stack budget。该测试必须与普通同步 RPC 测试
 同时保留；只在进程主栈上调用 repository 不能覆盖容器内的 coroutine stack 回归。
 
@@ -288,6 +286,6 @@ docker inspect --format '{{.State.Health.Status}}' flowie-server
 ```
 
 `flowie_server --check --require-security --config <flowie.yml> --profile <name>` 校验 YAML、远程 Auth/ACL
-provider、共享 CoroNet context、endpoint，并打开 protocol store 创建或校验 schema 后退出；它不会启动 MQTT
+provider、共享 Salts executor、endpoint，并打开 protocol store 创建或校验 schema 后退出；它不会启动 MQTT
 listener，也不会向 flowie-control 发出认证/授权请求。可配合内存 SQLite 做无持久化预检。TLS/WSS listener
 投入生产前仍需完成服务端证书路径和握手验收；`flowie.yml` 中的 transport 才是最终有效值。

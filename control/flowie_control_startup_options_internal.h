@@ -1,7 +1,7 @@
 #ifndef FLOWIE_CONTROL_STARTUP_OPTIONS_INTERNAL_H
 #define FLOWIE_CONTROL_STARTUP_OPTIONS_INTERNAL_H
 
-#include "turbo_fs.h"
+#include "salts_fs.h"
 
 #include <stddef.h>
 
@@ -15,8 +15,8 @@ extern "C" {
 
 typedef struct flowie_control_startup_options_s {
   size_t size;
-  char config_path[TURBO_FS_MAX_PATH];
-  char env_file[TURBO_FS_MAX_PATH];
+  char config_path[SALTS_FS_MAX_PATH];
+  char env_file[SALTS_FS_MAX_PATH];
   int check_only;
 } flowie_control_startup_options_t;
 

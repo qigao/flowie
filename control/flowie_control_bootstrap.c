@@ -2,7 +2,7 @@
 
 #include "flowie_control_credential_internal.h"
 #include "flowie_control_runtime_internal.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -29,8 +29,8 @@ typedef enum flowie_control_bootstrap_revision_e {
 
 static int flowie_control_bootstrap_result(int rc, const flowie_control_command_result_t *result,
                                            uint64_t expected_revision) {
-  if (rc != TURBO_OK) return rc;
-  return result && result->revision == expected_revision ? TURBO_OK : TURBO_EPROTO;
+  if (rc != SALTS_OK) return rc;
+  return result && result->revision == expected_revision ? SALTS_OK : SALTS_EPROTO;
 }
 
 static int flowie_control_bootstrap_verify(const flowie_control_repository_t *repository,
@@ -40,17 +40,17 @@ static int flowie_control_bootstrap_verify(const flowie_control_repository_t *re
   int has_system_admin = 0;
   int rc =
       repository->user->get(repository->ctx, config->domain_id, config->principal_id, &user);
-  if (rc == TURBO_OK && (!user.enabled || strcmp(user.principal_type, config->principal_type) != 0))
-    rc = TURBO_EPROTO;
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK && (!user.enabled || strcmp(user.principal_type, config->principal_type) != 0))
+    rc = SALTS_EPROTO;
+  if (rc == SALTS_OK)
     rc = repository->role->effective(repository->ctx, config->domain_id, config->principal_id,
                                      &roles);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     for (uint32_t index = 0u; index < roles.role_count; ++index) {
       if (strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN) == 0)
         has_system_admin = 1;
     }
-    if (!has_system_admin) rc = TURBO_EPERM;
+    if (!has_system_admin) rc = SALTS_EPERM;
   }
   return rc;
 }
@@ -73,18 +73,18 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   flowie_control_domain_view_t existing_domain = FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
   uint64_t current_revision = 0u;
   int rc;
-  if (flowie_control_repository_validate(repository) != TURBO_OK || !config ||
+  if (flowie_control_repository_validate(repository) != SALTS_OK || !config ||
       !config->domain_id[0] || !config->principal_id[0] || !config->principal_type[0] ||
       !password || password_size < FLOWIE_CONTROL_CONFIG_BOOTSTRAP_PASSWORD_MIN ||
       password_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX || occurred_at == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
 
   rc = repository->auth->current_revision(repository->ctx, &current_revision);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   if (current_revision != FLOWIE_CONTROL_BOOTSTRAP_EMPTY_REVISION) {
     rc = repository->user->domain_get(repository->ctx, config->domain_id, &existing_domain);
-    if (rc == TURBO_ENOENT) rc = TURBO_EBUSY;
-    if (rc != TURBO_OK) goto done;
+    if (rc == SALTS_ENOENT) rc = SALTS_EBUSY;
+    if (rc != SALTS_OK) goto done;
   }
 
   root.domain_id = config->domain_id;
@@ -93,9 +93,9 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   root.expected_revision = FLOWIE_CONTROL_BOOTSTRAP_EMPTY_REVISION;
   root.occurred_at = occurred_at;
   rc = repository->user->domain_create(repository->ctx, &root, &result);
-  if (rc == TURBO_EALREADY) rc = TURBO_EBUSY;
+  if (rc == SALTS_EALREADY) rc = SALTS_EBUSY;
   rc = flowie_control_bootstrap_result(rc, &result, FLOWIE_CONTROL_BOOTSTRAP_ROOT_REVISION);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
   user.domain_id = config->domain_id;
   user.principal_id = config->principal_id;
@@ -107,7 +107,7 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   rc = repository->user->create(repository->ctx, &user, &result);
   rc = flowie_control_bootstrap_result(rc, &result, FLOWIE_CONTROL_BOOTSTRAP_USER_REVISION);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
   credential.domain_id = config->domain_id;
   credential.principal_id = config->principal_id;
@@ -118,11 +118,11 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   credential.initial_secret = password;
   credential.initial_secret_size = password_size;
   rc = repository->credential->generate(repository->ctx, &credential, &generated);
-  if (rc == TURBO_OK && (generated.revision != FLOWIE_CONTROL_BOOTSTRAP_CREDENTIAL_REVISION ||
+  if (rc == SALTS_OK && (generated.revision != FLOWIE_CONTROL_BOOTSTRAP_CREDENTIAL_REVISION ||
                          generated.token_size != 0u))
-    rc = TURBO_EPROTO;
-  if (rc == TURBO_EALREADY) rc = TURBO_OK;
-  if (rc != TURBO_OK) goto done;
+    rc = SALTS_EPROTO;
+  if (rc == SALTS_EALREADY) rc = SALTS_OK;
+  if (rc != SALTS_OK) goto done;
 
   role.domain_id = config->domain_id;
   role.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN;
@@ -133,7 +133,7 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   rc = repository->role->create(repository->ctx, &role, &result);
   rc = flowie_control_bootstrap_result(rc, &result, FLOWIE_CONTROL_BOOTSTRAP_ROLE_REVISION);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
   password_role.domain_id = config->domain_id;
   password_role.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_PASSWORD_CHANGE_REQUIRED;
@@ -145,7 +145,7 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   rc = repository->role->create(repository->ctx, &password_role, &result);
   rc = flowie_control_bootstrap_result(rc, &result,
                                        FLOWIE_CONTROL_BOOTSTRAP_PASSWORD_ROLE_REVISION);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
   assignment.domain_id = config->domain_id;
   assignment.principal_id = config->principal_id;
@@ -157,7 +157,7 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   rc = repository->role->assignment_add(repository->ctx, &assignment, &result);
   rc = flowie_control_bootstrap_result(rc, &result, FLOWIE_CONTROL_BOOTSTRAP_ASSIGNMENT_REVISION);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
 
   password_assignment.domain_id = config->domain_id;
   password_assignment.principal_id = config->principal_id;
@@ -169,7 +169,7 @@ int flowie_control_bootstrap_apply(const flowie_control_repository_t *repository
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   rc = repository->role->assignment_add(repository->ctx, &password_assignment, &result);
   rc = flowie_control_bootstrap_result(rc, &result, FLOWIE_CONTROL_BOOTSTRAP_COMPLETE_REVISION);
-  if (rc == TURBO_OK) rc = flowie_control_bootstrap_verify(repository, config);
+  if (rc == SALTS_OK) rc = flowie_control_bootstrap_verify(repository, config);
 
 done:
   flowie_control_generated_credential_wipe(&generated);

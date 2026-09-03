@@ -5,10 +5,28 @@ cmake_add_grammar(FLOWIE_CONTROL_ACL
   FOLDER "flowie/control/acl")
 
 unset(FLOWIE_CONTROL_TBE_COMPILER CACHE)
+if(NOT DEFINED ENV{SALTS_UTILS_ROOT} OR "$ENV{SALTS_UTILS_ROOT}" STREQUAL "")
+  message(FATAL_ERROR "SALTS_UTILS_ROOT must name the installed SaltsUtils profile")
+endif()
+if(NOT IS_DIRECTORY "$ENV{SALTS_UTILS_ROOT}")
+  message(FATAL_ERROR "SALTS_UTILS_ROOT is not a directory: $ENV{SALTS_UTILS_ROOT}")
+endif()
+find_package(SaltsUtils CONFIG REQUIRED
+             PATHS "$ENV{SALTS_UTILS_ROOT}" NO_DEFAULT_PATH)
 find_program(FLOWIE_CONTROL_TBE_COMPILER
              NAMES tbe_compiler tbe_compiler.exe
-             PATHS "$ENV{TURBOPARSER_ROOT}/bin"
+             PATHS "$ENV{SALTS_UTILS_ROOT}/bin"
              NO_DEFAULT_PATH REQUIRED)
+if(WIN32)
+  set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+      "PATH=$<TARGET_FILE_DIR:Salts::Mustache>\;$<TARGET_FILE_DIR:Salts::Core>\;$ENV{PATH}")
+elseif(APPLE)
+  set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+      "DYLD_LIBRARY_PATH=$<TARGET_FILE_DIR:Salts::Mustache>:$<TARGET_FILE_DIR:Salts::Core>:$ENV{DYLD_LIBRARY_PATH}")
+else()
+  set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+      "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:Salts::Mustache>:$<TARGET_FILE_DIR:Salts::Core>:$ENV{LD_LIBRARY_PATH}")
+endif()
 set(FLOWIE_CONTROL_DATA_SCHEMA
     "${CMAKE_CURRENT_SOURCE_DIR}/schema/flowie_control_data.schema")
 set(FLOWIE_CONTROL_DATA_GENERATED_DIR
@@ -22,7 +40,8 @@ set(FLOWIE_CONTROL_DATA_SCHEMA_SOURCE
 add_custom_command(
   OUTPUT "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_DATA_GENERATED_DIR}"
-  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
+  COMMAND "${CMAKE_COMMAND}" -E env "${FLOWIE_CONTROL_TBE_RUNTIME_ENV}"
+          "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
           --lang sqlite --output "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   DEPENDS "${FLOWIE_CONTROL_DATA_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
   COMMENT "Generating Flowie Control SQLite data-manifest schema"
@@ -30,7 +49,8 @@ add_custom_command(
 add_custom_command(
   OUTPUT "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_DATA_GENERATED_DIR}"
-  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
+  COMMAND "${CMAKE_COMMAND}" -E env "${FLOWIE_CONTROL_TBE_RUNTIME_ENV}"
+          "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_DATA_SCHEMA}"
           --lang postgresql --output "${FLOWIE_CONTROL_DATA_POSTGRESQL_DDL}"
   DEPENDS "${FLOWIE_CONTROL_DATA_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
   COMMENT "Generating Flowie Control PostgreSQL data-manifest schema"
@@ -68,7 +88,8 @@ set(FLOWIE_CONTROL_STORE_POSTGRESQL_SOURCE
 add_custom_command(
   OUTPUT "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_STORE_GENERATED_DIR}"
-  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
+  COMMAND "${CMAKE_COMMAND}" -E env "${FLOWIE_CONTROL_TBE_RUNTIME_ENV}"
+          "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
           --lang sqlite --output "${FLOWIE_CONTROL_STORE_SQLITE_DDL}"
   DEPENDS "${FLOWIE_CONTROL_STORE_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
   COMMENT "Generating Flowie Control SQLite store schema"
@@ -76,7 +97,8 @@ add_custom_command(
 add_custom_command(
   OUTPUT "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${FLOWIE_CONTROL_STORE_GENERATED_DIR}"
-  COMMAND "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
+  COMMAND "${CMAKE_COMMAND}" -E env "${FLOWIE_CONTROL_TBE_RUNTIME_ENV}"
+          "${FLOWIE_CONTROL_TBE_COMPILER}" "${FLOWIE_CONTROL_STORE_SCHEMA}"
           --lang postgresql --output "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
   DEPENDS "${FLOWIE_CONTROL_STORE_SCHEMA}" "${FLOWIE_CONTROL_TBE_COMPILER}"
   COMMENT "Generating Flowie Control PostgreSQL store schema"
@@ -156,13 +178,14 @@ add_dependencies(flowie_control_core ${FLOWIE_CONTROL_ACL_LEXER_TARGET}
                                      ${FLOWIE_CONTROL_ACL_GRAMMAR_TARGET})
 cmake_config_target(flowie_control_core NO_INSTALL FOLDER "flowie/control/internal")
 target_include_directories(flowie_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+                                                       ${PROJECT_SOURCE_DIR}/flowie/include
                                                PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
                                                        ${FLOWIE_CONTROL_DATA_GENERATED_DIR}
                                                        ${FLOWIE_CONTROL_STORE_GENERATED_DIR})
 target_link_libraries(flowie_control_core
-                      PUBLIC Flowie::App flowie_orm_flow
-                      PRIVATE Flowie::Protocol
-                               Rocida::Core Rocida::STL monocypher)
+                      PRIVATE Salts::Core Salts::CSTL monocypher
+                              $<LINK_ONLY:flowie>
+                      PUBLIC flowie_orm_flow Flowie::Protocol)
 add_dependencies(flowie_control_core flowie_control_data_ddl flowie_control_store_ddl)
 
 install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
@@ -183,8 +206,25 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   target_link_libraries(
     flowie_control_external_https_authenticator
     PUBLIC flowie_control_core
-    PRIVATE TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
-            TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto monocypher)
+    PRIVATE Salts::CHTTP Salts::Core Salts::JsonParser
+            Salts::UriParser OpenSSL::SSL OpenSSL::Crypto monocypher)
+
+  add_library(
+    flowie_control_cjwt STATIC
+    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/cjwt.c
+    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/jws_openssl_3.c
+    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/jwe_disabled.c
+    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/utils.c)
+  cmake_config_target(flowie_control_cjwt NO_INSTALL
+                      FOLDER "flowie/control/internal")
+  target_include_directories(
+    flowie_control_cjwt
+    PUBLIC ${PROJECT_SOURCE_DIR}/vendor/cjwt/include
+    PRIVATE ${PROJECT_SOURCE_DIR}/vendor/cjwt/include/cjwt
+            ${PROJECT_SOURCE_DIR}/vendor/cjwt/src)
+  target_link_libraries(flowie_control_cjwt
+                        PUBLIC Salts::JsonParser
+                        PRIVATE Salts::Core OpenSSL::Crypto Flowie::Ed448Crypto)
 
   add_library(
     flowie_control_jwt_jwks_authenticator STATIC
@@ -197,8 +237,8 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
                                     ${PROJECT_SOURCE_DIR}/flowie/include)
   target_link_libraries(
     flowie_control_jwt_jwks_authenticator
-    PRIVATE TurboHttp::Cjwt TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
-            TurboParser::Parser OpenSSL::SSL OpenSSL::Crypto)
+    PRIVATE flowie_control_cjwt Salts::CHTTP Salts::Core
+            Salts::JsonParser Salts::UriParser OpenSSL::SSL OpenSSL::Crypto)
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_config_internal.h
@@ -210,10 +250,11 @@ add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_startup_options.c
                                           flowie_control_startup_options_internal.h)
 cmake_config_target(flowie_control_startup NO_INSTALL FOLDER "flowie/control/internal")
-target_include_directories(flowie_control_startup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(flowie_control_startup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+                                                        ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(flowie_control_startup
-                      PUBLIC Flowie::App
-                      PRIVATE Rocida::Core TurboParser::Parser)
+                      PRIVATE Orm::C Salts::Core Salts::CmdParser Salts::CYaml
+                              Salts::CYamlJsonAdapter Salts::JsonParser)
 
   set(FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/dashboard-resources"
@@ -234,14 +275,27 @@ target_link_libraries(flowie_control_startup
                    COPYONLY)
   endforeach()
 
+  add_library(flowie_control_http STATIC flowie_control_http_request.c
+                                          flowie_control_http_request_internal.h
+                                          flowie_control_http_server.c
+                                          flowie_control_http_server_internal.h
+                                          flowie_control_rpc.c
+                                          flowie_control_rpc_internal.h)
+  cmake_config_target(flowie_control_http NO_INSTALL
+                      FOLDER "flowie/control/internal")
+  target_include_directories(flowie_control_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(flowie_control_http
+                        PUBLIC Salts::Core
+                        PRIVATE Salts::CHTTP Salts::JsonParser)
+
   add_library(flowie_control_iris_adapter STATIC flowie_control_auth_iris_adapter.c
                                                  flowie_control_auth_iris_adapter_internal.h
+                                                 flowie_control_async.c
+                                                 flowie_control_async_internal.h
                                                  flowie_control_auth_iris_endpoint.c
                                                  flowie_control_auth_iris_endpoint_internal.h
                                                  flowie_control_acl_iris_endpoint.c
                                                  flowie_control_acl_iris_endpoint_internal.h
-                                                 flowie_control_http_request.c
-                                                 flowie_control_http_request_internal.h
                                                  flowie_control_dashboard.c
                                                  flowie_control_dashboard_internal.h
                                                  flowie_control_dashboard_view.c
@@ -251,14 +305,15 @@ target_link_libraries(flowie_control_startup
                            flowie_control_management_rpc_internal.h)
   cmake_config_target(flowie_control_iris_adapter NO_INSTALL
                       FOLDER "flowie/control/internal")
-  target_include_directories(flowie_control_iris_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_include_directories(flowie_control_iris_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+                                                         PRIVATE ${PROJECT_SOURCE_DIR}/flowie/include)
   target_compile_definitions(
     flowie_control_iris_adapter
     PRIVATE FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR="${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}")
   target_link_libraries(flowie_control_iris_adapter
-                        PUBLIC flowie_control_core TurboHttp::Iris
-                        PRIVATE flowie Flowie::Protocol TurboHttp::HttpClient TurboNet::CoroNet Rocida::Core
-                                TurboParser::Mustache TurboParser::Parser monocypher)
+                        PRIVATE flowie_control_http Salts::CHTTP Salts::Core Salts::Coroutine Salts::JsonParser
+                                Salts::Mustache monocypher $<LINK_ONLY:flowie>
+                        PUBLIC flowie_control_core Flowie::Protocol)
 
     add_library(flowie_control_runtime STATIC flowie_control_runtime.c
                                               flowie_control_runtime_internal.h)
@@ -267,7 +322,7 @@ target_link_libraries(flowie_control_startup
     target_include_directories(flowie_control_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(flowie_control_runtime
                           PUBLIC flowie_control_startup flowie_control_core
-                          PRIVATE flowie_control_iris_adapter TurboNet::CoroNet Rocida::Core
+                          PRIVATE flowie_control_iris_adapter Salts::CHTTP Salts::Core
                                   monocypher)
       target_link_libraries(flowie_control_runtime
                             PRIVATE flowie_control_external_https_authenticator)
@@ -292,9 +347,17 @@ target_link_libraries(flowie_control_startup
     if(BUILD_TESTS)
       find_package(OpenSSL REQUIRED)
       cmake_add_test(
+        test_flowie_control_http
+        SOURCES tests/test_flowie_control_http.c
+        LIBS flowie_control_http Salts::CHTTP Salts::TinyTest
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
+        FOLDER "flowie/control/tests")
+      set_tests_properties(test_flowie_control_http
+                           PROPERTIES LABELS "flowie;control-plane;http")
+      cmake_add_test(
         test_flowie_control_runtime
         SOURCES tests/test_flowie_control_runtime.c
-        LIBS flowie_control_runtime Rocida::TinyTest
+        LIBS flowie_control_runtime Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_runtime)
@@ -303,7 +366,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_bootstrap_runtime
         SOURCES tests/test_flowie_control_bootstrap_runtime.c
-        LIBS flowie_control_runtime Rocida::TinyTest
+        LIBS flowie_control_runtime Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_bootstrap_runtime)
@@ -312,8 +375,8 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_https_integration
         SOURCES tests/test_flowie_control_https_integration.c
-        LIBS flowie_control_runtime flowie_control_core TurboHttp::HttpClient
-             TurboNet::CoroNet Rocida::Core Rocida::TinyTest OpenSSL::Crypto
+        LIBS flowie_control_runtime flowie_control_core Salts::CHTTP
+             Salts::Coroutine Salts::Core Salts::TinyTest OpenSSL::Crypto
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_https_integration)
@@ -326,6 +389,10 @@ target_link_libraries(flowie_control_startup
         PROPERTIES LABELS "flowie;control-plane;security-contract;integration"
                    TIMEOUT 30)
       if(WIN32)
+        set_tests_properties(
+          test_flowie_control_http
+          PROPERTIES ENVIRONMENT_MODIFICATION
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         target_link_libraries(test_flowie_control_runtime PRIVATE ws2_32)
         target_link_libraries(test_flowie_control_https_integration PRIVATE ws2_32)
         set_target_properties(
@@ -343,15 +410,15 @@ target_link_libraries(flowie_control_startup
         set_tests_properties(
           test_flowie_control_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_bootstrap_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_https_integration
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       endif()
     endif()
 
@@ -359,7 +426,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_acl
     SOURCES tests/test_flowie_control_acl.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_acl
@@ -367,7 +434,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_bootstrap
     SOURCES tests/test_flowie_control_bootstrap.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_bootstrap
@@ -376,15 +443,21 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_startup_options
     SOURCES tests/test_flowie_control_startup_options.c
-    LIBS flowie_control_startup Rocida::TinyTest
+    LIBS flowie_control_startup Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_startup_options
                        PROPERTIES LABELS "flowie;control-plane;security-contract")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_startup_options
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
   cmake_add_test(
     test_flowie_control_config
     SOURCES tests/test_flowie_control_config.c
-    LIBS flowie_control_startup Rocida::TinyTest
+    LIBS flowie_control_startup Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   target_compile_definitions(
@@ -392,10 +465,16 @@ if(BUILD_TESTS)
     PRIVATE FLOWIE_CONTROL_TEST_CONFIG_PATH="${PROJECT_SOURCE_DIR}/flowie/examples/flowie-control.yml")
   set_tests_properties(test_flowie_control_config
                        PROPERTIES LABELS "flowie;control-plane;security-contract")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_config
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
   cmake_add_test(
     test_flowie_control_database
     SOURCES tests/test_flowie_control_database.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_database
@@ -403,7 +482,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_schema
     SOURCES tests/test_flowie_control_data_schema.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_schema
@@ -411,7 +490,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_store_schema
     SOURCES tests/test_flowie_control_store_schema.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_store_schema
@@ -420,7 +499,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_transfer
     SOURCES tests/test_flowie_control_data_transfer.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_transfer
@@ -428,15 +507,21 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_data_options
     SOURCES tests/test_flowie_control_data_options.c
-    LIBS flowie_control_startup Rocida::TinyTest
+    LIBS flowie_control_startup Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_data_options
                        PROPERTIES LABELS "flowie;control-plane;data-transfer")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_data_options
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
   cmake_add_test(
     test_flowie_control_store
     SOURCES tests/test_flowie_control_store.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_store
@@ -445,7 +530,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_turbodb_live
       SOURCES tests/test_flowie_control_turbodb_live.c
-      LIBS flowie_control_core Rocida::TinyTest
+      LIBS flowie_control_core Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(
@@ -456,7 +541,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_repository
     SOURCES tests/test_flowie_control_repository.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_repository
@@ -464,7 +549,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_cache
     SOURCES tests/test_flowie_control_auth_cache.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_cache
@@ -473,7 +558,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_external_authenticator
     SOURCES tests/test_flowie_control_external_authenticator.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_external_authenticator
@@ -482,8 +567,8 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_external_https_authenticator
       SOURCES tests/test_flowie_control_external_https_authenticator.c
-      LIBS flowie_control_external_https_authenticator TurboNet::CoroNet
-           Rocida::TinyTest
+      LIBS flowie_control_external_https_authenticator Salts::Core Salts::JsonParser
+           Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
     find_package(OpenSSL REQUIRED)
@@ -500,8 +585,8 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_jwt_jwks_authenticator
       SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
-      LIBS flowie_control_jwt_jwks_authenticator TurboHttp::Cjwt TurboNet::CoroNet
-           Rocida::TinyTest
+      LIBS flowie_control_jwt_jwks_authenticator flowie_control_cjwt Salts::CHTTP
+           Salts::JsonParser Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
     target_link_libraries(test_flowie_control_jwt_jwks_authenticator
@@ -523,16 +608,16 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_external_https_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_tests_properties(
         test_flowie_control_jwt_jwks_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Cjwt>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboParser::Parser>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
   cmake_add_test(
     test_flowie_control_principal_cache
     SOURCES tests/test_flowie_control_principal_cache.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_principal_cache
@@ -540,7 +625,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_rate_limiter
     SOURCES tests/test_flowie_control_auth_rate_limiter.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_rate_limiter
@@ -548,7 +633,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_auth_service
     SOURCES tests/test_flowie_control_auth_service.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_auth_service
@@ -557,7 +642,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_management_session
     SOURCES tests/test_flowie_control_management_session.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_management_session
@@ -565,7 +650,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_service_credential
     SOURCES tests/test_flowie_control_service_credential.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_service_credential
@@ -574,7 +659,7 @@ if(BUILD_TESTS)
   cmake_add_test(
     test_flowie_control_management_service
     SOURCES tests/test_flowie_control_management_service.c
-    LIBS flowie_control_core Rocida::TinyTest
+    LIBS flowie_control_core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/control/tests")
   set_tests_properties(test_flowie_control_management_service
@@ -582,7 +667,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_auth_iris_adapter
       SOURCES tests/test_flowie_control_auth_iris_adapter.c
-      LIBS flowie_control_iris_adapter Rocida::TinyTest
+      LIBS flowie_control_iris_adapter Salts::Coroutine Salts::JsonParser Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(test_flowie_control_auth_iris_adapter
@@ -590,7 +675,7 @@ if(BUILD_TESTS)
       cmake_add_test(
         test_flowie_control_management_rpc
         SOURCES tests/test_flowie_control_management_rpc.c
-        LIBS flowie_control_iris_adapter Rocida::TinyTest
+        LIBS flowie_control_iris_adapter Salts::Coroutine Salts::JsonParser Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
         FOLDER "flowie/control/tests")
       set_tests_properties(test_flowie_control_management_rpc
@@ -598,7 +683,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_dashboard
       SOURCES tests/test_flowie_control_dashboard.c
-      LIBS flowie_control_iris_adapter Rocida::TinyTest
+      LIBS flowie_control_iris_adapter Salts::Coroutine Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
       FOLDER "flowie/control/tests")
     set_tests_properties(test_flowie_control_dashboard
@@ -611,7 +696,7 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_auth_iris_adapter
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_target_properties(
           test_flowie_control_management_rpc
           PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -619,7 +704,7 @@ if(BUILD_TESTS)
         set_tests_properties(
           test_flowie_control_management_rpc
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_target_properties(
         test_flowie_control_dashboard
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -627,6 +712,6 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_dashboard
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::Iris>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboHttp::HttpClient>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
 endif()

@@ -8,8 +8,7 @@
 
 typedef struct flowie_server_http_security_s flowie_server_http_security_t;
 
-int flowie_server_http_security_create(coro_context_t *context,
-                                       const flowie_server_http_provider_config_t *auth,
+int flowie_server_http_security_create(const flowie_server_http_provider_config_t *auth,
                                        const flowie_server_http_provider_config_t *acl,
                                        flowie_server_http_security_t **out);
 void flowie_server_http_security_destroy(flowie_server_http_security_t *security);

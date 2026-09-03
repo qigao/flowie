@@ -1,7 +1,7 @@
 # Flowie 客户端开发指南
 
 Flowie Client 是回调驱动的 C MQTT client。它支持 MQTT 3.1、3.1.1、5，以及 TCP、TLS、WS、WSS。
-client 自己拥有 CoroNet context、worker thread、接收循环和有界 command queue；调用方不需要驱动 event loop。
+client 自己拥有 worker thread、有界 command queue，以及 TCP/TLS 所需的 CNet client 或 WS/WSS 所需的 CHTTP WebSocket client；调用方不需要驱动 event loop。
 
 ## 1. CMake 接入
 
@@ -28,6 +28,9 @@ cmake --build --preset win-release-user --target flowie_client
 公开头文件是 `flowie_mqtt_client.h`。所有配置结构必须从对应 `*_INIT` 宏初始化。
 `stream_recv_buffer_bytes`、`socket_recv_buffer_bytes` 和 `socket_send_buffer_bytes` 的层次、
 默认值与内存预算见 [Flowie 架构说明](ARCHITECTURE.md)。
+其中 `stream_recv_buffer_bytes` 是 MQTT 解码缓存硬上限；两个 `socket_*_buffer_bytes` 会经
+CNet 应用于 TCP/TLS，或经 CHTTP WebSocket 配置应用于 WS/WSS。socket buffer 为零时保留
+操作系统默认值，超出平台 `int` 范围会在 client 初始化时返回 `SALTS_ERANGE`。
 
 ## 2. 完整最小示例
 
@@ -162,7 +165,7 @@ int flowie_create_mqtt311(const flowie_mqtt_client_config_t *config,
 - `FLOWIE_MQTT_VERSION_3_1`、`FLOWIE_MQTT_VERSION_3_1_1` 和
   `FLOWIE_MQTT_VERSION_5` 是仅有的可选具体版本。
 - setter 对空 client、`UNSPECIFIED` 或不支持的值返回 `TURBO_EINVAL`；锁定后返回
-  `TURBO_EALREADY`；shutdown 开始后返回 `TURBO_ESHUTDOWN`。
+  `TURBO_EALREADY`；shutdown 开始后返回 `SALTS_ESHUTDOWN`。
 - packet 可继续显式填写版本，但必须与 client 选择一致；不一致的命令在入队前返回
   `TURBO_EPROTO`，不会自动降级或协商回退。
 - 自动重连与 `refresh_connect` 也沿用同一选择；刷新后的 CONNECT 不得切换版本。
@@ -186,7 +189,7 @@ reason code、Enhanced AUTH，以及由 CONNACK 协商的发送能力限制。
 缺失或改变、property 编码错误、超时和传输错误都会终止当前连接。challenge、response 和 completion 中
 由 client 提供的 view 仅在对应 callback 内有效。callback 填入的 response properties 必须来自
 `user_data` 所拥有的稳定缓冲区，并保持到该 client 的下一次 callback 开始；不能指向 callback 局部栈。
-MQTT 3.1/3.1.1 调用 re-authentication 会通过 `on_auth` 返回 `TURBO_ENOTSUP`。
+MQTT 3.1/3.1.1 调用 re-authentication 会通过 `on_auth` 返回 `SALTS_ENOTSUP`。
 
 配置结构没有本地 ABI 版本号，也不接受历史布局；`size` 必须精确匹配当前完整结构。
 client 选择的版本决定 CONNECT 协议级别；显式 packet 版本仅用于一致性校验，不能覆盖 client 选择。
@@ -221,6 +224,13 @@ rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
 `refresh_connect` 和 `on_reconnect` 都运行在 client worker coroutine。回调内的网络 I/O 必须使用
 coroutine API，并设置明确 timeout；密码学、文件扫描等重型工作应提交到有界 worker pool，不能阻塞
 owner lane。回调不能销毁同一个 client。缓存的 CONNECT password/token 在替换和销毁时会清零。
+
+已有独立重连监督器的封装不应再启用 `create_ex`，否则会形成两个连接状态推进者。此类封装可在
+`on_error` 或失败的 operation completion 回调内调用
+`flowie_mqtt_client_server_disconnect_reason()`：MQTT 5 服务端 DISCONNECT 返回具体 reason，普通
+EOF/传输错误返回 `TURBO_ENOENT`。该事件状态仅在当前 worker callback 内有效；回调外返回
+`TURBO_EBUSY`。例如 `0x87` 可触发监督器重新 CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应
+按终止错误处理。
 
 此机制与 MQTT enhanced authentication 不同：`flowie_mqtt_client_authenticate()` 的 AUTH `0x19`
 用于已协商 Authentication Method 的协议内 re-auth；JWT 作为普通 CONNECT password 时使用上述

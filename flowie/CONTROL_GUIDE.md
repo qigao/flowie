@@ -43,7 +43,7 @@ build\Msvc-Release\bin\flowie-control.exe --check
 ```
 
 仅在本地开发时使用 `--env-file/-E`。程序不会隐式读取当前目录 `.env`。`--check` 解析完整 schema，
-并用 CoroNet/OpenSSL 实际加载 server chain、private key、client CA，以及启用的第三方 HTTPS client
+并用 CHTTP/OpenSSL 实际加载 server chain、private key、client CA，以及启用的第三方 HTTPS client
 CA/certificate/private key；它不打开 listener、不连接第三方服务或控制数据库，也不执行 schema
 migration。证书、私钥、CA 或 secret reference 无法加载时立即失败，不回退到 HTTP、其他 TurboDB
 driver 或本地 credential。
@@ -59,11 +59,11 @@ MQTT Broker -> HTTPS /v4/authenticate -> flowie-control
                                          +-> local authorization Repository
 ```
 
-Broker v3 请求中的 `remote_address` 由 endpoint transport provenance 提供；默认是 CoroNet 直接 socket
+Broker v3 请求中的 `remote_address` 由 endpoint transport provenance 提供；默认是 CNet 直接 socket
 peer，显式启用 trusted PROXY v1/v2 的 TLS/WSS endpoint 则使用已验证 header 中的数值 `IP:port`，并
-单独保留 direct transport peer。Pipe 使用 `local`。Flowie 不读取 `X-Forwarded-For` 或其他 HTTP
+单独保留 direct transport peer。Flowie 不读取 `X-Forwarded-For` 或其他 HTTP
 代理 header。`peer_certificate_sha256` 仅在 MQTT TLS/WSS endpoint 配置
-`tls_client_ca_file`、CoroNet 已验证客户端证书后出现；否则是空字符串。该 MQTT 客户证书只描述
+`tls_client_ca_file`、CNet 已验证客户端证书后出现；否则是空字符串。该 MQTT 客户证书只描述
 MQTT client。Broker 使用 Repository 中具有精确 endpoint Role 的 service principal 调用 Control；
 Auth 成功响应中的用户 Domain 才决定后续 ACL policy，Broker service principal 的 Domain 不会成为
 业务 Domain，也不会加入 topic。
@@ -149,7 +149,7 @@ fail closed。
 本地 Auth 的 Argon2id 与同步 TurboDB 调用只进入专用 executor。Iris request/response/socket
 不跨线程；deadline 只结束 HTTP 等待，不会强行取消正在执行的同步 KDF/SQL。迟到结果被丢弃，任务自行
 擦除 secret；endpoint shutdown 停止接单并 drain。显式 `local_executor` 与两个外部 provider 互斥。
-外部网络 I/O 始终留在 CoroNet coroutine 路径，JWT/JWK 解析和签名验证进入其专用有界 executor。
+外部网络 I/O 始终留在 CHTTP client 路径，JWT/JWK 解析和签名验证进入其专用有界 executor。
 YAML 不保存 ACL rule body、用户 credential、service token 或私钥内容。
 
 唯一数据库边界示例：
@@ -438,7 +438,7 @@ draft、validate、publish 流程见 [ACL_GRAMMAR.md](ACL_GRAMMAR.md)。旧的 p
 都从 Repository 重新解析当前 enabled 状态和保留角色，因此禁用账户或撤销管理角色会立即使已有会话
 失权。登录表单还要求精确同源 `Origin`/`Host`，管理写操作继续要求会话内独立 CSRF token。本地密码
 验证在专用有界 executor 中执行；队列满返回 429，deadline 到期返回 503，超时请求随后产生的 session
-会由 worker 撤销。第三方 HTTPS Auth 使用 CoroNet coroutine I/O，不进入该 executor。
+会由 worker 撤销。第三方 HTTPS Auth 使用 CHTTP I/O，不进入该 executor。
 
 ```text
 verified login credential in the presented Domain
@@ -481,7 +481,7 @@ build\Msvc-Release\bin\flowie_server.exe `
 ```
 
 Server Application 先创建并同步绑定 Control HTTPS listener，再启动 MQTT worker；MQTT 启动失败会关闭
-Control listener。正常关闭顺序是先停止 MQTT，再在 Control 所属 CoroNet context 线程取消连接、关闭
+Control listener。正常关闭顺序是先停止 MQTT，再由 Control runtime 取消 CHTTP 连接、关闭
 listener、停止 context 并 join。以下独立入口仅用于诊断：
 
 ```powershell

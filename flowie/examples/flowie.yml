@@ -109,11 +109,11 @@ adapters:
       port: 1883
       max_packet_size: 1048576
       max_connections: 100000
-      # Applies only to the private CoroNet context. 65536 is the supported minimum;
-      # borrowed/owned contexts must be sized by their host and must omit this field.
+      # Applies only to the private Salts executor. 65536 is the supported minimum;
+      # borrowed executors must be sized by their host and must omit this field.
       coroutine_stack_size: 65536
-      # Capacity of each of CoroNet's two receive chunks per connection. MQTT framing
-      # reassembles across chunks; borrowed/owned contexts must omit this field.
+      # CNet receive-buffer capacity per stream connection. MQTT framing reassembles
+      # incrementally across receives; borrowed executors must omit this field.
       stream_recv_buffer_bytes: 4096
       send_hwm_bytes: 1048576
       # A connection that exhausts this bounded send budget is isolated; fan-out continues.
@@ -138,7 +138,7 @@ adapters:
 #      auth_method: password
 # For MQTT client mTLS, also change transport to tls/wss and configure the
 # client CA. This makes client certificates mandatory and forwards only the
-# CoroNet-verified SHA-256 fingerprint to Auth:
+# CNet-verified SHA-256 fingerprint to Auth:
 #      tls_client_ca_file: C:/certs/mqtt-client-ca.pem
   # Explicit application data sink selected by the Policy route above.
   socket.application.output:

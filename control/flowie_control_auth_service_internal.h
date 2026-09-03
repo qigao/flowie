@@ -115,7 +115,7 @@ void flowie_control_auth_service_destroy(flowie_control_auth_service_t *service)
 
 /**
  * Authenticate one request inside the Domain selected by a verified service credential.
- * Unknown callers and credential failures return TURBO_EPERM without cross-Root probing.
+ * Unknown callers and credential failures return SALTS_EPERM without cross-Root probing.
  */
 int flowie_control_auth_service_authenticate(flowie_control_auth_service_t *service,
                                              const flowie_control_authenticate_request_t *request,

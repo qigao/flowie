@@ -7,7 +7,7 @@ add_library(flowie_orm_flow STATIC src/flowie_orm_flow.c)
 set_target_properties(flowie_orm_flow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 cmake_config_target(flowie_orm_flow NO_INSTALL FOLDER "flowie/internal")
 target_include_directories(flowie_orm_flow PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
-target_link_libraries(flowie_orm_flow PUBLIC Orm::C PRIVATE Rocida::CFlow Rocida::Core)
+target_link_libraries(flowie_orm_flow PUBLIC Orm::C PRIVATE Salts::CFlow Salts::Core)
 if(TARGET Orm::PostgreSQL)
   target_compile_definitions(flowie_orm_flow PRIVATE FLOWIE_ORM_WITH_POSTGRESQL)
   target_link_libraries(flowie_orm_flow PUBLIC Orm::PostgreSQL)
@@ -58,8 +58,8 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Flowie::Protocol Orm::C TurboNet::CoroNet Rocida::Core
-  PRIVATE Rocida::STL roaring::roaring xxHash::xxhash)
+  PUBLIC Flowie::Protocol Orm::C Salts::Core Salts::Coroutine
+  PRIVATE Flowie::NetRuntime Salts::CSTL Salts::LtvParser roaring::roaring xxHash::xxhash)
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
 endif()
@@ -67,6 +67,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE Flowie::Client Flowie::Transport fl
 
 install(FILES ${FLOWIE_HEADERS}
               ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_message.h
+              ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_mqtt_security.h
               ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_execution.h
               ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_protocol_contract.h
               ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_protocol_repository.h

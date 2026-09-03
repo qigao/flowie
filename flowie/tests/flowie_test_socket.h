@@ -1,7 +1,7 @@
 #ifndef FLOWIE_TEST_SOCKET_H
 #define FLOWIE_TEST_SOCKET_H
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -64,7 +64,7 @@ static flowie_test_socket_t flowie_test_connect_with_recv_buffer(unsigned short 
   flowie_test_socket_t socket_handle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (socket_handle == FLOWIE_TEST_INVALID_SOCKET) return FLOWIE_TEST_INVALID_SOCKET;
   if (recv_buffer_bytes != 0u &&
-      flowie_test_socket_set_recv_buffer(socket_handle, recv_buffer_bytes) != TURBO_OK) {
+      flowie_test_socket_set_recv_buffer(socket_handle, recv_buffer_bytes) != SALTS_OK) {
     flowie_test_socket_close(socket_handle);
     return FLOWIE_TEST_INVALID_SOCKET;
   }
@@ -86,16 +86,16 @@ static flowie_test_socket_t flowie_test_connect(unsigned short port) {
 static int flowie_test_socket_set_recv_buffer(flowie_test_socket_t socket_handle, size_t bytes) {
   int value;
   if (socket_handle == FLOWIE_TEST_INVALID_SOCKET || bytes == 0u || bytes > INT_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   value = (int)bytes;
 #ifdef _WIN32
   return setsockopt(socket_handle, SOL_SOCKET, SO_RCVBUF, (const char *)&value,
                     (int)sizeof(value)) == 0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #else
-  return setsockopt(socket_handle, SOL_SOCKET, SO_RCVBUF, &value, sizeof(value)) == 0 ? TURBO_OK
-                                                                                      : TURBO_EIO;
+  return setsockopt(socket_handle, SOL_SOCKET, SO_RCVBUF, &value, sizeof(value)) == 0 ? SALTS_OK
+                                                                                      : SALTS_EIO;
 #endif
 }
 
@@ -107,10 +107,10 @@ static int flowie_test_send(flowie_test_socket_t socket_handle, const uint8_t *d
 #else
     ssize_t sent = send(socket_handle, data + offset, size - offset, 0);
 #endif
-    if (sent <= 0) return TURBO_EIO;
+    if (sent <= 0) return SALTS_EIO;
     offset += (size_t)sent;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_test_recv_exact(flowie_test_socket_t socket_handle, uint8_t *data, size_t size) {
@@ -119,11 +119,11 @@ static int flowie_test_recv_exact(flowie_test_socket_t socket_handle, uint8_t *d
   DWORD timeout_ms = 2000u;
   if (setsockopt(socket_handle, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
                  (int)sizeof(timeout_ms)) != 0)
-    return TURBO_EIO;
+    return SALTS_EIO;
 #else
   struct timeval timeout = {2, 0};
   if (setsockopt(socket_handle, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
-    return TURBO_EIO;
+    return SALTS_EIO;
 #endif
   while (offset < size) {
 #ifdef _WIN32
@@ -131,10 +131,10 @@ static int flowie_test_recv_exact(flowie_test_socket_t socket_handle, uint8_t *d
 #else
     ssize_t received = recv(socket_handle, data + offset, size - offset, 0);
 #endif
-    if (received <= 0) return TURBO_EIO;
+    if (received <= 0) return SALTS_EIO;
     offset += (size_t)received;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int flowie_test_recv_mqtt5_connack(flowie_test_socket_t socket_handle,
@@ -150,9 +150,9 @@ static int flowie_test_recv_mqtt5_connack(flowie_test_socket_t socket_handle,
   expected[10] = (uint8_t)(maximum_packet_size >> 16u);
   expected[11] = (uint8_t)(maximum_packet_size >> 8u);
   expected[12] = (uint8_t)maximum_packet_size;
-  if (flowie_test_recv_exact(socket_handle, received, sizeof(received)) != TURBO_OK)
-    return TURBO_EPROTO;
-  return memcmp(received, expected, sizeof(expected)) == 0 ? TURBO_OK : TURBO_EPROTO;
+  if (flowie_test_recv_exact(socket_handle, received, sizeof(received)) != SALTS_OK)
+    return SALTS_EPROTO;
+  return memcmp(received, expected, sizeof(expected)) == 0 ? SALTS_OK : SALTS_EPROTO;
 }
 
 static int flowie_test_socket_readable(flowie_test_socket_t socket_handle, uint32_t timeout_ms) {

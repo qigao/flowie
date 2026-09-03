@@ -3,8 +3,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +27,7 @@ static int live_drop_tables(const orm_config_t *database, const char *prefix) {
   orm_status_t status;
   const int written = snprintf(sql, sizeof(sql), sql_format, prefix, prefix, prefix, prefix, prefix,
                                prefix, prefix, prefix, prefix);
-  if (written <= 0 || (size_t)written >= sizeof(sql)) return TURBO_ERANGE;
+  if (written <= 0 || (size_t)written >= sizeof(sql)) return SALTS_ERANGE;
   orm_error_init(&error);
   status = flowie_orm_connect(database, &connection, &error);
   if (status == ORM_STATUS_OK) status = orm_raw(connection, orm_view(sql), &query, &error);
@@ -35,7 +35,7 @@ static int live_drop_tables(const orm_config_t *database, const char *prefix) {
   orm_result_destroy(result);
   orm_query_destroy(query);
   orm_disconnect(connection);
-  return status == ORM_STATUS_OK ? TURBO_OK : TURBO_EIO;
+  return status == ORM_STATUS_OK ? SALTS_OK : SALTS_EIO;
 }
 
 typedef struct live_visit_s {
@@ -59,7 +59,7 @@ static int live_visit_session(void *context, const flowie_protocol_session_row_t
   check_equal(row->principal.roles[0], "operator");
   check_equal(row->principal.group_count, 1u);
   check_equal(row->principal.groups[0], "devices");
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 spec("flowie TurboDB live protocol repository") {
@@ -92,7 +92,7 @@ spec("flowie TurboDB live protocol repository") {
     database.options = &option;
     database.option_count = 1u;
     (void)snprintf(prefix, sizeof(prefix), "flowie_protocol_turbodb_%llu",
-                   (unsigned long long)turbo_hrtime());
+                   (unsigned long long)salts_hrtime());
     config.database = &database;
     config.namespace_name = prefix;
     config.create_schema = 1;
@@ -103,7 +103,7 @@ spec("flowie TurboDB live protocol repository") {
     config.limits.max_client_id_size = 128u;
     config.limits.max_topic_size = 256u;
     config.limits.max_packet_size = 1024u;
-    check_equal(flowie_protocol_repository_open(&config, &repository), TURBO_OK);
+    check_equal(flowie_protocol_repository_open(&config, &repository), SALTS_OK);
     if (!repository) return;
 
     session.client_id = live_span(client_id, strlen(client_id));
@@ -129,12 +129,12 @@ spec("flowie TurboDB live protocol repository") {
     session.inflight_count = 1u;
     session.deliveries = &delivery;
     session.delivery_count = 1u;
-    check_equal(flowie_protocol_repository_session_save(repository, &session), TURBO_OK);
+    check_equal(flowie_protocol_repository_session_save(repository, &session), SALTS_OK);
     check_equal(flowie_protocol_repository_session_visit(repository, live_visit_session, &visit),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(visit.sessions, 1u);
 
     flowie_protocol_repository_close(repository);
-    check_equal(live_drop_tables(&database, prefix), TURBO_OK);
+    check_equal(live_drop_tables(&database, prefix), SALTS_OK);
   }
 }

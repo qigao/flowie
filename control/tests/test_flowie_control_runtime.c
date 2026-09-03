@@ -5,7 +5,7 @@
 #include "flowie_test_socket.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,20 +88,20 @@ static control_runtime_fixture_t runtime_fixture_open(void) {
   check_not_null(fixture.path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &fixture.store), TURBO_OK);
+  check_equal(flowie_control_store_open(&config, &fixture.store), SALTS_OK);
   {
     flowie_control_config_t runtime_config = FLOWIE_CONTROL_CONFIG_INIT;
     check_equal(flowie_control_bootstrap_apply(
                     flowie_control_store_repository(fixture.store), &runtime_config.bootstrap,
                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 900u),
-                TURBO_OK);
+                SALTS_OK);
   }
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), TURBO_OK);
-  check_equal(runtime_domain_create(fixture.store, fixture.revision), TURBO_OK);
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), TURBO_OK);
-  check_equal(runtime_user_create(fixture.store, fixture.revision), TURBO_OK);
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), TURBO_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
+  check_equal(runtime_domain_create(fixture.store, fixture.revision), SALTS_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
+  check_equal(runtime_user_create(fixture.store, fixture.revision), SALTS_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
   return fixture;
 }
 
@@ -150,9 +150,9 @@ static void runtime_jwt_jwks_composition_test(void) {
   (void)snprintf(config->auth.jwt_jwks.ca_file, sizeof(config->auth.jwt_jwks.ca_file), "%s",
                  cert_file);
 
-  check_equal(flowie_control_runtime_create(config, &runtime), TURBO_OK);
+  check_equal(flowie_control_runtime_create(config, &runtime), SALTS_OK);
   check_not_null(runtime);
-  check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+  check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
 
   free(config);
   tls_test_remove_file(key_file);
@@ -167,22 +167,22 @@ spec("Flowie controller runtime") {
 
     check_equal(flowie_control_management_identity_resolve_principal(
                     flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                     "role-viewer", fixture.revision),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                  "assign-viewer", fixture.revision + 1u),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
                                     "role-user-admin", fixture.revision + 2u),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
                                  "assign-user-admin", fixture.revision + 3u),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(flowie_control_management_identity_resolve_principal(
                     flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(caller.domain_id, "root-a");
     check_equal(caller.actor, "admin-a");
     check_equal(caller.permissions,
@@ -197,7 +197,7 @@ spec("Flowie controller runtime") {
     check_equal(
         flowie_control_management_identity_resolve_principal(
             flowie_control_store_repository(fixture.store), "root-a", "missing-admin", &caller),
-        TURBO_EPERM);
+        SALTS_EPERM);
     check_null(caller.domain_id);
     check_null(caller.actor);
     runtime_fixture_close(&fixture);
@@ -214,7 +214,7 @@ spec("Flowie controller runtime") {
     memcpy(config.listener.tls.client_ca_file, "missing-control-ca.pem",
            sizeof("missing-control-ca.pem"));
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EIO);
   }
 
   it("rejects every fixed Dashboard route as the Management RPC path") {
@@ -240,11 +240,11 @@ spec("Flowie controller runtime") {
                    key_file);
     config.dashboard_enabled = 1;
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
-    check_equal(flowie_control_runtime_validate(&config), TURBO_OK);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
     for (size_t index = 0u; index < sizeof(dashboard_paths) / sizeof(dashboard_paths[0]); ++index) {
       (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                      dashboard_paths[index]);
-      check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+      check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
     }
 
     tls_test_remove_file(key_file);
@@ -256,7 +256,7 @@ spec("Flowie controller runtime") {
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     config.auth.enabled = 1;
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("rejects invalid local executor bounds before TLS startup") {
@@ -265,7 +265,7 @@ spec("Flowie controller runtime") {
     config.auth.enabled = 1;
     config.auth.local_executor.workers = 0u;
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("rejects simultaneous local executor and external HTTPS modes") {
@@ -275,14 +275,14 @@ spec("Flowie controller runtime") {
     config.auth.local_executor.configured = 1;
     config.auth.external_https.enabled = 1;
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("requires a configured TurboDB driver") {
     flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("rejects programmatic plaintext and malformed TurboDB secret options") {
@@ -294,13 +294,13 @@ spec("Flowie controller runtime") {
                    "%s", "conninfo");
     (void)snprintf(config.turbodb.options[0].value, sizeof(config.turbodb.options[0].value), "%s",
                    "host=db.example password=literal");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
 
     (void)snprintf(config.turbodb.options[0].keyword, sizeof(config.turbodb.options[0].keyword),
                    "%s", "sslpassword");
     (void)snprintf(config.turbodb.options[0].value, sizeof(config.turbodb.options[0].value), "%s",
                    "env://BAD-NAME");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("validates the configured external HTTPS identity and secrets before startup") {
@@ -321,7 +321,7 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.listener.tls.client_ca_file, sizeof(config.listener.tls.client_ca_file),
                    "%s", cert_file);
     config.auth.external_https.enabled = 1;
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
     config.auth.enabled = 1;
     (void)snprintf(config.auth.method, sizeof(config.auth.method), "%s", "bearer");
     (void)snprintf(config.auth.external_https.url, sizeof(config.auth.external_https.url), "%s",
@@ -341,10 +341,10 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.external_https.tls.client_key_file,
                    sizeof(config.auth.external_https.tls.client_key_file), "%s", key_file);
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_OK);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
     (void)snprintf(config.auth.external_https.tls.ca_file,
                    sizeof(config.auth.external_https.tls.ca_file), "%s", "missing-external-ca.pem");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EIO);
 
     check_equal(runtime_test_set_env("FLOWIE_RUNTIME_EXTERNAL_TOKEN", NULL), 0);
     tls_test_remove_file(key_file);
@@ -381,14 +381,14 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.jwt_jwks.ca_file, sizeof(config.auth.jwt_jwks.ca_file), "%s",
                    cert_file);
 
-    check_equal(flowie_control_runtime_validate(&config), TURBO_OK);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
     config.auth.jwt_jwks.executor_workers = 0u;
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EINVAL);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
     config.auth.jwt_jwks.executor_workers =
         FLOWIE_CONTROL_CONFIG_AUTH_LOCAL_EXECUTOR_DEFAULT_WORKERS;
     (void)snprintf(config.auth.jwt_jwks.ca_file, sizeof(config.auth.jwt_jwks.ca_file), "%s",
                    "missing-jwks-ca.pem");
-    check_equal(flowie_control_runtime_validate(&config), TURBO_EIO);
+    check_equal(flowie_control_runtime_validate(&config), SALTS_EIO);
 
     tls_test_remove_file(key_file);
     tls_test_remove_file(cert_file);
@@ -407,10 +407,10 @@ spec("Flowie controller runtime") {
 
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                     "runtime-viewer", fixture.revision),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                  "runtime-viewer-add", fixture.revision + 1u),
-                TURBO_OK);
+                SALTS_OK);
     flowie_control_store_destroy(fixture.store);
     fixture.store = NULL;
     check_equal(
@@ -446,9 +446,9 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.external_https.tls.client_key_file,
                    sizeof(config.auth.external_https.tls.client_key_file), "%s", key_file);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_create(&config, &runtime), SALTS_OK);
     check_not_null(runtime);
-    check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
     runtime = NULL;
 
     check_equal(runtime_test_set_env("FLOWIE_RUNTIME_EXTERNAL_TOKEN", NULL), 0);
@@ -479,13 +479,13 @@ spec("Flowie controller runtime") {
                    "/v2/control/rpc");
     check_equal(flowie_control_test_runtime_turbodb(&config, fixture.path), 0);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_create(&config, &runtime), SALTS_OK);
     check_not_null(runtime);
-    check_equal(flowie_control_runtime_start(runtime), TURBO_OK);
-    check_equal(flowie_control_runtime_start(runtime), TURBO_EINVAL);
-    check_equal(flowie_control_runtime_stop(runtime), TURBO_OK);
-    check_equal(flowie_control_runtime_stop(runtime), TURBO_OK);
-    check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_start(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_start(runtime), SALTS_EINVAL);
+    check_equal(flowie_control_runtime_stop(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_stop(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
 
     tls_test_remove_file(key_file);
     tls_test_remove_file(cert_file);

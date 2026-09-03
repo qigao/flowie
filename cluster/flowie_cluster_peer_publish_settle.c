@@ -40,13 +40,13 @@ static int flowie_cluster_peer_publish_settlement_validate(
       settlement->size < sizeof(*settlement) || settlement->attempt == 0u ||
       settlement->point < FLOWIE_PROTOCOL_SETTLE_ACCEPTED ||
       settlement->point > FLOWIE_PROTOCOL_SETTLE_DURABLE ||
-      flowie_protocol_message_validate(&settlement->message) != TURBO_OK ||
+      flowie_protocol_message_validate(&settlement->message) != SALTS_OK ||
       settlement->message.protocol != FLOWIE_PROTOCOL_MQTT ||
       settlement->message.kind != FLOWIE_PROTOCOL_MESSAGE_DATA ||
       (settlement->message.qos != 1u && settlement->message.qos != 2u) ||
       settlement->message.packet_id == 0u || settlement->message.packet_id > UINT16_MAX)
-    return TURBO_EPROTO;
-  return TURBO_OK;
+    return SALTS_EPROTO;
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_publish_settle_encode(
@@ -57,16 +57,16 @@ int flowie_cluster_peer_publish_settle_encode(
   uint32_t flags = 0u;
   size_t total_size;
   int rc;
-  if (!out) return TURBO_EINVAL;
+  if (!out) return SALTS_EINVAL;
   *out = NULL;
   rc = flowie_cluster_peer_publish_settlement_validate(client_id, settlement);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   if (client_id.size > SIZE_MAX - FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   total_size = FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE + client_id.size;
-  if (total_size > max_payload_size || total_size > UINT32_MAX) return TURBO_EMSGSIZE;
+  if (total_size > max_payload_size || total_size > UINT32_MAX) return SALTS_EMSGSIZE;
   *out = tstr_new_len(NULL, total_size);
-  if (!*out) return TURBO_ENOMEM;
+  if (!*out) return SALTS_ENOMEM;
   encoded = (uint8_t *)*out;
   if (settlement->message.duplicate) flags |= FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_DUPLICATE;
   if (settlement->message.retain) flags |= FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_RETAIN;
@@ -110,7 +110,7 @@ int flowie_cluster_peer_publish_settle_encode(
       encoded + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_RESERVED32, 0u);
   memcpy(encoded + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE, client_id.data,
          client_id.size);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_publish_settle_decode(
@@ -124,9 +124,9 @@ int flowie_cluster_peer_publish_settle_decode(
   int rc;
   if (!out || out->size != sizeof(*out) ||
       out->abi_version != FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_VERSION || !bytes)
-    return TURBO_EINVAL;
-  if (data_size > max_payload_size) return TURBO_EMSGSIZE;
-  if (data_size < FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE) return TURBO_EPROTO;
+    return SALTS_EINVAL;
+  if (data_size > max_payload_size) return SALTS_EMSGSIZE;
+  if (data_size < FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE) return SALTS_EPROTO;
   flags = flowie_cluster_peer_wire_read_u32(
       bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_FLAGS);
   if (memcmp(bytes, FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_MAGIC,
@@ -144,12 +144,12 @@ int flowie_cluster_peer_publish_settle_decode(
       flowie_cluster_peer_wire_read_u32(
           bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_RESERVED32) != 0u ||
       (flags & ~FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_KNOWN_FLAGS) != 0u)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   client_id_size = flowie_cluster_peer_wire_read_u16(
       bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_CLIENT_ID_SIZE);
   if (client_id_size == 0u ||
       client_id_size != data_size - FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   decoded.client_id = (flowie_mqtt_span_t){
       bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE, client_id_size};
   decoded.settlement.message.protocol = FLOWIE_PROTOCOL_MQTT;
@@ -175,7 +175,7 @@ int flowie_cluster_peer_publish_settle_decode(
   decoded.settlement.message_id = flowie_cluster_peer_wire_read_u64(
       bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_MESSAGE_ID);
   rc = flowie_cluster_peer_publish_settlement_validate(decoded.client_id, &decoded.settlement);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   *out = decoded;
-  return TURBO_OK;
+  return SALTS_OK;
 }

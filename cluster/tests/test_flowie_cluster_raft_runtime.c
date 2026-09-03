@@ -1,7 +1,7 @@
 #include "flowie_cluster_raft_runtime_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -9,13 +9,13 @@ static int flowie_raft_runtime_apply(void *ctx,
                                      const tr_raft_entry_t *entries,
                                      size_t entry_count) {
   (void)ctx;
-  return entries && entry_count != 0u ? TURBO_OK : TURBO_EINVAL;
+  return entries && entry_count != 0u ? SALTS_OK : SALTS_EINVAL;
 }
 
 static int flowie_raft_runtime_payload(
-    void *ctx, const tr_raft_coronet_payload_t *payload) {
+    void *ctx, const tr_raft_transport_payload_t *payload) {
   (void)ctx;
-  return payload ? TURBO_OK : TURBO_EINVAL;
+  return payload ? SALTS_OK : SALTS_EINVAL;
 }
 
 spec("flowie cluster TurboRaft FlowMQ runtime") {
@@ -37,7 +37,7 @@ spec("flowie cluster TurboRaft FlowMQ runtime") {
     config.store.state_machine.apply_batch = flowie_raft_runtime_apply;
     config.on_payload = flowie_raft_runtime_payload;
     check_equal(flowie_cluster_raft_runtime_create(&config, &runtime),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_null(runtime);
   }
 }

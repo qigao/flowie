@@ -1,7 +1,7 @@
 #include "flowie_server_turbodb_config_internal.h"
 
-#include "turbo_error.h"
-#include "turbo_parser.h"
+#include "salts_error.h"
+#include <json_parser.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -43,24 +43,24 @@ static void flowie_server_turbodb_wipe(void *memory, size_t size) {
 int flowie_server_turbodb_config_create(const char *driver, const char *options_json,
                                         flowie_server_turbodb_config_t **out) {
   flowie_server_turbodb_config_t *config = NULL;
-  turbo_json_doc_t *document = NULL;
+  json_value_t *document = NULL;
   size_t option_count;
-  int rc = TURBO_EINVAL;
+  int rc = SALTS_EINVAL;
   if (out) *out = NULL;
   if (!out || !flowie_server_turbodb_text_valid(driver, FLOWIE_SERVER_TURBODB_DRIVER_MAX) ||
       !options_json || !options_json[0])
-    return TURBO_EINVAL;
-  if (turbo_parse_json((const uint8_t *)options_json, strlen(options_json), &document) != 0 ||
-      !document || turbo_json_type((const json_value_t *)document) != TURBO_JSON_OBJECT)
+    return SALTS_EINVAL;
+  document = json_parse(options_json, strlen(options_json));
+  if (!document || json_type(document) != JSON_OBJECT)
     goto done;
-  option_count = turbo_json_object_size((const json_value_t *)document);
+  option_count = json_object_size((const json_value_t *)document);
   if (option_count > FLOWIE_SERVER_TURBODB_OPTION_COUNT_MAX) {
-    rc = TURBO_ENOSPC;
+    rc = SALTS_ENOSPC;
     goto done;
   }
   config = (flowie_server_turbodb_config_t *)calloc(1u, sizeof(*config));
   if (!config) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto done;
   }
   memcpy(config->driver, driver, strlen(driver) + 1u);
@@ -69,23 +69,23 @@ int flowie_server_turbodb_config_create(const char *driver, const char *options_
   config->database.options = config->options;
   config->database.option_count = (uint32_t)option_count;
   for (size_t index = 0u; index < option_count; ++index) {
-    const char *keyword = turbo_json_object_key((const json_value_t *)document, index);
-    const json_value_t *value = turbo_json_object_value((const json_value_t *)document, index);
+    const char *keyword = json_object_key((const json_value_t *)document, index);
+    const json_value_t *value = json_object_value((const json_value_t *)document, index);
     const char *text;
     if (!flowie_server_turbodb_text_valid(keyword, FLOWIE_SERVER_TURBODB_OPTION_KEY_MAX) ||
-        !value || turbo_json_type(value) != TURBO_JSON_STRING) {
-      rc = TURBO_EINVAL;
+        !value || json_type(value) != JSON_STRING) {
+      rc = SALTS_EINVAL;
       goto done;
     }
     for (size_t prior = 0u; prior < index; ++prior) {
       if (strcmp(config->keywords[prior], keyword) == 0) {
-        rc = TURBO_EALREADY;
+        rc = SALTS_EALREADY;
         goto done;
       }
     }
-    text = turbo_json_string(value);
+    text = json_string(value);
     if (!flowie_server_turbodb_text_valid(text, FLOWIE_SERVER_TURBODB_OPTION_VALUE_MAX)) {
-      rc = TURBO_EINVAL;
+      rc = SALTS_EINVAL;
       goto done;
     }
     memcpy(config->keywords[index], keyword, strlen(keyword) + 1u);
@@ -95,10 +95,10 @@ int flowie_server_turbodb_config_create(const char *driver, const char *options_
   }
   *out = config;
   config = NULL;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
-  turbo_free_json(&document);
+  json_free(document);
   flowie_server_turbodb_config_destroy(config);
   return rc;
 }

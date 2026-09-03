@@ -34,14 +34,14 @@ static int flow_pattern_exchange_active_state(flowie_pattern_exchange_state_t st
 
 int flowie_pattern_role_validate(flowie_pattern_role_t role) {
   return role >= FLOWIE_PATTERN_PUBLISH && role <= FLOWIE_PATTERN_EXTENDED_SUBSCRIBE
-             ? TURBO_OK
-             : TURBO_EINVAL;
+             ? SALTS_OK
+             : SALTS_EINVAL;
 }
 
 int flowie_pattern_roles_compatible(flowie_pattern_role_t local,
                                         flowie_pattern_role_t remote) {
-  if (flowie_pattern_role_validate(local) != TURBO_OK ||
-      flowie_pattern_role_validate(remote) != TURBO_OK)
+  if (flowie_pattern_role_validate(local) != SALTS_OK ||
+      flowie_pattern_role_validate(remote) != SALTS_OK)
     return 0;
   switch (local) {
   case FLOWIE_PATTERN_PUBLISH:
@@ -76,11 +76,11 @@ int flowie_pattern_roles_compatible(flowie_pattern_role_t local,
 }
 
 int flowie_pattern_selector_init(flowie_pattern_selector_t *selector) {
-  if (!selector) return TURBO_EINVAL;
+  if (!selector) return SALTS_EINVAL;
   selector->size = sizeof(*selector);
   selector->contract_version = FLOWIE_PROTOCOL_CONTRACT_VERSION;
   atomic_init(&selector->cursor, 0u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_selection_begin(
@@ -93,8 +93,8 @@ int flowie_pattern_selection_begin(
       iterator->contract_version != FLOWIE_PROTOCOL_CONTRACT_VERSION ||
       (selection != FLOWIE_PATTERN_SELECT_FAN_OUT &&
        selection != FLOWIE_PATTERN_SELECT_ROUND_ROBIN))
-    return TURBO_EINVAL;
-  if (candidate_count == 0u) return TURBO_ENOENT;
+    return SALTS_EINVAL;
+  if (candidate_count == 0u) return SALTS_ENOENT;
   if (selection == FLOWIE_PATTERN_SELECT_ROUND_ROBIN)
     ticket = atomic_fetch_add_explicit(&selector->cursor, 1u, memory_order_relaxed);
   value.selection = selection;
@@ -104,57 +104,57 @@ int flowie_pattern_selection_begin(
                           : 0u;
   value.remaining = candidate_count;
   *iterator = value;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_selection_next(flowie_pattern_selection_iterator_t *iterator,
                                       size_t *candidate_index) {
-  if (!flow_pattern_iterator_valid(iterator) || !candidate_index) return TURBO_EINVAL;
-  if (iterator->remaining == 0u) return TURBO_ENOENT;
+  if (!flow_pattern_iterator_valid(iterator) || !candidate_index) return SALTS_EINVAL;
+  if (iterator->remaining == 0u) return SALTS_ENOENT;
   *candidate_index = iterator->next_offset;
   iterator->next_offset += 1u;
   if (iterator->next_offset == iterator->candidate_count) iterator->next_offset = 0u;
   iterator->remaining -= 1u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_route_validate(const flowie_pattern_route_t *route) {
   return route && route->size >= sizeof(*route) &&
                  route->contract_version == FLOWIE_PROTOCOL_CONTRACT_VERSION &&
                  route->route_id != 0u && route->generation != 0u
-             ? TURBO_OK
-             : TURBO_EINVAL;
+             ? SALTS_OK
+             : SALTS_EINVAL;
 }
 
 int flowie_pattern_routes_match(const flowie_pattern_route_t *requested,
                                     const flowie_pattern_route_t *candidate) {
-  return flowie_pattern_route_validate(requested) == TURBO_OK &&
-         flowie_pattern_route_validate(candidate) == TURBO_OK &&
+  return flowie_pattern_route_validate(requested) == SALTS_OK &&
+         flowie_pattern_route_validate(candidate) == SALTS_OK &&
          requested->route_id == candidate->route_id &&
          requested->generation == candidate->generation;
 }
 
 int flowie_pattern_exchange_init(flowie_pattern_exchange_t *exchange) {
-  if (!exchange) return TURBO_EINVAL;
+  if (!exchange) return SALTS_EINVAL;
   exchange->size = sizeof(*exchange);
   exchange->contract_version = FLOWIE_PROTOCOL_CONTRACT_VERSION;
   atomic_init(&exchange->state, FLOWIE_PATTERN_EXCHANGE_READY);
   atomic_init(&exchange->correlation_id, 0u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_exchange_snapshot(const flowie_pattern_exchange_t *exchange,
                                          flowie_pattern_exchange_state_t *state,
                                          uint64_t *correlation_id) {
   int value;
-  if (!flow_pattern_exchange_valid(exchange) || !state || !correlation_id) return TURBO_EINVAL;
+  if (!flow_pattern_exchange_valid(exchange) || !state || !correlation_id) return SALTS_EINVAL;
   value = atomic_load_explicit(&exchange->state, memory_order_acquire);
   if (value < FLOWIE_PATTERN_EXCHANGE_READY ||
       value > FLOWIE_PATTERN_EXCHANGE_RESETTING)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   *state = (flowie_pattern_exchange_state_t)value;
   *correlation_id = atomic_load_explicit(&exchange->correlation_id, memory_order_acquire);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_exchange_begin(flowie_pattern_exchange_t *exchange,
@@ -164,15 +164,15 @@ int flowie_pattern_exchange_begin(flowie_pattern_exchange_t *exchange,
   int expected = FLOWIE_PATTERN_EXCHANGE_READY;
   if (!flow_pattern_exchange_valid(exchange) || !flow_pattern_exchange_active_state(active_state) ||
       correlation_id == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (!atomic_compare_exchange_strong_explicit(&exchange->correlation_id, &empty, correlation_id,
                                                memory_order_acq_rel, memory_order_acquire))
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   if (atomic_compare_exchange_strong_explicit(&exchange->state, &expected, active_state,
                                               memory_order_release, memory_order_acquire))
-    return TURBO_OK;
+    return SALTS_OK;
   atomic_store_explicit(&exchange->correlation_id, 0u, memory_order_release);
-  return TURBO_EBUSY;
+  return SALTS_EBUSY;
 }
 
 int flowie_pattern_exchange_match(const flowie_pattern_exchange_t *exchange,
@@ -180,12 +180,12 @@ int flowie_pattern_exchange_match(const flowie_pattern_exchange_t *exchange,
                                       uint64_t correlation_id) {
   if (!flow_pattern_exchange_valid(exchange) || !flow_pattern_exchange_active_state(expected_state) ||
       correlation_id == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (atomic_load_explicit(&exchange->state, memory_order_acquire) != (int)expected_state)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   return atomic_load_explicit(&exchange->correlation_id, memory_order_acquire) == correlation_id
-             ? TURBO_OK
-             : TURBO_EPROTO;
+             ? SALTS_OK
+             : SALTS_EPROTO;
 }
 
 int flowie_pattern_exchange_finish(flowie_pattern_exchange_t *exchange,
@@ -195,32 +195,32 @@ int flowie_pattern_exchange_finish(flowie_pattern_exchange_t *exchange,
   int rc;
   if (terminal_state != FLOWIE_PATTERN_EXCHANGE_READY &&
       terminal_state != FLOWIE_PATTERN_EXCHANGE_RESETTING)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = flowie_pattern_exchange_match(exchange, expected_state, correlation_id);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   if (terminal_state == FLOWIE_PATTERN_EXCHANGE_READY)
     atomic_store_explicit(&exchange->correlation_id, 0u, memory_order_release);
   atomic_store_explicit(&exchange->state, terminal_state, memory_order_release);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_exchange_mark_resetting(flowie_pattern_exchange_t *exchange) {
   int state;
-  if (!flow_pattern_exchange_valid(exchange)) return TURBO_EINVAL;
+  if (!flow_pattern_exchange_valid(exchange)) return SALTS_EINVAL;
   state = atomic_load_explicit(&exchange->state, memory_order_acquire);
   if (!flow_pattern_exchange_active_state((flowie_pattern_exchange_state_t)state) &&
       state != FLOWIE_PATTERN_EXCHANGE_RESETTING)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   atomic_store_explicit(&exchange->state, FLOWIE_PATTERN_EXCHANGE_RESETTING,
                         memory_order_release);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_pattern_exchange_reset(flowie_pattern_exchange_t *exchange) {
-  if (!flow_pattern_exchange_valid(exchange)) return TURBO_EINVAL;
+  if (!flow_pattern_exchange_valid(exchange)) return SALTS_EINVAL;
   atomic_store_explicit(&exchange->correlation_id, 0u, memory_order_release);
   atomic_store_explicit(&exchange->state, FLOWIE_PATTERN_EXCHANGE_READY, memory_order_release);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_protocol_message_validate(const flowie_protocol_message_t *message) {
@@ -230,7 +230,7 @@ int flowie_protocol_message_validate(const flowie_protocol_message_t *message) {
       message->protocol_version == 0u || message->kind < FLOWIE_PROTOCOL_MESSAGE_DATA ||
       message->kind > FLOWIE_PROTOCOL_MESSAGE_ACK || message->duplicate > 1u ||
       message->retain > 1u || message->session_generation == 0u) {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   if ((message->protocol_version != FLOWIE_MQTT_PROTOCOL_3_1 &&
        message->protocol_version != FLOWIE_MQTT_PROTOCOL_3_1_1 &&
@@ -238,9 +238,9 @@ int flowie_protocol_message_validate(const flowie_protocol_message_t *message) {
       message->qos > FLOWIE_PROTOCOL_QOS_2 ||
       (message->qos == FLOWIE_PROTOCOL_QOS_0 && message->packet_id != 0u) ||
       (message->qos > FLOWIE_PROTOCOL_QOS_0 && message->packet_id == 0u)) {
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_protocol_origin_validate(const flowie_protocol_origin_t *origin) {
@@ -248,14 +248,14 @@ int flowie_protocol_origin_validate(const flowie_protocol_origin_t *origin) {
       origin->contract_version != FLOWIE_PROTOCOL_CONTRACT_VERSION ||
       origin->protocol != FLOWIE_PROTOCOL_MQTT ||
       origin->protocol_version == 0u || origin->session_id == 0u) {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   if (origin->protocol_version != FLOWIE_MQTT_PROTOCOL_3_1 &&
       origin->protocol_version != FLOWIE_MQTT_PROTOCOL_3_1_1 &&
       origin->protocol_version != FLOWIE_MQTT_PROTOCOL_5_0) {
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_protocol_settlement_policy_validate(
@@ -264,9 +264,9 @@ int flowie_protocol_settlement_policy_validate(
       !flow_protocol_settlement_point_valid(policy->qos0) ||
       !flow_protocol_settlement_point_valid(policy->qos1) ||
       !flow_protocol_settlement_point_valid(policy->qos2)) {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_protocol_owner_settle(
@@ -278,15 +278,15 @@ int flowie_protocol_owner_settle(
   if (!owner || owner->size < sizeof(*owner) || !owner->settle || !request ||
       request->size < sizeof(*request) || request->attempt == 0u ||
       !flow_protocol_settlement_point_valid(request->point)) {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   rc = flowie_protocol_message_validate(&request->message);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_protocol_settlement_policy_validate(policy);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   required = request->message.qos == FLOWIE_PROTOCOL_QOS_0 ? policy->qos0
              : request->message.qos == FLOWIE_PROTOCOL_QOS_1 ? policy->qos1
                                                                  : policy->qos2;
-  if (request->point != required) return TURBO_EBUSY;
+  if (request->point != required) return SALTS_EBUSY;
   return owner->settle(ctx, request);
 }

@@ -150,7 +150,7 @@ Endpoint 是 `POST /v4/authenticate`，payload protocol version 是 `3`。URL ma
 principal、effective Role/Group 和当前正数 `policy_version` 来自同一 Repository 状态。认证失败不
 返回部分 principal。Broker 必须在 `expires_at` 后拒绝继续使用该 principal。
 
-Argon2id 和同步 Repository 工作运行在专用有界 executor，不占用 CoroNet owner lane。队列满返回
+Argon2id 和同步 Repository 工作运行在专用有界 executor，不占用 CNet owner lane。队列满返回
 HTTP 429，deadline 到期返回 HTTP 503；认证拒绝或 service caller 无权限返回 HTTP 403。deadline
 不会强杀已接收的同步 KDF，任务仍负责最终擦除 secret，endpoint 关闭时 drain 已接收任务。
 

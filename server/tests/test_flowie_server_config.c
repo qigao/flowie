@@ -1,7 +1,9 @@
 #include "flowie_server_config_internal.h"
 
+#include "flowie.h"
+
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -14,7 +16,7 @@ spec("Flowie standalone YAML configuration") {
     const flowie_server_http_provider_config_t *acl;
 
     check_equal(flowie_server_config_load(FLOWIE_TEST_EU_CONFIG, "flowie", 1, &config, &error),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(config);
     endpoint = flowie_server_config_endpoint(config);
     auth = flowie_server_config_auth(config);
@@ -50,7 +52,7 @@ spec("Flowie standalone YAML configuration") {
 
     check_equal(flowie_server_config_load(FLOWIE_TEST_INSECURE_CONFIG, "flowie", 1, &config,
                                           &error),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(config);
     check_true(error.path[0] != '\0');
   }

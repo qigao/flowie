@@ -1,11 +1,10 @@
 # Flowie 服务端使用指南
 
 本文面向使用仓库内置 `flowie_server` 或 `flowie_supervisor` 部署 MQTT 服务的运维人员和应用开发者。
-Flowie 服务端支持 MQTT 3.1、3.1.1 与 5，监听 transport 支持 TCP、TLS、WS、WSS 和 Pipe。
+Flowie 服务端支持 MQTT 3.1、3.1.1 与 5；standalone CLI 的监听 transport 支持 TCP、TLS、WS 和 WSS。内部统一网络 runtime 另支持由 CNet 承载的 UDP/KCP，但 standalone MQTT server 不把标准 MQTT stream framing 发布为 datagram 协议。
 本文中的 provider、backend、adapter、data source、data sink 和 session store 均采用
 [配置式 Broker 概念与术语](CONFIGURED_BROKER_CONCEPTS.md)中的定义。
-网络与用户态 buffer 参数见
-[CoroNet Buffer Tuning Contract](../io/common/CORONET_BUFFER_TUNING.md)。
+网络 runtime 对容量、接收缓冲、命令数量与命令字节实行硬上限。公开 endpoint 调优会按 transport 下沉到 CNet：TCP/TLS/WS/WSS 支持 OS 收发缓冲、TCP keepalive 与 linger，TCP/TLS/WS/WSS listener 以及 UDP/KCP endpoint 支持 reuse-port。所有零值保留系统默认；非法范围或组合在 endpoint 创建时失败，平台不支持的选项在启动时明确返回 `SALTS_ENOTSUP`，不会静默忽略。
 
 > 当前主线 CMake 中的 `flowie_server` 是 direct-listener 可执行文件，只接受 listener、容量、日志和
 > `--protocol-store-driver` / `--protocol-store-options` 参数，不读取 YAML、`.flow` 或 embedded Control
@@ -156,15 +155,17 @@ ACK 延迟，应先在显式 accepted/durable handoff 完成 settlement，再从
 store backend 或 settlement 时，应停止 endpoint、排空或显式处置 inflight work，同时部署 YAML
 与 Graph，再执行 `--check` 后启动；这些字段不支持热重载。
 
-## 6. TCP、TLS、WS、WSS 与 Pipe
+## 6. TCP、TLS、UDP、KCP、WS 与 WSS
 
-在 `adapters.<name>.config.transport` 中选择 `tcp`、`tls`、`ws`、`wss` 或 `pipe`。
+endpoint runtime 中 TCP/TLS/UDP/KCP 统一走 CNet，WS/WSS 走 CHTTP WebSocket。当前 standalone MQTT server CLI 只接受 `tcp`、`tls`、`ws` 或 `wss`；UDP/KCP 只作为 runtime transport 发布，未声明为标准 MQTT datagram 协议。
 
-TLS/WSS listener 从 CoroNet 进程环境读取证书：
+`--socket-recv-buffer-bytes`、`--socket-send-buffer-bytes`、TCP keepalive 与 linger 只适用于 stream transport；reuse-port 同时适用于 stream listener 和 UDP/KCP。keepalive 的 idle、interval 或 probe count 非零时必须显式启用 keepalive。linger 启用且超时为零表示 abortive close。Windows 不支持 keepalive probe count 时会在启动阶段返回 `SALTS_ENOTSUP`；reuse-port 是否可用同样由平台 socket API 决定。
+
+TLS/WSS listener 从 Salts 进程环境读取证书：
 
 ```powershell
-$env:TURBONET_TLS_CERT_FILE = "C:\certs\server-chain.pem"
-$env:TURBONET_TLS_KEY_FILE = "C:\certs\server-key.pem"
+$env:SALTS_TLS_CERT_FILE = "C:\certs\server-chain.pem"
+$env:SALTS_TLS_KEY_FILE = "C:\certs\server-key.pem"
 ```
 
 然后将 endpoint transport 设置为 `tls` 或 `wss`。WSS endpoint 应显式配置与客户端一致的 path：
@@ -276,7 +277,7 @@ enhanced provider 是 MQTT 5 多轮认证状态机，接口包含：
 AUTH reason `0x18` 继续认证，已连接会话使用 `0x19` 发起 re-authentication。
 
 内置 HTTPS provider 只支持一次 HTTPS credential 验证：它的 `begin` 可以直接成功，但
-`continue_exchange` 返回 `TURBO_ENOTSUP`。底层 ABI 允许程序化宿主实现 exchange，但 bundled 产品不把
+`continue_exchange` 返回 `SALTS_ENOTSUP`。底层 ABI 允许程序化宿主实现 exchange，但 bundled 产品不把
 自定义进程内模块作为第二认证来源。若未来支持真正多轮认证，必须定义版本化 HTTPS exchange 契约并
 完成取消、超时和重认证测试；当前部署不能依靠 YAML 把一次性 HTTPS provider 自动升级为多轮协议。
 

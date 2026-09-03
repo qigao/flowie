@@ -3,7 +3,7 @@
 
 #include "flowie_cluster_publish_stream_internal.h"
 
-#include <turboraft/raft_coronet_transport.h>
+#include <turboraft/raft_transport.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,7 +12,7 @@ extern "C" {
 typedef struct flowie_cluster_publish_ingress_s flowie_cluster_publish_ingress_t;
 
 typedef int (*flowie_cluster_publish_ingress_enqueue_fn)(
-    void *ctx, const tr_raft_coronet_payload_t *payload);
+    void *ctx, const tr_raft_transport_payload_t *payload);
 
 typedef struct flowie_cluster_publish_ingress_config_s {
   tr_raft_node_id_t self_id;
@@ -31,7 +31,7 @@ void flowie_cluster_publish_ingress_destroy(
     flowie_cluster_publish_ingress_t *ingress);
 int flowie_cluster_publish_ingress_handle(
     flowie_cluster_publish_ingress_t *ingress,
-    const tr_raft_coronet_payload_t *payload);
+    const tr_raft_transport_payload_t *payload);
 size_t flowie_cluster_publish_ingress_active_count(
     const flowie_cluster_publish_ingress_t *ingress);
 

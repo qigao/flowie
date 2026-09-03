@@ -1,12 +1,12 @@
 #include "flowie_control_external_https_authenticator_internal.h"
 
-#include "CoroNet/turbo_coro_context.h"
 #include "base64_utils.h"
-#include "http_client.h"
+#include <chttp/chttp.h>
+#include <json_parser.h>
+#include <uri_parser.h>
 #include "monocypher.h"
-#include "turbo_error.h"
-#include "turbo_parser.h"
-#include "turbo_str.h"
+#include "salts_str.h"
+#include <salts/error_codes.h>
 
 #include <openssl/ssl.h>
 
@@ -17,6 +17,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum {
+  FLOWIE_CONTROL_EXTERNAL_HTTPS_HEADER_LIMIT = 16384u,
+  FLOWIE_CONTROL_EXTERNAL_HTTPS_DESTROY_TIMEOUT_MS = 5000u
+};
 
 typedef struct flowie_control_external_https_tls_s {
   tstr ca_file;
@@ -135,16 +140,6 @@ static int external_https_optional_path_valid(const char *value) {
   return external_https_text_valid(value, FLOWIE_CONTROL_EXTERNAL_HTTPS_TLS_PATH_MAX, 1);
 }
 
-static int external_https_ascii_equal(const char *left, const char *right) {
-  if (!left || !right) return 0;
-  while (*left && *right) {
-    if (tolower((unsigned char)*left) != tolower((unsigned char)*right)) return 0;
-    ++left;
-    ++right;
-  }
-  return *left == '\0' && *right == '\0';
-}
-
 static int external_https_ascii_prefix(const char *value, size_t value_size, const char *prefix) {
   size_t prefix_size = strlen(prefix);
   if (!value || value_size < prefix_size) return 0;
@@ -155,21 +150,21 @@ static int external_https_ascii_prefix(const char *value, size_t value_size, con
 
 static int external_https_json_fields_exact(const json_value_t *object, const char *const *allowed,
                                             size_t allowed_count) {
-  if (!object || turbo_json_type(object) != TURBO_JSON_OBJECT ||
-      turbo_json_object_size(object) != allowed_count)
-    return TURBO_EPROTO;
-  for (size_t field_index = 0u; field_index < turbo_json_object_size(object); ++field_index) {
-    const char *field = turbo_json_object_key(object, field_index);
+  if (!object || json_type(object) != JSON_OBJECT ||
+      json_object_size(object) != allowed_count)
+    return SALTS_EPROTO;
+  for (size_t field_index = 0u; field_index < json_object_size(object); ++field_index) {
+    const char *field = json_object_key(object, field_index);
     size_t matches = 0u;
     for (size_t allowed_index = 0u; allowed_index < allowed_count; ++allowed_index)
       if (field && strcmp(field, allowed[allowed_index]) == 0) ++matches;
-    if (matches != 1u) return TURBO_EPROTO;
+    if (matches != 1u) return SALTS_EPROTO;
     for (size_t previous = 0u; previous < field_index; ++previous) {
-      const char *previous_field = turbo_json_object_key(object, previous);
-      if (previous_field && field && strcmp(previous_field, field) == 0) return TURBO_EPROTO;
+      const char *previous_field = json_object_key(object, previous);
+      if (previous_field && field && strcmp(previous_field, field) == 0) return SALTS_EPROTO;
     }
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int external_https_json_u64(const json_value_t *value, uint64_t *out) {
@@ -178,17 +173,17 @@ static int external_https_json_u64(const json_value_t *value, uint64_t *out) {
   char *end = NULL;
   size_t size = 0u;
   unsigned long long parsed;
-  if (!value || turbo_json_type(value) != TURBO_JSON_NUMBER || !out) return TURBO_EPROTO;
-  text = turbo_json_number_text(value, &size);
-  if (!text || size == 0u || size >= sizeof(buffer)) return TURBO_EPROTO;
+  if (!value || json_type(value) != JSON_NUMBER || !out) return SALTS_EPROTO;
+  text = json_number_text(value, &size);
+  if (!text || size == 0u || size >= sizeof(buffer)) return SALTS_EPROTO;
   memcpy(buffer, text, size);
   buffer[size] = '\0';
-  if (buffer[0] == '-' || buffer[0] == '+' || (size > 1u && buffer[0] == '0')) return TURBO_EPROTO;
+  if (buffer[0] == '-' || buffer[0] == '+' || (size > 1u && buffer[0] == '0')) return SALTS_EPROTO;
   errno = 0;
   parsed = strtoull(buffer, &end, 10);
-  if (errno == ERANGE || !end || *end != '\0') return TURBO_EPROTO;
+  if (errno == ERANGE || !end || *end != '\0') return SALTS_EPROTO;
   *out = (uint64_t)parsed;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int external_https_copy_json_string(const json_value_t *object, const char *field, char *out,
@@ -196,43 +191,43 @@ static int external_https_copy_json_string(const json_value_t *object, const cha
   json_value_t *value;
   const char *text;
   size_t size;
-  if (!object || !field || !out || capacity == 0u) return TURBO_EPROTO;
-  value = turbo_json_object_get(object, field);
-  if (!value || turbo_json_type(value) != TURBO_JSON_STRING) return TURBO_EPROTO;
-  text = turbo_json_string(value);
-  size = turbo_json_string_len(value);
-  if (!text || size == 0u || size >= capacity || memchr(text, '\0', size)) return TURBO_EPROTO;
+  if (!object || !field || !out || capacity == 0u) return SALTS_EPROTO;
+  value = json_object_get(object, field);
+  if (!value || json_type(value) != JSON_STRING) return SALTS_EPROTO;
+  text = json_string(value);
+  size = json_string_len(value);
+  if (!text || size == 0u || size >= capacity || memchr(text, '\0', size)) return SALTS_EPROTO;
   memcpy(out, text, size);
   out[size] = '\0';
-  return external_https_text_valid(out, capacity - 1u, 1) ? TURBO_OK : TURBO_EPROTO;
+  return external_https_text_valid(out, capacity - 1u, 1) ? SALTS_OK : SALTS_EPROTO;
 }
 
 static int external_https_copy_groups(const json_value_t *object,
                                       flowie_control_external_auth_assertion_t *assertion) {
-  json_value_t *groups = turbo_json_object_get(object, "groups");
+  json_value_t *groups = json_object_get(object, "groups");
   size_t count;
-  if (!groups || turbo_json_type(groups) != TURBO_JSON_ARRAY || !assertion) return TURBO_EPROTO;
-  count = turbo_json_array_size(groups);
-  if (count > FLOWIE_SECURITY_MAX_GROUPS) return TURBO_EPROTO;
+  if (!groups || json_type(groups) != JSON_ARRAY || !assertion) return SALTS_EPROTO;
+  count = json_array_size(groups);
+  if (count > FLOWIE_SECURITY_MAX_GROUPS) return SALTS_EPROTO;
   for (size_t index = 0u; index < count; ++index) {
-    json_value_t *entry = turbo_json_array_get(groups, index);
+    json_value_t *entry = json_array_get(groups, index);
     const char *text;
     size_t size;
-    if (!entry || turbo_json_type(entry) != TURBO_JSON_STRING) return TURBO_EPROTO;
-    text = turbo_json_string(entry);
-    size = turbo_json_string_len(entry);
+    if (!entry || json_type(entry) != JSON_STRING) return SALTS_EPROTO;
+    text = json_string(entry);
+    size = json_string_len(entry);
     if (!text || size == 0u || size > FLOWIE_SECURITY_ID_MAX || memchr(text, '\0', size))
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     memcpy(assertion->external_groups[index], text, size);
     assertion->external_groups[index][size] = '\0';
     if (!external_https_text_valid(assertion->external_groups[index], FLOWIE_SECURITY_ID_MAX, 1))
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     for (size_t previous = 0u; previous < index; ++previous)
       if (strcmp(assertion->external_groups[previous], assertion->external_groups[index]) == 0)
-        return TURBO_EPROTO;
+        return SALTS_EPROTO;
   }
   assertion->external_group_count = (uint32_t)count;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_control_external_https_decode_response(
@@ -244,86 +239,87 @@ int flowie_control_external_https_decode_response(
       "issuer",     "domain_id", "subject",         "subject_type",    "auth_method", "issued_at",
       "expires_at", "revision",  "assurance_level", "account_enabled", "groups"};
   flowie_control_external_auth_assertion_t assertion = FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  turbo_json_doc_t *document = NULL;
+  json_value_t *document = NULL;
   json_value_t *authenticated;
   json_value_t *assertion_object;
   json_value_t *account_enabled;
   uint64_t version = 0u;
   uint64_t assurance = 0u;
-  int rc = TURBO_EPROTO;
+  int rc = SALTS_EPROTO;
   if (assertion_out && assertion_out->size >= sizeof(*assertion_out)) *assertion_out = assertion;
   if (!body || body_size == 0u || body_size > FLOWIE_CONTROL_EXTERNAL_HTTPS_MAX_RESPONSE_SIZE ||
       !external_https_text_valid(method, FLOWIE_SECURITY_TYPE_MAX, 1) || !assertion_out ||
       assertion_out->size < sizeof(*assertion_out))
-    return TURBO_EINVAL;
-  if (turbo_parse_json((const uint8_t *)body, body_size, &document) != TURBO_OK || !document)
-    return TURBO_EPROTO;
-  authenticated = turbo_json_object_get(document, "authenticated");
-  if (!authenticated || turbo_json_type(authenticated) != TURBO_JSON_BOOL ||
-      external_https_json_u64(turbo_json_object_get(document, "version"), &version) != TURBO_OK ||
+    return SALTS_EINVAL;
+  document = json_parse(body, body_size);
+  if (!document)
+    return SALTS_EPROTO;
+  authenticated = json_object_get(document, "authenticated");
+  if (!authenticated || json_type(authenticated) != JSON_BOOL ||
+      external_https_json_u64(json_object_get(document, "version"), &version) != SALTS_OK ||
       version != FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)
     goto done;
-  if (!turbo_json_bool(authenticated)) {
+  if (!json_bool(authenticated)) {
     if (external_https_json_fields_exact(
-            document, denied_fields, sizeof(denied_fields) / sizeof(denied_fields[0])) != TURBO_OK)
+            document, denied_fields, sizeof(denied_fields) / sizeof(denied_fields[0])) != SALTS_OK)
       goto done;
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
   if (external_https_json_fields_exact(document, outer_fields,
-                                       sizeof(outer_fields) / sizeof(outer_fields[0])) != TURBO_OK)
+                                       sizeof(outer_fields) / sizeof(outer_fields[0])) != SALTS_OK)
     goto done;
-  assertion_object = turbo_json_object_get(document, "assertion");
+  assertion_object = json_object_get(document, "assertion");
   if (external_https_json_fields_exact(assertion_object, assertion_fields,
                                        sizeof(assertion_fields) / sizeof(assertion_fields[0])) !=
-      TURBO_OK)
+      SALTS_OK)
     goto done;
   if (external_https_copy_json_string(assertion_object, "issuer", assertion.issuer,
-                                      sizeof(assertion.issuer)) != TURBO_OK ||
+                                      sizeof(assertion.issuer)) != SALTS_OK ||
       external_https_copy_json_string(assertion_object, "domain_id", assertion.domain_id,
-                                      sizeof(assertion.domain_id)) != TURBO_OK ||
+                                      sizeof(assertion.domain_id)) != SALTS_OK ||
       external_https_copy_json_string(assertion_object, "subject", assertion.subject,
-                                      sizeof(assertion.subject)) != TURBO_OK ||
+                                      sizeof(assertion.subject)) != SALTS_OK ||
       external_https_copy_json_string(assertion_object, "subject_type", assertion.subject_type,
-                                      sizeof(assertion.subject_type)) != TURBO_OK ||
+                                      sizeof(assertion.subject_type)) != SALTS_OK ||
       external_https_copy_json_string(assertion_object, "auth_method", assertion.auth_method,
-                                      sizeof(assertion.auth_method)) != TURBO_OK ||
+                                      sizeof(assertion.auth_method)) != SALTS_OK ||
       strcmp(assertion.auth_method, method) != 0 ||
-      external_https_json_u64(turbo_json_object_get(assertion_object, "issued_at"),
-                              &assertion.issued_at) != TURBO_OK ||
-      external_https_json_u64(turbo_json_object_get(assertion_object, "expires_at"),
-                              &assertion.expires_at) != TURBO_OK ||
-      external_https_json_u64(turbo_json_object_get(assertion_object, "revision"),
-                              &assertion.revision) != TURBO_OK ||
-      external_https_json_u64(turbo_json_object_get(assertion_object, "assurance_level"),
-                              &assurance) != TURBO_OK ||
+      external_https_json_u64(json_object_get(assertion_object, "issued_at"),
+                              &assertion.issued_at) != SALTS_OK ||
+      external_https_json_u64(json_object_get(assertion_object, "expires_at"),
+                              &assertion.expires_at) != SALTS_OK ||
+      external_https_json_u64(json_object_get(assertion_object, "revision"),
+                              &assertion.revision) != SALTS_OK ||
+      external_https_json_u64(json_object_get(assertion_object, "assurance_level"),
+                              &assurance) != SALTS_OK ||
       assurance < FLOWIE_CONTROL_EXTERNAL_ASSURANCE_SINGLE_FACTOR ||
       assurance > FLOWIE_CONTROL_EXTERNAL_ASSURANCE_HARDWARE_BOUND || assertion.issued_at == 0u ||
       assertion.expires_at <= assertion.issued_at || assertion.revision == 0u ||
-      external_https_copy_groups(assertion_object, &assertion) != TURBO_OK)
+      external_https_copy_groups(assertion_object, &assertion) != SALTS_OK)
     goto done;
-  account_enabled = turbo_json_object_get(assertion_object, "account_enabled");
-  if (!account_enabled || turbo_json_type(account_enabled) != TURBO_JSON_BOOL) goto done;
+  account_enabled = json_object_get(assertion_object, "account_enabled");
+  if (!account_enabled || json_type(account_enabled) != JSON_BOOL) goto done;
   assertion.assurance_level = (uint32_t)assurance;
-  assertion.account_enabled = turbo_json_bool(account_enabled) ? 1 : 0;
+  assertion.account_enabled = json_bool(account_enabled) ? 1 : 0;
   *assertion_out = assertion;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
-  if (rc != TURBO_OK)
+  if (rc != SALTS_OK)
     *assertion_out =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  turbo_free_json(&document);
+  json_free(document);
   return rc;
 }
 
 static int external_https_json_add(json_value_t *object, const char *field, json_value_t *value) {
-  if (value && turbo_json_object_add_checked(object, field, value)) return TURBO_OK;
+  if (value && json_object_add_checked(object, field, value)) return SALTS_OK;
   if (value) {
-    turbo_json_doc_t *owned = (turbo_json_doc_t *)value;
-    turbo_free_json(&owned);
+    json_value_t *owned = (json_value_t *)value;
+    json_free(owned);
   }
-  return TURBO_ENOMEM;
+  return SALTS_ENOMEM;
 }
 
 static int external_https_request_valid(const flowie_control_external_auth_request_t *request) {
@@ -341,125 +337,108 @@ static int external_https_request_valid(const flowie_control_external_auth_reque
 
 int flowie_control_external_https_encode_request(
     const flowie_control_external_auth_request_t *request, char **body_out, size_t *body_size_out) {
-  turbo_json_doc_t *document = NULL;
+  json_value_t *document = NULL;
   char *secret_base64 = NULL;
-  int rc = TURBO_ENOMEM;
+  int rc = SALTS_ENOMEM;
   if (body_out) *body_out = NULL;
   if (body_size_out) *body_size_out = 0u;
-  if (!external_https_request_valid(request) || !body_out || !body_size_out) return TURBO_EINVAL;
+  if (!external_https_request_valid(request) || !body_out || !body_size_out) return SALTS_EINVAL;
   if (tn_base64_encode(request->secret, request->secret_size, &secret_base64) != 0 ||
       !secret_base64)
-    return TURBO_ENOMEM;
-  document = (turbo_json_doc_t *)turbo_json_create_object();
+    return SALTS_ENOMEM;
+  document = (json_value_t *)json_create_object();
   if (!document) goto done;
   if (external_https_json_add(
           document, "version",
-          turbo_json_create_uint64(FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)) != TURBO_OK ||
-      external_https_json_add(document, "domain", turbo_json_create_string(request->domain_id)) !=
-          TURBO_OK ||
+          json_create_uint64(FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)) != SALTS_OK ||
+      external_https_json_add(document, "domain", json_create_string(request->domain_id)) !=
+          SALTS_OK ||
       external_https_json_add(document, "identity",
-                              turbo_json_create_string(request->presented_identity)) != TURBO_OK ||
-      external_https_json_add(document, "method", turbo_json_create_string(request->method)) !=
-          TURBO_OK ||
-      external_https_json_add(document, "secret_base64", turbo_json_create_string(secret_base64)) !=
-          TURBO_OK ||
-      external_https_json_add(document, "protocol", turbo_json_create_string(request->protocol)) !=
-          TURBO_OK ||
+                              json_create_string(request->presented_identity)) != SALTS_OK ||
+      external_https_json_add(document, "method", json_create_string(request->method)) !=
+          SALTS_OK ||
+      external_https_json_add(document, "secret_base64", json_create_string(secret_base64)) !=
+          SALTS_OK ||
+      external_https_json_add(document, "protocol", json_create_string(request->protocol)) !=
+          SALTS_OK ||
       external_https_json_add(document, "remote_address",
-                              turbo_json_create_string(request->remote_address)) != TURBO_OK ||
+                              json_create_string(request->remote_address)) != SALTS_OK ||
       external_https_json_add(document, "peer_certificate_sha256",
-                              turbo_json_create_string(request->peer_certificate_sha256
+                              json_create_string(request->peer_certificate_sha256
                                                            ? request->peer_certificate_sha256
-                                                           : "")) != TURBO_OK)
+                                                           : "")) != SALTS_OK)
     goto done;
-  *body_out = turbo_json_serialize(document, body_size_out);
+  *body_out = json_serialize(document, body_size_out);
   if (!*body_out) goto done;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
   if (secret_base64) {
     crypto_wipe(secret_base64, strlen(secret_base64));
     free(secret_base64);
   }
-  turbo_free_json(&document);
+  json_free(document);
   return rc;
 }
 
-static int external_https_content_type_json(const char *headers, size_t headers_size) {
-  static const char name[] = "content-type:";
-  size_t line_start = 0u;
-  int matches = 0;
-  if (!headers || headers_size == 0u) return 0;
-  while (line_start < headers_size) {
-    size_t line_end = line_start;
-    size_t cursor;
-    while (line_end < headers_size && headers[line_end] != '\n')
-      ++line_end;
-    cursor = line_start;
-    if (line_end - cursor >= sizeof(name) - 1u) {
-      size_t index;
-      for (index = 0u; index < sizeof(name) - 1u; ++index)
-        if (tolower((unsigned char)headers[cursor + index]) != name[index]) break;
-      if (index == sizeof(name) - 1u) {
-        cursor += sizeof(name) - 1u;
-        while (cursor < line_end && (headers[cursor] == ' ' || headers[cursor] == '\t'))
-          ++cursor;
-        if (external_https_ascii_prefix(headers + cursor, line_end - cursor, "application/json") &&
-            (cursor + 16u == line_end || headers[cursor + 16u] == ';' ||
-             headers[cursor + 16u] == '\r'))
-          ++matches;
-        else return 0;
-      }
-    }
-    line_start = line_end + 1u;
-  }
-  return matches == 1;
+static int external_https_content_type_json(const chttp_response *response) {
+  const char *content_type = chttp_response_header(response, "Content-Type");
+  size_t json_size = sizeof("application/json") - 1u;
+  return content_type && external_https_ascii_prefix(content_type, strlen(content_type),
+                                                     "application/json") &&
+         (content_type[json_size] == '\0' || content_type[json_size] == ';');
+}
+
+static int external_https_endpoint_text(char *connection_uri, size_t connection_capacity,
+                                        char *authority, size_t authority_capacity,
+                                        const char *host, uint16_t port) {
+  const int ipv6_literal = host && strchr(host, ':') != NULL;
+  int connection_size;
+  int authority_size;
+  if (!connection_uri || connection_capacity == 0u || !authority || authority_capacity == 0u ||
+      !host || !host[0])
+    return SALTS_EINVAL;
+  connection_size = snprintf(connection_uri, connection_capacity,
+                             ipv6_literal ? "tls://[%s]:%u" : "tls://%s:%u", host,
+                             (unsigned int)port);
+  if (port == 443u)
+    authority_size = snprintf(authority, authority_capacity, ipv6_literal ? "[%s]" : "%s", host);
+  else
+    authority_size = snprintf(authority, authority_capacity,
+                              ipv6_literal ? "[%s]:%u" : "%s:%u", host,
+                              (unsigned int)port);
+  if (connection_size <= 0 || (size_t)connection_size >= connection_capacity ||
+      authority_size <= 0 || (size_t)authority_size >= authority_capacity)
+    return SALTS_ERANGE;
+  return SALTS_OK;
 }
 
 static int external_https_validate_url(const char *url, tstr *host_out, uint16_t *port_out) {
-  uri_t *uri = NULL;
+  uri_t uri = {0};
   const char *scheme;
   const char *host;
   const char *path;
   int port;
-  int rc = TURBO_EINVAL;
-  if (!url || !url[0] || !host_out || !port_out ||
-      turbo_parse_uri((const uint8_t *)url, strlen(url), &uri) != TURBO_OK || !uri)
-    return TURBO_EINVAL;
-  scheme = turbo_uri_scheme(uri);
-  host = turbo_uri_host(uri);
-  path = turbo_uri_path(uri);
-  port = turbo_uri_port(uri);
-  if (!turbo_uri_is_valid(uri) || !scheme || strcmp(scheme, "https") != 0 || !host || !host[0] ||
-      !path || path[0] != '/' || !path[1] ||
-      (turbo_uri_userinfo(uri) && turbo_uri_userinfo(uri)[0]) ||
-      (turbo_uri_query(uri) && turbo_uri_query(uri)[0]) ||
-      (turbo_uri_fragment(uri) && turbo_uri_fragment(uri)[0]) || port < 0 || port > UINT16_MAX)
+  int rc = SALTS_EINVAL;
+  if (!url || !url[0] || !host_out || !port_out || !uri_parse(url, &uri))
+    return SALTS_EINVAL;
+  scheme = uri.scheme;
+  host = uri.host;
+  path = uri.path;
+  port = uri.port;
+  if (!uri.valid || strcmp(scheme, "https") != 0 || !host[0] || path[0] != '/' || !path[1] ||
+      uri.userinfo[0] || uri.query[0] || uri.fragment[0] || port < 0 || port > UINT16_MAX)
     goto done;
   *host_out = tstr_dup(host);
   if (!*host_out) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto done;
   }
   *port_out = port == 0 ? 443u : (uint16_t)port;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
-  turbo_free_uri(&uri);
   return rc;
-}
-
-static int external_https_connect_policy(const char *scheme, const char *hostname, uint16_t port,
-                                         const turbo_dns_result_t *results, size_t result_count,
-                                         void *user_data) {
-  const flowie_control_external_https_authenticator_t *authenticator =
-      (const flowie_control_external_https_authenticator_t *)user_data;
-  (void)results;
-  if (!authenticator || !scheme || strcmp(scheme, "https") != 0 || !hostname ||
-      !external_https_ascii_equal(hostname, authenticator->host) || port != authenticator->port ||
-      result_count == 0u)
-    return -1;
-  return 0;
 }
 
 static int external_https_tls_config_valid(const flowie_control_external_https_tls_config_t *tls) {
@@ -486,10 +465,10 @@ static void external_https_tls_cleanup(flowie_control_external_https_tls_t *tls)
 static int external_https_tls_init(flowie_control_external_https_tls_t *tls,
                                    const flowie_control_external_https_tls_config_t *config) {
   flowie_control_external_https_tls_t next = {0};
-  if (!tls || !external_https_tls_config_valid(config)) return TURBO_EINVAL;
+  if (!tls || !external_https_tls_config_valid(config)) return SALTS_EINVAL;
   if (!config) {
     *tls = next;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   next.ca_file = config->ca_file ? tstr_dup(config->ca_file) : NULL;
   next.client_cert_file = config->client_cert_file ? tstr_dup(config->client_cert_file) : NULL;
@@ -500,10 +479,10 @@ static int external_https_tls_init(flowie_control_external_https_tls_t *tls,
       (config->client_key_file && !next.client_key_file) ||
       (config->client_key_password_ref && !next.client_key_password_ref)) {
     external_https_tls_cleanup(&next);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   *tls = next;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int external_https_secret_valid(const flowie_security_secret_lease_t *lease) {
@@ -516,34 +495,35 @@ static int external_https_secret_valid(const flowie_security_secret_lease_t *lea
 
 static int external_https_tls_apply(const flowie_control_external_https_tls_t *tls,
                                     const flowie_security_key_provider_t *key_provider,
-                                    http_client_t *client) {
+                                    const char *server_name,
+                                    chttp_tls_profile *profile) {
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
-  turbo_tls_client_config_t config = {0};
+  cnet_tls_client_config config = {0};
   char *password = NULL;
-  int rc = TURBO_OK;
-  if (!tls || !key_provider || !client) return TURBO_EINVAL;
-  if (!tls->ca_file && !tls->client_cert_file) return TURBO_OK;
+  int rc = SALTS_OK;
+  if (!tls || !key_provider || !server_name || !server_name[0] || !profile) return SALTS_EINVAL;
   if (tls->client_key_password_ref) {
     rc = flowie_security_secret_acquire(key_provider, tls->client_key_password_ref, &lease);
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
     if (!external_https_secret_valid(&lease)) {
-      rc = TURBO_EPERM;
+      rc = SALTS_EPERM;
       goto done;
     }
     password = (char *)malloc(lease.byte_count + 1u);
     if (!password) {
-      rc = TURBO_ENOMEM;
+      rc = SALTS_ENOMEM;
       goto done;
     }
     memcpy(password, lease.bytes, lease.byte_count);
     password[lease.byte_count] = '\0';
   }
-  config.ca_file = tls->ca_file;
-  config.cert_file = tls->client_cert_file;
-  config.key_file = tls->client_key_file;
-  config.key_password = password;
-  config.verify_peer = 1;
-  if (http_client_set_tls_client_config(client, &config) != 0) rc = TURBO_EIO;
+  config = (cnet_tls_client_config){.size = sizeof(config),
+                                    .ca_file = tls->ca_file,
+                                    .cert_file = tls->client_cert_file,
+                                    .key_file = tls->client_key_file,
+                                    .key_password = password,
+                                    .server_name = server_name};
+  rc = chttp_tls_profile_init(profile, &config);
 
 done:
   if (password) {
@@ -554,43 +534,79 @@ done:
   return rc;
 }
 
+static native_io_backend_kind external_https_backend(void) {
+#if defined(_WIN32)
+  return NATIVE_IO_BACKEND_IOCP;
+#elif defined(__linux__)
+  return NATIVE_IO_BACKEND_EPOLL;
+#else
+  return NATIVE_IO_BACKEND_KQUEUE;
+#endif
+}
+
+static chttp_client_config external_https_client_config(
+    const flowie_control_external_https_authenticator_t *authenticator) {
+  size_t max_request = FLOWIE_CONTROL_EXTERNAL_HTTPS_MAX_SECRET_SIZE * 2u + 8192u;
+  return (chttp_client_config){
+      .network = {.backend = external_https_backend(),
+                  .connection_capacity = 1u,
+                  .command_capacity = 8u,
+                  .request_capacity = 4u,
+                  .completion_batch_capacity = 4u,
+                  .event_capacity = 8u,
+                  .max_send_bytes = max_request + FLOWIE_CONTROL_EXTERNAL_HTTPS_HEADER_LIMIT,
+                  .receive_buffer_bytes = 65536u,
+                  .connect_timeout_ms = authenticator->timeout_ms,
+                  .read_timeout_ms = authenticator->timeout_ms,
+                  .write_timeout_ms = authenticator->timeout_ms,
+                  .tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES,
+                  .tls_handshake_timeout_ms = authenticator->timeout_ms},
+      .request_capacity = 1u,
+      .max_start_line_bytes = 2048u,
+      .max_header_count = 16u,
+      .max_header_bytes = FLOWIE_CONTROL_EXTERNAL_HTTPS_HEADER_LIMIT,
+      .max_request_body_bytes = max_request,
+      .max_response_body_bytes = authenticator->max_response_size,
+      .max_informational_responses = 4u};
+}
+
 static int external_https_tls_files_validate(const flowie_control_external_https_tls_t *tls,
                                              const flowie_security_key_provider_t *key_provider) {
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
   SSL_CTX *context = NULL;
   char *password = NULL;
-  int rc = TURBO_EIO;
-  if (!tls || !key_provider) return TURBO_EINVAL;
-  if (!tls->ca_file && !tls->client_cert_file) return TURBO_OK;
+  int rc = SALTS_EIO;
+  if (!tls || !key_provider) return SALTS_EINVAL;
+  if (!tls->ca_file && !tls->client_cert_file) return SALTS_OK;
   context = SSL_CTX_new(TLS_client_method());
   if (!context) goto done;
   if (tls->ca_file && SSL_CTX_load_verify_locations(context, tls->ca_file, NULL) != 1) goto done;
   if (!tls->client_cert_file) {
-    rc = TURBO_OK;
+    rc = SALTS_OK;
     goto done;
   }
   if (tls->client_key_password_ref) {
     rc = flowie_security_secret_acquire(key_provider, tls->client_key_password_ref, &lease);
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
     if (!external_https_secret_valid(&lease)) {
-      rc = TURBO_EPERM;
+      rc = SALTS_EPERM;
       goto done;
     }
     password = (char *)malloc(lease.byte_count + 1u);
     if (!password) {
-      rc = TURBO_ENOMEM;
+      rc = SALTS_ENOMEM;
       goto done;
     }
     memcpy(password, lease.bytes, lease.byte_count);
     password[lease.byte_count] = '\0';
     SSL_CTX_set_default_passwd_cb_userdata(context, password);
   }
-  rc = TURBO_EIO;
+  rc = SALTS_EIO;
   if (SSL_CTX_use_certificate_chain_file(context, tls->client_cert_file) != 1 ||
       SSL_CTX_use_PrivateKey_file(context, tls->client_key_file, SSL_FILETYPE_PEM) != 1 ||
       SSL_CTX_check_private_key(context) != 1)
     goto done;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
   SSL_CTX_free(context);
@@ -607,31 +623,37 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
   flowie_control_external_https_authenticator_t *authenticator =
       (flowie_control_external_https_authenticator_t *)ctx;
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
-  http_client_t *client = NULL;
-  http_response_t *response = NULL;
+  chttp_client client = {0};
+  chttp_tls_profile tls_profile = {0};
+  chttp_response response = {0};
+  chttp_error error = {0};
+  chttp_client_config client_config;
+  chttp_options options;
+  uri_t uri = {0};
   char *authorization = NULL;
   char *body = NULL;
   size_t body_size = 0u;
   size_t token_size = 0u;
-  const char *headers[3];
+  chttp_header headers[3];
+  char connection_uri[320];
+  char authority[320];
   unsigned int in_flight;
   external_https_outcome_t outcome = EXTERNAL_HTTPS_OUTCOME_LOCAL_FAILURE;
   int admitted = 0;
-  int rc = TURBO_EIO;
+  int rc = SALTS_EIO;
   if (assertion_out && assertion_out->size >= sizeof(*assertion_out))
     *assertion_out =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   if (!authenticator || !external_https_request_valid(request) || !assertion_out ||
       assertion_out->size < sizeof(*assertion_out) ||
       strcmp(request->method, authenticator->method) != 0)
-    return TURBO_EINVAL;
-  if (!coro_context_current()) return TURBO_ENOTSUP;
+    return SALTS_EINVAL;
   external_https_counter_increment(&authenticator->started_requests);
   in_flight = atomic_load_explicit(&authenticator->in_flight, memory_order_relaxed);
   do {
     if (in_flight >= authenticator->max_in_flight) {
       external_https_record_outcome(authenticator, EXTERNAL_HTTPS_OUTCOME_LOCAL_OVERLOAD);
-      return TURBO_EBUSY;
+      return SALTS_EBUSY;
     }
   } while (!atomic_compare_exchange_weak_explicit(&authenticator->in_flight, &in_flight,
                                                   in_flight + 1u, memory_order_acq_rel,
@@ -639,101 +661,97 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
   admitted = 1;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
                                       authenticator->service_token_ref, &lease);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   token_size = lease.byte_count;
   if (!external_https_secret_valid(&lease)) {
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
-  authorization = (char *)malloc(sizeof("Authorization: Bearer ") + token_size);
+  authorization = (char *)malloc(sizeof("Bearer ") + token_size);
   if (!authorization) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto done;
   }
-  memcpy(authorization, "Authorization: Bearer ", sizeof("Authorization: Bearer ") - 1u);
-  memcpy(authorization + sizeof("Authorization: Bearer ") - 1u, lease.bytes, token_size);
-  authorization[sizeof("Authorization: Bearer ") - 1u + token_size] = '\0';
+  memcpy(authorization, "Bearer ", sizeof("Bearer ") - 1u);
+  memcpy(authorization + sizeof("Bearer ") - 1u, lease.bytes, token_size);
+  authorization[sizeof("Bearer ") - 1u + token_size] = '\0';
   rc = flowie_control_external_https_encode_request(request, &body, &body_size);
-  if (rc != TURBO_OK) goto done;
-  client = http_client_create(authenticator->url);
-  if (!client) {
-    rc = TURBO_EIO;
+  if (rc != SALTS_OK) goto done;
+  if (!uri_parse(authenticator->url, &uri) || !uri.valid) {
+    rc = SALTS_EINVAL;
     goto done;
   }
-  http_client_set_timeout(client, (int)authenticator->timeout_ms);
-  http_client_set_connect_timeout(client, (int)authenticator->timeout_ms);
-  http_client_set_read_timeout(client, (int)authenticator->timeout_ms);
-  http_client_set_max_response_size(client, authenticator->max_response_size);
-  http_client_set_max_response_header_size(client,
-                                           FLOWIE_CONTROL_EXTERNAL_HTTPS_DEFAULT_RESPONSE_SIZE);
-  http_client_follow_redirects(client, 0);
-  http_client_clear_retry_policy(client);
-  rc = external_https_tls_apply(&authenticator->tls, &authenticator->key_provider, client);
-  if (rc != TURBO_OK) goto done;
-  if (http_client_set_connect_policy(client, external_https_connect_policy, authenticator) != 0) {
-    rc = TURBO_EIO;
-    goto done;
-  }
-  headers[0] = "Content-Type: application/json";
-  headers[1] = "Accept: application/json";
-  headers[2] = authorization;
-  response = http_request(client, HTTP_POST, authenticator->url, headers, 3, body, body_size);
-  if (!response) {
+  rc = external_https_endpoint_text(connection_uri, sizeof(connection_uri), authority,
+                                    sizeof(authority), authenticator->host, authenticator->port);
+  if (rc != SALTS_OK) goto done;
+  rc = external_https_tls_apply(&authenticator->tls, &authenticator->key_provider,
+                                authenticator->host, &tls_profile);
+  if (rc != SALTS_OK) goto done;
+  client_config = external_https_client_config(authenticator);
+  rc = chttp_client_init(&client, &client_config);
+  if (rc != SALTS_OK) goto done;
+  headers[0] = (chttp_header){"Content-Type", "application/json"};
+  headers[1] = (chttp_header){"Accept", "application/json"};
+  headers[2] = (chttp_header){"Authorization", authorization};
+  options = (chttp_options){.connection_uri = connection_uri,
+                            .authority = authority,
+                            .target = uri.path,
+                            .headers = headers,
+                            .header_count = 3u,
+                            .body = body,
+                            .body_size = body_size,
+                            .timeout_ms = authenticator->timeout_ms,
+                            .tls = &tls_profile,
+                            .protocol = CHTTP_HTTP_1_1};
+  rc = chttp_post(&client, &options, &response, &error);
+  if (rc != SALTS_OK) {
     outcome = EXTERNAL_HTTPS_OUTCOME_TRANSPORT_FAILURE;
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
-  if (response->status_code <= 0) {
-    outcome = EXTERNAL_HTTPS_OUTCOME_TRANSPORT_FAILURE;
-    rc = TURBO_EIO;
-    goto done;
-  }
-  if (response->status_code == 401 || response->status_code == 403) {
+  if (response.status_code == 401u || response.status_code == 403u) {
     outcome = EXTERNAL_HTTPS_OUTCOME_DENIED;
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
-  if (response->status_code == 429) {
+  if (response.status_code == 429u) {
     outcome = EXTERNAL_HTTPS_OUTCOME_REMOTE_OVERLOAD;
-    rc = TURBO_EBUSY;
+    rc = SALTS_EBUSY;
     goto done;
   }
-  if (response->error_code != HTTP_ERROR_NONE) {
-    outcome = EXTERNAL_HTTPS_OUTCOME_TRANSPORT_FAILURE;
-    rc = TURBO_EIO;
-    goto done;
-  }
-  if (response->status_code >= 500 && response->status_code <= 599) {
+  if (response.status_code >= 500u && response.status_code <= 599u) {
     outcome = EXTERNAL_HTTPS_OUTCOME_REMOTE_SERVER_FAILURE;
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
-  if (response->status_code != 200 ||
-      !external_https_content_type_json(response->headers, response->headers_len)) {
+  if (response.status_code != 200u || !external_https_content_type_json(&response)) {
     outcome = EXTERNAL_HTTPS_OUTCOME_PROTOCOL_FAILURE;
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
-  if (!response->body || response->body_len == 0u) {
+  if (!response.body || response.body_size == 0u) {
     outcome = EXTERNAL_HTTPS_OUTCOME_PROTOCOL_FAILURE;
-    rc = TURBO_EPROTO;
+    rc = SALTS_EPROTO;
     goto done;
   }
-  rc = flowie_control_external_https_decode_response(response->body, response->body_len,
+  rc = flowie_control_external_https_decode_response((const char *)response.body,
+                                                     response.body_size,
                                                      authenticator->method, assertion_out);
-  if (rc == TURBO_OK) outcome = EXTERNAL_HTTPS_OUTCOME_SUCCEEDED;
-  else if (rc == TURBO_EPERM) outcome = EXTERNAL_HTTPS_OUTCOME_DENIED;
+  if (rc == SALTS_OK) outcome = EXTERNAL_HTTPS_OUTCOME_SUCCEEDED;
+  else if (rc == SALTS_EPERM) outcome = EXTERNAL_HTTPS_OUTCOME_DENIED;
   else outcome = EXTERNAL_HTTPS_OUTCOME_PROTOCOL_FAILURE;
 
 done:
-  if (response) http_response_free(response);
-  if (client) http_client_destroy(client);
+  chttp_response_destroy(&response);
+  if (client.impl != NULL)
+    (void)chttp_client_destroy(&client, FLOWIE_CONTROL_EXTERNAL_HTTPS_DESTROY_TIMEOUT_MS);
+  (void)chttp_tls_profile_destroy(&tls_profile);
   if (body) {
     crypto_wipe(body, body_size);
-    turbo_json_serialize_free(body);
+    json_serialize_free(body);
   }
   if (authorization) {
-    crypto_wipe(authorization, sizeof("Authorization: Bearer ") + token_size);
+    crypto_wipe(authorization, sizeof("Bearer ") + token_size);
     free(authorization);
   }
   flowie_security_secret_release(&authenticator->key_provider, &lease);
@@ -763,10 +781,10 @@ int flowie_control_external_https_authenticator_create(
       config->max_in_flight > FLOWIE_CONTROL_EXTERNAL_HTTPS_MAX_IN_FLIGHT ||
       config->key_provider.size < sizeof(config->key_provider) || !config->key_provider.acquire ||
       !config->key_provider.release || !external_https_tls_config_valid(&config->tls))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   authenticator =
       (flowie_control_external_https_authenticator_t *)calloc(1u, sizeof(*authenticator));
-  if (!authenticator) return TURBO_ENOMEM;
+  if (!authenticator) return SALTS_ENOMEM;
   authenticator->url = config->url ? tstr_dup(config->url) : NULL;
   authenticator->method = tstr_dup(config->method);
   authenticator->service_token_ref = tstr_dup(config->service_token_ref);
@@ -785,23 +803,23 @@ int flowie_control_external_https_authenticator_create(
   atomic_init(&authenticator->local_failures, 0u);
   authenticator->key_provider = config->key_provider;
   if (!authenticator->url || !authenticator->method || !authenticator->service_token_ref) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto fail;
   }
   rc = external_https_tls_init(&authenticator->tls, &config->tls);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = external_https_validate_url(authenticator->url, &authenticator->host, &authenticator->port);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
                                       authenticator->service_token_ref, &lease);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   if (!external_https_secret_valid(&lease)) {
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto fail;
   }
   flowie_security_secret_release(&authenticator->key_provider, &lease);
   rc = external_https_tls_files_validate(&authenticator->tls, &authenticator->key_provider);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   authenticator->interface =
       (flowie_control_external_authenticator_t)FLOWIE_CONTROL_EXTERNAL_AUTHENTICATOR_INIT;
   authenticator->interface.capabilities = FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES |
@@ -810,7 +828,7 @@ int flowie_control_external_https_authenticator_create(
   authenticator->interface.method = authenticator->method;
   authenticator->interface.verify = external_https_verify;
   *out = authenticator;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   flowie_security_secret_release(&authenticator->key_provider, &lease);
@@ -843,7 +861,7 @@ int flowie_control_external_https_authenticator_get_stats(
   flowie_control_external_https_authenticator_stats_t stats =
       FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
   if (stats_out && stats_out->size >= sizeof(*stats_out)) *stats_out = stats;
-  if (!authenticator || !stats_out || stats_out->size < sizeof(*stats_out)) return TURBO_EINVAL;
+  if (!authenticator || !stats_out || stats_out->size < sizeof(*stats_out)) return SALTS_EINVAL;
   stats.started_requests =
       (uint64_t)atomic_load_explicit(&authenticator->started_requests, memory_order_relaxed);
   stats.in_flight = (uint64_t)atomic_load_explicit(&authenticator->in_flight, memory_order_relaxed);
@@ -862,5 +880,5 @@ int flowie_control_external_https_authenticator_get_stats(
   stats.local_failures =
       (uint64_t)atomic_load_explicit(&authenticator->local_failures, memory_order_relaxed);
   *stats_out = stats;
-  return TURBO_OK;
+  return SALTS_OK;
 }

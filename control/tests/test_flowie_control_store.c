@@ -5,8 +5,8 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_thread.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -34,9 +34,9 @@ static flowie_control_store_t *control_store_open(char **path_out) {
   check_not_null(*path_out);
   check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+  check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
   check_not_null(store);
-  check_equal(control_domain_create(store, "root-a", "request-root-a", 0u, &result), TURBO_OK);
+  check_equal(control_domain_create(store, "root-a", "request-root-a", 0u, &result), SALTS_OK);
   check_equal(result.revision, 1u);
   return store;
 }
@@ -221,7 +221,7 @@ static int control_subject_rule_put(flowie_control_store_t *store, uint32_t ordi
   flowie_control_policy_subject_rule_put_command_t command =
       FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
   int rc = flowie_control_acl_parse(rule_line, strlen(rule_line), &document);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   command.domain_id = "root-a";
   command.ordinal = ordinal;
   command.document = &document;
@@ -277,7 +277,7 @@ static void control_concurrent_group_create(void *arg) {
   control_concurrent_group_create_t *write = (control_concurrent_group_create_t *)arg;
   atomic_fetch_add_explicit(write->ready, 1, memory_order_release);
   while (!atomic_load_explicit(write->go, memory_order_acquire))
-    turbo_thread_yield();
+    salts_thread_yield();
   write->rc = control_group_create(write->store, "root-a", write->group_id, NULL, write->request_id,
                                    write->expected_revision, &write->result);
 }
@@ -291,14 +291,14 @@ spec("Flowie control TurboDB fact store") {
     check_equal(flowie_control_test_turbodb_init(&test_database, ":memory:"), 0);
     config.database = &test_database.config;
     test_database.config.struct_size = sizeof(test_database.config) - 1u;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EINVAL);
     check_null(store);
     test_database.config.struct_size = sizeof(test_database.config) + 1u;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EINVAL);
     check_null(store);
     test_database.config.struct_size = sizeof(test_database.config);
     ++test_database.config.abi_version;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EINVAL);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EINVAL);
     check_null(store);
   }
 
@@ -315,7 +315,7 @@ spec("Flowie control TurboDB fact store") {
     check_not_null(path);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
     flowie_control_store_destroy(store);
     store = NULL;
 
@@ -336,10 +336,10 @@ spec("Flowie control TurboDB fact store") {
     check_not_null(path);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
     flowie_control_store_destroy(store);
     store = NULL;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
     check_not_null(store);
 
     flowie_control_store_destroy(store);
@@ -370,7 +370,7 @@ spec("Flowie control TurboDB fact store") {
 
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EPROTO);
     check_null(store);
 
     check_equal(tt_remove_file(path), 0);
@@ -399,7 +399,7 @@ spec("Flowie control TurboDB fact store") {
 
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EPROTO);
     check_null(store);
 
     check_equal(tt_remove_file(path), 0);
@@ -426,7 +426,7 @@ spec("Flowie control TurboDB fact store") {
     check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EPROTO);
     check_null(store);
 
     check_equal(tt_remove_file(path), 0);
@@ -453,7 +453,7 @@ spec("Flowie control TurboDB fact store") {
 
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EPROTO);
     check_null(store);
 
     check_equal(tt_remove_file(path), 0);
@@ -479,7 +479,7 @@ spec("Flowie control TurboDB fact store") {
     check_equal(flowie_control_database_close(database), FLOWIE_CONTROL_DB_OK);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&config, &store), TURBO_EPROTO);
+    check_equal(flowie_control_store_open(&config, &store), SALTS_EPROTO);
     check_null(store);
 
     check_equal(tt_remove_file(path), 0);
@@ -506,8 +506,8 @@ spec("Flowie control TurboDB fact store") {
     int has_more = 0;
 
     check_equal(control_role_create(store, "root-a", "publisher", "request-role", 1u, &result),
-                TURBO_OK);
-    check_equal(flowie_control_acl_parse(rule_text, sizeof(rule_text) - 1u, &document), TURBO_OK);
+                SALTS_OK);
+    check_equal(flowie_control_acl_parse(rule_text, sizeof(rule_text) - 1u, &document), SALTS_OK);
     put.domain_id = "root-a";
     put.ordinal = 10u;
     put.document = &document;
@@ -515,10 +515,10 @@ spec("Flowie control TurboDB fact store") {
     put.request_id = "request-subject-rule";
     put.expected_revision = 2u;
     put.occurred_at = 8002u;
-    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), TURBO_OK);
+    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), SALTS_OK);
     check_equal(flowie_control_store_policy_subject_rule_get(
                     store, "root-a", FLOWIE_SECURITY_SUBJECT_ROLE, "publisher", &view),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(view.ordinal, 10u);
     check_equal(view.document.subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
     check_equal(view.document.subject, "publisher");
@@ -532,11 +532,11 @@ spec("Flowie control TurboDB fact store") {
     replacement = document;
     replacement.entries[0].effect = FLOWIE_SECURITY_DENY;
     put.document = &replacement;
-    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), TURBO_OK);
+    check_equal(flowie_control_store_policy_subject_rule_put(store, &put, &result), SALTS_OK);
     check_equal(flowie_control_store_policy_subject_rule_list(store, "root-a",
                                                               FLOWIE_SECURITY_SUBJECT_ROLE, 0u, 0,
                                                               page, 2u, &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(page[0].ordinal, 11u);
@@ -549,11 +549,11 @@ spec("Flowie control TurboDB fact store") {
     remove.request_id = "request-subject-rule-delete";
     remove.expected_revision = 4u;
     remove.occurred_at = 8004u;
-    check_equal(flowie_control_store_policy_subject_rule_delete(store, &remove, &result), TURBO_OK);
+    check_equal(flowie_control_store_policy_subject_rule_delete(store, &remove, &result), SALTS_OK);
     view = (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
     check_equal(flowie_control_store_policy_subject_rule_get(
                     store, "root-a", FLOWIE_SECURITY_SUBJECT_ROLE, "publisher", &view),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
 
     control_store_close(store, path);
   }
@@ -568,18 +568,18 @@ spec("Flowie control TurboDB fact store") {
     uint64_t revision = 0u;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &command, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &command, &result), SALTS_OK);
     check_equal(result.revision, 2u);
     check_false(result.replayed);
-    check_equal(flowie_control_store_user_get(store, "root-a", "device-7", &user), TURBO_OK);
+    check_equal(flowie_control_store_user_get(store, "root-a", "device-7", &user), SALTS_OK);
     check_equal(user.domain_id, "root-a");
     check_equal(user.principal_id, "device-7");
     check_equal(user.principal_type, "device");
     check_true(user.enabled);
     check_equal(user.revision, 2u);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 2u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 2u);
 
     control_store_close(store, path);
@@ -594,18 +594,18 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_command_result_t replay = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &command, &first), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &command, &first), SALTS_OK);
     command.expected_revision = 99u;
     command.occurred_at = 9000u;
-    check_equal(flowie_control_store_user_create(store, &command, &replay), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &command, &replay), SALTS_OK);
     check_equal(replay.revision, first.revision);
     check_true(replay.replayed);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 2u);
 
     command.principal_type = "service";
     replay = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_user_create(store, &command, &replay), TURBO_EBUSY);
+    check_equal(flowie_control_store_user_create(store, &command, &replay), SALTS_EBUSY);
     check_equal(replay.revision, 0u);
 
     control_store_close(store, path);
@@ -620,14 +620,14 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &first, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &first, &result), SALTS_OK);
     stale.principal_id = "device-stale";
     stale.occurred_at = 9000u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_user_create(store, &stale, &result), TURBO_EBUSY);
+    check_equal(flowie_control_store_user_create(store, &stale, &result), SALTS_EBUSY);
     check_equal(flowie_control_store_user_get(store, "root-a", "device-stale", &user),
-                TURBO_ENOENT);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+                SALTS_ENOENT);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 2u);
 
     control_store_close(store, path);
@@ -648,20 +648,20 @@ spec("Flowie control TurboDB fact store") {
     uint64_t revision = 0u;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     flowie_control_credential_issue_command_t stale =
         control_credential_issue_command("request-credential-stale", 1u);
-    check_equal(flowie_control_store_credential_generate(store, &stale, &generated), TURBO_EBUSY);
+    check_equal(flowie_control_store_credential_generate(store, &stale, &generated), SALTS_EBUSY);
     check_equal(generated.token_size, 0u);
     check_equal(generated.token, zeros, sizeof(generated.token));
-    check_equal(flowie_control_store_credential_generate(store, &issue, &generated), TURBO_OK);
+    check_equal(flowie_control_store_credential_generate(store, &issue, &generated), SALTS_OK);
     check_equal(generated.revision, 3u);
     check_equal(generated.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_starts_with(generated.token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX);
     check_not_equal(generated.token, zeros, sizeof(generated.token));
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", generated.token,
                                                        generated.token_size, &verified),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(verified.user_revision, 2u);
     check_equal(verified.credential_revision, 3u);
 
@@ -671,24 +671,24 @@ spec("Flowie control TurboDB fact store") {
         (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", wrong_token,
                                                        sizeof(wrong_token), &verified),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(verified.credential_revision, 0u);
     check_equal(flowie_control_store_credential_verify(store, "root-a", "missing-user",
                                                        generated.token, generated.token_size,
                                                        &verified),
-                TURBO_EPERM);
+                SALTS_EPERM);
 
     issue.expected_revision = 99u;
     flowie_control_generated_credential_wipe(&generated);
     check_equal(generated.token, zeros, sizeof(generated.token));
     generated = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
     check_equal(flowie_control_store_credential_generate(store, &issue, &generated),
-                TURBO_EALREADY);
+                SALTS_EALREADY);
     check_equal(generated.token_size, 0u);
     check_equal(generated.token, zeros, sizeof(generated.token));
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 3u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 3u);
 
     flowie_control_credential_wipe(wrong_token, sizeof(wrong_token));
@@ -712,40 +712,40 @@ spec("Flowie control TurboDB fact store") {
     char old_token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE];
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
-    check_equal(flowie_control_store_credential_generate(store, &issue, &first), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
+    check_equal(flowie_control_store_credential_generate(store, &issue, &first), SALTS_OK);
     memcpy(old_token, first.token, sizeof(old_token));
     flowie_control_generated_credential_wipe(&first);
     issue = control_credential_issue_command("request-credential-rotate", 3u);
-    check_equal(flowie_control_store_credential_rotate(store, &issue, &rotated), TURBO_OK);
+    check_equal(flowie_control_store_credential_rotate(store, &issue, &rotated), SALTS_OK);
     check_equal(rotated.revision, 4u);
     check_not_equal(rotated.token, old_token, sizeof(old_token));
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", old_token,
                                                        sizeof(old_token), &verified),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", rotated.token,
                                                        rotated.token_size, &verified),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(verified.credential_revision, 4u);
 
     check_equal(control_credential_revoke(store, "request-credential-revoke", 4u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(result.revision, 5u);
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", rotated.token,
                                                        rotated.token_size, &verified),
-                TURBO_EPERM);
+                SALTS_EPERM);
     check_equal(control_credential_revoke(store, "request-credential-revoke", 0u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_true(result.replayed);
 
     issue = control_credential_issue_command("request-credential-reactivate", 5u);
     flowie_control_generated_credential_wipe(&rotated);
     rotated = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
-    check_equal(flowie_control_store_credential_rotate(store, &issue, &rotated), TURBO_OK);
+    check_equal(flowie_control_store_credential_rotate(store, &issue, &rotated), SALTS_OK);
     check_equal(rotated.revision, 6u);
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", rotated.token,
                                                        rotated.token_size, &verified),
-                TURBO_OK);
+                SALTS_OK);
 
     disable.domain_id = "root-a";
     disable.principal_id = "device-7";
@@ -753,14 +753,14 @@ spec("Flowie control TurboDB fact store") {
     disable.request_id = "request-disable-after-credential";
     disable.expected_revision = 6u;
     disable.occurred_at = 9000u;
-    check_equal(flowie_control_store_user_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_disable(store, &disable, &result), SALTS_OK);
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-7", rotated.token,
                                                        rotated.token_size, &verified),
-                TURBO_EPERM);
+                SALTS_EPERM);
     issue = control_credential_issue_command("request-disabled-user-rotate", 7u);
-    check_equal(flowie_control_store_credential_rotate(store, &issue, &first), TURBO_EPERM);
+    check_equal(flowie_control_store_credential_rotate(store, &issue, &first), SALTS_EPERM);
     check_equal(first.token_size, 0u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 7u);
 
     flowie_control_credential_wipe(old_token, sizeof(old_token));
@@ -778,7 +778,7 @@ spec("Flowie control TurboDB fact store") {
 
     for (unsigned int round = 0u; round < CONTROL_CONCURRENT_ROUNDS; ++round) {
       control_concurrent_group_create_t writes[CONTROL_CONCURRENT_WRITERS] = {0};
-      turbo_thread_t threads[CONTROL_CONCURRENT_WRITERS] = {0};
+      salts_thread_t threads[CONTROL_CONCURRENT_WRITERS] = {0};
       int thread_created[CONTROL_CONCURRENT_WRITERS] = {0};
       atomic_int ready;
       atomic_int go;
@@ -794,35 +794,35 @@ spec("Flowie control TurboDB fact store") {
         writes[index].ready = &ready;
         writes[index].go = &go;
         writes[index].result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-        writes[index].rc = TURBO_EIO;
+        writes[index].rc = SALTS_EIO;
         (void)snprintf(writes[index].group_id, sizeof(writes[index].group_id), "concurrent-%u-%zu",
                        round, index);
         (void)snprintf(writes[index].request_id, sizeof(writes[index].request_id),
                        "request-concurrent-%u-%zu", round, index);
         writes[index].rc =
-            turbo_thread_create(&threads[index], control_concurrent_group_create, &writes[index]);
-        check_equal(writes[index].rc, TURBO_OK);
-        thread_created[index] = writes[index].rc == TURBO_OK;
+            salts_thread_create(&threads[index], control_concurrent_group_create, &writes[index]);
+        check_equal(writes[index].rc, SALTS_OK);
+        thread_created[index] = writes[index].rc == SALTS_OK;
       }
       if (!thread_created[0] || !thread_created[1]) {
         atomic_store_explicit(&go, 1, memory_order_release);
         for (size_t index = 0u; index < CONTROL_CONCURRENT_WRITERS; ++index) {
           if (!thread_created[index]) continue;
-          check_equal(turbo_thread_join(&threads[index]), TURBO_OK);
-          turbo_thread_destroy(&threads[index]);
+          check_equal(salts_thread_join(&threads[index]), SALTS_OK);
+          salts_thread_destroy(&threads[index]);
         }
         break;
       }
       while (atomic_load_explicit(&ready, memory_order_acquire) != CONTROL_CONCURRENT_WRITERS)
-        turbo_thread_yield();
+        salts_thread_yield();
       atomic_store_explicit(&go, 1, memory_order_release);
       for (size_t index = 0u; index < CONTROL_CONCURRENT_WRITERS; ++index) {
-        check_equal(turbo_thread_join(&threads[index]), TURBO_OK);
-        turbo_thread_destroy(&threads[index]);
-        if (writes[index].rc == TURBO_OK) {
+        check_equal(salts_thread_join(&threads[index]), SALTS_OK);
+        salts_thread_destroy(&threads[index]);
+        if (writes[index].rc == SALTS_OK) {
           ++success_count;
           check_equal(writes[index].result.revision, revision + 1u);
-        } else if (writes[index].rc == TURBO_EBUSY) {
+        } else if (writes[index].rc == SALTS_EBUSY) {
           ++busy_count;
           loser = index;
           check_equal(writes[index].result.revision, 0u);
@@ -834,13 +834,13 @@ spec("Flowie control TurboDB fact store") {
       check_equal(control_group_create(store, "root-a", writes[loser].group_id, NULL,
                                        writes[loser].request_id, revision + 1u,
                                        &writes[loser].result),
-                  TURBO_OK);
+                  SALTS_OK);
       revision += 2u;
       check_equal(writes[loser].result.revision, revision);
     }
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 1u + 2u * CONTROL_CONCURRENT_ROUNDS);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 1u + 2u * CONTROL_CONCURRENT_ROUNDS);
 
     control_store_close(store, path);
@@ -855,7 +855,7 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_user_view_t user = FLOWIE_CONTROL_USER_VIEW_INIT;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &create, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &create, &result), SALTS_OK);
     disable.domain_id = "root-a";
     disable.principal_id = "device-7";
     disable.actor = "admin-1";
@@ -863,27 +863,27 @@ spec("Flowie control TurboDB fact store") {
     disable.expected_revision = 2u;
     disable.occurred_at = 5000u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_user_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_disable(store, &disable, &result), SALTS_OK);
     check_equal(result.revision, 3u);
     check_false(result.replayed);
-    check_equal(flowie_control_store_user_get(store, "root-a", "device-7", &user), TURBO_OK);
+    check_equal(flowie_control_store_user_get(store, "root-a", "device-7", &user), SALTS_OK);
     check_false(user.enabled);
     check_equal(user.revision, 3u);
 
     disable.expected_revision = 0u;
     disable.occurred_at = 6000u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_user_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_disable(store, &disable, &result), SALTS_OK);
     check_equal(result.revision, 3u);
     check_true(result.replayed);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 3u);
 
     disable.request_id = "request-disable-again";
     disable.expected_revision = 3u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_user_disable(store, &disable, &result), TURBO_EALREADY);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_user_disable(store, &disable, &result), SALTS_EALREADY);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 3u);
 
     control_store_close(store, path);
@@ -897,29 +897,29 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_effective_groups_view_t groups = FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     uint64_t revision = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "engineering", NULL, "request-eng", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_group_create(store, "root-a", "backend", "engineering", "request-backend",
                                      3u, &result),
-                TURBO_OK);
-    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), TURBO_OK);
+                SALTS_OK);
+    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), SALTS_OK);
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7", &groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(groups.group_count, 2u);
     check_equal(groups.groups[0], "engineering");
     check_equal(groups.groups[1], "backend");
 
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(control_domain_create(store, "root-b", "request-root-b", 5u, &result), TURBO_OK);
+    check_equal(control_domain_create(store, "root-b", "request-root-b", 5u, &result), SALTS_OK);
     check_equal(control_group_create(store, "root-b", "foreign-child", "engineering",
                                      "request-cross-root", 6u, &result),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     check_equal(control_group_create(store, "root-a", "self-parent", "self-parent",
                                      "request-self-parent", 6u, &result),
-                TURBO_EINVAL);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+                SALTS_EINVAL);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 6u);
 
     control_store_close(store, path);
@@ -934,32 +934,32 @@ spec("Flowie control TurboDB fact store") {
     uint64_t revision = 0u;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "engineering", NULL, "request-eng", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_group_create(store, "root-a", "backend", "engineering", "request-backend",
                                      3u, &result),
-                TURBO_OK);
-    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), TURBO_OK);
+                SALTS_OK);
+    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), SALTS_OK);
     check_equal(control_membership_remove(store, "backend", "request-member-remove", 5u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(result.revision, 6u);
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7", &groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(groups.group_count, 0u);
 
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     check_equal(control_membership_remove(store, "backend", "request-member-remove", 99u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_true(result.replayed);
     check_equal(result.revision, 6u);
     check_equal(
         control_membership_remove(store, "backend", "request-member-remove-missing", 6u, &result),
-        TURBO_ENOENT);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+        SALTS_ENOENT);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 6u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 6u);
 
     control_store_close(store, path);
@@ -973,44 +973,44 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_effective_groups_view_t groups = FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "engineering", NULL, "request-eng", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_group_create(store, "root-a", "backend", "engineering", "request-backend",
                                      3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_group_delete(store, "root-a", "engineering", "request-delete-eng", 4u, &result),
-        TURBO_EBUSY);
-    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), TURBO_OK);
+        SALTS_EBUSY);
+    check_equal(control_membership_add(store, "backend", "request-member", 4u, &result), SALTS_OK);
     check_equal(
         control_group_delete(store, "root-a", "backend", "request-delete-backend", 5u, &result),
-        TURBO_EBUSY);
+        SALTS_EBUSY);
     check_equal(control_membership_remove(store, "backend", "request-member-remove", 5u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_group_delete(store, "root-a", "backend", "request-delete-backend", 6u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(result.revision, 7u);
 
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     check_equal(
         control_group_delete(store, "root-a", "backend", "request-delete-backend", 0u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_true(result.replayed);
     check_equal(result.revision, 7u);
     check_equal(
         control_group_delete(store, "root-a", "engineering", "request-delete-eng", 7u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(result.revision, 8u);
     check_equal(
         control_group_delete(store, "root-a", "root-a", "request-delete-domain", 8u, &result),
-        TURBO_EINVAL);
+        SALTS_EINVAL);
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7", &groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(groups.group_count, 0u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 8u);
 
     control_store_close(store, path);
@@ -1025,13 +1025,13 @@ spec("Flowie control TurboDB fact store") {
     int has_more = 0;
 
     check_equal(control_group_create(store, "root-a", "testa", NULL, "request-testa", 1u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_store_mark_group_disabled(path, "root-a", "testa"), 0);
     check_equal(control_group_delete(store, "root-a", "testa", "request-delete-testa", 2u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         flowie_control_store_group_list(store, "root-a", NULL, groups, 1u, &count, &has_more),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(count, 0u);
     check_false(has_more);
 
@@ -1052,13 +1052,13 @@ spec("Flowie control TurboDB fact store") {
       (void)snprintf(request, sizeof(request), "request-depth-%u", depth);
       check_equal(control_group_create(store, "root-a", group, parent[0] ? parent : NULL, request,
                                        revision, &result),
-                  TURBO_OK);
+                  SALTS_OK);
       ++revision;
       (void)snprintf(parent, sizeof(parent), "%s", group);
     }
     check_equal(control_group_create(store, "root-a", "too-deep", parent, "request-too-deep",
                                      revision, &result),
-                TURBO_ENOSPC);
+                SALTS_ENOSPC);
     check_equal(revision, (uint64_t)FLOWIE_CONTROL_GROUP_MAX_DEPTH + 2u);
 
     control_store_close(store, path);
@@ -1074,29 +1074,29 @@ spec("Flowie control TurboDB fact store") {
     char request[64];
     uint64_t revision = 2u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     for (uint32_t index = 0u; index <= FLOWIE_SECURITY_MAX_GROUPS; ++index) {
       (void)snprintf(group, sizeof(group), "branch-%u", index);
       (void)snprintf(request, sizeof(request), "request-group-%u", index);
       check_equal(control_group_create(store, "root-a", group, NULL, request, revision, &result),
-                  TURBO_OK);
+                  SALTS_OK);
       ++revision;
     }
     for (uint32_t index = 0u; index < FLOWIE_SECURITY_MAX_GROUPS; ++index) {
       (void)snprintf(group, sizeof(group), "branch-%u", index);
       (void)snprintf(request, sizeof(request), "request-member-%u", index);
-      check_equal(control_membership_add(store, group, request, revision, &result), TURBO_OK);
+      check_equal(control_membership_add(store, group, request, revision, &result), SALTS_OK);
       ++revision;
     }
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7", &groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(groups.group_count, FLOWIE_SECURITY_MAX_GROUPS);
     (void)snprintf(group, sizeof(group), "branch-%u", FLOWIE_SECURITY_MAX_GROUPS);
     check_equal(control_membership_add(store, group, "request-member-overflow", revision, &result),
-                TURBO_ENOSPC);
+                SALTS_ENOSPC);
     groups = (flowie_control_effective_groups_view_t)FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7", &groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(groups.group_count, FLOWIE_SECURITY_MAX_GROUPS);
 
     control_store_close(store, path);
@@ -1110,34 +1110,34 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     uint64_t revision = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(control_role_create(store, "root-a", "writer", "request-role-writer", 2u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_role_create(store, "root-a", "reader", "request-role-reader", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_user_role_add(store, "writer", "request-user-role-writer", 4u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_user_role_add(store, "reader", "request-user-role-reader", 5u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(flowie_control_store_effective_roles(store, "root-a", "device-7", &roles),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(roles.role_count, 2u);
     check_equal(roles.roles[0], "reader");
     check_equal(roles.roles[1], "writer");
 
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     check_equal(control_user_role_add(store, "writer", "request-user-role-writer", 99u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_true(result.replayed);
     check_equal(result.revision, 5u);
 
-    check_equal(control_domain_create(store, "root-b", "request-root-b", 6u, &result), TURBO_OK);
+    check_equal(control_domain_create(store, "root-b", "request-root-b", 6u, &result), SALTS_OK);
     check_equal(
         control_role_create(store, "root-b", "foreign", "request-role-foreign", 7u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_user_role_add(store, "foreign", "request-cross-root-role", 8u, &result),
-                TURBO_ENOENT);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+                SALTS_ENOENT);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 8u);
 
     control_store_close(store, path);
@@ -1152,39 +1152,39 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_effective_roles_view_t roles = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(control_role_create(store, "root-a", "writer", "request-role-writer", 2u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_user_role_add(store, "writer", "request-user-role-writer", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     disable.domain_id = "root-a";
     disable.role_id = "writer";
     disable.actor = "admin-1";
     disable.request_id = "request-role-disable";
     disable.expected_revision = 4u;
     disable.occurred_at = 7000u;
-    check_equal(flowie_control_store_role_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_role_disable(store, &disable, &result), SALTS_OK);
     check_equal(result.revision, 5u);
     check_equal(flowie_control_store_effective_roles(store, "root-a", "device-7", &roles),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(roles.role_count, 0u);
 
     disable.expected_revision = 0u;
     disable.occurred_at = 8000u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    check_equal(flowie_control_store_role_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_role_disable(store, &disable, &result), SALTS_OK);
     check_true(result.replayed);
     check_equal(result.revision, 5u);
     check_equal(control_user_role_remove(store, "writer", "request-user-role-remove", 5u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(result.revision, 6u);
     check_equal(control_user_role_remove(store, "writer", "request-user-role-remove", 0u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_true(result.replayed);
     check_equal(result.revision, 6u);
     check_equal(control_user_role_add(store, "writer", "request-disabled-role", 6u, &result),
-                TURBO_EPERM);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+                SALTS_EPERM);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 6u);
 
     control_store_close(store, path);
@@ -1200,26 +1200,26 @@ spec("Flowie control TurboDB fact store") {
     char request[64];
     uint64_t revision = 2u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     for (uint32_t index = 0u; index <= FLOWIE_SECURITY_MAX_ROLES; ++index) {
       (void)snprintf(role, sizeof(role), "role-%u", index);
       (void)snprintf(request, sizeof(request), "request-role-%u", index);
-      check_equal(control_role_create(store, "root-a", role, request, revision, &result), TURBO_OK);
+      check_equal(control_role_create(store, "root-a", role, request, revision, &result), SALTS_OK);
       ++revision;
     }
     for (uint32_t index = 0u; index < FLOWIE_SECURITY_MAX_ROLES; ++index) {
       (void)snprintf(role, sizeof(role), "role-%u", index);
       (void)snprintf(request, sizeof(request), "request-user-role-%u", index);
-      check_equal(control_user_role_add(store, role, request, revision, &result), TURBO_OK);
+      check_equal(control_user_role_add(store, role, request, revision, &result), SALTS_OK);
       ++revision;
     }
     (void)snprintf(role, sizeof(role), "role-%u", FLOWIE_SECURITY_MAX_ROLES);
     check_equal(control_user_role_add(store, role, "request-user-role-overflow", revision, &result),
-                TURBO_ENOSPC);
+                SALTS_ENOSPC);
     check_equal(flowie_control_store_effective_roles(store, "root-a", "device-7", &roles),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(roles.role_count, FLOWIE_SECURITY_MAX_ROLES);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 19u);
 
     control_store_close(store, path);
@@ -1242,24 +1242,24 @@ spec("Flowie control TurboDB fact store") {
     size_t count = 0u;
     int has_more = 0;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "operators", NULL, "request-group", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_subject_rule_put(store, 10u, valid_rule, "request-policy-put", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(result.revision, 4u);
     check_equal(flowie_control_store_policy_subject_rule_list(store, "root-a",
                                                               FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0,
                                                               rules, 1u, &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(rules[0].ordinal, 10u);
     check_equal(rules[0].document.subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
     check_equal(rules[0].document.subject, "device-7");
     check_equal(rules[0].document.entry_count, 1u);
-    check_equal(flowie_control_store_policy_validate(store, "root-a", &validation), TURBO_OK);
+    check_equal(flowie_control_store_policy_validate(store, "root-a", &validation), SALTS_OK);
     check_equal(validation.rule_count, 2u);
     check_equal(validation.deny_rule_count, 0u);
 
@@ -1273,19 +1273,19 @@ spec("Flowie control TurboDB fact store") {
     invalid_put.expected_revision = 4u;
     invalid_put.occurred_at = 8004u;
     check_equal(flowie_control_store_policy_subject_rule_put(store, &invalid_put, &result),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_equal(control_subject_rule_put(
                     store, 11u,
                     "user device-7 allow {\n  read topic other-a/operators/devices/%u/event\n}",
                     "request-policy-bad-filter", 4u, &result),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(
         control_subject_rule_put(
             store, 11u,
             "user missing allow {\n  read topic root-a/groups/operators/devices/%u/event\n}",
             "request-policy-missing-principal", 4u, &result),
-        TURBO_ENOENT);
-    check_equal(flowie_control_store_revision(store, &validation.store_revision), TURBO_OK);
+        SALTS_ENOENT);
+    check_equal(flowie_control_store_revision(store, &validation.store_revision), SALTS_OK);
     check_equal(validation.store_revision, 4u);
 
     control_store_close(store, path);
@@ -1311,12 +1311,12 @@ spec("Flowie control TurboDB fact store") {
     size_t audit_before = 0u;
     size_t audit_after = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
-        TURBO_OK);
-    check_equal(flowie_control_store_revision(store, &revision_before), TURBO_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_before), TURBO_OK);
+        SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision_before), SALTS_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), SALTS_OK);
 
     change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
     change.ordinal = 10u;
@@ -1328,20 +1328,20 @@ spec("Flowie control TurboDB fact store") {
     dry_run.diagnostic_capacity = 4u;
 
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_true(dry_run.valid);
     check_equal(dry_run.store_revision, revision_before);
     check_equal(dry_run.rule_count, 2u);
     check_equal(dry_run.deny_rule_count, 0u);
     check_equal(dry_run.diagnostic_count, 0u);
 
-    check_equal(flowie_control_store_revision(store, &revision_after), TURBO_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_after), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision_after), SALTS_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), SALTS_OK);
     check_equal(revision_after, revision_before);
     check_equal(audit_after, audit_before);
     check_equal(flowie_control_store_policy_subject_rule_get(
                     store, "root-a", FLOWIE_SECURITY_SUBJECT_PRINCIPAL, "device-7", &stored),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(stored.document.entries[0].topic, "root-a/current/#");
 
     control_store_close(store, path);
@@ -1366,12 +1366,12 @@ spec("Flowie control TurboDB fact store") {
     size_t audit_before = 0u;
     size_t audit_after = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
-        TURBO_OK);
-    check_equal(flowie_control_store_revision(store, &revision_before), TURBO_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_before), TURBO_OK);
+        SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision_before), SALTS_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), SALTS_OK);
 
     change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
     change.ordinal = 11u;
@@ -1383,7 +1383,7 @@ spec("Flowie control TurboDB fact store") {
     dry_run.diagnostic_capacity = 2u;
 
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.store_revision, revision_before);
     check_equal(dry_run.rule_count, 0u);
@@ -1396,8 +1396,8 @@ spec("Flowie control TurboDB fact store") {
     check_equal(diagnostics[0].subject_id, "missing");
     check_equal(diagnostics[0].field, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
 
-    check_equal(flowie_control_store_revision(store, &revision_after), TURBO_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_after), TURBO_OK);
+    check_equal(flowie_control_store_revision(store, &revision_after), SALTS_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), SALTS_OK);
     check_equal(revision_after, revision_before);
     check_equal(audit_after, audit_before);
 
@@ -1425,12 +1425,12 @@ spec("Flowie control TurboDB fact store") {
 
     first_user.principal_id = "device-7";
     second_user.principal_id = "device-8";
-    check_equal(flowie_control_store_user_create(store, &first_user, &result), TURBO_OK);
-    check_equal(flowie_control_store_user_create(store, &second_user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &first_user, &result), SALTS_OK);
+    check_equal(flowie_control_store_user_create(store, &second_user, &result), SALTS_OK);
     check_equal(control_subject_rule_put(store, 10u, first_rule, "request-policy-7", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_put(store, 20u, second_rule, "request-policy-8", 4u, &result),
-                TURBO_OK);
+                SALTS_OK);
 
     change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
     change.subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
@@ -1439,13 +1439,13 @@ spec("Flowie control TurboDB fact store") {
     dry_run.diagnostic_capacity = 2u;
 
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", &change, 1u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_true(dry_run.valid);
     check_equal(dry_run.rule_count, 2u);
     check_equal(dry_run.diagnostic_count, 0u);
     check_equal(flowie_control_store_policy_subject_rule_get(
                     store, "root-a", FLOWIE_SECURITY_SUBJECT_PRINCIPAL, "device-7", &stored),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(stored.document.entries[0].topic, "root-a/first/#");
 
     control_store_close(store, path);
@@ -1476,12 +1476,12 @@ spec("Flowie control TurboDB fact store") {
 
     first_user.principal_id = "device-7";
     second_user.principal_id = "device-8";
-    check_equal(flowie_control_store_user_create(store, &first_user, &result), TURBO_OK);
-    check_equal(flowie_control_store_user_create(store, &second_user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &first_user, &result), SALTS_OK);
+    check_equal(flowie_control_store_user_create(store, &second_user, &result), SALTS_OK);
     check_equal(control_subject_rule_put(store, 10u, first_rule, "request-first", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_put(store, 20u, second_rule, "request-second", 4u, &result),
-                TURBO_OK);
+                SALTS_OK);
     dry_run.diagnostics = diagnostics;
     dry_run.diagnostic_capacity = 2u;
 
@@ -1489,7 +1489,7 @@ spec("Flowie control TurboDB fact store") {
     changes[0].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
     changes[0].subject_id = "missing";
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 1u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.diagnostic_count, 1u);
     check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DELETE_TARGET_NOT_FOUND);
@@ -1502,7 +1502,7 @@ spec("Flowie control TurboDB fact store") {
     changes[0].document = conflicting_rule;
     changes[0].document_size = sizeof(conflicting_rule) - 1u;
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 1u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.diagnostic_count, 1u);
     check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_ORDINAL_CONFLICT);
@@ -1516,7 +1516,7 @@ spec("Flowie control TurboDB fact store") {
     changes[1].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
     changes[1].subject_id = "device-8";
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 2u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.diagnostic_count, 1u);
     check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_EMPTY_POLICY);
@@ -1544,10 +1544,10 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_policy_diagnostic_t diagnostics[2] = {FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INIT};
     flowie_control_policy_dry_run_result_t dry_run = FLOWIE_CONTROL_POLICY_DRY_RUN_RESULT_INIT;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_subject_rule_put(store, 10u, current_rule, "request-policy-put", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     for (size_t index = 0u; index < 2u; ++index) {
       changes[index].operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
       changes[index].ordinal = (uint32_t)(10u + index);
@@ -1562,7 +1562,7 @@ spec("Flowie control TurboDB fact store") {
     dry_run.diagnostic_capacity = 2u;
 
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, 2u, &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.diagnostic_count, 1u);
     check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DUPLICATE_CHANGE);
@@ -1598,7 +1598,7 @@ spec("Flowie control TurboDB fact store") {
                      candidate);
       user = control_user_create_command(requests[candidate], 1u + candidate);
       user.principal_id = subjects[candidate];
-      check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+      check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
 
       document_size += (size_t)snprintf(documents[candidate] + document_size,
                                        sizeof(documents[candidate]) - document_size,
@@ -1624,7 +1624,7 @@ spec("Flowie control TurboDB fact store") {
 
     check_equal(flowie_control_store_policy_dry_run(store, "root-a", changes, candidate_count,
                                                     &dry_run),
-                TURBO_OK);
+                SALTS_OK);
     check_false(dry_run.valid);
     check_equal(dry_run.diagnostic_count, 1u);
     check_equal(diagnostics[0].code, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT);
@@ -1651,47 +1651,47 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_policy_validation_t validation = FLOWIE_CONTROL_POLICY_VALIDATION_INIT;
 
     user.principal_id = "shared";
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "shared", NULL, "request-shared-group", 2u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_role_create(store, "root-a", "shared", "request-shared-role", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_role_create(store, "root-a", "disabled", "request-disabled-role", 4u, &result),
-        TURBO_OK);
+        SALTS_OK);
     disable.domain_id = "root-a";
     disable.role_id = "disabled";
     disable.actor = "admin-1";
     disable.request_id = "request-disable-role";
     disable.expected_revision = 5u;
     disable.occurred_at = 9800u;
-    check_equal(flowie_control_store_role_disable(store, &disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_role_disable(store, &disable, &result), SALTS_OK);
 
     check_equal(control_subject_rule_put(store, 10u, role_rule, "request-role-rule", 6u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_put(store, 20u, group_rule, "request-group-rule", 7u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_put(store, 30u, user_rule, "request-user-rule", 8u, &result),
-                TURBO_OK);
-    check_equal(flowie_control_store_policy_validate(store, "root-a", &validation), TURBO_OK);
+                SALTS_OK);
+    check_equal(flowie_control_store_policy_validate(store, "root-a", &validation), SALTS_OK);
     check_equal(validation.rule_count, 5u);
 
     check_equal(
         control_subject_rule_put(store, 40u, role_rule, "request-duplicate-role", 9u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_subject_rule_put(store, 40u, "role missing allow", "request-missing-role",
                                          10u, &result),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     check_equal(control_subject_rule_put(store, 40u, "group missing allow", "request-missing-group",
                                          10u, &result),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     check_equal(control_subject_rule_put(store, 40u, "user missing allow", "request-missing-user",
                                          10u, &result),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     check_equal(control_subject_rule_put(store, 40u, "role disabled allow",
                                          "request-disabled-role-rule", 10u, &result),
-                TURBO_EPERM);
+                SALTS_EPERM);
 
     control_store_close(store, path);
   }
@@ -1721,24 +1721,24 @@ spec("Flowie control TurboDB fact store") {
     uint64_t revision = 0u;
     size_t audit_count = 0u;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     replacement_user.principal_id = "device-8";
-    check_equal(flowie_control_store_user_create(store, &replacement_user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &replacement_user, &result), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "operators", NULL, "request-group", 3u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "public", NULL, "request-public-group", 4u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_role_create(store, "root-a", "reader", "request-role", 5u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_subject_rule_put(store, 10u, principal_rule, "request-principal-rule", 6u, &result),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_subject_rule_put(store, 20u, group_rule, "request-group-rule", 7u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_put(store, 30u, role_rule, "request-role-rule", 8u, &result),
-                TURBO_OK);
+                SALTS_OK);
 
     user_disable.domain_id = "root-a";
     user_disable.principal_id = "device-7";
@@ -1752,55 +1752,55 @@ spec("Flowie control TurboDB fact store") {
     role_disable.request_id = "request-disable-role-referenced";
     role_disable.expected_revision = 9u;
     role_disable.occurred_at = 10001u;
-    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_EBUSY);
+    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), SALTS_EBUSY);
     check_equal(control_group_delete(store, "root-a", "operators",
                                      "request-delete-group-referenced", 9u, &result),
-                TURBO_EBUSY);
-    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_EBUSY);
+                SALTS_EBUSY);
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), SALTS_EBUSY);
 
     check_equal(
         control_policy_publish(store, "request-publish-subject-rules", 9u, 20000u, &published),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_subject_rule_delete(store, FLOWIE_SECURITY_SUBJECT_PRINCIPAL, "device-7",
                                             "request-delete-principal-rule", 10u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_delete(store, FLOWIE_SECURITY_SUBJECT_GROUP, "operators",
                                             "request-delete-group-rule", 11u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_subject_rule_delete(store, FLOWIE_SECURITY_SUBJECT_ROLE, "reader",
                                             "request-delete-role-rule", 12u, &result),
-                TURBO_OK);
+                SALTS_OK);
     user_disable.expected_revision = 13u;
-    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_EBUSY);
+    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), SALTS_EBUSY);
     check_equal(control_group_delete(store, "root-a", "operators", "request-delete-group-published",
                                      13u, &result),
-                TURBO_EBUSY);
+                SALTS_EBUSY);
     role_disable.expected_revision = 13u;
-    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_EBUSY);
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), SALTS_EBUSY);
 
     check_equal(control_subject_rule_put(store, 40u, replacement_rule, "request-replacement-rule",
                                          13u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_policy_publish(store, "request-publish-replacement", 14u, 21000u, &published),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(
         control_group_delete(store, "root-a", "operators", "request-delete-group", 15u, &result),
-        TURBO_OK);
+        SALTS_OK);
     role_disable.request_id = "request-disable-role";
     role_disable.expected_revision = 16u;
     role_disable.occurred_at = 10002u;
-    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_role_disable(store, &role_disable, &result), SALTS_OK);
     user_disable.request_id = "request-disable-user";
     user_disable.expected_revision = 17u;
     user_disable.occurred_at = 10003u;
-    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_disable(store, &user_disable, &result), SALTS_OK);
     check_equal(control_group_delete(store, "root-a", "public",
                                      "request-delete-resource-segment-group", 18u, &result),
-                TURBO_OK);
-    check_equal(flowie_control_store_revision(store, &revision), TURBO_OK);
+                SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
     check_equal(revision, 19u);
-    check_equal(flowie_control_store_audit_count(store, &audit_count), TURBO_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_count), SALTS_OK);
     check_equal(audit_count, 19u);
 
     control_store_close(store, path);
@@ -1825,25 +1825,25 @@ spec("Flowie control TurboDB fact store") {
     flowie_control_user_create_command_t second_user =
         control_user_create_command("request-user-8", 2u);
 
-    check_equal(flowie_control_store_user_create(store, &first_user, &put), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &first_user, &put), SALTS_OK);
     second_user.principal_id = "device-8";
-    check_equal(flowie_control_store_user_create(store, &second_user, &put), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &second_user, &put), SALTS_OK);
     check_equal(
         control_group_create(store, "root-a", "operators", NULL, "request-operators", 3u, &put),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_subject_rule_put(store, 20u, first_rule, "request-policy-first", 4u, &put),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         control_subject_rule_put(store, 40u, second_rule, "request-policy-second", 5u, &put),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(control_policy_publish(store, "request-policy-publish", 6u, 20000u, &published),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(published.revision, 7u);
     check_equal(published.policy_version, 1u);
     check_false(published.replayed);
 
     check_equal(flowie_control_store_policy_bundle_load(store, "root-a", 0u, &repository_bundle),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(repository_bundle.policy_version, 1u);
     check_equal(repository_bundle.expires_at, 20000u);
     check_equal(repository_bundle.rule_count, 4u);
@@ -1855,23 +1855,23 @@ spec("Flowie control TurboDB fact store") {
 
     repository_bundle = (flowie_security_policy_bundle_t)FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
     check_equal(flowie_control_store_policy_bundle_load(store, "root-a", 1u, &repository_bundle),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(repository_bundle.rule_count, 4u);
     flowie_control_store_policy_bundle_release(&repository_bundle);
     check_equal(flowie_control_store_policy_bundle_load(store, "root-a", 2u, &repository_bundle),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
 
     published = (flowie_control_policy_publish_result_t)FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
     check_equal(control_policy_publish(store, "request-policy-publish", 0u, 20000u, &published),
-                TURBO_OK);
+                SALTS_OK);
     check_true(published.replayed);
     check_equal(published.revision, 7u);
     check_equal(published.policy_version, 1u);
     check_equal(control_policy_publish(store, "request-policy-publish", 0u, 21000u, &published),
-                TURBO_EBUSY);
+                SALTS_EBUSY);
     check_equal(control_policy_publish(store, "request-policy-stale", 6u, 21000u, &published),
-                TURBO_EBUSY);
-    check_equal(flowie_control_store_policy_status(store, "root-a", &status), TURBO_OK);
+                SALTS_EBUSY);
+    check_equal(flowie_control_store_policy_status(store, "root-a", &status), SALTS_OK);
     check_equal(status.store_revision, 7u);
     check_equal(status.policy_version, 1u);
     check_equal(status.draft_rule_count, 2u);
@@ -1897,17 +1897,17 @@ spec("Flowie control TurboDB fact store") {
     size_t count = 0u;
     int has_more = 0;
 
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     user.principal_id = "device-8";
     user.request_id = "request-direct-user-8";
     user.expected_revision = 2u;
-    check_equal(flowie_control_store_user_create(store, &user, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
     check_equal(control_group_create(store, "root-a", "engineering", NULL,
                                      "request-direct-engineering", 3u, &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_group_create(store, "root-a", "backend", "engineering",
                                      "request-direct-backend", 4u, &result),
-                TURBO_OK);
+                SALTS_OK);
 
     membership.domain_id = "root-a";
     membership.principal_id = "device-7";
@@ -1916,21 +1916,21 @@ spec("Flowie control TurboDB fact store") {
     membership.request_id = "request-direct-membership-7";
     membership.expected_revision = 5u;
     membership.occurred_at = 7005u;
-    check_equal(flowie_control_store_membership_add(store, &membership, &result), TURBO_OK);
+    check_equal(flowie_control_store_membership_add(store, &membership, &result), SALTS_OK);
     membership.principal_id = "device-8";
     membership.group_id = "engineering";
     membership.request_id = "request-direct-membership-8";
     membership.expected_revision = 6u;
     membership.occurred_at = 7006u;
-    check_equal(flowie_control_store_membership_add(store, &membership, &result), TURBO_OK);
+    check_equal(flowie_control_store_membership_add(store, &membership, &result), SALTS_OK);
     check_equal(flowie_control_store_effective_groups(store, "root-a", "device-7",
                                                        &effective_groups),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(effective_groups.group_count, 2u);
 
     check_equal(flowie_control_store_membership_list(store, "root-a", NULL, NULL, memberships,
                                                       1u, &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_true(has_more);
     check_equal(memberships[0].principal_id, "device-7");
@@ -1938,7 +1938,7 @@ spec("Flowie control TurboDB fact store") {
     memberships[0] = (flowie_control_membership_view_t)FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT;
     check_equal(flowie_control_store_membership_list(store, "root-a", "device-7", "backend",
                                                       memberships, 1u, &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(memberships[0].principal_id, "device-8");
@@ -1946,10 +1946,10 @@ spec("Flowie control TurboDB fact store") {
 
     check_equal(control_role_create(store, "root-a", "writer", "request-direct-writer", 7u,
                                     &result),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(control_role_create(store, "root-a", "reader", "request-direct-reader", 8u,
                                     &result),
-                TURBO_OK);
+                SALTS_OK);
     assignment.domain_id = "root-a";
     assignment.principal_id = "device-7";
     assignment.role_id = "writer";
@@ -1957,17 +1957,17 @@ spec("Flowie control TurboDB fact store") {
     assignment.request_id = "request-direct-assignment-7";
     assignment.expected_revision = 9u;
     assignment.occurred_at = 8009u;
-    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), SALTS_OK);
     assignment.principal_id = "device-8";
     assignment.role_id = "reader";
     assignment.request_id = "request-direct-assignment-8";
     assignment.expected_revision = 10u;
     assignment.occurred_at = 8010u;
-    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), TURBO_OK);
+    check_equal(flowie_control_store_user_role_add(store, &assignment, &result), SALTS_OK);
 
     check_equal(flowie_control_store_user_role_list(store, "root-a", NULL, NULL, assignments, 1u,
                                                      &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_true(has_more);
     check_equal(assignments[0].principal_id, "device-7");
@@ -1975,7 +1975,7 @@ spec("Flowie control TurboDB fact store") {
     assignments[0] = (flowie_control_user_role_view_t)FLOWIE_CONTROL_USER_ROLE_VIEW_INIT;
     check_equal(flowie_control_store_user_role_list(store, "root-a", "device-7", "writer",
                                                      assignments, 1u, &count, &has_more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(assignments[0].principal_id, "device-8");

@@ -2,8 +2,8 @@
 #define FLOWIE_CONTROL_ACL_IRIS_ENDPOINT_INTERNAL_H
 
 #include "flowie_control_repository_internal.h"
+#include "flowie_control_http_server_internal.h"
 #include "flowie_control_service_credential_internal.h"
-#include "iris/iris_app.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,7 +32,7 @@ int flowie_control_acl_iris_endpoint_create(const flowie_control_acl_iris_endpoi
                                             flowie_control_acl_iris_endpoint_t **out);
 void flowie_control_acl_iris_endpoint_destroy(flowie_control_acl_iris_endpoint_t *endpoint);
 int flowie_control_acl_iris_endpoint_register(flowie_control_acl_iris_endpoint_t *endpoint,
-                                              iris_app_t *app);
+                                              flowie_control_http_app_t *app);
 int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t *endpoint, Req *req,
                                              int *status_out, char **body_out,
                                              size_t *body_size_out);

@@ -4,7 +4,7 @@
 #include "flowie_control_management_service_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -83,16 +83,16 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   int has_more = 0;
 
   check_not_null(repository);
-  check_equal(flowie_control_repository_validate(repository), TURBO_OK);
+  check_equal(flowie_control_repository_validate(repository), SALTS_OK);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "management-contract-root";
   root.occurred_at = 1000u;
-  check_equal(repository->user->domain_create(repository->ctx, &root, &result), TURBO_OK);
+  check_equal(repository->user->domain_create(repository->ctx, &root, &result), SALTS_OK);
 
   config.repository = repository;
-  check_equal(flowie_control_management_service_create(&config, &service), TURBO_OK);
+  check_equal(flowie_control_management_service_create(&config, &service), SALTS_OK);
   check_not_null(service);
 
   viewer.domain_id = "root-a";
@@ -115,35 +115,35 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   user.request_id = "management-contract-user-denied";
   user.expected_revision = 1u;
   user.occurred_at = 1001u;
-  check_equal(flowie_control_management_user_create(service, &viewer, &user, &result), TURBO_EPERM);
+  check_equal(flowie_control_management_user_create(service, &viewer, &user, &result), SALTS_EPERM);
 
   user.actor = user_admin.actor;
   user.request_id = "management-contract-user-a";
   check_equal(flowie_control_management_user_create(service, &user_admin, &user, &result),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(result.revision, 2u);
   user.principal_id = "device-b";
   user.request_id = "management-contract-user-b";
   user.expected_revision = 2u;
   user.occurred_at = 1002u;
   check_equal(flowie_control_management_user_create(service, &user_admin, &user, &result),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(result.revision, 3u);
 
   check_equal(flowie_control_management_user_get(service, &viewer, "device-a", &user_view),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(user_view.principal_id, "device-a");
   check_true(user_view.enabled);
   check_equal(
       flowie_control_management_user_list(service, &viewer, NULL, user_page, 1u, &count, &has_more),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(count, 1u);
   check_true(has_more);
   check_equal(user_page[0].principal_id, "device-a");
   user_page[0] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
   check_equal(flowie_control_management_user_list(service, &viewer, "device-a", user_page, 1u,
                                                   &count, &has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_false(has_more);
   check_equal(user_page[0].principal_id, "device-b");
@@ -156,11 +156,11 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   group.expected_revision = 3u;
   group.occurred_at = 1003u;
   check_equal(flowie_control_management_group_create(service, &user_admin, &group, &result),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(result.revision, 4u);
   check_equal(flowie_control_management_group_list(service, &viewer, NULL, group_page, 4u, &count,
                                                    &has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_false(has_more);
 
@@ -172,11 +172,11 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   membership.expected_revision = 4u;
   membership.occurred_at = 1004u;
   check_equal(flowie_control_management_membership_add(service, &user_admin, &membership, &result),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(result.revision, 5u);
   check_equal(
       flowie_control_management_effective_groups(service, &viewer, "device-a", &effective_groups),
-      TURBO_OK);
+      SALTS_OK);
   check_true(flowie_control_management_contract_contains(
       effective_groups.groups[0], sizeof(effective_groups.groups[0]), effective_groups.group_count,
       "operators"));
@@ -188,11 +188,11 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   role.expected_revision = 5u;
   role.occurred_at = 1005u;
   check_equal(flowie_control_management_role_create(service, &security_admin, &role, &result),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(result.revision, 6u);
   check_equal(
       flowie_control_management_role_list(service, &viewer, NULL, role_page, 2u, &count, &has_more),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(count, 1u);
   check_false(has_more);
   check_equal(role_page[0].role_id, "operator");
@@ -206,39 +206,39 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   assignment.occurred_at = 1006u;
   check_equal(
       flowie_control_management_user_role_add(service, &security_admin, &assignment, &result),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(result.revision, 7u);
   check_equal(
       flowie_control_management_effective_roles(service, &viewer, "device-a", &effective_roles),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(effective_roles.role_count, 1u);
   check_equal(effective_roles.roles[0], "operator");
 
   rule.domain_id = "root-a";
   rule.ordinal = 10u;
   check_equal(flowie_control_acl_parse(policy_rule, sizeof(policy_rule) - 1u, &policy_document),
-              TURBO_OK);
+              SALTS_OK);
   rule.document = &policy_document;
   rule.actor = policy_admin.actor;
   rule.request_id = "management-contract-rule";
   rule.expected_revision = 7u;
   rule.occurred_at = 1007u;
   check_equal(flowie_control_management_policy_subject_rule_put(service, &viewer, &rule, &result),
-              TURBO_EPERM);
+              SALTS_EPERM);
   check_equal(
       flowie_control_management_policy_subject_rule_put(service, &policy_admin, &rule, &result),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(result.revision, 8u);
   check_equal(flowie_control_management_policy_subject_rule_list(service, &viewer,
                                                                  FLOWIE_SECURITY_SUBJECT_ANY, 0u, 0,
                                                                  rule_page, 2u, &count, &has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_false(has_more);
   check_equal(rule_page[0].ordinal, 10u);
   check_equal(rule_page[0].document.subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
   check_equal(rule_page[0].document.subject, "device-a");
-  check_equal(flowie_control_management_policy_validate(service, &viewer, &validation), TURBO_OK);
+  check_equal(flowie_control_management_policy_validate(service, &viewer, &validation), SALTS_OK);
   check_equal(validation.store_revision, 8u);
   check_equal(validation.rule_count, 2u);
   dry_run_change.operation = FLOWIE_CONTROL_POLICY_DRY_RUN_PUT;
@@ -251,10 +251,10 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   dry_run.diagnostic_capacity = 2u;
   check_equal(
       flowie_control_management_policy_dry_run(service, &viewer, &dry_run_change, 1u, &dry_run),
-      TURBO_EPERM);
+      SALTS_EPERM);
   check_equal(flowie_control_management_policy_dry_run(service, &policy_admin, &dry_run_change, 1u,
                                                        &dry_run),
-              TURBO_OK);
+              SALTS_OK);
   check_true(dry_run.valid);
   check_equal(dry_run.store_revision, 8u);
   check_equal(dry_run.rule_count, 2u);
@@ -267,31 +267,31 @@ flowie_control_management_repository_contract_run(const flowie_control_repositor
   publish.expires_at = 20000u;
   check_equal(
       flowie_control_management_policy_publish(service, &policy_admin, &publish, &published),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(published.revision, 9u);
   check_equal(published.policy_version, 1u);
-  check_equal(flowie_control_management_policy_status(service, &viewer, &policy_status), TURBO_OK);
+  check_equal(flowie_control_management_policy_status(service, &viewer, &policy_status), SALTS_OK);
   check_equal(policy_status.store_revision, 9u);
   check_equal(policy_status.policy_version, 1u);
   check_equal(policy_status.published_rule_count, 2u);
   check_equal(flowie_control_management_system_status(service, &viewer, &management_status),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(management_status.store_revision, 9u);
   check_equal(management_status.policy.policy_version, 1u);
 
   check_equal(flowie_control_management_audit_list(service, &viewer, 0u, audit_page, 16u, &count,
                                                    &has_more),
-              TURBO_EPERM);
+              SALTS_EPERM);
   check_equal(flowie_control_management_audit_list(service, &security_admin, 0u, audit_page, 3u,
                                                    &count, &has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 3u);
   check_true(has_more);
   check_equal(audit_page[0].revision, 1u);
   check_equal(audit_page[2].revision, 3u);
   check_equal(flowie_control_management_audit_list(service, &security_admin, 3u, audit_page, 16u,
                                                    &count, &has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 6u);
   check_false(has_more);
   check_equal(audit_page[5].revision, 9u);

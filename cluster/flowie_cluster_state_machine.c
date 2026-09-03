@@ -1,6 +1,6 @@
 #include "flowie_cluster_state_machine_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -14,11 +14,11 @@ int flowie_cluster_state_machine_apply_batch(
   size_t index;
   if (!state || !state->owners.directory || !state->apply_publish || !entries ||
       entry_count == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   for (index = 0u; index < entry_count; ++index) {
     const tr_raft_entry_t *entry = &entries[index];
     int rc;
-    if (entry->data_length < sizeof(FLOWIE_OWNER_MAGIC)) return TURBO_EPROTO;
+    if (entry->data_length < sizeof(FLOWIE_OWNER_MAGIC)) return SALTS_EPROTO;
     if (memcmp(entry->data, FLOWIE_OWNER_MAGIC,
                sizeof(FLOWIE_OWNER_MAGIC)) == 0) {
       rc = flowie_cluster_owner_projection_apply_batch(&state->owners, entry,
@@ -28,13 +28,13 @@ int flowie_cluster_state_machine_apply_batch(
       tr_raft_data_descriptor_t descriptor;
       rc = tr_raft_data_descriptor_decode(entry->data, entry->data_length,
                                           &descriptor);
-      if (rc == TURBO_OK)
+      if (rc == SALTS_OK)
         rc = state->apply_publish(state->publish_ctx, entry->index, entry->term,
                                   entry->command_id, &descriptor);
     } else {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
     }
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }

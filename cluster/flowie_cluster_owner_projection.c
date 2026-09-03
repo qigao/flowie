@@ -1,6 +1,6 @@
 #include "flowie_cluster_owner_projection_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -80,10 +80,10 @@ int flowie_cluster_owner_command_encode(
   size_t encoded_size;
   if (output_size) *output_size = 0u;
   if (!flowie_owner_command_valid(command) || !output || !output_size)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   encoded_size = FLOWIE_CLUSTER_OWNER_COMMAND_HEADER_SIZE +
                  command->node_id_size;
-  if (output_capacity < encoded_size) return TURBO_ENOSPC;
+  if (output_capacity < encoded_size) return SALTS_ENOSPC;
   memset(output, 0, encoded_size);
   memcpy(output + FLOWIE_OWNER_OFFSET_MAGIC, FLOWIE_OWNER_COMMAND_MAGIC,
          sizeof(FLOWIE_OWNER_COMMAND_MAGIC));
@@ -100,7 +100,7 @@ int flowie_cluster_owner_command_encode(
   memcpy(output + FLOWIE_OWNER_OFFSET_NODE, command->node_id,
          command->node_id_size);
   *output_size = encoded_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_owner_command_decode(
@@ -117,11 +117,11 @@ int flowie_cluster_owner_command_decode(
       input[FLOWIE_OWNER_OFFSET_RESERVED + 1u] != 0u ||
       input[FLOWIE_OWNER_OFFSET_RESERVED_2] != 0u ||
       input[FLOWIE_OWNER_OFFSET_RESERVED_2 + 1u] != 0u)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   node_id_size = flowie_owner_read_u16(input + FLOWIE_OWNER_OFFSET_NODE_SIZE);
   if (node_id_size > FLOWIE_CLUSTER_NODE_ID_MAX ||
       input_size != FLOWIE_CLUSTER_OWNER_COMMAND_HEADER_SIZE + node_id_size)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   memset(&command, 0, sizeof(command));
   command.kind = (flowie_cluster_owner_command_kind_t)
       input[FLOWIE_OWNER_OFFSET_KIND];
@@ -132,9 +132,9 @@ int flowie_cluster_owner_command_decode(
          FLOWIE_CLUSTER_BOOT_ID_SIZE);
   memcpy(command.node_id, input + FLOWIE_OWNER_OFFSET_NODE, node_id_size);
   command.node_id[node_id_size] = '\0';
-  if (!flowie_owner_command_valid(&command)) return TURBO_EPROTO;
+  if (!flowie_owner_command_valid(&command)) return SALTS_EPROTO;
   *out = command;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_owner_projection_apply_batch(
@@ -143,17 +143,17 @@ int flowie_cluster_owner_projection_apply_batch(
       (flowie_cluster_owner_projection_t *)ctx;
   size_t index;
   if (!projection || !projection->directory || !entries || entry_count == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   for (index = 0u; index < entry_count; ++index) {
     flowie_cluster_owner_command_t command;
     flowie_cluster_owner_directory_entry_t directory_entry =
         FLOWIE_CLUSTER_OWNER_DIRECTORY_ENTRY_INIT;
     int rc;
-    if (entries[index].index == 0u) return TURBO_EPROTO;
+    if (entries[index].index == 0u) return SALTS_EPROTO;
     rc = flowie_cluster_owner_command_decode(entries[index].data,
                                              entries[index].data_length,
                                              &command);
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
     directory_entry.shard_id = command.shard_id;
     directory_entry.owner.shard_id = command.shard_id;
     if (command.kind == FLOWIE_CLUSTER_OWNER_COMMAND_ASSIGN) {
@@ -161,11 +161,11 @@ int flowie_cluster_owner_projection_apply_batch(
       rc = flowie_cluster_owner_token_init(
           &directory_entry.owner, command.shard_id, command.owner_epoch,
           command.node_id, command.node_id_size, command.boot_id);
-      if (rc != TURBO_OK) return rc;
+      if (rc != SALTS_OK) return rc;
     }
     rc = flowie_cluster_owner_directory_apply(
         projection->directory, &directory_entry, entries[index].index);
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }

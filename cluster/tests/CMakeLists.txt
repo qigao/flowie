@@ -1,7 +1,7 @@
 cmake_add_test(
   test_flowie_cluster_publish_stream
   SOURCES test_flowie_cluster_publish_stream.c
-  LIBS flowie_cluster_publish_stream Rocida::TinyTest
+  LIBS flowie_cluster_publish_stream Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -11,7 +11,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_publish_ingress
   SOURCES test_flowie_cluster_publish_ingress.c
-  LIBS flowie_cluster_publish_stream Rocida::TinyTest
+  LIBS flowie_cluster_publish_stream Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -21,7 +21,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_publish_egress
   SOURCES test_flowie_cluster_publish_egress.c
-  LIBS flowie_cluster_publish_stream Rocida::TinyTest
+  LIBS flowie_cluster_publish_stream Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -31,7 +31,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_publish_router
   SOURCES test_flowie_cluster_publish_router.c
-  LIBS flowie_cluster_publish_stream Rocida::TinyTest
+  LIBS flowie_cluster_publish_stream Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -41,7 +41,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_raft_store
   SOURCES test_flowie_cluster_raft_store.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -51,7 +51,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_raft_runtime
   SOURCES test_flowie_cluster_raft_runtime.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -61,7 +61,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_raft_generation
   SOURCES test_flowie_cluster_raft_generation.c
-  LIBS flowie_cluster_raft_generation Rocida::TinyTest
+  LIBS flowie_cluster_raft_generation Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -78,14 +78,14 @@ if(WIN32)
     test_flowie_cluster_raft_runtime
     test_flowie_cluster_raft_generation
     PROPERTIES ENVIRONMENT_MODIFICATION
-               "PATH=path_list_prepend:$<TARGET_FILE_DIR:FlowMQ::FlowMQ>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboParser::DataBind>;PATH=path_list_prepend:$<TARGET_FILE_DIR:TurboNet::CoroNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Rocida::Core>;PATH=path_list_prepend:${_flowie_compiler_runtime_dir}")
+               "PATH=path_list_prepend:$<TARGET_FILE_DIR:FlowMQ::FlowMQ>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::DataBind>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${_flowie_compiler_runtime_dir}")
   unset(_flowie_compiler_runtime_dir)
 endif()
 
 cmake_add_test(
   test_flowie_cluster_peer_authority
   SOURCES test_flowie_cluster_peer_authority.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 cmake_target_enable_boringssl_linkage(test_flowie_cluster_peer_authority)
@@ -99,7 +99,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_owner_directory
   SOURCES test_flowie_cluster_owner_directory.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 cmake_target_enable_boringssl_linkage(test_flowie_cluster_owner_directory)
@@ -113,7 +113,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_owner_projection
   SOURCES test_flowie_cluster_owner_projection.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(
@@ -123,7 +123,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_cluster_state_machine
   SOURCES test_flowie_cluster_state_machine.c
-  LIBS flowie_cluster_runtime Rocida::TinyTest
+  LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
 set_tests_properties(

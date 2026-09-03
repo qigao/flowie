@@ -3,9 +3,10 @@
 
 #include "flowie_cluster_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 #include "flowie_security.h"
-#include "turbo_str.h"
+#include "salts_str.h"
+#include <cnet/cnet.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -37,9 +38,6 @@ extern "C" {
 #define FLOWIE_CLUSTER_PEER_EDGE_ACTION_ACK_SIZE 24u
 #define FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_VERSION 1u
 #define FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE 64u
-
-typedef struct coro_socket_s coro_socket_t;
-struct tf_coronet_execution_s;
 
 typedef enum flowie_cluster_peer_frame_kind_e {
   FLOWIE_CLUSTER_PEER_FRAME_HELLO = 1,
@@ -445,16 +443,25 @@ typedef struct flowie_cluster_peer_link_config_s {
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_link_create(const flowie_cluster_peer_link_config_t *config,
                                               flowie_cluster_peer_link_t **out);
 
-/** Destroy only after run() returned; a live link returns TURBO_EBUSY. */
+/** Destroy only after run() returned; a live link returns SALTS_EBUSY. */
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_link_destroy(flowie_cluster_peer_link_t *link);
 
 /**
- * Run on the CoroNet owner lane with an already connected TLS socket. The
- * socket remains caller-owned. Verified peer certificate and TLS channel
+ * Bind the link to a caller-owned CNet client and return the observer that must
+ * be supplied when connecting or adopting the TLS connection. The caller must
+ * then run the link on the same CNet owner thread.
+ */
+FLOWIE_INTERNAL_C_API int flowie_cluster_peer_link_observer(flowie_cluster_peer_link_t *link,
+                                                cnet_client *network,
+                                                cnet_observer *out_observer);
+
+/**
+ * Run with the TLS connection created using link_observer(). The connection
+ * remains caller-owned. Verified peer certificate and the CNet TLS exporter
  * binding are mandatory before the Flowie HELLO exchange.
  */
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_link_run(flowie_cluster_peer_link_t *link,
-                                           coro_socket_t *connected_tls_socket);
+                                            cnet_connection connected_tls_connection);
 
 /**
  * Thread-safe bounded admission. The frame is encoded and owned by the link
@@ -560,7 +567,7 @@ typedef int (*flowie_cluster_peer_owner_finalize_fn)(void *finalize_ctx, int dur
 /**
  * Finish one asynchronously accepted owner command. This schedules finalize()
  * and the derived reply back onto the owner lane. The completion context is
- * single-use. When this returns TURBO_OK, the adapter owns the finalize
+ * single-use. When this returns SALTS_OK, the adapter owns the finalize
  * obligation; when scheduling fails, finalize() is not called and the provider
  * retains finalize_ctx and must fail the shard closed because no cross-thread
  * MQTT-state mutation or reply callback is permitted.
@@ -571,10 +578,10 @@ typedef int (*flowie_cluster_peer_owner_complete_fn)(void *completion_ctx, int d
 
 /**
  * Stage one command on the owner lane and hand its durable work to an
- * asynchronous provider. Returning TURBO_OK transfers exactly one completion
+ * asynchronous provider. Returning SALTS_OK transfers exactly one completion
  * obligation to the provider; any other status means completion must not be
  * called. Borrowed command views expire when this function returns. While one
- * asynchronous command is outstanding, later commands receive TURBO_EBUSY so
+ * asynchronous command is outstanding, later commands receive SALTS_EBUSY so
  * two fact revisions cannot advance concurrently on the same adapter.
  */
 typedef int (*flowie_cluster_peer_owner_execute_async_fn)(
@@ -591,7 +598,6 @@ typedef int (*flowie_cluster_peer_owner_reply_fn)(void *user_data,
 typedef struct flowie_cluster_peer_owner_config_s {
   size_t size;
   uint32_t abi_version;
-  struct tf_coronet_execution_s *execution;
   size_t max_payload_size;
   size_t queue_entries;
   size_t queue_bytes;
@@ -609,7 +615,6 @@ typedef struct flowie_cluster_peer_owner_config_s {
 #define FLOWIE_CLUSTER_PEER_OWNER_CONFIG_INIT                                                      \
   {sizeof(flowie_cluster_peer_owner_config_t),                                                     \
    FLOWIE_CLUSTER_PEER_OWNER_ABI_V1,                                                               \
-   NULL,                                                                                           \
    0u,                                                                                             \
    0u,                                                                                             \
    0u,                                                                                             \
@@ -629,7 +634,7 @@ FLOWIE_INTERNAL_C_API int flowie_cluster_peer_owner_create(const flowie_cluster_
 
 /**
  * Copy and admit one COMMAND. Accepted commands always resolve and fence on
- * the owner lane before execute(); overload is returned as TURBO_ENOSPC.
+ * the owner lane before execute(); overload is returned as SALTS_ENOSPC.
  */
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_owner_submit(flowie_cluster_peer_owner_t *owner,
                                                const flowie_cluster_peer_frame_t *command);
@@ -641,16 +646,16 @@ FLOWIE_INTERNAL_C_API int flowie_cluster_peer_owner_close(flowie_cluster_peer_ow
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_owner_drain(flowie_cluster_peer_owner_t *owner,
                                               uint64_t timeout_ns);
 
-/** Destroy only after close and drain; otherwise returns TURBO_EBUSY. */
+/** Destroy only after close and drain; otherwise returns SALTS_EBUSY. */
 FLOWIE_INTERNAL_C_API int flowie_cluster_peer_owner_destroy(flowie_cluster_peer_owner_t *owner);
 
-/** Apply fail-closed mTLS settings to a not-yet-connected CoroNet TLS socket. */
-FLOWIE_INTERNAL_C_API int flowie_cluster_peer_tls_client_configure(coro_socket_t *socket, const char *ca_file,
-                                                       const char *cert_file, const char *key_file,
-                                                       const char *key_password);
-FLOWIE_INTERNAL_C_API int flowie_cluster_peer_tls_server_configure(coro_socket_t *socket, const char *ca_file,
-                                                       const char *cert_file, const char *key_file,
-                                                       const char *key_password);
+/** Initialize fail-closed reusable CNet mTLS profiles for cluster links. */
+FLOWIE_INTERNAL_C_API int flowie_cluster_peer_tls_client_configure(
+    cnet_tls_client *client, const char *ca_file, const char *cert_file,
+    const char *key_file, const char *key_password, const char *server_name);
+FLOWIE_INTERNAL_C_API int flowie_cluster_peer_tls_server_configure(
+    cnet_tls_server *server, const char *ca_file, const char *cert_file,
+    const char *key_file, const char *key_password);
 
 #ifdef __cplusplus
 }

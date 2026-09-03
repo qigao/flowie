@@ -1,6 +1,6 @@
 #include "flowie_control_auth_service_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -67,9 +67,9 @@ int flowie_control_auth_service_resolve_domain(const flowie_control_auth_service
       !flowie_control_auth_text_valid(caller->domain_id, FLOWIE_SECURITY_ID_MAX) ||
       (caller->peer_certificate_sha256 &&
        !flowie_control_auth_fingerprint_valid(caller->peer_certificate_sha256)))
-    return TURBO_EPERM;
+    return SALTS_EPERM;
   memcpy(domain_id_out, caller->domain_id, strlen(caller->domain_id) + 1u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_control_auth_service_create(const flowie_control_auth_service_config_t *config,
@@ -80,7 +80,7 @@ int flowie_control_auth_service_create(const flowie_control_auth_service_config_
 
   if (out) *out = NULL;
   if (!config || config->size < sizeof(*config) || !out ||
-      flowie_control_repository_validate(config->repository) != TURBO_OK ||
+      flowie_control_repository_validate(config->repository) != SALTS_OK ||
       !flowie_control_auth_text_valid(config->method, FLOWIE_SECURITY_TYPE_MAX) ||
       config->principal_ttl_seconds == 0u ||
       config->principal_ttl_seconds > FLOWIE_CONTROL_AUTH_MAX_PRINCIPAL_TTL_SECONDS ||
@@ -92,13 +92,13 @@ int flowie_control_auth_service_create(const flowie_control_auth_service_config_
       (!!config->external_authenticator != !!config->external_identity_mapper) ||
       (config->external_authenticator &&
        (flowie_control_external_authenticator_validate(config->external_authenticator) !=
-            TURBO_OK ||
+            SALTS_OK ||
         flowie_control_external_identity_mapper_validate(config->external_identity_mapper) !=
-            TURBO_OK ||
+            SALTS_OK ||
         strcmp(config->method, config->external_authenticator->method) != 0)))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   service = (flowie_control_auth_service_t *)calloc(1u, sizeof(*service));
-  if (!service) return TURBO_ENOMEM;
+  if (!service) return SALTS_ENOMEM;
   service->repository = *config->repository;
   service->policy_version = config->policy_version;
   service->clock_seconds =
@@ -115,13 +115,13 @@ int flowie_control_auth_service_create(const flowie_control_auth_service_config_
   }
 
   rc = flowie_control_auth_cache_create(&config->credential_cache, &service->credential_cache);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_control_principal_cache_create(&config->principal_cache, &service->principal_cache);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = flowie_control_auth_rate_limiter_create(&config->rate_limiter, &service->rate_limiter);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   *out = service;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   flowie_control_auth_service_destroy(service);
@@ -178,14 +178,14 @@ static int flowie_control_auth_service_authenticate_root_impl(
         verified_external_assertion->size < sizeof(*verified_external_assertion))) ||
       (request->peer_certificate_sha256 &&
        !flowie_control_auth_fingerprint_valid(request->peer_certificate_sha256)))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if ((require_policy != 0 && require_policy != 1) || strcmp(request->method, service->method) != 0)
-    return TURBO_EPERM;
+    return SALTS_EPERM;
 
   if (!resolved_credential && !verified_external_assertion) {
     rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, caller_scope, domain_id,
                                                   request->identity);
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
   }
   if (service->external_auth_enabled) {
     flowie_control_external_identity_map_request_t map_request =
@@ -198,7 +198,7 @@ static int flowie_control_auth_service_authenticate_root_impl(
       if (!flowie_control_auth_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX) ||
           !flowie_control_auth_text_valid(request->remote_address,
                                           FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX)) {
-        rc = TURBO_EINVAL;
+        rc = SALTS_EINVAL;
         goto done;
       }
       external_request.domain_id = domain_id;
@@ -211,30 +211,30 @@ static int flowie_control_auth_service_authenticate_root_impl(
       external_request.peer_certificate_sha256 = request->peer_certificate_sha256;
       rc = service->external_authenticator.verify(service->external_authenticator.ctx,
                                                   &external_request, &assertion);
-      if (rc != TURBO_OK) goto done;
+      if (rc != SALTS_OK) goto done;
     }
     now = service->clock_seconds(service->clock_ctx);
     if (now == 0u) {
-      rc = TURBO_EIO;
+      rc = SALTS_EIO;
       goto done;
     }
     if (assertion.size >= sizeof(assertion) &&
         (assertion.account_enabled == 0 || assertion.expires_at <= now)) {
-      rc = TURBO_EPERM;
+      rc = SALTS_EPERM;
       goto done;
     }
     if (flowie_control_external_auth_assertion_validate(&assertion, service->method, now) !=
-        TURBO_OK) {
-      rc = TURBO_EPROTO;
+        SALTS_OK) {
+      rc = SALTS_EPROTO;
       goto done;
     }
     if (strcmp(assertion.domain_id, domain_id) != 0) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       goto done;
     }
     if (assertion.external_group_count > 0u && (service->external_authenticator.capabilities &
                                                 FLOWIE_CONTROL_EXTERNAL_AUTH_GROUP_CLAIMS) == 0u) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       goto done;
     }
     map_request.domain_id = domain_id;
@@ -242,34 +242,34 @@ static int flowie_control_auth_service_authenticate_root_impl(
     map_request.assertion = &assertion;
     rc = service->external_identity_mapper.map(service->external_identity_mapper.ctx, &map_request,
                                                &mapped);
-    if (rc != TURBO_OK) goto done;
-    if (flowie_control_external_identity_map_result_validate(&mapped) != TURBO_OK) {
-      rc = TURBO_EPROTO;
+    if (rc != SALTS_OK) goto done;
+    if (flowie_control_external_identity_map_result_validate(&mapped) != SALTS_OK) {
+      rc = SALTS_EPROTO;
       goto done;
     }
     rc = service->repository.auth->external_principal_snapshot(
         service->repository.ctx, domain_id, mapped.principal_id, assertion.revision, &snapshot);
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
     expiration_cap = assertion.expires_at;
   } else {
     if (resolved_credential) {
       verified = resolved_credential->verified;
-      rc = TURBO_OK;
+      rc = SALTS_OK;
     } else {
       rc = flowie_control_auth_cache_verify(service->credential_cache, &service->repository,
                                             domain_id, request->identity, request->secret,
                                             request->secret_size, &verified, &cache_hit);
     }
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
   }
   if (!resolved_credential && !verified_external_assertion)
     flowie_control_auth_rate_limiter_record_success(service->rate_limiter, caller_scope, domain_id,
                                                     request->identity);
   if (require_policy) {
     rc = service->policy_version.current(service->policy_version.ctx, domain_id, &policy_version);
-    if (rc != TURBO_OK) goto done;
+    if (rc != SALTS_OK) goto done;
     if (policy_version == 0u) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       goto done;
     }
   }
@@ -277,36 +277,36 @@ static int flowie_control_auth_service_authenticate_root_impl(
     if (!require_policy) {
       rc = service->repository.auth->principal_snapshot(service->repository.ctx, domain_id,
                                                         request->identity, &verified, &snapshot);
-      if (rc != TURBO_OK) goto done;
+      if (rc != SALTS_OK) goto done;
     } else {
       rc = service->repository.auth->current_revision(service->repository.ctx, &store_revision);
-      if (rc != TURBO_OK || store_revision == 0u) {
-        if (rc == TURBO_OK) rc = TURBO_EPROTO;
+      if (rc != SALTS_OK || store_revision == 0u) {
+        if (rc == SALTS_OK) rc = SALTS_EPROTO;
         goto done;
       }
       rc = flowie_control_principal_cache_get(service->principal_cache, domain_id,
                                               request->identity, verified.user_revision,
                                               verified.credential_revision, store_revision,
                                               policy_version, &snapshot, &principal_cache_hit);
-      if (rc == TURBO_ENOENT) {
+      if (rc == SALTS_ENOENT) {
         rc = service->repository.auth->principal_snapshot(service->repository.ctx, domain_id,
                                                           request->identity, &verified, &snapshot);
-        if (rc != TURBO_OK) goto done;
+        if (rc != SALTS_OK) goto done;
         rc = flowie_control_principal_cache_put(service->principal_cache, &snapshot, store_revision,
                                                 policy_version);
-        if (rc != TURBO_OK) goto done;
-      } else if (rc != TURBO_OK) {
+        if (rc != SALTS_OK) goto done;
+      } else if (rc != SALTS_OK) {
         goto done;
       }
     }
   }
   now = service->clock_seconds(service->clock_ctx);
   if (now == 0u || now > UINT64_MAX - service->principal_ttl_seconds) {
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
   if (expiration_cap != UINT64_MAX && now >= expiration_cap) {
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
 
@@ -324,10 +324,10 @@ static int flowie_control_auth_service_authenticate_root_impl(
   principal.policy_version = policy_version;
   *principal_out = principal;
   if (credential_cache_hit_out) *credential_cache_hit_out = cache_hit;
-  rc = TURBO_OK;
+  rc = SALTS_OK;
 
 done:
-  if (rc != TURBO_OK) *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
+  if (rc != SALTS_OK) *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   memset(&assertion, 0, sizeof(assertion));
   memset(&mapped, 0, sizeof(mapped));
   memset(&snapshot, 0, sizeof(snapshot));
@@ -355,10 +355,10 @@ static int flowie_control_auth_service_authenticate_external_discovered(
   if (!flowie_control_auth_text_valid(request->protocol, FLOWIE_SECURITY_TYPE_MAX) ||
       !flowie_control_auth_text_valid(request->remote_address,
                                       FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, request->caller->service_id,
                                                 request->caller->domain_id, request->identity);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   external_request.domain_id = "";
   external_request.presented_identity = request->identity;
   external_request.method = request->method;
@@ -369,26 +369,26 @@ static int flowie_control_auth_service_authenticate_external_discovered(
   external_request.peer_certificate_sha256 = request->peer_certificate_sha256;
   rc = service->external_authenticator.verify(service->external_authenticator.ctx,
                                               &external_request, &assertion);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   now = service->clock_seconds(service->clock_ctx);
   if (now == 0u) {
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
   if (assertion.size >= sizeof(assertion) &&
       (assertion.account_enabled == 0 || assertion.expires_at <= now)) {
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
   if (flowie_control_external_auth_assertion_validate(&assertion, service->method, now) !=
-      TURBO_OK) {
-    rc = TURBO_EPROTO;
+      SALTS_OK) {
+    rc = SALTS_EPROTO;
     goto done;
   }
   rc = flowie_control_auth_service_authenticate_root_impl(
       service, assertion.domain_id, request->caller->service_id, request, 1, NULL, &assertion,
       principal_out, credential_cache_hit_out);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     flowie_control_auth_rate_limiter_record_success(service->rate_limiter,
                                                     request->caller->service_id,
                                                     request->caller->domain_id, request->identity);
@@ -422,17 +422,17 @@ int flowie_control_auth_service_authenticate(flowie_control_auth_service_t *serv
        !flowie_control_auth_fingerprint_valid(request->caller->peer_certificate_sha256)) ||
       (request->peer_certificate_sha256 &&
        !flowie_control_auth_fingerprint_valid(request->peer_certificate_sha256)))
-    return TURBO_EPERM;
-  if (strcmp(request->method, service->method) != 0) return TURBO_EPERM;
+    return SALTS_EPERM;
+  if (strcmp(request->method, service->method) != 0) return SALTS_EPERM;
   if (service->external_auth_enabled)
     return flowie_control_auth_service_authenticate_external_discovered(
         service, request, principal_out, credential_cache_hit_out);
   rc = flowie_control_auth_rate_limiter_acquire(service->rate_limiter, request->caller->service_id,
                                                 request->caller->domain_id, request->identity);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = service->repository.auth->credential_resolve(
       service->repository.ctx, request->identity, request->secret, request->secret_size, &resolved);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   flowie_control_auth_rate_limiter_record_success(service->rate_limiter,
                                                   request->caller->service_id,
                                                   request->caller->domain_id, request->identity);

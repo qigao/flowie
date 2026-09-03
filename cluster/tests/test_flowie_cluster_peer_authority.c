@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_authority_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -44,7 +44,7 @@ static flowie_cluster_peer_authority_t *authority_fixture_create(authority_fixtu
   config.max_peers = 2u;
   config.pins = fixture->pins;
   config.pin_count = 2u;
-  check_equal(flowie_cluster_peer_authority_create(&config, &authority), TURBO_OK);
+  check_equal(flowie_cluster_peer_authority_create(&config, &authority), SALTS_OK);
   check_not_null(authority);
   return authority;
 }
@@ -56,25 +56,25 @@ spec("Flowie cluster peer authority") {
     authority_fixture_init(&fixture);
     authority = authority_fixture_create(&fixture);
     check_equal(flowie_cluster_peer_authority_replace(authority, fixture.peers, 2u, 7u),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_authority_authorize(
                      authority, fixture.peers[0].node_id, fixture.boots[0],
                      fixture.fingerprints[0]),
-                 TURBO_OK);
+                 SALTS_OK);
     fixture.boots[0][1] = 9u;
     check_equal(flowie_cluster_peer_authority_authorize(
                      authority, fixture.peers[0].node_id, fixture.boots[0],
                      fixture.fingerprints[0]),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     fixture.boots[0][1] = 0u;
     check_equal(flowie_cluster_peer_authority_authorize(
                      authority, fixture.peers[0].node_id, fixture.boots[0],
                      fixture.fingerprints[1]),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     check_equal(flowie_cluster_peer_authority_authorize(
                      authority, vstr_from_cstr("node-c"), fixture.boots[0],
                      fixture.fingerprints[0]),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     flowie_cluster_peer_authority_destroy(authority);
   }
 
@@ -87,13 +87,13 @@ spec("Flowie cluster peer authority") {
     authority_fixture_init(&fixture);
     authority = authority_fixture_create(&fixture);
     check_equal(flowie_cluster_peer_authority_replace(authority, fixture.peers, 2u, 11u),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_authority_snapshot(authority, snapshot, 1u, &count,
                                                         &revision),
-                 TURBO_ENOSPC);
+                 SALTS_ENOSPC);
     check_equal(flowie_cluster_peer_authority_snapshot(authority, snapshot, 2u, &count,
                                                         &revision),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(count, 2u);
     check_equal(revision, 11u);
     check_equal(snapshot[0].node_id.len, strlen("node-a"));
@@ -112,17 +112,17 @@ spec("Flowie cluster peer authority") {
     authority_fixture_init(&fixture);
     authority = authority_fixture_create(&fixture);
     check_equal(flowie_cluster_peer_authority_replace(authority, fixture.peers, 1u, 3u),
-                 TURBO_OK);
+                 SALTS_OK);
     reordered[0] = fixture.peers[1];
     reordered[1] = fixture.peers[0];
     check_equal(flowie_cluster_peer_authority_replace(authority, reordered, 2u, 4u),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     fixture.peers[1].node_id = vstr_from_cstr("node-c");
     check_equal(flowie_cluster_peer_authority_replace(authority, fixture.peers, 2u, 4u),
-                 TURBO_EPERM);
+                 SALTS_EPERM);
     check_equal(flowie_cluster_peer_authority_snapshot(authority, snapshot, 2u, &count,
                                                         &revision),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(count, 1u);
     check_equal(revision, 3u);
     flowie_cluster_peer_authority_destroy(authority);
@@ -137,15 +137,15 @@ spec("Flowie cluster peer authority") {
     config.pins = fixture.pins;
     config.pin_count = 2u;
     fixture.fingerprints[0][7] = 'A';
-    check_equal(flowie_cluster_peer_authority_create(&config, &authority), TURBO_EINVAL);
+    check_equal(flowie_cluster_peer_authority_create(&config, &authority), SALTS_EINVAL);
     check_null(authority);
     fixture.fingerprints[0][7] = '1';
     fixture.pins[1].node_id = fixture.pins[0].node_id;
-    check_equal(flowie_cluster_peer_authority_create(&config, &authority), TURBO_EINVAL);
+    check_equal(flowie_cluster_peer_authority_create(&config, &authority), SALTS_EINVAL);
     check_null(authority);
     fixture.pins[1].node_id = vstr_from_cstr("node-b");
     config.max_peers = 0u;
-    check_equal(flowie_cluster_peer_authority_create(&config, &authority), TURBO_EINVAL);
+    check_equal(flowie_cluster_peer_authority_create(&config, &authority), SALTS_EINVAL);
     check_null(authority);
   }
 }

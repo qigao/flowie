@@ -1,11 +1,11 @@
 #ifndef FLOWIE_H
 #define FLOWIE_H
 
-#include "CoroNet/turbo_coro_context.h"
 #include "flowie_export.h"
 #include "flowie_execution.h"
 #include "flowie_message.h"
 #include "flowie_mqtt_protocol.h"
+#include "flowie_mqtt_security.h"
 #include "flowie_protocol_repository.h"
 #include "flowie_security.h"
 
@@ -25,6 +25,7 @@ typedef struct flowie_endpoint_s flowie_endpoint_core_t;
 #define FLOWIE_DEFAULT_MAX_CONNECTIONS 1024u
 #define FLOWIE_DEFAULT_SEND_HWM_BYTES (1024u * 1024u)
 #define FLOWIE_DEFAULT_RECV_BUFFER_SIZE (4u * 1024u)
+#define FLOWIE_DEFAULT_NETWORK_COMMAND_BYTES (16u * 1024u * 1024u)
 #define FLOWIE_DEFAULT_MAX_SUBSCRIPTIONS_PER_SESSION 1024u
 #define FLOWIE_DEFAULT_MAX_INFLIGHT_PER_SESSION 64u
 #define FLOWIE_MAX_CONNECTIONS_LIMIT UINT32_MAX
@@ -36,9 +37,10 @@ typedef struct flowie_endpoint_s flowie_endpoint_core_t;
 typedef enum flowie_transport_e {
   FLOWIE_TRANSPORT_TCP = 1,
   FLOWIE_TRANSPORT_TLS,
+  FLOWIE_TRANSPORT_UDP,
+  FLOWIE_TRANSPORT_KCP,
   FLOWIE_TRANSPORT_WS,
-  FLOWIE_TRANSPORT_WSS,
-  FLOWIE_TRANSPORT_PIPE
+  FLOWIE_TRANSPORT_WSS
 } flowie_transport_t;
 
 /** Per-subscriber overflow behavior for MQTT fan-out. */
@@ -55,7 +57,7 @@ typedef struct flowie_endpoint_config_s {
   flowie_protocol_settlement_policy_t settlement;
   const char *host;
   int port;
-  /** Pipe endpoint or WS/WSS request path. */
+  /** WS/WSS request path; ignored by CNet transports. */
   const char *path;
   size_t max_packet_size;
   uint32_t max_connections;
@@ -79,15 +81,17 @@ typedef struct flowie_endpoint_config_s {
   size_t max_retained_messages;
   /** Zero selects DISCONNECT; no other slow-subscriber policy is currently supported. */
   flowie_slow_subscriber_policy_t slow_subscriber_policy;
-  /** Private-context coroutine stack size. Zero selects the CoroNet default. */
+  /** Private Salts executor coroutine stack size. Zero selects the Salts default. */
   size_t coroutine_stack_size;
   /** Maximum inbound MQTT 5 Topic Alias accepted per connection. Zero disables aliases. */
   uint16_t topic_alias_maximum;
   /**
-   * Capacity of each private-context CoroNet user-space receive buffer.
+   * Capacity of each CNet user-space receive buffer.
    * 0 selects the 4 KiB component default.
    */
   size_t stream_recv_buffer_bytes;
+  /** Aggregate copied CNet/CHTTP send-command bytes; 0 selects 16 MiB. */
+  size_t network_command_bytes;
   /** Requested OS SO_RCVBUF bytes for TCP/TLS/WS/WSS; 0 preserves the OS default. */
   size_t socket_recv_buffer_bytes;
   /** Requested OS SO_SNDBUF bytes for TCP/TLS/WS/WSS; 0 preserves the OS default. */
@@ -203,7 +207,7 @@ typedef struct flowie_endpoint_cluster_action_s {
    0u,                                                                                             \
    (flowie_protocol_settlement_point_t)0}
 
-/** Runs at most once on the endpoint CoroNet owner lane after an accepted request. */
+/** Runs at most once on the endpoint Salts executor owner shard after an accepted request. */
 typedef void (*flowie_endpoint_cluster_complete_fn)(void *complete_ctx, int status,
                                                     const flowie_endpoint_cluster_action_t *action);
 
@@ -244,8 +248,8 @@ typedef struct flowie_endpoint_cluster_socket_port_s {
  * External MQTT session-owner boundary for one managed endpoint.
  *
  * Request inputs are borrowed only for the call; an implementation returning
- * TURBO_OK must copy them and, after the request callback returns, invoke
- * completion exactly once on the endpoint's CoroNet owner lane. A non-OK return
+ * SALTS_OK must copy them and, after the request callback returns, invoke
+ * completion exactly once on the endpoint's Salts executor owner shard. A non-OK return
  * must not invoke completion. `detach()` is
  * synchronous: after it returns, the adapter must never invoke a completion or
  * socket-port callback for that connection generation. The binding and its ctx
@@ -284,7 +288,7 @@ typedef struct flowie_endpoint_cluster_binding_s {
                 flowie_mqtt_version_t mqtt_version, flowie_mqtt_span_t client_id,
                 const flowie_protocol_settlement_request_t *settlement,
                 flowie_endpoint_cluster_complete_fn complete, void *complete_ctx);
-  /** Fire-and-forget abnormal loss; inputs must be copied before returning TURBO_OK. */
+  /** Fire-and-forget abnormal loss; inputs must be copied before returning SALTS_OK. */
   int (*connection_lost)(void *ctx, uint64_t connection_id, uint64_t connection_generation,
                          flowie_mqtt_version_t mqtt_version, flowie_mqtt_span_t client_id);
   void (*detach)(void *ctx, uint64_t connection_id, uint64_t connection_generation);
@@ -349,7 +353,7 @@ typedef struct flowie_endpoint_core_options_s {
 #define FLOWIE_ENDPOINT_CORE_OPTIONS_INIT {sizeof(flowie_endpoint_core_options_t), NULL, NULL}
 
 /**
- * Create one standalone MQTT broker endpoint with a private CoroNet context.
+ * Create one standalone MQTT broker endpoint with a private Salts executor.
  *
  * The Core owns listener, sessions, subscriptions, retained state and bounded
  * send queues. Product composition is outside this library boundary.
@@ -359,8 +363,8 @@ FLOWIE_C_API int flowie_endpoint_core_create(const char *name, const flowie_endp
                                           flowie_endpoint_core_t **out);
 
 /**
- * Create a direct Core with explicit CoroNet placement and optional bindings.
- * OWNED_CONTEXT is rejected; borrowed resources remain caller-owned through
+ * Create a direct Core with explicit Salts executor placement and optional bindings.
+ * Borrowed resources remain caller-owned through
  * destruction. Security and persistence bindings are copied/retained according
  * to their individual contracts.
  */
@@ -404,39 +408,13 @@ typedef struct flowie_publish_message_view_s {
 /**
  * Build the MQTT PUBLISH protocol/data bridge value without allocation.
  * The caller supplies the protocol-owner route and current session generation.
- * Returns TURBO_OK, TURBO_EINVAL for ABI/route errors, or TURBO_EPROTO for an
+ * Returns SALTS_OK, SALTS_EINVAL for ABI/route errors, or SALTS_EPROTO for an
  * invalid MQTT publish contract. Output is modified only on success.
  */
 FLOWIE_C_API int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
                                          flowie_mqtt_version_t version, uint64_t owner_instance_id,
                                          uint64_t session_id, uint64_t session_generation,
                                          flowie_publish_message_view_t *out);
-
-typedef enum flowie_mqtt_security_resource_kind_e {
-  FLOWIE_MQTT_SECURITY_TOPIC = 1,
-  FLOWIE_MQTT_SECURITY_TOPIC_FILTER
-} flowie_mqtt_security_resource_kind_t;
-
-/**
- * Optional matcher context for MQTT resource kind and per-connection ACL placeholders.
- * username and client_id are borrowed only for the synchronous authorization call.
- */
-typedef struct flowie_mqtt_security_context_s {
-  size_t size;
-  flowie_mqtt_security_resource_kind_t kind;
-  flowie_mqtt_span_t username;
-  flowie_mqtt_span_t client_id;
-} flowie_mqtt_security_context_t;
-
-#define FLOWIE_MQTT_SECURITY_CONTEXT_INIT                                                          \
-  {sizeof(flowie_mqtt_security_context_t), FLOWIE_MQTT_SECURITY_TOPIC, {NULL, 0u}, {NULL, 0u}}
-
-/**
- * Initialize a SecurityRealm adapter matcher for MQTT Topic Filters.
- * The matcher is stateless and may be shared when the realm itself is
- * externally synchronized according to its owner contract.
- */
-FLOWIE_C_API int flowie_mqtt_security_matcher_init(flowie_security_matcher_t *out);
 
 #ifdef __cplusplus
 }

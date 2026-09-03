@@ -4,8 +4,8 @@
 #include "flowie_export.h"
 #include "flowie_protocol_contract.h"
 #include "flowie_mqtt_protocol.h"
-#include "turbo_buffer.h"
-#include "turbo_str.h"
+#include "salts_buffer.h"
+#include "salts_str.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -43,7 +43,7 @@ typedef struct flowie_publish_result_s {
 #define FLOWIE_MQTT_MESSAGE_BROKER_WILL UINT32_C(0x80000000)
 
 #define FLOWIE_PUBLISH_RESULT_INIT                                                                 \
-  {sizeof(flowie_publish_result_t), TURBO_OK, (flowie_protocol_settlement_point_t)0}
+  {sizeof(flowie_publish_result_t), SALTS_OK, (flowie_protocol_settlement_point_t)0}
 
 FLOWIE_C_API void flowie_message_init(flowie_message_t *message);
 FLOWIE_C_API void flowie_message_cleanup(flowie_message_t *message);

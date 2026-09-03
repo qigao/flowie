@@ -44,7 +44,7 @@ Repository 本地 Auth 或第三方 HTTPS Auth。第三方 credential、OIDC、L
 ### 4. 关联组件与底层设计 (Related System ADRs)
 
 - [TurboDB ORM 统一状态、索引、日志与时间序列](ADR_TYPED_ORM_PERSISTENCE_V2.md)
-- [CoroNet Buffer 调优契约](../io/common/CORONET_BUFFER_TUNING.md)
+- [服务端网络与容量配置](SERVER_GUIDE.md#6-tcptlsudpkcpws-与-wss)
 
 ### 5. 过程日志与临时清单 (Internal Logs & Work-in-Progress)
 

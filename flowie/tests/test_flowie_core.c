@@ -1,16 +1,16 @@
 #include "flowie.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
                                 flowie_publish_result_t *result, void *ctx) {
   (void)endpoint;
   (void)message;
   (void)ctx;
-  result->status = TURBO_OK;
+  result->status = SALTS_OK;
   result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 suite("Flowie standalone core") {
@@ -24,7 +24,31 @@ suite("Flowie standalone core") {
     config.manage_sessions = 1;
     options.on_message = flowie_test_dispatch;
     check_equal(flowie_endpoint_core_create("standalone", &config, &options, &endpoint),
-                 TURBO_OK);
+                 SALTS_OK);
+    check_not_null(endpoint);
+    flowie_endpoint_core_destroy(endpoint);
+  }
+
+  it("accepts public stream socket tuning for the CNet transport") {
+    flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+    flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+    flowie_endpoint_core_t *endpoint = NULL;
+
+    config.host = "127.0.0.1";
+    config.port = 1883;
+    config.manage_sessions = 1;
+    config.reuse_port = 1;
+    config.socket_recv_buffer_bytes = 32768u;
+    config.socket_send_buffer_bytes = 65536u;
+    config.tcp_keepalive = 1;
+    config.tcp_keepalive_idle_ms = 60000u;
+    config.tcp_keepalive_interval_ms = 10000u;
+    config.tcp_keepalive_count = 3u;
+    config.linger = 1;
+    config.linger_ms = 250u;
+    options.on_message = flowie_test_dispatch;
+
+    check_equal(flowie_endpoint_core_create("tuned", &config, &options, &endpoint), SALTS_OK);
     check_not_null(endpoint);
     flowie_endpoint_core_destroy(endpoint);
   }
@@ -40,7 +64,7 @@ suite("Flowie standalone core") {
     route.owner_instance_id = 7u;
     route.session_id = 11u;
     route.session_generation = 13u;
-    check_equal(flowie_message_set_protocol_route(&message, &route), TURBO_OK);
+    check_equal(flowie_message_set_protocol_route(&message, &route), SALTS_OK);
     settlement.message.protocol = FLOWIE_PROTOCOL_MQTT;
     settlement.message.protocol_version = FLOWIE_MQTT_VERSION_5;
     settlement.message.kind = FLOWIE_PROTOCOL_MESSAGE_DATA;
@@ -48,13 +72,13 @@ suite("Flowie standalone core") {
     settlement.message.packet_id = 3u;
     settlement.message.session_generation = route.session_generation;
     settlement.requested_point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
-    check_equal(flowie_message_set_protocol_settlement(&message, &settlement), TURBO_OK);
+    check_equal(flowie_message_set_protocol_settlement(&message, &settlement), SALTS_OK);
     check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
-                 TURBO_EALREADY);
+                 SALTS_EALREADY);
     flowie_message_cleanup(&message);
   }
 }

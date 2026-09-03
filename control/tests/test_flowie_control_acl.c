@@ -2,7 +2,7 @@
 #include "flowie.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -24,7 +24,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     char formatted[FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u];
     size_t formatted_size = 0u;
 
-    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), TURBO_OK);
+    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), SALTS_OK);
     check_equal(document.subject_kind, FLOWIE_SECURITY_SUBJECT_PRINCIPAL);
     check_equal(document.subject, "4fc55867-cdb8-4458-9ba7-afca8e4e2867");
     check_equal(document.connection_effect, FLOWIE_SECURITY_ALLOW);
@@ -41,7 +41,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
                       FLOWIE_SECURITY_ACTION_SUBSCRIBE);
     check_equal(flowie_control_acl_format(&document, formatted, sizeof(formatted),
                                            &formatted_size),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(formatted_size, sizeof(canonical) - 1u);
     check_equal(formatted, canonical);
   }
@@ -69,7 +69,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     size_t rule_count = 0u;
 
     check_equal(flowie_control_acl_parse(role_input, sizeof(role_input) - 1u, &document),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(document.subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
     check_equal(document.entry_count, 3u);
     check_true(document.entries[0].uses_username);
@@ -77,11 +77,11 @@ spec("Flowie Control subject-scoped ACL grammar") {
     check_equal(document.entries[2].alternative_count, 2u);
     check_equal(flowie_control_acl_format(&document, formatted, sizeof(formatted),
                                           &formatted_size),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(formatted_size, sizeof(role_canonical) - 1u);
     check_equal(formatted, role_canonical);
     check_equal(flowie_control_acl_compile(&document, "root-a", rules, 5u, &rule_count),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(rule_count, 5u);
     for (size_t index = 0u; index < rule_count; ++index) {
       check_equal(rules[index].subject_kind, FLOWIE_SECURITY_SUBJECT_ROLE);
@@ -95,15 +95,15 @@ spec("Flowie Control subject-scoped ACL grammar") {
     document = (flowie_control_acl_document_t)FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
     formatted_size = 0u;
     check_equal(flowie_control_acl_parse(group_input, sizeof(group_input) - 1u, &document),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(document.subject_kind, FLOWIE_SECURITY_SUBJECT_GROUP);
     check_equal(flowie_control_acl_format(&document, formatted, sizeof(formatted),
                                           &formatted_size),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(formatted, group_input);
     rule_count = 0u;
     check_equal(flowie_control_acl_compile(&document, "root-a", rules, 5u, &rule_count),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(rule_count, 1u);
     check_equal(rules[0].subject_kind, FLOWIE_SECURITY_SUBJECT_GROUP);
   }
@@ -116,7 +116,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
         "}";
     flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
 
-    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), TURBO_OK);
+    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), SALTS_OK);
     check_true(document.entries[0].uses_username);
     check_true(document.entries[0].uses_client_id);
     check_equal(document.entries[0].topic, "root-a/$bridge/%capture/devices/%u/state");
@@ -144,8 +144,8 @@ spec("Flowie Control subject-scoped ACL grammar") {
     flowie_security_realm_t *realm = NULL;
     size_t count = 0u;
 
-    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), TURBO_OK);
-    check_equal(flowie_control_acl_compile(&document, "root-a", rules, 4u, &count), TURBO_OK);
+    check_equal(flowie_control_acl_parse(input, sizeof(input) - 1u, &document), SALTS_OK);
+    check_equal(flowie_control_acl_compile(&document, "root-a", rules, 4u, &count), SALTS_OK);
     check_equal(count, 4u);
     check_equal(rules[0].action_mask, FLOWIE_SECURITY_ACTION_CONNECT);
     check_equal(rules[0].resource_type, FLOWIE_SECURITY_RESOURCE_GENERIC);
@@ -157,12 +157,12 @@ spec("Flowie Control subject-scoped ACL grammar") {
                  "root-a/groups/region/operators/devices/%u/heartbeat");
     check_equal(rules[3].pattern,
                  "root-a/groups/region/operators/devices/%capture/command");
-    check_equal(flowie_mqtt_security_matcher_init(&matcher), TURBO_OK);
+    check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
     realm_config.policy_version = 1u;
     realm_config.rules = rules;
     realm_config.rule_count = count;
     realm_config.matcher = matcher;
-    check_equal(flowie_security_realm_create(&realm_config, &realm), TURBO_OK);
+    check_equal(flowie_security_realm_create(&realm_config, &realm), SALTS_OK);
     memcpy(principal.principal_id, "device-1", sizeof("device-1"));
     memcpy(principal.principal_type, "device", sizeof("device"));
     memcpy(principal.domain_id, "root-a", sizeof("root-a"));
@@ -174,7 +174,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     request.action = FLOWIE_SECURITY_ACTION_CONNECT;
     request.resource_type = FLOWIE_SECURITY_RESOURCE_GENERIC;
     request.resource = "root-a";
-    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
 
     mqtt.username = (flowie_mqtt_span_t){(const uint8_t *)"device-1", 8u};
@@ -183,7 +183,7 @@ spec("Flowie Control subject-scoped ACL grammar") {
     request.resource = "root-a/groups/region/operators/devices/device-1/event";
     request.protocol_context = &mqtt;
     decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
-    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
 
     mqtt.client_id =
@@ -191,20 +191,20 @@ spec("Flowie Control subject-scoped ACL grammar") {
     request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/groups/region/operators/devices/7f4c12/command";
     decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
-    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
 
     mqtt.client_id =
         (flowie_mqtt_span_t){(const uint8_t *)"7f4c12-controller",
                              sizeof("7f4c12-controller") - 1u};
     decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
-    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
 
     mqtt.client_id =
         (flowie_mqtt_span_t){(const uint8_t *)"other-capture", sizeof("other-capture") - 1u};
     decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
-    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), TURBO_OK);
+    check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     flowie_security_realm_destroy(realm);
   }
@@ -235,33 +235,33 @@ spec("Flowie Control subject-scoped ACL grammar") {
 
     check_equal(flowie_control_acl_parse(unknown_subject, sizeof(unknown_subject) - 1u,
                                          &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(empty_segment, sizeof(empty_segment) - 1u, &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(wildcard_domain, sizeof(wildcard_domain) - 1u,
                                          &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(partial_wildcard, sizeof(partial_wildcard) - 1u,
                                          &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(partial_placeholder,
                                          sizeof(partial_placeholder) - 1u, &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(non_terminal_hash,
                                          sizeof(non_terminal_hash) - 1u, &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(non_terminal_alternatives,
                                          sizeof(non_terminal_alternatives) - 1u, &document),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(missing_tail, sizeof(missing_tail) - 1u, &document),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(duplicate_alternative,
                                           sizeof(duplicate_alternative) - 1u, &document),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_equal(flowie_control_acl_parse(excess_alternatives,
                                          sizeof(excess_alternatives) - 1u, &document),
-                TURBO_ENOSPC);
+                SALTS_ENOSPC);
     check_equal(flowie_control_acl_parse(denied_block, sizeof(denied_block) - 1u, &document),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
   }
 }

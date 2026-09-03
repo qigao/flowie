@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -17,7 +17,7 @@ static flowie_protocol_settlement_request_t flowie_publish_settlement(void) {
   settlement.message.duplicate = 1u;
   settlement.message.retain = 1u;
   settlement.point = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
-  settlement.status = TURBO_OK;
+  settlement.status = SALTS_OK;
   settlement.message_id = 71u;
   settlement.attempt = 2u;
   return settlement;
@@ -34,13 +34,13 @@ spec("flowie cluster peer PUBLISH_SETTLE codec") {
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(tstr_len(encoded),
                   FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE + sizeof(client_id) - 1u);
     check_equal(encoded, "TFPS", 4u);
     check_equal(flowie_cluster_peer_publish_settle_decode(encoded, tstr_len(encoded), 256u,
                                                            &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.client_id.data, client_id, decoded.client_id.size);
     check_equal(decoded.settlement.message.protocol, FLOWIE_PROTOCOL_MQTT);
     check_equal(decoded.settlement.message.protocol_version, FLOWIE_MQTT_VERSION_5);
@@ -66,26 +66,26 @@ spec("flowie cluster peer PUBLISH_SETTLE codec") {
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     settlement = flowie_publish_settlement();
     settlement.attempt = 0u;
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     settlement = flowie_publish_settlement();
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     encoded[59] = (char)0x80u;
     check_equal(flowie_cluster_peer_publish_settle_decode(encoded, tstr_len(encoded), 256u,
                                                            &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     encoded[59] = 0;
     check_equal(flowie_cluster_peer_publish_settle_decode(
                      encoded, tstr_len(encoded), tstr_len(encoded) - 1u, &decoded),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     tstr_free(encoded);
   }
 }

@@ -1,6 +1,6 @@
 #include "flowie_cluster_raft_generation_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 
@@ -69,14 +69,14 @@ int flowie_cluster_raft_generation_create_with_api(
   if (out) *out = NULL;
   if (!out || !flowie_cluster_raft_generation_config_valid(config) ||
       !flowie_cluster_raft_generation_api_valid(api))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   generation =
       (flowie_cluster_raft_generation_t *)calloc(1u, sizeof(*generation));
-  if (!generation) return TURBO_ENOMEM;
+  if (!generation) return SALTS_ENOMEM;
   generation->api = api;
   generation->max_event_bytes = config->router.max_event_bytes;
   rc = api->owners_create(&config->owners, &generation->owners);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   generation->state_machine.owners.directory = generation->owners;
   generation->state_machine.apply_publish = config->apply_publish;
   generation->state_machine.publish_ctx = config->publish_ctx;
@@ -85,13 +85,13 @@ int flowie_cluster_raft_generation_create_with_api(
   runtime_config.store.state_machine.apply_batch =
       flowie_cluster_state_machine_apply_batch;
   rc = api->runtime_create(&runtime_config, &generation->runtime);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   rc = api->router_create_bound(&config->router, generation->runtime,
                                 &generation->router);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   generation->state = FLOWIE_CLUSTER_RAFT_GENERATION_CREATED;
   *out = generation;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   if (generation->router) (void)api->router_destroy(generation->router);
@@ -112,9 +112,9 @@ int flowie_cluster_raft_generation_start(
     flowie_cluster_raft_generation_t *generation) {
   int rc;
   if (!generation || generation->state != FLOWIE_CLUSTER_RAFT_GENERATION_CREATED)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = generation->api->runtime_start(generation->runtime);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     generation->state = FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING;
   return rc;
 }
@@ -126,11 +126,11 @@ int flowie_cluster_raft_generation_drive(
   int rc;
   if (!generation ||
       generation->state != FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = generation->api->runtime_drive(
       generation->runtime, elapsed_ticks, next_election_timeout_ticks,
       out_step);
-  return rc == TURBO_OK ? generation->api->router_retry(generation->router)
+  return rc == SALTS_OK ? generation->api->router_retry(generation->router)
                         : rc;
 }
 
@@ -145,10 +145,10 @@ int flowie_cluster_raft_generation_propose_owner(
   if (!generation ||
       generation->state != FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING ||
       command_id == 0u || !command || !out_receipt)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = flowie_cluster_owner_command_encode(command, encoded, sizeof(encoded),
                                            &encoded_size);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   proposal.command_id = command_id;
   proposal.data = encoded;
   proposal.data_length = encoded_size;
@@ -165,14 +165,14 @@ int flowie_cluster_raft_generation_submit_publish_durable(
   if (!generation ||
       generation->state != FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING ||
       stream_id == 0u || command_id == 0u || !event || !*event)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = generation->api->runtime_status(generation->runtime, &status);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   if (status.raft.core.role != TR_RAFT_LEADER || status.raft.core.term == 0u)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   rc = generation->api->runtime_configuration(generation->runtime,
                                                &configuration);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   return generation->api->router_submit_durable(
       generation->router, status.raft.core.term, stream_id, command_id,
       &configuration, event);
@@ -185,7 +185,7 @@ int flowie_cluster_raft_generation_publish(
   int rc;
   if (!generation || !request || request->stream_id == 0u ||
       request->command_id == 0u || !request->edge_boot_id)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = flowie_cluster_publish_event_encode(
       request->mqtt_version, request->requested_settlement,
       request->connection_id, request->connection_generation,
@@ -193,7 +193,7 @@ int flowie_cluster_raft_generation_publish(
       request->accepted_at_epoch_seconds, request->edge_node_id,
       request->edge_boot_id, request->client_id, request->packet,
       generation->max_event_bytes, &event);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_cluster_raft_generation_submit_publish_durable(
         generation, request->stream_id, request->command_id, &event);
   tstr_freep(&event);
@@ -205,9 +205,9 @@ int flowie_cluster_raft_generation_stop(
   int rc;
   if (!generation ||
       generation->state != FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = generation->api->runtime_stop(generation->runtime);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     generation->state = FLOWIE_CLUSTER_RAFT_GENERATION_STOPPED;
   return rc;
 }
@@ -220,17 +220,17 @@ flowie_cluster_owner_directory_t *flowie_cluster_raft_generation_owners(
 int flowie_cluster_raft_generation_destroy(
     flowie_cluster_raft_generation_t *generation) {
   int rc;
-  if (!generation) return TURBO_OK;
+  if (!generation) return SALTS_OK;
   if (generation->state == FLOWIE_CLUSTER_RAFT_GENERATION_RUNNING)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   rc = generation->api->router_destroy(generation->router);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   generation->router = NULL;
   rc = generation->api->runtime_destroy(generation->runtime);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   generation->runtime = NULL;
   generation->api->owners_destroy(generation->owners);
   generation->owners = NULL;
   free(generation);
-  return TURBO_OK;
+  return SALTS_OK;
 }

@@ -226,15 +226,15 @@ typedef struct flowie_security_rule_s {
  * `subject` must be `*` for `any`; actions are comma-separated. `\\`, `\|`, and
  * `\xHH` escapes are accepted in subject, domain, and pattern fields.
  *
- * The parser copies into `rule_out`, performs no allocation, and returns TURBO_OK,
- * TURBO_EINVAL for invalid pointers/capacities, or TURBO_EPROTO for invalid syntax.
+ * The parser copies into `rule_out`, performs no allocation, and returns SALTS_OK,
+ * SALTS_EINVAL for invalid pointers/capacities, or SALTS_EPROTO for invalid syntax.
  */
 FLOWIE_C_API int flowie_security_rule_parse_line(const char *line, size_t line_size,
                                                   flowie_security_rule_t *rule_out);
 /**
  * Serialize one validated rule to the canonical line representation.
  * `line_out` is not NUL-terminated by contract; `line_size_out` receives its byte count.
- * Returns TURBO_OK, TURBO_EINVAL for invalid input, or TURBO_ENOSPC for insufficient capacity.
+ * Returns SALTS_OK, SALTS_EINVAL for invalid input, or SALTS_ENOSPC for insufficient capacity.
  */
 FLOWIE_C_API int flowie_security_rule_format_line(const flowie_security_rule_t *rule,
                                                    char *line_out, size_t line_capacity,
@@ -459,13 +459,13 @@ FLOWIE_C_API int flowie_security_realm_refresh(flowie_security_realm_t *realm,
                                                 uint64_t required_version,
                                                 uint64_t now_epoch_seconds);
 
-/** Complete one deterministic decision. Deny is a valid result and returns TURBO_OK. */
+/** Complete one deterministic decision. Deny is a valid result and returns SALTS_OK. */
 FLOWIE_C_API int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
                                                  const flowie_security_request_t *request,
                                                  uint64_t now_epoch_seconds,
                                                  flowie_security_decision_t *decision);
 
-/** Evaluate and map a deny decision to TURBO_EPERM for protocol-owner boundaries. */
+/** Evaluate and map a deny decision to SALTS_EPERM for protocol-owner boundaries. */
 FLOWIE_C_API int flowie_security_realm_authorize(flowie_security_realm_t *realm,
                                                   const flowie_security_request_t *request,
                                                   uint64_t now_epoch_seconds,

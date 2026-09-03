@@ -1,14 +1,12 @@
 #include "flowie_control_jwt_jwks_authenticator_internal.h"
 
-#include "CoroNet/turbo_coro_context.h"
 #include "cjwt/cjwt.h"
 #include "mtls_test_server.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "turbo_error.h"
-#include "turbo_parser.h"
+#include "salts_error.h"
+#include <json_parser.h>
 
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,7 +47,7 @@ static flowie_control_jwt_jwks_authenticator_t *jwt_test_authenticator(void) {
   config.audience = "flowie";
   config.subject_type = "device";
   config.algorithm = "EdDSA";
-  check_equal(flowie_control_jwt_jwks_authenticator_create(&config, &authenticator), TURBO_OK);
+  check_equal(flowie_control_jwt_jwks_authenticator_create(&config, &authenticator), SALTS_OK);
   check_not_null(authenticator);
   return authenticator;
 }
@@ -70,21 +68,21 @@ static char *jwt_test_encode(const jwt_test_claims_t *claims) {
   token.iat = (int64_t *)&claims->issued_at;
   token.nbf = (int64_t *)&claims->not_before;
   token.exp = (int64_t *)&claims->expires_at;
-  token.private_claims = turbo_json_create_object();
+  token.private_claims = json_create_object();
   check_not_null(token.private_claims);
-  turbo_json_object_set_string(token.private_claims, "domain_id", claims->domain_id);
-  turbo_json_object_set_bool(token.private_claims, "account_enabled", claims->account_enabled != 0);
-  turbo_json_object_set_number(token.private_claims, "revision", (double)claims->revision);
-  turbo_json_object_set_number(token.private_claims, "assurance_level",
+  json_object_set_string(token.private_claims, "domain_id", claims->domain_id);
+  json_object_set_bool(token.private_claims, "account_enabled", claims->account_enabled != 0);
+  json_object_set_number(token.private_claims, "revision", (double)claims->revision);
+  json_object_set_number(token.private_claims, "assurance_level",
                                (double)claims->assurance_level);
-  groups = turbo_json_create_array();
+  groups = json_create_array();
   check_not_null(groups);
-  turbo_json_array_add(groups, turbo_json_create_string("operators"));
-  turbo_json_object_add(token.private_claims, "groups", groups);
+  json_array_add(groups, json_create_string("operators"));
+  json_object_add(token.private_claims, "groups", groups);
   check_equal(cjwt_encode(&token, JWT_TEST_PRIVATE_KEY, sizeof(JWT_TEST_PRIVATE_KEY), &encoded),
               CJWTE_OK);
   check_not_null(encoded);
-  turbo_free_json(&token.private_claims);
+  json_free(token.private_claims);
   return encoded;
 }
 
@@ -116,23 +114,7 @@ static flowie_control_external_auth_request_t jwt_test_request(const char *token
   return request;
 }
 
-typedef struct jwt_test_verify_task_s {
-  const flowie_control_external_authenticator_t *authenticator;
-  flowie_control_external_auth_request_t request;
-  flowie_control_external_auth_assertion_t assertion;
-  atomic_int done;
-  int status;
-} jwt_test_verify_task_t;
-
 static uint64_t jwt_test_clock(void *ctx) { return ctx ? *(const uint64_t *)ctx : 0u; }
-
-static void jwt_test_verify_task(coro_t *coroutine, void *arg) {
-  jwt_test_verify_task_t *task = (jwt_test_verify_task_t *)arg;
-  (void)coroutine;
-  task->status =
-      task->authenticator->verify(task->authenticator->ctx, &task->request, &task->assertion);
-  atomic_store_explicit(&task->done, 1, memory_order_release);
-}
 
 static int jwt_test_http_response(char *buffer, size_t capacity, const char *content_type) {
   int result;
@@ -154,21 +136,26 @@ static int jwt_test_network_verify(const char *content_type, uint8_t *request_ou
   flowie_control_jwt_jwks_authenticator_config_t config =
       FLOWIE_CONTROL_JWT_JWKS_AUTHENTICATOR_CONFIG_INIT;
   flowie_control_jwt_jwks_authenticator_t *authenticator = NULL;
+  const flowie_control_external_authenticator_t *interface = NULL;
+  flowie_control_external_auth_request_t request;
+  flowie_control_external_auth_assertion_t assertion =
+      FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   jwt_test_claims_t claims = jwt_test_valid_claims();
-  jwt_test_verify_task_t task;
-  coro_context_t *context = NULL;
   uint64_t now = 1000u;
   char *token = NULL;
   int response_size;
-  int rc = TURBO_EIO;
+  int rc = SALTS_EIO;
   memset(&server, 0, sizeof(server));
   server.listener = FLOW_MTLS_TEST_INVALID_SOCKET;
-  memset(&task, 0, sizeof(task));
-  atomic_init(&task.done, 0);
   response_size = jwt_test_http_response(response, sizeof(response), content_type);
   if (response_size <= 0 ||
       tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)) != 0)
     goto done;
+  token = jwt_test_encode(&claims);
+  if (!token) {
+    rc = SALTS_ENOMEM;
+    goto done;
+  }
   if (flow_tls_test_server_start(&server, (const uint8_t *)response, (size_t)response_size) != 0)
     goto done;
   if (snprintf(url, sizeof(url), "https://localhost:%u/.well-known/jwks.json", server.port) <= 0)
@@ -183,31 +170,12 @@ static int jwt_test_network_verify(const char *content_type, uint8_t *request_ou
   config.clock_seconds = jwt_test_clock;
   config.clock_ctx = &now;
   rc = flowie_control_jwt_jwks_authenticator_create(&config, &authenticator);
-  if (rc != TURBO_OK) goto done;
-  token = jwt_test_encode(&claims);
-  if (!token) {
-    rc = TURBO_ENOMEM;
-    goto done;
-  }
-  task.authenticator = flowie_control_jwt_jwks_authenticator_interface(authenticator);
-  task.request = jwt_test_request(token);
-  task.assertion =
-      (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  context = coro_context_create(NULL);
-  if (!context) {
-    rc = TURBO_ENOMEM;
-    goto done;
-  }
-  rc = coro_context_spawn(context, jwt_test_verify_task, &task);
-  if (rc != TURBO_OK) goto done;
-  while (!atomic_load_explicit(&task.done, memory_order_acquire)) {
-    rc = coro_context_run(context, TURBO_RUN_ONCE);
-    if (rc != TURBO_OK) goto done;
-  }
-  rc = task.status;
+  if (rc != SALTS_OK) goto done;
+  interface = flowie_control_jwt_jwks_authenticator_interface(authenticator);
+  request = jwt_test_request(token);
+  rc = interface->verify(interface->ctx, &request, &assertion);
 
 done:
-  if (context) coro_context_destroy(context);
   flowie_control_jwt_jwks_authenticator_destroy(authenticator);
   flow_mtls_test_server_join(&server);
   if (request_out && request_capacity != 0u && server.request_size < request_capacity)
@@ -219,11 +187,11 @@ done:
 }
 
 spec("Flowie control JWT/JWKS authenticator") {
-  it("fetches its first JWKS over coroutine HTTPS and rejects a wrong media type") {
+  it("fetches its first JWKS over CHTTP and rejects a wrong media type") {
     uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY] = {0};
-    check_equal(jwt_test_network_verify("Application/JSON", request, sizeof(request)), TURBO_OK);
+    check_equal(jwt_test_network_verify("Application/JSON", request, sizeof(request)), SALTS_OK);
     check_not_null(strstr((const char *)request, "GET /.well-known/jwks.json HTTP/1.1"));
-    check_equal(jwt_test_network_verify("text/plain", NULL, 0u), TURBO_EPROTO);
+    check_equal(jwt_test_network_verify("text/plain", NULL, 0u), SALTS_EPROTO);
   }
 
   it("verifies one exact asymmetric key and emits a Domain-bound assertion") {
@@ -236,10 +204,10 @@ spec("Flowie control JWT/JWKS authenticator") {
 
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(assertion.issuer, "https://idp.example");
     check_equal(assertion.domain_id, "root-a");
     check_equal(assertion.subject, "device-a");
@@ -250,7 +218,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request.domain_id = "";
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(assertion.domain_id, "root-a");
 
     free(token);
@@ -266,14 +234,14 @@ spec("Flowie control JWT/JWKS authenticator") {
     flowie_control_external_auth_request_t request;
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                TURBO_OK);
+                SALTS_OK);
 
     claims.issuer = "https://other.example";
     token = jwt_test_encode(&claims);
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.audience = "other";
@@ -281,7 +249,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.subject = "device-b";
@@ -289,7 +257,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.domain_id = "root-b";
@@ -297,7 +265,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.account_enabled = 0;
@@ -305,7 +273,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.issued_at = 1001u;
@@ -313,7 +281,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.not_before = 1031u;
@@ -321,7 +289,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.expires_at = 969u;
@@ -329,7 +297,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     claims.revision = 0u;
@@ -337,7 +305,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     free(token);
     claims = jwt_test_valid_claims();
     claims.assurance_level = 4u;
@@ -345,7 +313,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     free(token);
     claims = jwt_test_valid_claims();
     claims.algorithm = alg_hs256;
@@ -353,7 +321,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
 
     flowie_control_jwt_jwks_authenticator_destroy(authenticator);
@@ -370,20 +338,20 @@ spec("Flowie control JWT/JWKS authenticator") {
 
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1000u),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EBUSY);
+                SALTS_EBUSY);
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                TURBO_OK);
+                SALTS_OK);
     free(token);
     claims.kid = "key-2";
     token = jwt_test_encode(&claims);
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     claims = jwt_test_valid_claims();
     token = jwt_test_encode(&claims);
@@ -393,7 +361,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request = jwt_test_request(token);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                TURBO_EPERM);
+                SALTS_EPERM);
     free(token);
     flowie_control_jwt_jwks_authenticator_destroy(authenticator);
   }
@@ -417,16 +385,16 @@ spec("Flowie control JWT/JWKS authenticator") {
 
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, duplicate,
                                                               sizeof(duplicate) - 1u, 1200u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, encryption,
                                                               sizeof(encryption) - 1u, 1200u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, private_key,
                                                               sizeof(private_key) - 1u, 1200u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, wrong_algorithm,
                                                               sizeof(wrong_algorithm) - 1u, 1200u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     flowie_control_jwt_jwks_authenticator_destroy(authenticator);
   }
 }

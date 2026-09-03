@@ -40,35 +40,35 @@ RUN curl -fsSL \
     && git -C /opt/vcpkg checkout "${VCPKG_REF}" \
     && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-FROM build_toolchain AS turboutils_builder
-COPY --from=turbo_utils . /src/turbo-utils
+FROM build_toolchain AS salts_builder
+COPY --from=salts . /src/salts
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/turbo-utils; \
+    set -eux; parallel="$(nproc)"; cd /src/salts; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
-      -DCMAKE_INSTALL_PREFIX="/opt/turboutils/$FLOWIE_PROFILE" \
+      -DCMAKE_INSTALL_PREFIX="/opt/salts/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
-FROM build_toolchain AS turboparser_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turbo_parser . /src/turbo-parser
+FROM build_toolchain AS salts_utils_builder
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=salts_utils . /src/salts-utils
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/turbo-parser; \
+    set -eux; parallel="$(nproc)"; cd /src/salts-utils; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
-      -DCMAKE_INSTALL_PREFIX="/opt/turboparser/$FLOWIE_PROFILE" \
+      -DCMAKE_INSTALL_PREFIX="/opt/salts-utils/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DTURBO_ENABLE_CAPTURE=OFF \
+      -DSALTS_UTILS_ENABLE_CAPTURE=OFF \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"; \
-    LD_LIBRARY_PATH="/opt/turboparser/$FLOWIE_PROFILE/lib:/opt/turboutils/$FLOWIE_PROFILE/lib" \
-      ldd "/opt/turboparser/$FLOWIE_PROFILE/bin/tbe_compiler" \
-      | tee "/opt/turboparser/$FLOWIE_PROFILE/tbe-compiler.ldd"; \
-    ! grep -F 'not found' "/opt/turboparser/$FLOWIE_PROFILE/tbe-compiler.ldd"
+    LD_LIBRARY_PATH="/opt/salts-utils/$FLOWIE_PROFILE/lib:/opt/salts/$FLOWIE_PROFILE/lib" \
+      ldd "/opt/salts-utils/$FLOWIE_PROFILE/bin/tbe_compiler" \
+      | tee "/opt/salts-utils/$FLOWIE_PROFILE/tbe-compiler.ldd"; \
+    ! grep -F 'not found' "/opt/salts-utils/$FLOWIE_PROFILE/tbe-compiler.ldd"
 
 FROM build_toolchain AS turbonet_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
 COPY --from=turbo_net . /src/turbonet
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     set -eux; parallel="$(nproc)"; cd /src/turbonet; \
@@ -79,18 +79,9 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
-# Opt-in CoroNet logging regression stage. Building this target exercises the
-# Linux epoll backend without adding test binaries to the Flowie runtime image.
-FROM turbonet_builder AS turbonet_logging_tests
-RUN set -eux; cd /src/turbonet; \
-    cmake --build --preset "$FLOWIE_BUILD_PRESET" --parallel "$(nproc)" \
-      --target test_coronet_logging test_coronet_epoll_fault_logging; \
-    ctest --preset "$FLOWIE_BUILD_PRESET" --output-on-failure \
-      -R '^test_coronet_(logging|epoll_fault_logging)$'
-
 FROM build_toolchain AS turbodb_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
 COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
 COPY --from=turbo_db . /src/turbodb
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
@@ -103,32 +94,16 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
-FROM build_toolchain AS turbohttp_builder
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
-COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
-COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
-COPY --from=turbo_http . /src/TurboHTTP
-RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/TurboHTTP; \
-    cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
-      -DCMAKE_INSTALL_PREFIX="/opt/turbohttp/$FLOWIE_PROFILE" \
-      -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
-    cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
-
 FROM build_toolchain AS builder
 ARG SOURCE_REVISION=unknown
-COPY --from=turboutils_builder /opt/turboutils/ /opt/turboutils/
-COPY --from=turboparser_builder /opt/turboparser/ /opt/turboparser/
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
 COPY --from=turbonet_builder /opt/turbonet/ /opt/turbonet/
 COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
-COPY --from=turbohttp_builder /opt/turbohttp/ /opt/turbohttp/
-COPY --from=turboutils_builder /src/turbo-utils/vcpkg_installed/ /src/turbo-utils/vcpkg_installed/
-COPY --from=turboparser_builder /src/turbo-parser/vcpkg_installed/ /src/turbo-parser/vcpkg_installed/
+COPY --from=salts_builder /src/salts/vcpkg_installed/ /src/salts/vcpkg_installed/
+COPY --from=salts_utils_builder /src/salts-utils/vcpkg_installed/ /src/salts-utils/vcpkg_installed/
 COPY --from=turbonet_builder /src/turbonet/vcpkg_installed/ /src/turbonet/vcpkg_installed/
 COPY --from=turbodb_builder /src/turbodb/vcpkg_installed/ /src/turbodb/vcpkg_installed/
-COPY --from=turbohttp_builder /src/TurboHTTP/vcpkg_installed/ /src/TurboHTTP/vcpkg_installed/
 COPY . /src/flowie
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     set -eux; parallel="$(nproc)"; cd /src/flowie; \
@@ -150,19 +125,17 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control-data" \
       /opt/flowie-runtime/bin/flowie-control-data; \
     for libdir in \
-      "/opt/turboutils/$FLOWIE_PROFILE/lib" "/opt/turboparser/$FLOWIE_PROFILE/lib" \
+      "/opt/salts/$FLOWIE_PROFILE/lib" "/opt/salts-utils/$FLOWIE_PROFILE/lib" \
       "/opt/turbonet/$FLOWIE_PROFILE/lib" "/opt/turbodb/$FLOWIE_PROFILE/lib" \
-      "/opt/turbohttp/$FLOWIE_PROFILE/lib" "/opt/flowie/$FLOWIE_PROFILE/lib" \
-      /src/turbo-utils/vcpkg_installed/x64-linux/debug/lib \
-      /src/turbo-utils/vcpkg_installed/x64-linux/lib \
-      /src/turbo-parser/vcpkg_installed/x64-linux/debug/lib \
-      /src/turbo-parser/vcpkg_installed/x64-linux/lib \
+      "/opt/flowie/$FLOWIE_PROFILE/lib" \
+      /src/salts/vcpkg_installed/x64-linux/debug/lib \
+      /src/salts/vcpkg_installed/x64-linux/lib \
+      /src/salts-utils/vcpkg_installed/x64-linux/debug/lib \
+      /src/salts-utils/vcpkg_installed/x64-linux/lib \
       /src/turbonet/vcpkg_installed/x64-linux/debug/lib \
       /src/turbonet/vcpkg_installed/x64-linux/lib \
       /src/turbodb/vcpkg_installed/x64-linux/debug/lib \
       /src/turbodb/vcpkg_installed/x64-linux/lib \
-      /src/TurboHTTP/vcpkg_installed/x64-linux/debug/lib \
-      /src/TurboHTTP/vcpkg_installed/x64-linux/lib \
       /src/flowie/vcpkg_installed/x64-linux/debug/lib \
       /src/flowie/vcpkg_installed/x64-linux/lib; do \
       if [ -d "$libdir" ]; then \

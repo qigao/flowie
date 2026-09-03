@@ -4,7 +4,7 @@
 #include "flowie_control_repository_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -57,13 +57,13 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   uint64_t revision = 0u;
 
   check_not_null(repository);
-  check_equal(flowie_control_repository_validate(repository), TURBO_OK);
+  check_equal(flowie_control_repository_validate(repository), SALTS_OK);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "contract-root";
   root.occurred_at = 1000u;
-  check_equal(repository->user->domain_create(repository->ctx, &root, &result), TURBO_OK);
+  check_equal(repository->user->domain_create(repository->ctx, &root, &result), SALTS_OK);
 
   user.domain_id = "root-a";
   user.principal_id = "device-a";
@@ -72,17 +72,17 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   user.request_id = "contract-user";
   user.expected_revision = 1u;
   user.occurred_at = 1001u;
-  check_equal(repository->user->create(repository->ctx, &user, &result), TURBO_OK);
-  check_equal(repository->user->get(repository->ctx, "root-a", "device-a", &view), TURBO_OK);
+  check_equal(repository->user->create(repository->ctx, &user, &result), SALTS_OK);
+  check_equal(repository->user->get(repository->ctx, "root-a", "device-a", &view), SALTS_OK);
   check_true(view.enabled);
 
   user.principal_id = "stale-device";
   user.request_id = "contract-stale-user";
   user.expected_revision = 1u;
   user.occurred_at = 1002u;
-  check_equal(repository->user->create(repository->ctx, &user, &result), TURBO_EBUSY);
+  check_equal(repository->user->create(repository->ctx, &user, &result), SALTS_EBUSY);
   check_equal(repository->user->get(repository->ctx, "root-a", "stale-device", &view),
-               TURBO_ENOENT);
+               SALTS_ENOENT);
 
   group.domain_id = "root-a";
   group.group_id = "operators";
@@ -91,7 +91,7 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   group.request_id = "contract-group";
   group.expected_revision = 2u;
   group.occurred_at = 1003u;
-  check_equal(repository->group->create(repository->ctx, &group, &result), TURBO_OK);
+  check_equal(repository->group->create(repository->ctx, &group, &result), SALTS_OK);
 
   membership.domain_id = "root-a";
   membership.principal_id = "device-a";
@@ -100,7 +100,7 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   membership.request_id = "contract-membership";
   membership.expected_revision = 3u;
   membership.occurred_at = 1004u;
-  check_equal(repository->group->membership_add(repository->ctx, &membership, &result), TURBO_OK);
+  check_equal(repository->group->membership_add(repository->ctx, &membership, &result), SALTS_OK);
 
   role.domain_id = "root-a";
   role.role_id = "reader";
@@ -108,7 +108,7 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   role.request_id = "contract-role";
   role.expected_revision = 4u;
   role.occurred_at = 1005u;
-  check_equal(repository->role->create(repository->ctx, &role, &result), TURBO_OK);
+  check_equal(repository->role->create(repository->ctx, &role, &result), SALTS_OK);
 
   assignment.domain_id = "root-a";
   assignment.principal_id = "device-a";
@@ -117,12 +117,12 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   assignment.request_id = "contract-assignment";
   assignment.expected_revision = 5u;
   assignment.occurred_at = 1006u;
-  check_equal(repository->role->assignment_add(repository->ctx, &assignment, &result), TURBO_OK);
+  check_equal(repository->role->assignment_add(repository->ctx, &assignment, &result), SALTS_OK);
 
   check_equal(repository->group->membership_list(repository->ctx, "root-a", NULL, NULL,
                                                   direct_memberships, 1u, &direct_count,
                                                   &direct_has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(direct_count, 1u);
   check_false(direct_has_more);
   check_equal(direct_memberships[0].principal_id, "device-a");
@@ -130,7 +130,7 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   check_equal(repository->role->assignment_list(repository->ctx, "root-a", NULL, NULL,
                                                  direct_assignments, 1u, &direct_count,
                                                  &direct_has_more),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(direct_count, 1u);
   check_false(direct_has_more);
   check_equal(direct_assignments[0].principal_id, "device-a");
@@ -138,7 +138,7 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
 
   check_equal(repository->auth->external_principal_snapshot(repository->ctx, "root-a", "device-a",
                                                              77u, &snapshot),
-               TURBO_OK);
+               SALTS_OK);
   check_equal(snapshot.user_revision, 2u);
   check_equal(snapshot.credential_revision, 77u);
   check_true(flowie_control_contract_contains(snapshot.effective_groups.groups[0],
@@ -154,15 +154,15 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   issue.request_id = "contract-credential";
   issue.expected_revision = 6u;
   issue.occurred_at = 1007u;
-  check_equal(repository->credential->generate(repository->ctx, &issue, &credential), TURBO_OK);
+  check_equal(repository->credential->generate(repository->ctx, &issue, &credential), SALTS_OK);
   check_equal(repository->auth->credential_verify(repository->ctx, "root-a", "device-a",
                                                    credential.token, credential.token_size,
                                                    &verified),
-               TURBO_OK);
+               SALTS_OK);
   snapshot = (flowie_control_principal_snapshot_t)FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
   check_equal(repository->auth->principal_snapshot(repository->ctx, "root-a", "device-a",
                                                     &verified, &snapshot),
-               TURBO_OK);
+               SALTS_OK);
   check_true(flowie_control_contract_contains(snapshot.effective_groups.groups[0],
                                               sizeof(snapshot.effective_groups.groups[0]),
                                               snapshot.effective_groups.group_count, "operators"));
@@ -173,14 +173,14 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   rule.domain_id = "root-a";
   rule.ordinal = 10u;
   check_equal(flowie_control_acl_parse(policy_rule, sizeof(policy_rule) - 1u, &policy_document),
-              TURBO_OK);
+              SALTS_OK);
   rule.document = &policy_document;
   rule.actor = "bootstrap";
   rule.request_id = "contract-rule";
   rule.expected_revision = 7u;
   rule.occurred_at = 1008u;
-  check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &result), TURBO_OK);
-  check_equal(repository->policy->validate(repository->ctx, "root-a", &validation), TURBO_OK);
+  check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &result), SALTS_OK);
+  check_equal(repository->policy->validate(repository->ctx, "root-a", &validation), SALTS_OK);
   check_equal(validation.store_revision, 8u);
   check_equal(validation.rule_count, 2u);
   check_equal(validation.deny_rule_count, 0u);
@@ -191,17 +191,17 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   publish.expected_revision = 8u;
   publish.occurred_at = 1009u;
   publish.expires_at = 20000u;
-  check_equal(repository->policy->publish(repository->ctx, &publish, &published), TURBO_OK);
+  check_equal(repository->policy->publish(repository->ctx, &publish, &published), SALTS_OK);
   check_equal(published.revision, 9u);
   check_equal(published.policy_version, 1u);
   check_false(published.replayed);
-  check_equal(repository->policy->status(repository->ctx, "root-a", &status), TURBO_OK);
+  check_equal(repository->policy->status(repository->ctx, "root-a", &status), SALTS_OK);
   check_equal(status.store_revision, 9u);
   check_equal(status.policy_version, 1u);
   check_equal(status.draft_rule_count, 1u);
   check_equal(status.published_rule_count, 2u);
 
-  check_equal(repository->policy->bundle_load(repository->ctx, "root-a", 1u, &bundle), TURBO_OK);
+  check_equal(repository->policy->bundle_load(repository->ctx, "root-a", 1u, &bundle), SALTS_OK);
   check_equal(bundle.policy_version, 1u);
   check_equal(bundle.expires_at, 20000u);
   check_equal(bundle.rule_count, 2u);
@@ -210,18 +210,18 @@ flowie_control_repository_basic_contract_run(const flowie_control_repository_t *
   repository->policy->bundle_release(repository->ctx, &bundle);
   bundle = (flowie_security_policy_bundle_t)FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
   check_equal(repository->policy->bundle_load(repository->ctx, "root-a", 2u, &bundle),
-               TURBO_ENOENT);
+               SALTS_ENOENT);
 
   publish.expected_revision = 0u;
   published = (flowie_control_policy_publish_result_t)FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
-  check_equal(repository->policy->publish(repository->ctx, &publish, &published), TURBO_OK);
+  check_equal(repository->policy->publish(repository->ctx, &publish, &published), SALTS_OK);
   check_true(published.replayed);
   check_equal(published.revision, 9u);
   check_equal(published.policy_version, 1u);
 
-  check_equal(repository->audit->revision(repository->ctx, &revision), TURBO_OK);
+  check_equal(repository->audit->revision(repository->ctx, &revision), SALTS_OK);
   check_equal(revision, 9u);
-  check_equal(repository->audit->count(repository->ctx, &audit_count), TURBO_OK);
+  check_equal(repository->audit->count(repository->ctx, &audit_count), SALTS_OK);
   check_equal(audit_count, 9u);
   flowie_control_generated_credential_wipe(&credential);
 }

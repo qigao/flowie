@@ -1,13 +1,19 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
- 
-find_dependency(Rocida   CONFIG REQUIRED
-                PATHS "${ROCIDA_ROOT_PATH}"
-                NO_DEFAULT_PATH) 
-find_dependency(TurboParser CONFIG REQUIRED)
-find_dependency(TurboNet CONFIG REQUIRED)
-find_dependency(Orm CONFIG REQUIRED)
+
+if(NOT DEFINED ENV{SALTS_ROOT} OR "$ENV{SALTS_ROOT}" STREQUAL "")
+  set(Flowie_FOUND FALSE)
+  set(Flowie_NOT_FOUND_MESSAGE "SALTS_ROOT must name the installed Salts profile")
+  return()
+endif()
+find_dependency(Salts CONFIG REQUIRED PATHS "$ENV{SALTS_ROOT}" NO_DEFAULT_PATH)
+if(NOT DEFINED ENV{TURBODB_ROOT} OR "$ENV{TURBODB_ROOT}" STREQUAL "")
+  set(Flowie_FOUND FALSE)
+  set(Flowie_NOT_FOUND_MESSAGE "TURBODB_ROOT must name the installed TurboDB profile")
+  return()
+endif()
+find_dependency(Orm CONFIG REQUIRED PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 
 include("${CMAKE_CURRENT_LIST_DIR}/FlowieTargets.cmake")
 

@@ -200,7 +200,8 @@ function(cmake_add_test target_name)
   add_test(NAME ${target_name} COMMAND ${target_name})
   if(UNIX AND NOT APPLE)
     set(_runtime_test_environment)
-    foreach(_runtime_target IN ITEMS Rocida::Core TurboParser::Parser TurboNet::CoroNet)
+    foreach(_runtime_target IN ITEMS Salts::Core Salts::CNet Salts::CHTTP
+                                      Salts::Mustache)
       if(TARGET ${_runtime_target})
         list(APPEND _runtime_test_environment
              "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:${_runtime_target}>")

@@ -1,8 +1,8 @@
 #include "flowie_control_principal_cache_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -35,7 +35,7 @@ static void principal_cache_reader(void *arg) {
     flowie_control_principal_snapshot_t snapshot = FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     int hit = 0;
     if (flowie_control_principal_cache_get(reader->cache, "root-a", "device-a", 1u, 2u, 3u,
-                                           7u, &snapshot, &hit) != TURBO_OK || !hit ||
+                                           7u, &snapshot, &hit) != SALTS_OK || !hit ||
         strcmp(snapshot.principal_id, "device-a") != 0)
       atomic_fetch_add_explicit(&reader->failures, 1, memory_order_relaxed);
   }
@@ -54,51 +54,51 @@ spec("Flowie control principal snapshot cache") {
         principal_cache_snapshot("root-a", "device-c", 5u);
     flowie_control_principal_snapshot_t out = FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     principal_cache_reader_t reader;
-    turbo_thread_t threads[4];
+    salts_thread_t threads[4];
     int hit = 0;
 
     config.capacity = 2u;
     config.ttl_ms = 10u;
     config.clock_ms = principal_cache_test_clock;
     config.clock_ctx = &now_ms;
-    check_equal(flowie_control_principal_cache_create(&config, &cache), TURBO_OK);
-    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_create(&config, &cache), SALTS_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), SALTS_OK);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 3u,
-                                                     7u, &out, &hit), TURBO_OK);
+                                                     7u, &out, &hit), SALTS_OK);
     check_true(hit);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 2u, 2u, 3u,
-                                                     7u, &out, &hit), TURBO_ENOENT);
+                                                     7u, &out, &hit), SALTS_ENOENT);
     check_false(hit);
-    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), SALTS_OK);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 3u,
-                                                     8u, &out, &hit), TURBO_ENOENT);
+                                                     8u, &out, &hit), SALTS_ENOENT);
     check_false(hit);
-    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), SALTS_OK);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 4u,
-                                                     7u, &out, &hit), TURBO_ENOENT);
+                                                     7u, &out, &hit), SALTS_ENOENT);
     check_false(hit);
-    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), TURBO_OK);
-    check_equal(flowie_control_principal_cache_put(cache, &second, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), SALTS_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &second, 3u, 7u), SALTS_OK);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 3u,
-                                                     7u, &out, &hit), TURBO_OK);
+                                                     7u, &out, &hit), SALTS_OK);
     check_true(hit);
-    check_equal(flowie_control_principal_cache_put(cache, &third, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &third, 3u, 7u), SALTS_OK);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-b", 3u, 4u, 3u,
-                                                     7u, &out, &hit), TURBO_ENOENT);
+                                                     7u, &out, &hit), SALTS_ENOENT);
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 3u,
-                                                     7u, &out, &hit), TURBO_OK);
+                                                     7u, &out, &hit), SALTS_OK);
     check_true(hit);
     now_ms = 110u;
     check_equal(flowie_control_principal_cache_get(cache, "root-a", "device-a", 1u, 2u, 3u,
-                                                     7u, &out, &hit), TURBO_ENOENT);
+                                                     7u, &out, &hit), SALTS_ENOENT);
     check_false(hit);
     now_ms = 100u;
-    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), TURBO_OK);
+    check_equal(flowie_control_principal_cache_put(cache, &first, 3u, 7u), SALTS_OK);
     reader.cache = cache;
     atomic_init(&reader.failures, 0);
     for (size_t index = 0u; index < 4u; ++index)
-      check_equal(turbo_thread_create(&threads[index], principal_cache_reader, &reader), 0);
-    for (size_t index = 0u; index < 4u; ++index) turbo_thread_join(&threads[index]);
+      check_equal(salts_thread_create(&threads[index], principal_cache_reader, &reader), 0);
+    for (size_t index = 0u; index < 4u; ++index) salts_thread_join(&threads[index]);
     check_equal(atomic_load_explicit(&reader.failures, memory_order_relaxed), 0);
     flowie_control_principal_cache_destroy(cache);
   }

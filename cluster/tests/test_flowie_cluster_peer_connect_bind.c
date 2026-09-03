@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -95,7 +95,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(
         flowie_cluster_peer_connect_bind_encode(
             &connect, &principal, FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(encoded, expected_header, sizeof(expected_header));
     check_false(flowie_cluster_peer_connect_bind_test_contains(
         (const uint8_t *)encoded, tstr_len(encoded), username, sizeof(username) - 1u));
@@ -107,7 +107,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_true(decoded.security_enabled);
     check_equal(decoded.principal.principal_id, "writer");
     check_equal(decoded.principal.domain_id, "root-a");
@@ -149,7 +149,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
                  FLOWIE_MQTT_PARSE_OK);
     check_equal(flowie_cluster_peer_connect_bind_encode(
                      &connect, NULL, FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_connect_bind_test_read_u32((const uint8_t *)encoded + 16u),
                   0u);
     check_equal(flowie_cluster_peer_connect_bind_test_read_u32((const uint8_t *)encoded + 20u),
@@ -157,7 +157,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_false(decoded.security_enabled);
     check_equal(decoded.principal.policy_version, 0u);
     check_equal(decoded.connect.version, FLOWIE_MQTT_VERSION_3_1_1);
@@ -191,11 +191,11 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_encode_with_metadata(
                      &connect, NULL, &metadata,
                      FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.remote_address.len, sizeof(remote_address) - 1u);
     check_equal(decoded.remote_address.data, remote_address, sizeof(remote_address) - 1u);
     check_equal(decoded.transport_peer_address.len, sizeof(transport_peer_address) - 1u);
@@ -228,13 +228,13 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_encode_with_metadata(
                      &connect, NULL, &metadata,
                      FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_null(encoded);
     metadata.transport_peer_address = (vstr){address_with_nul, sizeof(address_with_nul)};
     check_equal(flowie_cluster_peer_connect_bind_encode_with_metadata(
                      &connect, NULL, &metadata,
                      FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_null(encoded);
     metadata.remote_address = (vstr){overlong_address, sizeof(overlong_address)};
     metadata.transport_peer_address =
@@ -242,7 +242,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_encode_with_metadata(
                      &connect, NULL, &metadata,
                      FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_null(encoded);
   }
 
@@ -266,31 +266,31 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(
         flowie_cluster_peer_connect_bind_encode(
             &connect, &principal, FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-        TURBO_EPROTO);
+        SALTS_EPROTO);
     check_null(encoded);
     principal = flowie_cluster_peer_connect_bind_test_principal();
     check_equal(flowie_cluster_peer_connect_bind_encode(
                      &connect, &principal, FLOWIE_CLUSTER_PEER_CONNECT_BIND_HEADER_SIZE, &encoded),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     check_null(encoded);
     check_equal(
         flowie_cluster_peer_connect_bind_encode(
             &connect, &principal, FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(flowie_cluster_peer_connect_bind_decode(encoded, tstr_len(encoded),
                                                          tstr_len(encoded) - 1u, &decoded),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     encoded[24] = 1;
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     encoded[24] = 0;
     encoded[23] = 2;
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_free(encoded);
   }
 
@@ -313,7 +313,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(
         flowie_cluster_peer_connect_bind_encode(
             &connect, &principal, FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     second_group = NULL;
     for (size_t offset = FLOWIE_CLUSTER_PEER_CONNECT_BIND_HEADER_SIZE;
          offset + sizeof("team-a") - 1u <= tstr_len(encoded); ++offset) {
@@ -327,7 +327,7 @@ spec("flowie cluster peer CONNECT_BIND codec") {
     check_equal(flowie_cluster_peer_connect_bind_decode(
                      encoded, tstr_len(encoded), FLOWIE_CLUSTER_PEER_CONNECT_BIND_TEST_MAX_PAYLOAD,
                      &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_free(encoded);
   }
 }

@@ -3,7 +3,7 @@
 
 #include "flowie_control_management_service_internal.h"
 #include "flowie_control_management_session_internal.h"
-#include "iris/iris_app.h"
+#include "flowie_control_http_server_internal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -135,16 +135,15 @@ typedef struct flowie_control_dashboard_config_s {
 
 int flowie_control_dashboard_create(const flowie_control_dashboard_config_t *config,
                                     flowie_control_dashboard_t **out);
-int flowie_control_dashboard_bind(flowie_control_dashboard_t *dashboard, iris_app_t *app);
+int flowie_control_dashboard_bind(flowie_control_dashboard_t *dashboard,
+                                  flowie_control_http_app_t *app);
 void flowie_control_dashboard_unbind(flowie_control_dashboard_t *dashboard);
 void flowie_control_dashboard_destroy(flowie_control_dashboard_t *dashboard);
 int flowie_control_dashboard_path_reserved(const char *path);
 
 /**
- * Execute a login through the configured bounded executor.
- *
- * When the executor is enabled, the caller must run on a CoroNet context owner lane. A deadline
- * abandons the result; a later successful result is revoked before its worker releases the job.
+ * Execute a login synchronously from the CHTTP app's bounded worker pool.
+ * The compatibility executor fields remain configuration inputs while the app owns admission.
  */
 int flowie_control_dashboard_execute_login(
     flowie_control_dashboard_t *dashboard, const char *domain_id, const char *principal_id,

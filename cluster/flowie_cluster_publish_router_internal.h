@@ -45,7 +45,7 @@ int flowie_cluster_publish_router_submit_durable(
     const tr_raft_conf_t *configuration, tstr *event);
 int flowie_cluster_publish_router_handle(
     flowie_cluster_publish_router_t *router,
-    const tr_raft_coronet_payload_t *payload);
+    const tr_raft_transport_payload_t *payload);
 int flowie_cluster_publish_router_retry(
     flowie_cluster_publish_router_t *router);
 size_t flowie_cluster_publish_router_outbound_count(

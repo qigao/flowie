@@ -1,6 +1,6 @@
 #include "flowie_cluster_raft_store_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,14 +13,14 @@ struct flowie_cluster_raft_store_s {
 static int flowie_cluster_raft_discard_message(
     void *ctx, const tr_raft_message_t *message) {
   (void)ctx;
-  return message ? TURBO_OK : TURBO_EINVAL;
+  return message ? SALTS_OK : SALTS_EINVAL;
 }
 
 static int flowie_cluster_raft_store_snapshot(
     void *ctx, tr_raft_index_t index, tr_raft_term_t term,
     const tr_raft_conf_t *configuration, const uint8_t *data, size_t size) {
   flowie_cluster_raft_store_t *store = (flowie_cluster_raft_store_t *)ctx;
-  if (!store) return TURBO_EINVAL;
+  if (!store) return SALTS_EINVAL;
   return tr_raft_wal_storage_store_snapshot(
       store->storage, index, term, configuration, data, size);
 }
@@ -49,9 +49,9 @@ int flowie_cluster_raft_store_open(
   tr_raft_service_config_t service_config;
   int rc;
   if (out) *out = NULL;
-  if (!out || !flowie_cluster_raft_config_valid(config)) return TURBO_EINVAL;
+  if (!out || !flowie_cluster_raft_config_valid(config)) return SALTS_EINVAL;
   store = (flowie_cluster_raft_store_t *)calloc(1u, sizeof(*store));
-  if (!store) return TURBO_ENOMEM;
+  if (!store) return SALTS_ENOMEM;
   memset(&storage_config, 0, sizeof(storage_config));
   storage_config.path_prefix = config->path;
   storage_config.segment_bytes = config->segment_bytes;
@@ -61,19 +61,19 @@ int flowie_cluster_raft_store_open(
   storage_config.create_if_missing = true;
   storage_config.max_snapshot_bytes = config->max_snapshot_bytes;
   rc = tr_raft_wal_storage_open(&storage_config, &store->storage);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   memset(&recovery, 0, sizeof(recovery));
   rc = tr_raft_wal_storage_load(store->storage, &recovery);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   if (recovery.snapshot_size != 0u) {
     if (!config->snapshot_restore) {
-      rc = TURBO_EPROTO;
+      rc = SALTS_EPROTO;
       goto recovery_fail;
     }
     rc = config->snapshot_restore(
         config->snapshot_restore_ctx, recovery.snapshot_index,
         recovery.snapshot_term, recovery.snapshot_data, recovery.snapshot_size);
-    if (rc != TURBO_OK) goto recovery_fail;
+    if (rc != SALTS_OK) goto recovery_fail;
   }
   memset(&service_config, 0, sizeof(service_config));
   service_config.core.self_id = config->self_id;
@@ -99,7 +99,7 @@ int flowie_cluster_raft_store_open(
   service_config.core.max_inflight_append_requests =
       config->max_inflight_append_requests;
   rc = tr_raft_wal_storage_bind(store->storage, &service_config.storage);
-  if (rc != TURBO_OK) goto recovery_fail;
+  if (rc != SALTS_OK) goto recovery_fail;
   service_config.transport = config->transport;
   if (!service_config.transport.enqueue)
     service_config.transport.enqueue = flowie_cluster_raft_discard_message;
@@ -115,12 +115,12 @@ int flowie_cluster_raft_store_open(
     service_config.snapshot_policy.store_context = store;
   }
   rc = tr_raft_service_create(&service_config, &store->service);
-  if (rc == TURBO_OK) rc = tr_raft_service_poll(store->service);
+  if (rc == SALTS_OK) rc = tr_raft_service_poll(store->service);
 recovery_fail:
   tr_raft_wal_recovery_destroy(&recovery);
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   *out = store;
-  return TURBO_OK;
+  return SALTS_OK;
 fail:
   if (store->service) tr_raft_service_destroy(store->service);
   if (store->storage) (void)tr_raft_wal_storage_close(store->storage);
@@ -133,7 +133,7 @@ int flowie_cluster_raft_store_tick(flowie_cluster_raft_store_t *store,
                                    uint32_t next_election_timeout_ticks) {
   tr_raft_tick_t tick;
   if (!store || elapsed_ticks == 0u || next_election_timeout_ticks == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   tick.elapsed_ticks = elapsed_ticks;
   tick.next_election_timeout_ticks = next_election_timeout_ticks;
   return tr_raft_service_tick(store->service, &tick);
@@ -141,14 +141,14 @@ int flowie_cluster_raft_store_tick(flowie_cluster_raft_store_t *store,
 
 int flowie_cluster_raft_store_step(flowie_cluster_raft_store_t *store,
                                    const tr_raft_message_t *message) {
-  if (!store || !message) return TURBO_EINVAL;
+  if (!store || !message) return SALTS_EINVAL;
   return tr_raft_service_step(store->service, message);
 }
 
 int flowie_cluster_raft_store_propose(
     flowie_cluster_raft_store_t *store, const tr_raft_proposal_t *proposal,
     tr_raft_operation_status_t *out_receipt) {
-  if (!store || !proposal || !out_receipt) return TURBO_EINVAL;
+  if (!store || !proposal || !out_receipt) return SALTS_EINVAL;
   return tr_raft_service_propose_with_receipt(store->service, proposal,
                                               out_receipt);
 }
@@ -156,20 +156,20 @@ int flowie_cluster_raft_store_propose(
 int flowie_cluster_raft_store_status(
     const flowie_cluster_raft_store_t *store,
     tr_raft_service_status_t *out_status) {
-  if (!store || !out_status) return TURBO_EINVAL;
+  if (!store || !out_status) return SALTS_EINVAL;
   return tr_raft_service_status(store->service, out_status);
 }
 
 int flowie_cluster_raft_store_configuration(
     const flowie_cluster_raft_store_t *store,
     tr_raft_conf_t *out_configuration) {
-  if (!store || !out_configuration) return TURBO_EINVAL;
+  if (!store || !out_configuration) return SALTS_EINVAL;
   return tr_raft_service_configuration(store->service, out_configuration);
 }
 
 int flowie_cluster_raft_store_close(flowie_cluster_raft_store_t *store) {
   int rc;
-  if (!store) return TURBO_EINVAL;
+  if (!store) return SALTS_EINVAL;
   tr_raft_service_destroy(store->service);
   rc = tr_raft_wal_storage_close(store->storage);
   free(store);

@@ -20,8 +20,8 @@ cmake_config_target(flowie_cluster_peer NO_INSTALL FOLDER "cluster")
 target_include_directories(
   flowie_cluster_peer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                              ${PROJECT_SOURCE_DIR}/flowie/src)
-target_link_libraries(flowie_cluster_peer PUBLIC Flowie::App TurboNet::CoroNet
-                      PRIVATE Rocida::Core Rocida::STL)
+target_link_libraries(flowie_cluster_peer PUBLIC Flowie::App Salts::CNet
+                      PRIVATE Salts::Core Salts::CSTL)
 
 add_library(flowie_cluster_topology STATIC flowie_cluster_topology.c
                                             flowie_cluster_topology_internal.h)
@@ -30,7 +30,7 @@ target_include_directories(
   flowie_cluster_topology PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                  ${PROJECT_SOURCE_DIR}/flowie/src)
 target_link_libraries(flowie_cluster_topology PUBLIC Flowie::App
-                      PRIVATE Rocida::Core Rocida::STL)
+                      PRIVATE Salts::Core Salts::CSTL)
 
 add_library(flowie_cluster_publish_event STATIC flowie_cluster_publish_event.c
                                                flowie_cluster_publish_event_internal.h)
@@ -40,7 +40,7 @@ target_include_directories(
                                       ${PROJECT_SOURCE_DIR}/flowie/src)
 target_link_libraries(flowie_cluster_publish_event
                       PUBLIC flowie_cluster_peer Flowie::App
-                      PRIVATE Rocida::Core)
+                      PRIVATE Salts::Core)
 
 add_library(flowie_cluster_publish_stream STATIC flowie_cluster_publish_stream.c
                                                 flowie_cluster_publish_stream_internal.h
@@ -56,7 +56,7 @@ target_include_directories(
                                        ${PROJECT_SOURCE_DIR}/flowie/src)
 target_link_libraries(flowie_cluster_publish_stream
                       PUBLIC flowie_cluster_publish_event TurboRaft::DataStream
-                      PRIVATE Rocida::Core Rocida::STL)
+                      PRIVATE Salts::Core Salts::CSTL)
 
 add_library(
   flowie_cluster_runtime STATIC
@@ -79,9 +79,8 @@ target_include_directories(
 target_link_libraries(
   flowie_cluster_runtime
   PUBLIC flowie_cluster_peer Flowie::App Flowie::Transport TurboRaft::Service
-         TurboRaft::WalStorage TurboRaft::ServiceOwner TurboRaft::FlowMQ
-         TurboRaft::DataStream Rocida::Core
-  PRIVATE Rocida::STL monocypher)
+         TurboRaft::WalStorage TurboRaft::FlowMQ TurboRaft::DataStream Salts::Core
+  PRIVATE Salts::CSTL monocypher)
 
 target_link_libraries(flowie_cluster_publish_stream
                       PUBLIC flowie_cluster_runtime)
@@ -96,6 +95,6 @@ target_include_directories(
 target_link_libraries(flowie_cluster_raft_generation
                       PUBLIC flowie_cluster_runtime flowie_cluster_publish_stream)
 
-if(BUILD_TESTS)
+if(FLOWIE_BUILD_TESTS)
   add_subdirectory(tests)
 endif()

@@ -1,20 +1,20 @@
 #include "flowie_supervisor_runtime_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
 static int read_all_stdout(flowie_supervisor_runtime_t *runtime, char *buffer, size_t capacity) {
   size_t total = 0;
-  int rc = TURBO_OK;
+  int rc = SALTS_OK;
   while (total + 1u < capacity) {
     size_t count = 0;
     rc = flowie_supervisor_runtime_read_stdout(runtime, buffer + total, capacity - total - 1u,
                                                &count);
     total += count;
-    if (rc == TURBO_EOF) break;
-    if (rc != TURBO_OK || count == 0) break;
+    if (rc == SALTS_EOF) break;
+    if (rc != SALTS_OK || count == 0) break;
   }
   buffer[total] = '\0';
   return rc;
@@ -22,14 +22,14 @@ static int read_all_stdout(flowie_supervisor_runtime_t *runtime, char *buffer, s
 
 static int read_all_stderr(flowie_supervisor_runtime_t *runtime, char *buffer, size_t capacity) {
   size_t total = 0;
-  int rc = TURBO_OK;
+  int rc = SALTS_OK;
   while (total + 1u < capacity) {
     size_t count = 0;
     rc = flowie_supervisor_runtime_read_stderr(runtime, buffer + total, capacity - total - 1u,
                                                &count);
     total += count;
-    if (rc == TURBO_EOF) break;
-    if (rc != TURBO_OK || count == 0) break;
+    if (rc == SALTS_EOF) break;
+    if (rc != SALTS_OK || count == 0) break;
   }
   buffer[total] = '\0';
   return rc;
@@ -42,7 +42,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_t *runtime = (flowie_supervisor_runtime_t *)1;
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), TURBO_EINVAL);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_EINVAL);
     check_null(runtime);
     check_equal(error.operation, "validate supervisor configuration");
   }
@@ -51,7 +51,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    turbo_process_result_t child;
+    salts_process_result_t child;
     char output[256];
     char profile[sizeof("missing")] = "flowie";
 
@@ -61,15 +61,15 @@ spec("flowie supervisor runtime") {
     config.graph_path = FLOWIE_TEST_GRAPH_PATH;
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), TURBO_OK);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
     check_not_null(runtime);
     (void)memcpy(profile, "missing", sizeof("missing"));
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), TURBO_OK);
-    check_equal(child.state, TURBO_PROCESS_EXITED);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(child.state, SALTS_PROCESS_EXITED);
     check_equal(child.exit_code, 0);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), TURBO_EALREADY);
-    check_equal(read_all_stdout(runtime, output, sizeof(output)), TURBO_EOF);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_EALREADY);
+    check_equal(read_all_stdout(runtime, output, sizeof(output)), SALTS_EOF);
     check_contains(output, "configuration and graph are valid");
     flowie_supervisor_runtime_destroy(runtime);
   }
@@ -78,7 +78,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    turbo_process_result_t child;
+    salts_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -87,12 +87,12 @@ spec("flowie supervisor runtime") {
     config.graph_path = FLOWIE_TEST_GRAPH_PATH;
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), TURBO_OK);
-    check_equal(child.state, TURBO_PROCESS_EXITED);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(child.state, SALTS_PROCESS_EXITED);
     check_not_equal(child.exit_code, 0);
-    check_equal(read_all_stderr(runtime, output, sizeof(output)), TURBO_EOF);
+    check_equal(read_all_stderr(runtime, output, sizeof(output)), SALTS_EOF);
     check_contains(output, "resolve profile failed");
     flowie_supervisor_runtime_destroy(runtime);
   }
@@ -101,7 +101,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    turbo_process_result_t child;
+    salts_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -110,12 +110,12 @@ spec("flowie supervisor runtime") {
     config.control_config_path = "missing-flowie-control.yml";
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), TURBO_OK);
-    check_equal(child.state, TURBO_PROCESS_EXITED);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(child.state, SALTS_PROCESS_EXITED);
     check_not_equal(child.exit_code, 0);
-    check_equal(read_all_stderr(runtime, output, sizeof(output)), TURBO_EOF);
+    check_equal(read_all_stderr(runtime, output, sizeof(output)), SALTS_EOF);
     check_contains(output, "load control configuration failed");
     flowie_supervisor_runtime_destroy(runtime);
   }
@@ -124,16 +124,16 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    turbo_process_result_t child;
+    salts_process_result_t child;
 
     config.worker_program = FLOWIE_TEST_LONG_RUNNING_WORKER_PROGRAM;
     config.config_path = "unused.yml";
     config.graph_path = "unused.flow";
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), TURBO_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 50u, &child, &error), TURBO_ETIMEDOUT);
-    check_equal(flowie_supervisor_runtime_stop(runtime, &child, &error), TURBO_OK);
-    check_equal(child.state, TURBO_PROCESS_TERMINATED);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 50u, &child, &error), SALTS_ETIMEDOUT);
+    check_equal(flowie_supervisor_runtime_stop(runtime, &child, &error), SALTS_OK);
+    check_equal(child.state, SALTS_PROCESS_TERMINATED);
     flowie_supervisor_runtime_destroy(runtime);
   }
 }

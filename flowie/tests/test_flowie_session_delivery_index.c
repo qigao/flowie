@@ -1,8 +1,8 @@
 #include "flowie_session_internal.h"
 
 #include "tinytest.h"
-#include "turbo/clock.h"
-#include "turbo_error.h"
+#include <salts/clock.h>
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -49,21 +49,21 @@ spec("flowie session delivery packet-id index") {
     uint64_t elapsed_ms;
     size_t reserved = 0u;
     uint16_t packet_id = 0u;
-    int rc = TURBO_OK;
+    int rc = SALTS_OK;
 
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
-    started_at = turbo_monotonic_ms();
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    started_at = salts_monotonic_ms();
     for (; reserved < FLOWIE_TEST_DELIVERY_SCALE_COUNT; ++reserved) {
       rc = flowie_session_owner_delivery_reserve(owner, 1u, &packet_id);
-      if (rc != TURBO_OK) break;
+      if (rc != SALTS_OK) break;
     }
-    elapsed_ms = turbo_monotonic_ms() - started_at;
+    elapsed_ms = salts_monotonic_ms() - started_at;
     info("reserved=%zu elapsed_ms=%llu budget_ms=%u", reserved,
          (unsigned long long)elapsed_ms, FLOWIE_TEST_DELIVERY_SCALE_MAX_MS);
-    check_equal(rc, TURBO_OK);
+    check_equal(rc, SALTS_OK);
     check_equal(reserved, (size_t)FLOWIE_TEST_DELIVERY_SCALE_COUNT);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, (size_t)FLOWIE_TEST_DELIVERY_SCALE_COUNT);
     check_less_equal((size_t)elapsed_ms, (size_t)FLOWIE_TEST_DELIVERY_SCALE_MAX_MS);
     flowie_session_owner_destroy(owner);
@@ -82,26 +82,26 @@ spec("flowie session delivery packet-id index") {
     static const size_t remaining[] = {0u, 1u, 3u, 4u, 5u, 6u};
 
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), TURBO_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
     for (size_t i = 0u; i < DELIVERY_COUNT; ++i)
       check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_ids[i]),
-                  TURBO_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[7]), TURBO_OK);
+                  SALTS_OK);
+    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[7]), SALTS_OK);
 
     clone = flowie_session_owner_clone(owner);
     check_not_null(clone);
     for (size_t i = 0u; i < sizeof(remaining) / sizeof(remaining[0]); ++i)
       check_equal(flowie_session_owner_delivery_cancel(clone, packet_ids[remaining[i]]),
-                  TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(clone, &snapshot), TURBO_OK);
+                  SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(clone, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(clone);
 
     for (size_t i = 0u; i < sizeof(remaining) / sizeof(remaining[0]); ++i)
       check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[remaining[i]]),
-                  TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+                  SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(owner);
   }
@@ -144,12 +144,12 @@ spec("flowie session delivery packet-id index") {
     row.deliveries = deliveries;
     row.delivery_count = sizeof(deliveries) / sizeof(deliveries[0]);
 
-    check_equal(flowie_session_owner_repository_restore(&config, &row, &owner), TURBO_OK);
+    check_equal(flowie_session_owner_repository_restore(&config, &row, &owner), SALTS_OK);
     check_not_null(owner);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[1]), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), TURBO_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[0]), TURBO_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), TURBO_OK);
+    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[1]), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[0]), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(owner);
 
@@ -158,7 +158,7 @@ spec("flowie session delivery packet-id index") {
     packets[1][6] = (uint8_t)packet_ids[0];
     owner = NULL;
     check_equal(flowie_session_owner_repository_restore(&config, &row, &owner),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_null(owner);
   }
 }

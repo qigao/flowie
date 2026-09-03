@@ -13,21 +13,21 @@ TurboUtils 重复，也容易让各入口形成不同的优先级。另一方面
 
 ## 决策
 
-新增内部 `flowie_control_startup` target，通过 `turbo_parser.h` 提供的 CMD 与 DotEnv API 解析：
+新增内部 `flowie_control_startup` target，通过 Salts 的 `Salts::CmdParser` 与 DotEnv API 解析：
 
 - `--config/-c` 或 `FLOWIE_CONTROL_CONFIG`：独立 controller 配置文件；没有来源时 fail fast。
 - `--env-file/-E` 或 `FLOWIE_CONTROL_ENV_FILE`：显式 DotEnv 文件；不自动读取当前目录 `.env`。
 - `--check` 或 `FLOWIE_CONTROL_CHECK`：只验证配置并退出的启动意图。
 
-解析顺序为先选择 DotEnv 文件并调用 `turbo_dotenv_load(path, false)`，再通过
-`turbo_cmd_set_env()`/`turbo_cmd_parse()` 合并参数。因此有效优先级固定为：
+解析顺序为先选择 DotEnv 文件并调用 `dotenv_load(path, false)`，再通过
+`cmd_arger_with_env()`/`cmd_arger_parse()` 合并参数。因此有效优先级固定为：
 
 ```text
 CLI > existing process environment > explicitly selected DotEnv
 ```
 
 结果复制到有界、无外部所有权的结构体。DotEnv 会修改进程环境，所以该入口只能在创建线程和其他组件前
-调用一次。CLI 语法错误和帮助输出仍由 TurboUtils CMD parser 在进程边界处理。
+调用一次。CLI 语法错误和帮助输出仍由 Salts CmdParser 在进程边界处理。
 
 ## 安全边界
 
@@ -38,5 +38,5 @@ store。指定的 DotEnv 文件无法读取时立即失败，不回退到默认 
 ## 影响与回滚
 
 `flowie_control_core` 不依赖 CMD/DotEnv；新依赖被隔离在不安装的 `flowie_control_startup` target。
-`flowie-control` 只在 TurboDB ORM、Iris HTTP server 与 RPC 均可用时构建和安装。回滚时可停止并移除该
+`flowie-control` 只在 TurboDB ORM、Salts CHTTP server 与 RPC 均可用时构建和安装。回滚时可停止并移除该
 可执行文件，不影响 MQTT 数据面；配置 version 1 不提供隐式旧格式 fallback。

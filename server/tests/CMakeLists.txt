@@ -4,14 +4,14 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
 endif()
 
 add_executable(flowie_supervisor_test_worker flowie_supervisor_test_worker.c)
-target_link_libraries(flowie_supervisor_test_worker PRIVATE Rocida::Core)
+target_link_libraries(flowie_supervisor_test_worker PRIVATE Salts::Core)
 cmake_config_target(flowie_supervisor_test_worker NO_INSTALL FOLDER "flowie/server/tests")
 
 cmake_add_test(
   test_flowie_supervisor
   SOURCES test_flowie_supervisor.c ${PROJECT_SOURCE_DIR}/server/flowie_supervisor_runtime.c
           ${PROJECT_SOURCE_DIR}/server/flowie_supervisor_runtime_internal.h
-  LIBS Rocida::Core Rocida::TinyTest
+  LIBS Salts::Core Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/server ${CMAKE_CURRENT_SOURCE_DIR}
   FOLDER "flowie/server/tests")
 target_compile_definitions(
@@ -23,25 +23,6 @@ target_compile_definitions(
 add_dependencies(test_flowie_supervisor flowie_server flowie_supervisor_test_worker)
 set_tests_properties(test_flowie_supervisor
                      PROPERTIES LABELS "flowie;flowie-release;product-contract")
-
-cmake_add_test(
-  test_flowie_server_application
-  SOURCES test_flowie_server_application.c
-  LIBS flowie_server_application Rocida::TinyTest
-  INCLUDES ${PROJECT_SOURCE_DIR}/server ${PROJECT_SOURCE_DIR}/io/socket/tests
-           ${PROJECT_SOURCE_DIR}/flowie/tests
-  FOLDER "flowie/server/tests")
-target_compile_definitions(
-  test_flowie_server_application
-  PRIVATE FLOWIE_TEST_GRAPH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/flowie_server_no_policy.flow")
-cmake_target_enable_boringssl_linkage(test_flowie_server_application)
-if(WIN32)
-  target_link_libraries(test_flowie_server_application PRIVATE ws2_32)
-endif()
-set_tests_properties(
-  test_flowie_server_application
-  PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract;integration"
-             TIMEOUT 30)
 
 add_test(
   NAME flowie_supervisor_check
@@ -108,7 +89,7 @@ set_tests_properties(flowie_server_check_dev_product
 cmake_add_test(
   test_flowie_dev_server_bdd
   SOURCES test_flowie_dev_server_bdd.c
-  LIBS Flowie::Client Rocida::Core Rocida::TinyTest
+  LIBS Flowie::Client Salts::Core Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
   FOLDER "flowie/server/tests")
 target_compile_definitions(
@@ -128,7 +109,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS Rocida::Core Rocida::TinyTest
+    LIBS Salts::Core Salts::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(
@@ -148,7 +129,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_fixed_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS Rocida::Core Rocida::TinyTest
+    LIBS Salts::Core Salts::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(

@@ -1,7 +1,7 @@
 #include "flow_io_policy.h"
 
 #include "platform.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <limits.h>
 #include <string.h>
@@ -24,7 +24,7 @@ static int tf_io_budget_fits(const tf_io_budget_t *budget, size_t bytes) {
 }
 
 static uint64_t tf_io_deadline_ns(uint64_t timeout_ms) {
-  uint64_t now = turbo_hrtime();
+  uint64_t now = salts_hrtime();
   if (timeout_ms > (UINT64_MAX - now) / TF_IO_NANOSECONDS_PER_MILLISECOND) return UINT64_MAX;
   return now + timeout_ms * TF_IO_NANOSECONDS_PER_MILLISECOND;
 }
@@ -32,70 +32,70 @@ static uint64_t tf_io_deadline_ns(uint64_t timeout_ms) {
 static int tf_io_wait_changed(tf_io_budget_t *budget, uint64_t deadline_ns) {
   uint64_t now;
   if (deadline_ns == UINT64_MAX) {
-    turbo_cond_wait(&budget->changed, &budget->mutex);
-    return TURBO_OK;
+    salts_cond_wait(&budget->changed, &budget->mutex);
+    return SALTS_OK;
   }
-  now = turbo_hrtime();
-  if (now >= deadline_ns) return TURBO_ETIMEDOUT;
-  return turbo_cond_timedwait(&budget->changed, &budget->mutex, deadline_ns - now) == 0
-             ? TURBO_OK
-             : TURBO_ETIMEDOUT;
+  now = salts_hrtime();
+  if (now >= deadline_ns) return SALTS_ETIMEDOUT;
+  return salts_cond_timedwait(&budget->changed, &budget->mutex, deadline_ns - now) == 0
+             ? SALTS_OK
+             : SALTS_ETIMEDOUT;
 }
 
 int tf_io_budget_init(tf_io_budget_t *budget, const tf_io_budget_config_t *config) {
-  if (!budget || !tf_io_budget_config_valid(config)) return TURBO_EINVAL;
+  if (!budget || !tf_io_budget_config_valid(config)) return SALTS_EINVAL;
   memset(budget, 0, sizeof(*budget));
-  turbo_mutex_init(&budget->mutex);
-  turbo_cond_init(&budget->changed);
+  salts_mutex_init(&budget->mutex);
+  salts_cond_init(&budget->changed);
   budget->max_messages = config->max_messages;
   budget->max_bytes = config->max_bytes;
   budget->admission = config->admission;
   budget->wait_timeout_ms = config->wait_timeout_ms;
   budget->initialized = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void tf_io_budget_destroy(tf_io_budget_t *budget) {
   if (!budget || !budget->initialized) return;
   tf_io_budget_close(budget);
-  turbo_cond_destroy(&budget->changed);
-  turbo_mutex_destroy(&budget->mutex);
+  salts_cond_destroy(&budget->changed);
+  salts_mutex_destroy(&budget->mutex);
   memset(budget, 0, sizeof(*budget));
 }
 
 int tf_io_budget_open(tf_io_budget_t *budget) {
-  if (!budget || !budget->initialized) return TURBO_EINVAL;
-  turbo_mutex_lock(&budget->mutex);
+  if (!budget || !budget->initialized) return SALTS_EINVAL;
+  salts_mutex_lock(&budget->mutex);
   if (budget->messages != 0 || budget->bytes != 0) {
-    turbo_mutex_unlock(&budget->mutex);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&budget->mutex);
+    return SALTS_EBUSY;
   }
   budget->accepting = 1;
-  turbo_cond_broadcast(&budget->changed);
-  turbo_mutex_unlock(&budget->mutex);
-  return TURBO_OK;
+  salts_cond_broadcast(&budget->changed);
+  salts_mutex_unlock(&budget->mutex);
+  return SALTS_OK;
 }
 
 void tf_io_budget_close(tf_io_budget_t *budget) {
   if (!budget || !budget->initialized) return;
-  turbo_mutex_lock(&budget->mutex);
+  salts_mutex_lock(&budget->mutex);
   budget->accepting = 0;
-  turbo_cond_broadcast(&budget->changed);
-  turbo_mutex_unlock(&budget->mutex);
+  salts_cond_broadcast(&budget->changed);
+  salts_mutex_unlock(&budget->mutex);
 }
 
 int tf_io_budget_acquire(tf_io_budget_t *budget, size_t bytes) {
   uint64_t deadline_ns = UINT64_MAX;
-  int rc = TURBO_OK;
-  if (!budget || !budget->initialized) return TURBO_EINVAL;
-  if (budget->max_bytes != 0 && bytes > budget->max_bytes) return TURBO_ENOSPC;
+  int rc = SALTS_OK;
+  if (!budget || !budget->initialized) return SALTS_EINVAL;
+  if (budget->max_bytes != 0 && bytes > budget->max_bytes) return SALTS_ENOSPC;
   if (budget->admission == TF_IO_ADMISSION_BLOCK && budget->wait_timeout_ms != UINT64_MAX) {
     deadline_ns = tf_io_deadline_ns(budget->wait_timeout_ms);
   }
-  turbo_mutex_lock(&budget->mutex);
+  salts_mutex_lock(&budget->mutex);
   for (;;) {
     if (!budget->accepting) {
-      rc = TURBO_ESHUTDOWN;
+      rc = SALTS_ESHUTDOWN;
       break;
     }
     if (tf_io_budget_fits(budget, bytes)) {
@@ -104,57 +104,57 @@ int tf_io_budget_acquire(tf_io_budget_t *budget, size_t bytes) {
       break;
     }
     if (budget->admission == TF_IO_ADMISSION_FAIL) {
-      rc = TURBO_ENOSPC;
+      rc = SALTS_ENOSPC;
       break;
     }
     rc = tf_io_wait_changed(budget, deadline_ns);
-    if (rc != TURBO_OK) break;
+    if (rc != SALTS_OK) break;
   }
-  turbo_mutex_unlock(&budget->mutex);
+  salts_mutex_unlock(&budget->mutex);
   return rc;
 }
 
 int tf_io_budget_release(tf_io_budget_t *budget, size_t bytes) {
-  if (!budget || !budget->initialized) return TURBO_EINVAL;
-  turbo_mutex_lock(&budget->mutex);
+  if (!budget || !budget->initialized) return SALTS_EINVAL;
+  salts_mutex_lock(&budget->mutex);
   if (budget->messages == 0 || budget->bytes < bytes) {
-    turbo_mutex_unlock(&budget->mutex);
-    return TURBO_ERANGE;
+    salts_mutex_unlock(&budget->mutex);
+    return SALTS_ERANGE;
   }
   budget->messages -= 1u;
   budget->bytes -= bytes;
-  turbo_cond_broadcast(&budget->changed);
-  turbo_mutex_unlock(&budget->mutex);
-  return TURBO_OK;
+  salts_cond_broadcast(&budget->changed);
+  salts_mutex_unlock(&budget->mutex);
+  return SALTS_OK;
 }
 
 int tf_io_budget_drain(tf_io_budget_t *budget, uint64_t timeout_ms) {
   uint64_t deadline_ns = timeout_ms == UINT64_MAX ? UINT64_MAX : tf_io_deadline_ns(timeout_ms);
-  int rc = TURBO_OK;
-  if (!budget || !budget->initialized) return TURBO_EINVAL;
-  turbo_mutex_lock(&budget->mutex);
+  int rc = SALTS_OK;
+  if (!budget || !budget->initialized) return SALTS_EINVAL;
+  salts_mutex_lock(&budget->mutex);
   while (budget->messages != 0) {
     if (timeout_ms == 0) {
-      rc = TURBO_ETIMEDOUT;
+      rc = SALTS_ETIMEDOUT;
       break;
     }
     rc = tf_io_wait_changed(budget, deadline_ns);
-    if (rc != TURBO_OK) break;
+    if (rc != SALTS_OK) break;
   }
-  turbo_mutex_unlock(&budget->mutex);
+  salts_mutex_unlock(&budget->mutex);
   return rc;
 }
 
 int tf_io_budget_snapshot(tf_io_budget_t *budget, tf_io_budget_snapshot_t *out) {
-  if (!budget || !budget->initialized || !out) return TURBO_EINVAL;
-  turbo_mutex_lock(&budget->mutex);
+  if (!budget || !budget->initialized || !out) return SALTS_EINVAL;
+  salts_mutex_lock(&budget->mutex);
   out->messages = budget->messages;
   out->bytes = budget->bytes;
   out->max_messages = budget->max_messages;
   out->max_bytes = budget->max_bytes;
   out->accepting = budget->accepting;
-  turbo_mutex_unlock(&budget->mutex);
-  return TURBO_OK;
+  salts_mutex_unlock(&budget->mutex);
+  return SALTS_OK;
 }
 
 void tf_round_robin_init(tf_round_robin_t *selector) {
@@ -164,9 +164,9 @@ void tf_round_robin_init(tf_round_robin_t *selector) {
 
 int tf_round_robin_next(tf_round_robin_t *selector, size_t candidate_count, size_t *index) {
   uint_fast64_t ticket;
-  if (!selector || !index || candidate_count == 0) return TURBO_EINVAL;
+  if (!selector || !index || candidate_count == 0) return SALTS_EINVAL;
   ticket = atomic_fetch_add_explicit(&selector->cursor, 1u, memory_order_relaxed);
   *index = (size_t)(ticket % candidate_count);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 

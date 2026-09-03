@@ -1,7 +1,8 @@
 cmake_add_test(
   test_flowie_mqtt_client
-  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client.c
-  LIBS Flowie::Client Flowie::Protocol TurboNet::CoroNet Rocida::TinyTest
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
+  LIBS Flowie::Client Flowie::Protocol Flowie::NetRuntime Salts::Core
+       Salts::TinyTest
   FOLDER "flowie/client/tests")
 
 target_include_directories(test_flowie_mqtt_client
@@ -15,7 +16,7 @@ set_tests_properties(
 cmake_add_test(
   test_flowie_mqtt_client_live
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
-  LIBS Flowie::Client Flowie::Protocol TurboNet::CoroNet Rocida::TinyTest
+  LIBS Flowie::Client Flowie::Protocol Salts::Core Salts::TinyTest
   FOLDER "flowie/client/tests")
 
 set_tests_properties(
@@ -34,7 +35,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mqtt_client_fixed_interop
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
-    LIBS Flowie::Client Flowie::Protocol TurboNet::CoroNet Rocida::TinyTest
+    LIBS Flowie::Client Flowie::Protocol Salts::Core Salts::TinyTest
     FOLDER "flowie/client/tests")
   target_compile_definitions(
     test_flowie_mqtt_client_fixed_interop

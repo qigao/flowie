@@ -3,7 +3,7 @@
 
 #include "platform.h"
 #include "tls_test_support.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
@@ -30,7 +30,7 @@ typedef int flow_mtls_test_socket_t;
 
 typedef struct flow_mtls_test_server_s {
   flow_mtls_test_socket_t listener;
-  turbo_thread_t thread;
+  salts_thread_t thread;
   const uint8_t *response;
   size_t response_size;
   uint32_t response_delay_ms;
@@ -144,7 +144,7 @@ static void flow_mtls_test_server_main(void *arg) {
   if (!flow_mtls_test_request_complete(request, request_size)) goto done;
   memcpy(server->request, request, request_size + 1u);
   server->request_size = request_size;
-  if (server->response_delay_ms != 0u) turbo_sleep_ms(server->response_delay_ms);
+  if (server->response_delay_ms != 0u) salts_sleep_ms(server->response_delay_ms);
   if (server->response_size != 0u &&
       SSL_write(ssl, server->response, (int)server->response_size) != (int)server->response_size)
     goto done;
@@ -160,7 +160,8 @@ done:
 static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
                                           size_t response_size, uint32_t response_delay_ms,
                                           int require_peer_certificate) {
-  struct sockaddr_in address;
+  struct sockaddr_storage address;
+  int family = AF_INET6;
 #ifdef _WIN32
   int address_size = (int)sizeof(address);
   WSADATA data;
@@ -172,24 +173,48 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   if (!server || (!response && response_size != 0u)) return -1;
   memset(server, 0, sizeof(*server));
   server->require_peer_certificate = require_peer_certificate ? 1 : 0;
-  server->listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (server->listener == FLOW_MTLS_TEST_INVALID_SOCKET) return -1;
+  server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
+  if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET) {
+    int ipv6_only = 0;
+    if (setsockopt(server->listener, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&ipv6_only,
+                   sizeof(ipv6_only)) != 0) {
+      flow_mtls_test_close_socket(server->listener);
+      server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;
+    }
+  }
+  if (server->listener == FLOW_MTLS_TEST_INVALID_SOCKET) {
+    family = AF_INET;
+    server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
+    if (server->listener == FLOW_MTLS_TEST_INVALID_SOCKET) return -1;
+  }
   memset(&address, 0, sizeof(address));
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  if (bind(server->listener, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+  if (family == AF_INET6) {
+    struct sockaddr_in6 *address6 = (struct sockaddr_in6 *)&address;
+    address6->sin6_family = AF_INET6;
+    address6->sin6_addr = in6addr_any;
+    address6->sin6_port = 0;
+    address_size = (int)sizeof(*address6);
+  } else {
+    struct sockaddr_in *address4 = (struct sockaddr_in *)&address;
+    address4->sin_family = AF_INET;
+    address4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address4->sin_port = 0;
+    address_size = (int)sizeof(*address4);
+  }
+  if (bind(server->listener, (const struct sockaddr *)&address, address_size) != 0 ||
       listen(server->listener, 1) != 0 ||
       getsockname(server->listener, (struct sockaddr *)&address, &address_size) != 0) {
     flow_mtls_test_close_socket(server->listener);
     server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;
     return -1;
   }
-  server->port = ntohs(address.sin_port);
+  server->port = family == AF_INET6
+                     ? ntohs(((const struct sockaddr_in6 *)&address)->sin6_port)
+                     : ntohs(((const struct sockaddr_in *)&address)->sin_port);
   server->response = response;
   server->response_size = response_size;
   server->response_delay_ms = response_delay_ms;
-  if (turbo_thread_create(&server->thread, flow_mtls_test_server_main, server) != 0) {
+  if (salts_thread_create(&server->thread, flow_mtls_test_server_main, server) != 0) {
     flow_mtls_test_close_socket(server->listener);
     server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;
     return -1;
@@ -216,7 +241,7 @@ static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const ui
 
 static void flow_mtls_test_server_join(flow_mtls_test_server_t *server) {
   if (!server) return;
-  if (server->started) (void)turbo_thread_join(&server->thread);
+  if (server->started) (void)salts_thread_join(&server->thread);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET)
     flow_mtls_test_close_socket(server->listener);
   server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;

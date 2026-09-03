@@ -1,6 +1,6 @@
 #include "flowie_control_database_config_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +11,7 @@ int flowie_control_database_config_resolve(
   if (!config || config->size < sizeof(*config) || config->version != FLOWIE_CONTROL_CONFIG_VERSION ||
       !database || !options || !config->turbodb.driver[0] ||
       config->turbodb.option_count > FLOWIE_CONTROL_CONFIG_TURBODB_OPTION_COUNT_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   orm_config(database);
   database->driver = orm_view(config->turbodb.driver);
   database->options = options;
@@ -19,17 +19,17 @@ int flowie_control_database_config_resolve(
   for (size_t index = 0u; index < config->turbodb.option_count; ++index) {
     const flowie_control_config_turbodb_option_t *input = &config->turbodb.options[index];
     const char *value = input->value;
-    if (!input->keyword[0] || !value[0]) return TURBO_EINVAL;
+    if (!input->keyword[0] || !value[0]) return SALTS_EINVAL;
     if (flowie_control_config_turbodb_secret_option(input->keyword) &&
         !flowie_control_config_secret_ref_valid(value))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     if (strncmp(value, "env://", sizeof("env://") - 1u) == 0) {
-      if (!flowie_control_config_secret_ref_valid(value)) return TURBO_EINVAL;
+      if (!flowie_control_config_secret_ref_valid(value)) return SALTS_EINVAL;
       value = getenv(value + sizeof("env://") - 1u);
-      if (!value || !value[0]) return TURBO_ENOENT;
+      if (!value || !value[0]) return SALTS_ENOENT;
     }
     options[index].keyword = orm_view(input->keyword);
     options[index].value = orm_view(value);
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }

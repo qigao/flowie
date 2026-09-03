@@ -1,7 +1,7 @@
 #include "flowie_server_turbodb_config_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -21,7 +21,7 @@ spec("Flowie server TurboDB configuration") {
                     "postgresql",
                     "{\"conninfo\":\"host=pg dbname=flowie\",\"application_name\":\"flowie\"}",
                     &config),
-                TURBO_OK);
+                SALTS_OK);
     check_not_null(config);
     database = flowie_server_turbodb_config_database(config);
     check_not_null(database);
@@ -38,7 +38,7 @@ spec("Flowie server TurboDB configuration") {
 
     check_equal(
         flowie_server_turbodb_config_create("sqlite", "{\"filename\":\":memory:\"}", &config),
-        TURBO_OK);
+        SALTS_OK);
     database = flowie_server_turbodb_config_database(config);
     check_equal(database->option_count, 1u);
     check_true(option_equal(&database->options[0], "filename", ":memory:"));
@@ -53,18 +53,18 @@ spec("Flowie server TurboDB configuration") {
                                    "\"k17\":\"v\"}";
     flowie_server_turbodb_config_t *config = (flowie_server_turbodb_config_t *)1;
 
-    check_equal(flowie_server_turbodb_config_create("", "{}", &config), TURBO_EINVAL);
+    check_equal(flowie_server_turbodb_config_create("", "{}", &config), SALTS_EINVAL);
     check_null(config);
-    check_equal(flowie_server_turbodb_config_create("sqlite", "[]", &config), TURBO_EINVAL);
+    check_equal(flowie_server_turbodb_config_create("sqlite", "[]", &config), SALTS_EINVAL);
     check_null(config);
     check_equal(flowie_server_turbodb_config_create("sqlite", "{\"filename\":1}", &config),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(config);
     check_equal(flowie_server_turbodb_config_create(
                     "sqlite", "{\"filename\":\"a\",\"filename\":\"b\"}", &config),
-                TURBO_EALREADY);
+                SALTS_EALREADY);
     check_null(config);
-    check_equal(flowie_server_turbodb_config_create("sqlite", too_many, &config), TURBO_ENOSPC);
+    check_equal(flowie_server_turbodb_config_create("sqlite", too_many, &config), SALTS_ENOSPC);
     check_null(config);
   }
 }

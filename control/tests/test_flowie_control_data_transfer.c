@@ -4,7 +4,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +15,7 @@ static flowie_control_store_t *data_test_store_open(const char *path) {
   flowie_control_store_t *store = NULL;
   check_equal(flowie_control_test_turbodb_init(&database, path), 0);
   config.database = &database.config;
-  check_equal(flowie_control_store_open(&config, &store), TURBO_OK);
+  check_equal(flowie_control_store_open(&config, &store), SALTS_OK);
   return store;
 }
 
@@ -78,7 +78,7 @@ spec("Flowie Control Domain data transfer") {
     domain.request_id = "data-domain";
     domain.occurred_at = 1u;
     check_equal(repository->user->domain_create(repository->ctx, &domain, &command_result),
-                TURBO_OK);
+                SALTS_OK);
     user.domain_id = "root-a";
     user.principal_id = "device-7";
     user.principal_type = "device";
@@ -86,14 +86,14 @@ spec("Flowie Control Domain data transfer") {
     user.request_id = "data-user";
     user.expected_revision = 1u;
     user.occurred_at = 2u;
-    check_equal(repository->user->create(repository->ctx, &user, &command_result), TURBO_OK);
+    check_equal(repository->user->create(repository->ctx, &user, &command_result), SALTS_OK);
     group.domain_id = "root-a";
     group.group_id = "operators";
     group.actor = "test";
     group.request_id = "data-group";
     group.expected_revision = 2u;
     group.occurred_at = 3u;
-    check_equal(repository->group->create(repository->ctx, &group, &command_result), TURBO_OK);
+    check_equal(repository->group->create(repository->ctx, &group, &command_result), SALTS_OK);
     membership.domain_id = "root-a";
     membership.principal_id = "device-7";
     membership.group_id = "operators";
@@ -102,14 +102,14 @@ spec("Flowie Control Domain data transfer") {
     membership.expected_revision = 3u;
     membership.occurred_at = 4u;
     check_equal(repository->group->membership_add(repository->ctx, &membership, &command_result),
-                TURBO_OK);
+                SALTS_OK);
     role.domain_id = "root-a";
     role.role_id = "reader";
     role.actor = "test";
     role.request_id = "data-role";
     role.expected_revision = 4u;
     role.occurred_at = 5u;
-    check_equal(repository->role->create(repository->ctx, &role, &command_result), TURBO_OK);
+    check_equal(repository->role->create(repository->ctx, &role, &command_result), SALTS_OK);
     assignment.domain_id = "root-a";
     assignment.principal_id = "device-7";
     assignment.role_id = "reader";
@@ -118,8 +118,8 @@ spec("Flowie Control Domain data transfer") {
     assignment.expected_revision = 5u;
     assignment.occurred_at = 6u;
     check_equal(repository->role->assignment_add(repository->ctx, &assignment, &command_result),
-                TURBO_OK);
-    check_equal(flowie_control_acl_parse(acl, sizeof(acl) - 1u, &document), TURBO_OK);
+                SALTS_OK);
+    check_equal(flowie_control_acl_parse(acl, sizeof(acl) - 1u, &document), SALTS_OK);
     rule.domain_id = "root-a";
     rule.ordinal = 10u;
     rule.document = &document;
@@ -128,19 +128,19 @@ spec("Flowie Control Domain data transfer") {
     rule.expected_revision = 6u;
     rule.occurred_at = 7u;
     check_equal(repository->policy->subject_rule_put(repository->ctx, &rule, &command_result),
-                TURBO_OK);
+                SALTS_OK);
     publish.domain_id = "root-a";
     publish.actor = "test";
     publish.request_id = "data-publish";
     publish.expected_revision = 7u;
     publish.occurred_at = 8u;
     publish.expires_at = 20000u;
-    check_equal(repository->policy->publish(repository->ctx, &publish, &publish_result), TURBO_OK);
+    check_equal(repository->policy->publish(repository->ctx, &publish, &publish_result), SALTS_OK);
     user.principal_id = "device-disabled";
     user.request_id = "data-disabled-user";
     user.expected_revision = 8u;
     user.occurred_at = 9u;
-    check_equal(repository->user->create(repository->ctx, &user, &command_result), TURBO_OK);
+    check_equal(repository->user->create(repository->ctx, &user, &command_result), SALTS_OK);
     disable_user.domain_id = "root-a";
     disable_user.principal_id = "device-disabled";
     disable_user.actor = "test";
@@ -148,10 +148,10 @@ spec("Flowie Control Domain data transfer") {
     disable_user.expected_revision = 9u;
     disable_user.occurred_at = 10u;
     check_equal(repository->user->disable(repository->ctx, &disable_user, &command_result),
-                TURBO_OK);
+                SALTS_OK);
 
     check_equal(flowie_control_data_export(repository, "root-a", archive_path, &exported),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(exported.source_revision, 10u);
     check_equal(exported.user_count, 2u);
     check_equal(exported.membership_count, 1u);
@@ -160,19 +160,19 @@ spec("Flowie Control Domain data transfer") {
     check_true(exported.policy_published);
 
     repository = flowie_control_store_repository(target);
-    check_equal(repository->audit->revision(repository->ctx, &revision), TURBO_OK);
+    check_equal(repository->audit->revision(repository->ctx, &revision), SALTS_OK);
     check_equal(revision, 0u);
-    check_equal(flowie_control_data_import(repository, archive_path, 1, &imported), TURBO_OK);
+    check_equal(flowie_control_data_import(repository, archive_path, 1, &imported), SALTS_OK);
     check_false(imported.mutated);
-    check_equal(repository->audit->revision(repository->ctx, &revision), TURBO_OK);
+    check_equal(repository->audit->revision(repository->ctx, &revision), SALTS_OK);
     check_equal(revision, 0u);
 
     imported = (flowie_control_data_transfer_result_t)FLOWIE_CONTROL_DATA_TRANSFER_RESULT_INIT;
-    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), TURBO_OK);
+    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), SALTS_OK);
     check_true(imported.mutated);
     check_equal(imported.user_count, 2u);
     check_equal(repository->user->list(repository->ctx, "root-a", NULL, users, 2u, &count, &more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 2u);
     check_equal(users[0].principal_id, "device-7");
     check_true(users[0].enabled);
@@ -180,16 +180,16 @@ spec("Flowie Control Domain data transfer") {
     check_false(users[1].enabled);
     check_equal(repository->group->membership_list(repository->ctx, "root-a", NULL, NULL,
                                                     memberships, 1u, &count, &more),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(count, 1u);
     check_equal(memberships[0].group_id, "operators");
-    check_equal(repository->policy->status(repository->ctx, "root-a", &status), TURBO_OK);
+    check_equal(repository->policy->status(repository->ctx, "root-a", &status), SALTS_OK);
     check_equal(status.policy_version, 1u);
     check_equal(status.expires_at, 20000u);
 
     revision = imported.target_revision;
     imported = (flowie_control_data_transfer_result_t)FLOWIE_CONTROL_DATA_TRANSFER_RESULT_INIT;
-    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), TURBO_OK);
+    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), SALTS_OK);
     check_false(imported.mutated);
     check_equal(imported.target_revision, revision);
 
@@ -199,10 +199,10 @@ spec("Flowie Control Domain data transfer") {
     domain.expected_revision = 0u;
     domain.occurred_at = 1u;
     check_equal(repository->user->domain_create(repository->ctx, &domain, &command_result),
-                TURBO_OK);
+                SALTS_OK);
     imported = (flowie_control_data_transfer_result_t)FLOWIE_CONTROL_DATA_TRANSFER_RESULT_INIT;
-    check_equal(flowie_control_data_import(repository, archive_path, 1, &imported), TURBO_EBUSY);
-    check_equal(repository->audit->revision(repository->ctx, &revision), TURBO_OK);
+    check_equal(flowie_control_data_import(repository, archive_path, 1, &imported), SALTS_EBUSY);
+    check_equal(repository->audit->revision(repository->ctx, &revision), SALTS_OK);
     check_equal(revision, 1u);
 
     {
@@ -218,8 +218,8 @@ spec("Flowie Control Domain data transfer") {
     }
     imported = (flowie_control_data_transfer_result_t)FLOWIE_CONTROL_DATA_TRANSFER_RESULT_INIT;
     repository = flowie_control_store_repository(rejected_target);
-    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), TURBO_EPROTO);
-    check_equal(repository->audit->revision(repository->ctx, &revision), TURBO_OK);
+    check_equal(flowie_control_data_import(repository, archive_path, 0, &imported), SALTS_EPROTO);
+    check_equal(repository->audit->revision(repository->ctx, &revision), SALTS_OK);
     check_equal(revision, 0u);
 
     flowie_control_store_destroy(source);

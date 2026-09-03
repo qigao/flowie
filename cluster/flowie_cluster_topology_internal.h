@@ -104,8 +104,8 @@ int flowie_cluster_topology_plan_config_validate(
  * means an outgoing connector is planned only when local_node_id is smaller.
  * Every REMOVE precedes every ADD, including boot/endpoint replacement.
  *
- * TURBO_EBUSY rejects a snapshot older than last_applied_revision. A changed
- * topology at the exact already-applied revision is TURBO_EPROTO. Capacity is
+ * SALTS_EBUSY rejects a snapshot older than last_applied_revision. A changed
+ * topology at the exact already-applied revision is SALTS_EPROTO. Capacity is
  * bounded by max_nodes and at most 2 * max_nodes operations.
  */
 int flowie_cluster_topology_plan_build(const flowie_cluster_topology_plan_config_t *config,

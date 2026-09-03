@@ -1,7 +1,7 @@
 #ifndef FLOWIE_SUPERVISOR_RUNTIME_INTERNAL_H
 #define FLOWIE_SUPERVISOR_RUNTIME_INTERNAL_H
 
-#include "turbo_process.h"
+#include "salts_process.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -46,12 +46,12 @@ int flowie_supervisor_runtime_start(flowie_supervisor_runtime_t *runtime,
 
 /** Observe completion without changing the child lifecycle. */
 int flowie_supervisor_runtime_wait_for(flowie_supervisor_runtime_t *runtime, uint64_t timeout_ms,
-                                       turbo_process_result_t *result,
+                                       salts_process_result_t *result,
                                        flowie_supervisor_error_t *error);
 
 /** Terminate and reap the owned Worker. Safe when it has already exited. */
 int flowie_supervisor_runtime_stop(flowie_supervisor_runtime_t *runtime,
-                                   turbo_process_result_t *result,
+                                   salts_process_result_t *result,
                                    flowie_supervisor_error_t *error);
 
 /** Consume captured output; capture must have been enabled in the config. */

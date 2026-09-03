@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
-#include "turbo_error.h"
-#include "turbo_thread.h"
+#include "salts_error.h"
+#include "salts_thread.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -35,8 +35,8 @@ struct flowie_cluster_peer_registry_s {
   size_t inflight_sends;
   int closing;
   int drained;
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
 };
 
 static int flowie_cluster_peer_registry_nonzero(const uint8_t *value, size_t size) {
@@ -52,8 +52,8 @@ static int flowie_cluster_peer_registry_identity_validate(
       remote_node_id.len > FLOWIE_CLUSTER_NODE_ID_MAX ||
       memchr(remote_node_id.data, '\0', remote_node_id.len) || !remote_boot_id ||
       !flowie_cluster_peer_registry_nonzero(remote_boot_id, FLOWIE_CLUSTER_BOOT_ID_SIZE))
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 static int flowie_cluster_peer_registry_identity_equal(
@@ -93,21 +93,21 @@ int flowie_cluster_peer_registry_create(const flowie_cluster_peer_registry_confi
       config->abi_version != FLOWIE_CLUSTER_PEER_REGISTRY_ABI_V1 || config->max_links == 0u ||
       config->max_links > SIZE_MAX / sizeof(flowie_cluster_peer_registry_entry_t) ||
       config->max_inflight_sends == 0u || !out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   registry = (flowie_cluster_peer_registry_t *)calloc(1u, sizeof(*registry));
-  if (!registry) return TURBO_ENOMEM;
+  if (!registry) return SALTS_ENOMEM;
   registry->entries = (flowie_cluster_peer_registry_entry_t *)calloc(
       config->max_links, sizeof(flowie_cluster_peer_registry_entry_t));
   if (!registry->entries) {
     free(registry);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   registry->max_links = config->max_links;
   registry->max_inflight_sends = config->max_inflight_sends;
-  turbo_mutex_init(&registry->mutex);
-  turbo_cond_init(&registry->changed);
+  salts_mutex_init(&registry->mutex);
+  salts_cond_init(&registry->changed);
   *out = registry;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *registry,
@@ -117,18 +117,18 @@ int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *regist
   flowie_cluster_peer_registry_entry_t *entry;
   tstr owned_node_id;
   int rc;
-  if (!registry || !link) return TURBO_EINVAL;
+  if (!registry || !link) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(remote_node_id, remote_boot_id);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   owned_node_id = tstr_from_v(remote_node_id);
-  if (!owned_node_id) return TURBO_ENOMEM;
-  turbo_mutex_lock(&registry->mutex);
+  if (!owned_node_id) return SALTS_ENOMEM;
+  salts_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, remote_node_id, remote_boot_id);
-  if (registry->closing) rc = TURBO_ESHUTDOWN;
-  else if (entry) rc = entry->link == link ? TURBO_EALREADY : TURBO_EBUSY;
+  if (registry->closing) rc = SALTS_ESHUTDOWN;
+  else if (entry) rc = entry->link == link ? SALTS_EALREADY : SALTS_EBUSY;
   else if (registry->registered_links == registry->max_links ||
            !(entry = flowie_cluster_peer_registry_free_entry(registry)))
-    rc = TURBO_ENOSPC;
+    rc = SALTS_ENOSPC;
   else {
     entry->remote_node_id = owned_node_id;
     owned_node_id = NULL;
@@ -137,9 +137,9 @@ int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *regist
     entry->state = FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_ACTIVE;
     ++registry->registered_links;
     registry->drained = 0;
-    rc = TURBO_OK;
+    rc = SALTS_OK;
   }
-  turbo_mutex_unlock(&registry->mutex);
+  salts_mutex_unlock(&registry->mutex);
   tstr_free(owned_node_id);
   return rc;
 }
@@ -150,24 +150,24 @@ int flowie_cluster_peer_registry_unregister(
   flowie_cluster_peer_registry_entry_t *entry;
   tstr owned_node_id = NULL;
   int rc;
-  if (!registry || !link) return TURBO_EINVAL;
+  if (!registry || !link) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(remote_node_id, remote_boot_id);
-  if (rc != TURBO_OK) return rc;
-  turbo_mutex_lock(&registry->mutex);
+  if (rc != SALTS_OK) return rc;
+  salts_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, remote_node_id, remote_boot_id);
-  if (!entry) rc = TURBO_ENOENT;
-  else if (entry->link != link) rc = TURBO_EBUSY;
+  if (!entry) rc = SALTS_ENOENT;
+  else if (entry->link != link) rc = SALTS_EBUSY;
   else if (entry->inflight_sends != 0u) {
     entry->state = FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_DRAINING;
-    rc = TURBO_EBUSY;
+    rc = SALTS_EBUSY;
   } else {
     owned_node_id = entry->remote_node_id;
     memset(entry, 0, sizeof(*entry));
     --registry->registered_links;
-    turbo_cond_broadcast(&registry->changed);
-    rc = TURBO_OK;
+    salts_cond_broadcast(&registry->changed);
+    rc = SALTS_OK;
   }
-  turbo_mutex_unlock(&registry->mutex);
+  salts_mutex_unlock(&registry->mutex);
   tstr_free(owned_node_id);
   return rc;
 }
@@ -179,12 +179,12 @@ static void flowie_cluster_peer_registry_complete(void *ctx, int status) {
   void *complete_ctx = completion->complete_ctx;
   flowie_cluster_peer_registry_t *registry = completion->registry;
   if (complete) complete(complete_ctx, status);
-  turbo_mutex_lock(&registry->mutex);
+  salts_mutex_lock(&registry->mutex);
   if (completion->entry->inflight_sends != 0u) --completion->entry->inflight_sends;
   if (registry->inflight_sends != 0u) --registry->inflight_sends;
   if (registry->closing && registry->inflight_sends == 0u) registry->drained = 1;
-  turbo_cond_broadcast(&registry->changed);
-  turbo_mutex_unlock(&registry->mutex);
+  salts_cond_broadcast(&registry->changed);
+  salts_mutex_unlock(&registry->mutex);
   free(completion);
 }
 
@@ -195,30 +195,30 @@ int flowie_cluster_peer_registry_send(void *ctx, const flowie_cluster_peer_frame
   flowie_cluster_peer_registry_completion_t *completion;
   flowie_cluster_peer_registry_entry_t *entry;
   int rc;
-  if (!registry || !frame) return TURBO_EINVAL;
+  if (!registry || !frame) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(frame->target_node_id, frame->target_boot_id);
-  if (rc != TURBO_OK) return rc;
-  turbo_mutex_lock(&registry->mutex);
+  if (rc != SALTS_OK) return rc;
+  salts_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, frame->target_node_id, frame->target_boot_id);
-  if (registry->closing) rc = TURBO_ESHUTDOWN;
-  else if (!entry || entry->state != FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_ACTIVE) rc = TURBO_ENOENT;
-  else if (registry->inflight_sends >= registry->max_inflight_sends) rc = TURBO_ENOSPC;
+  if (registry->closing) rc = SALTS_ESHUTDOWN;
+  else if (!entry || entry->state != FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_ACTIVE) rc = SALTS_ENOENT;
+  else if (registry->inflight_sends >= registry->max_inflight_sends) rc = SALTS_ENOSPC;
   else {
     ++entry->inflight_sends;
     ++registry->inflight_sends;
     registry->drained = 0;
-    rc = TURBO_OK;
+    rc = SALTS_OK;
   }
-  turbo_mutex_unlock(&registry->mutex);
-  if (rc != TURBO_OK) return rc;
+  salts_mutex_unlock(&registry->mutex);
+  if (rc != SALTS_OK) return rc;
   completion = (flowie_cluster_peer_registry_completion_t *)calloc(1u, sizeof(*completion));
   if (!completion) {
-    turbo_mutex_lock(&registry->mutex);
+    salts_mutex_lock(&registry->mutex);
     --entry->inflight_sends;
     --registry->inflight_sends;
-    turbo_cond_broadcast(&registry->changed);
-    turbo_mutex_unlock(&registry->mutex);
-    return TURBO_ENOMEM;
+    salts_cond_broadcast(&registry->changed);
+    salts_mutex_unlock(&registry->mutex);
+    return SALTS_ENOMEM;
   }
   completion->registry = registry;
   completion->entry = entry;
@@ -226,12 +226,12 @@ int flowie_cluster_peer_registry_send(void *ctx, const flowie_cluster_peer_frame
   completion->complete_ctx = complete_ctx;
   rc = flowie_cluster_peer_link_send(entry->link, frame, flowie_cluster_peer_registry_complete,
                                      completion);
-  if (rc != TURBO_OK) {
-    turbo_mutex_lock(&registry->mutex);
+  if (rc != SALTS_OK) {
+    salts_mutex_lock(&registry->mutex);
     --entry->inflight_sends;
     --registry->inflight_sends;
-    turbo_cond_broadcast(&registry->changed);
-    turbo_mutex_unlock(&registry->mutex);
+    salts_cond_broadcast(&registry->changed);
+    salts_mutex_unlock(&registry->mutex);
     free(completion);
   }
   return rc;
@@ -242,8 +242,8 @@ int flowie_cluster_peer_registry_snapshot(flowie_cluster_peer_registry_t *regist
   size_t index;
   if (!registry || !out || out->size != sizeof(*out) ||
       out->abi_version != FLOWIE_CLUSTER_PEER_REGISTRY_ABI_V1)
-    return TURBO_EINVAL;
-  turbo_mutex_lock(&registry->mutex);
+    return SALTS_EINVAL;
+  salts_mutex_lock(&registry->mutex);
   out->registered_links = registry->registered_links;
   out->draining_links = 0u;
   for (index = 0u; index < registry->max_links; ++index)
@@ -251,21 +251,21 @@ int flowie_cluster_peer_registry_snapshot(flowie_cluster_peer_registry_t *regist
       ++out->draining_links;
   out->inflight_sends = registry->inflight_sends;
   out->closing = registry->closing;
-  turbo_mutex_unlock(&registry->mutex);
-  return TURBO_OK;
+  salts_mutex_unlock(&registry->mutex);
+  return SALTS_OK;
 }
 
 int flowie_cluster_peer_registry_close(flowie_cluster_peer_registry_t *registry) {
-  int rc = TURBO_OK;
-  if (!registry) return TURBO_EINVAL;
-  turbo_mutex_lock(&registry->mutex);
-  if (registry->closing) rc = TURBO_EALREADY;
+  int rc = SALTS_OK;
+  if (!registry) return SALTS_EINVAL;
+  salts_mutex_lock(&registry->mutex);
+  if (registry->closing) rc = SALTS_EALREADY;
   else {
     registry->closing = 1;
     registry->drained = registry->inflight_sends == 0u;
-    turbo_cond_broadcast(&registry->changed);
+    salts_cond_broadcast(&registry->changed);
   }
-  turbo_mutex_unlock(&registry->mutex);
+  salts_mutex_unlock(&registry->mutex);
   return rc;
 }
 
@@ -273,43 +273,43 @@ int flowie_cluster_peer_registry_drain(flowie_cluster_peer_registry_t *registry,
                                        uint64_t timeout_ns) {
   uint64_t start_ns;
   uint64_t deadline_ns;
-  int rc = TURBO_OK;
-  if (!registry) return TURBO_EINVAL;
-  start_ns = turbo_hrtime();
+  int rc = SALTS_OK;
+  if (!registry) return SALTS_EINVAL;
+  start_ns = salts_hrtime();
   deadline_ns = timeout_ns == UINT64_MAX || timeout_ns > UINT64_MAX - start_ns
                     ? UINT64_MAX
                     : start_ns + timeout_ns;
-  turbo_mutex_lock(&registry->mutex);
-  if (!registry->closing) rc = TURBO_EBUSY;
-  while (rc == TURBO_OK && registry->inflight_sends != 0u) {
+  salts_mutex_lock(&registry->mutex);
+  if (!registry->closing) rc = SALTS_EBUSY;
+  while (rc == SALTS_OK && registry->inflight_sends != 0u) {
     uint64_t now_ns;
     if (deadline_ns == UINT64_MAX) {
-      turbo_cond_wait(&registry->changed, &registry->mutex);
+      salts_cond_wait(&registry->changed, &registry->mutex);
       continue;
     }
-    now_ns = turbo_hrtime();
+    now_ns = salts_hrtime();
     if (now_ns >= deadline_ns) {
-      rc = timeout_ns == 0u ? TURBO_EBUSY : TURBO_ETIMEDOUT;
+      rc = timeout_ns == 0u ? SALTS_EBUSY : SALTS_ETIMEDOUT;
       break;
     }
-    (void)turbo_cond_timedwait(&registry->changed, &registry->mutex, deadline_ns - now_ns);
+    (void)salts_cond_timedwait(&registry->changed, &registry->mutex, deadline_ns - now_ns);
   }
-  if (rc == TURBO_OK) registry->drained = 1;
-  turbo_mutex_unlock(&registry->mutex);
+  if (rc == SALTS_OK) registry->drained = 1;
+  salts_mutex_unlock(&registry->mutex);
   return rc;
 }
 
 int flowie_cluster_peer_registry_destroy(flowie_cluster_peer_registry_t *registry) {
   int ready;
-  if (!registry) return TURBO_EINVAL;
-  turbo_mutex_lock(&registry->mutex);
+  if (!registry) return SALTS_EINVAL;
+  salts_mutex_lock(&registry->mutex);
   ready = registry->closing && registry->drained && registry->inflight_sends == 0u &&
           registry->registered_links == 0u;
-  turbo_mutex_unlock(&registry->mutex);
-  if (!ready) return TURBO_EBUSY;
-  turbo_cond_destroy(&registry->changed);
-  turbo_mutex_destroy(&registry->mutex);
+  salts_mutex_unlock(&registry->mutex);
+  if (!ready) return SALTS_EBUSY;
+  salts_cond_destroy(&registry->changed);
+  salts_mutex_destroy(&registry->mutex);
   free(registry->entries);
   free(registry);
-  return TURBO_OK;
+  return SALTS_OK;
 }

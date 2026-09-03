@@ -22,9 +22,9 @@ static int flowie_cluster_publish_event_settlement_validate(
   if (!publish_command || requested < FLOWIE_PROTOCOL_SETTLE_RECEIVED ||
       requested > FLOWIE_PROTOCOL_SETTLE_DURABLE ||
       flowie_mqtt_publish_parse(&publish_command->packet, &publish) != FLOWIE_MQTT_PARSE_OK)
-    return TURBO_EPROTO;
-  return publish.qos == 0u && requested != FLOWIE_PROTOCOL_SETTLE_RECEIVED ? TURBO_EPROTO
-                                                                               : TURBO_OK;
+    return SALTS_EPROTO;
+  return publish.qos == 0u && requested != FLOWIE_PROTOCOL_SETTLE_RECEIVED ? SALTS_EPROTO
+                                                                               : SALTS_OK;
 }
 
 int flowie_cluster_publish_event_encode(
@@ -47,20 +47,20 @@ int flowie_cluster_publish_event_encode(
       memchr(edge_node_id.data, '\0', edge_node_id.len) ||
       !flowie_cluster_publish_event_nonzero(edge_boot_id, FLOWIE_CLUSTER_BOOT_ID_SIZE) ||
       max_payload_size <= FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   packet_limit = max_payload_size < FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE
                      ? max_payload_size
                      : FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE;
   rc = flowie_cluster_peer_mqtt_command_encode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                mqtt_version, client_id, packet, packet_limit,
                                                &command);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_cluster_peer_mqtt_command_decode(
         FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH, command, tstr_len(command), packet_limit,
         &decoded);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_cluster_publish_event_settlement_validate(requested_settlement, &decoded);
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     tstr_free(command);
     return rc;
   }
@@ -68,17 +68,17 @@ int flowie_cluster_publish_event_encode(
       tstr_len(command) >
           SIZE_MAX - FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE - edge_node_id.len) {
     tstr_free(command);
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   }
   total = FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE + edge_node_id.len + tstr_len(command);
   if (total > max_payload_size || total > UINT32_MAX || tstr_len(command) > UINT32_MAX) {
     tstr_free(command);
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   }
   *out = tstr_new_len(NULL, total);
   if (!*out) {
     tstr_free(command);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   bytes = (uint8_t *)*out;
   memset(bytes, 0, FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE);
@@ -99,7 +99,7 @@ int flowie_cluster_publish_event_encode(
   memcpy(bytes + FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE + edge_node_id.len, command,
          tstr_len(command));
   tstr_free(command);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size_t max_payload_size,
@@ -114,9 +114,9 @@ int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size
   int rc;
   if (!bytes || !out || out->size != sizeof(*out) ||
       out->abi_version != FLOWIE_CLUSTER_PUBLISH_EVENT_VERSION || max_payload_size == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (data_size > max_payload_size || data_size < FLOWIE_CLUSTER_PUBLISH_EVENT_V1_HEADER_SIZE)
-    return data_size > max_payload_size ? TURBO_EMSGSIZE : TURBO_EPROTO;
+    return data_size > max_payload_size ? SALTS_EMSGSIZE : SALTS_EPROTO;
   wire_version = flowie_cluster_peer_wire_read_u16(bytes + 4u);
   header_size = wire_version == 1u ? FLOWIE_CLUSTER_PUBLISH_EVENT_V1_HEADER_SIZE
                                   : FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE;
@@ -128,7 +128,7 @@ int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size
       memcmp(bytes + 17u, "\0\0\0\0\0\0\0", 7u) != 0 ||
       flowie_cluster_peer_wire_read_u16(bytes + (wire_version == 1u ? 74u : 82u)) != 0u ||
       flowie_cluster_peer_wire_read_u32(bytes + (wire_version == 1u ? 76u : 84u)) != 0u)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   command_size = flowie_cluster_peer_wire_read_u32(bytes + 12u);
   edge_node_size = flowie_cluster_peer_wire_read_u16(bytes + (wire_version == 1u ? 72u : 80u));
   decoded.requested_settlement = (flowie_protocol_settlement_point_t)bytes[16];
@@ -146,10 +146,10 @@ int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size
       decoded.connection_generation == 0u || decoded.session_id == 0u ||
       decoded.session_generation == 0u ||
       !flowie_cluster_publish_event_nonzero(decoded.edge_boot_id, FLOWIE_CLUSTER_BOOT_ID_SIZE))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   decoded.edge_node_id = vstr_from_buf(
       (const char *)bytes + header_size, edge_node_size);
-  if (memchr(decoded.edge_node_id.data, '\0', decoded.edge_node_id.len)) return TURBO_EPROTO;
+  if (memchr(decoded.edge_node_id.data, '\0', decoded.edge_node_id.len)) return SALTS_EPROTO;
   packet_limit = max_payload_size < FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE
                      ? max_payload_size
                      : FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE;
@@ -157,10 +157,10 @@ int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size
       FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
       bytes + header_size + edge_node_size, command_size,
       packet_limit, &decoded.publish);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_cluster_publish_event_settlement_validate(decoded.requested_settlement,
                                                           &decoded.publish);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   *out = decoded;
-  return TURBO_OK;
+  return SALTS_OK;
 }

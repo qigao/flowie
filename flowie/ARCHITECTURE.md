@@ -13,7 +13,7 @@ composition forms are defined in
 Flowie does not embed or link the TurboMQTT client, broker, socket, queue, worker, processor,
 sink, or plugin runtime. The server application and
 the independent `flowie_client` SDK share only the Flowie protocol module; the client SDK builds
-its own single-owner CoroNet transport state. The protocol knowledge migrated from TurboMQTT
+its own single-owner Salts transport state: CNet for TCP/TLS and CHTTP WebSocket for WS/WSS. The protocol knowledge migrated from TurboMQTT
 remains deterministic and free of I/O:
 
 - MQTT packet framing and fundamental constants;
@@ -38,10 +38,10 @@ authority.
 
 ## Layers and ownership
 
-Flowie endpoint Core owns its CoroNet listener and accepted connection lanes; it does not depend on
+Flowie endpoint Core owns its `Flowie::NetRuntime` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph
 dispatch sink into that Core and exposes graph operations without duplicating state. Reusable code below this boundary is limited to the
-protocol-neutral CoroNet execution/runtime and connection snapshot helpers in `io/common`.
+protocol-neutral Salts executor wrapper and CNet/CHTTP network runtime under `flowie/runtime`.
 
 In standalone mode MQTT protocol facts have one source of truth: Flowie's typed protocol repository
 over `Orm::C`. Session, subscription, inflight, retained, and Will mutations commit to that
@@ -68,11 +68,11 @@ persistence remain internal owner behavior rather than invented graph operations
 
 | Layer | Owner | Mutable state | Forbidden dependencies |
 |---|---|---|---|
-| `flowie_protocol` | caller-owned parse invocation | none; results borrow input bytes | CoroNet, sockets, queues, graph runtime, storage |
-| `flowie_client` | caller coroutine or DLL-owned CoroNet worker | one outbound transport, framing, packet IDs, inbound QoS 2 state, bounded async command queue | Flowie endpoint, graph runtime, server session or persistence state |
+| `flowie_protocol` | caller-owned parse invocation | none; results borrow input bytes | CNet/CHTTP, sockets, queues, graph runtime, storage |
+| `flowie_client` | DLL-owned Salts worker | one outbound CNet or CHTTP WebSocket transport, framing, packet IDs, inbound QoS 2 state, bounded async command queue | Flowie endpoint, graph runtime, server session or persistence state |
 | endpoint Core | Flowie endpoint owner | listener lifecycle, limits, connection registry | direct callback or graph adapter mutation of connection/session state |
 | optional graph adapter | TurboFlow composition | source name, route-owner registration, graph settlement result | socket/session ownership |
-| connection resource | CoroNet-bound Flowie owner | transport handle, receive buffer, negotiated version | MQTT parser performing reads or writes |
+| connection resource | Flowie network owner | generation-fenced transport handle, receive buffer, negotiated version | MQTT parser performing reads or writes |
 | session owner (internal) | Flowie session owner | bounded cache reconstructed from session facts | independent public resource identity or queue/sink state advancement |
 | subscription index | Flowie subscription owner | rebuildable filter/member query index | graph-owned subscriber membership |
 | application graph | TurboFlow | private message attempt and settlement result | direct MQTT ACK, reconnect, or socket access |
@@ -83,15 +83,13 @@ Parser output is a zero-copy borrowed view. The connection owner must either fin
 before the receive buffer changes or copy selected fields into its own bounded session/message
 storage.
 
-The client SDK has two explicit execution modes. A non-NULL client `context` preserves the
-caller-owned coroutine API. A V2 config with `context == NULL` creates a private persistent
-CoroNet context and one DLL worker thread. Managed operations deep-copy their packet descriptions
+The client SDK owns one persistent worker thread. Managed operations deep-copy their packet descriptions
 into a queue bounded by both command count and owned bytes. Only the worker mutates the MQTT
-state machine or socket; cross-thread submissions use `coro_post()` to wake that owner. Completion,
+state machine or transport; cross-thread submissions wake that owner through the bounded command queue. Completion,
 inbound PUBLISH, and unsolicited-disconnect callbacks run on the worker and may enqueue more async
 commands, but may not perform synchronous client I/O or destroy the client. Destruction marks the
-queue closed, interrupts pending I/O, completes accepted queued commands with `TURBO_ESHUTDOWN`,
-joins the worker, and only then frees the context and client state.
+queue closed, interrupts pending I/O, completes accepted queued commands with `SALTS_ESHUTDOWN`,
+joins the worker, and only then frees the CNet/CHTTP transport and client state.
 
 Stream transport and application dispatch are separate bounded paths:
 
@@ -99,11 +97,11 @@ Stream transport and application dispatch are separate bounded paths:
 - direct admission: owned packet -> required Core callback; or
 - graph admission: owned packet -> optional TurboFlow adapter/source -> inline/worker stage.
 - reply admission: encoded control packet + message-owned route -> bounded endpoint Queue ->
-  owner-lane route lookup -> CoroNet send.
+  owner-lane route lookup -> CNet or CHTTP WebSocket send.
 
 When `manage_sessions` is enabled, CONNECT is the protocol-owner exception to application
 publication. The endpoint's private session primitive consumes the complete CONNECT on the same
-CoroNet lane, authenticates and authorizes it when an explicit security binding is installed,
+endpoint owner lane, authenticates and authorizes it when an explicit security binding is installed,
 opens or resumes the bounded session, atomically rebinds
 the provisional connection route to the session generation, and enqueues CONNACK. Rejected and
 accepted CONNECT packets do not enter application dispatch. SUBSCRIBE, UNSUBSCRIBE, PUBREL,
@@ -112,7 +110,7 @@ PUBLISH packets enter the selected direct callback or optional graph adapter.
 When `manage_sessions` is disabled, the endpoint preserves external-session mode and publishes
 CONNECT for a separately assembled session processor.
 
-Each MQTT connection has exactly one CoroNet-lane owner for socket receive, framing, parser,
+Each MQTT connection has exactly one CNet-lane owner for socket receive, framing, parser,
 negotiated protocol state, close, and backpressure. Raw stream bytes never cross a lane boundary.
 The first client packet must be a valid CONNECT. Its protocol level fixes MQTT 3.1 level 3,
 MQTT 3.1.1 level 4, or MQTT 5 level 5 for all later packets on that connection; a non-CONNECT
@@ -135,7 +133,7 @@ The tested Flowie WS/WSS path uses the WebSocket subprotocol token `mqtt` for MQ
 and 5, with the CONNECT protocol-name/level pair remaining the version fact source. Some legacy
 MQTT 3.1 clients instead require `Sec-WebSocket-Protocol: mqttv3.1`; Flowie does not currently
 claim or test that token. This token difference does not affect MQTT 3.1 clients using TCP, TLS,
-or Pipe.
+over TCP or TLS.
 The public callback client accepts an optional verified TLS identity for TLS and WSS plus
 MQTT 5 Enhanced AUTH challenge and re-authentication callbacks. CA, certificate, key, and password
 strings are copied at creation; certificate and key are an atomic pair, peer verification cannot
@@ -316,7 +314,7 @@ invocation resolves exactly one YAML configuration, one profile, and one graph, 
 configuration generation until shutdown. `flowie_supervisor` is an optional control-plane owner
 that starts exactly one Worker through `turbo_process_t`. It passes arguments directly without a
 shell, sets no execution deadline for the long-running Worker, owns the child process tree, and
-terminates/reaps it on Supervisor shutdown. The Supervisor does not access Flow, Queue, CoroNet,
+terminates/reaps it on Supervisor shutdown. The Supervisor does not access Flow, Queue, CNet,
 session, or storage state and does not automatically restart a failed Worker.
 
 Worker stdout/stderr inherit the Supervisor streams by default, so normal long-running logs do not
@@ -327,7 +325,7 @@ An explicit restart/backoff policy may be added later only as configuration-owne
 behavior; it must not be inferred from a child failure.
 
 Configuration creates resources and binds them; it does not instantiate hidden MQTT queues or
-processors. A Flowie endpoint owns its shared CoroNet socket binding, framing, and parser on one
+processors. A Flowie endpoint owns its shared CNet socket binding, framing, and parser on one
 lane, and declares the TurboFlow source that receives complete owned MQTT packets. A graph
 declares protocol/session processors, worker capacity, and sinks. Persistence is an injected
 resource selected explicitly per state class.
@@ -344,12 +342,12 @@ before registration. There is no realm pointer lookup, service locator, plaintex
 YAML policy body, provider fallback, or implicit anonymous fallback. The complete control/data-plane
 decision is documented in `ADR_DYNAMIC_ACL_BUNDLE.md`.
 
-The endpoint also owns the provenance of transport authentication context. TCP/TLS/WS/WSS
-`remote_address` is the numeric direct socket peer and Pipe uses the literal `local`. A TLS/WSS
+The endpoint also owns the provenance of transport authentication context. TCP/TLS/UDP/KCP/WS/WSS
+`remote_address` is the numeric direct network peer. A TLS/WSS
 endpoint may explicitly require trusted PROXY v1/v2 admission before TLS; only a direct peer in the
 configured numeric CIDRs can then supply the source address, while the direct transport peer remains
 available separately. Flowie does not consume HTTP forwarded headers. When an endpoint configures
-`tls_client_ca_file`, CoroNet requires and verifies the MQTT client certificate before Flowie reads
+`tls_client_ca_file`, CNet requires and verifies the MQTT client certificate before Flowie reads
 its canonical SHA-256 fingerprint. These values cross the provider ABI as borrowed, request-lifetime
 fields and the certificate append is guarded by the request `size`. Broker HTTPS Auth v3 forwards
 them to `flowie-control`; the latter still derives Domain from the separate verified mTLS
@@ -373,7 +371,7 @@ local immutable snapshot lookup.
 1. protocol framing, fragmentation, malformed input, limits, UTF-8, topic, shared-filter, and ACL
    parser tests;
 2. endpoint/session tests with synthetic primitive completions and no network;
-3. real CoroNet TCP/Pipe/WebSocket protocol integration tests;
+3. real CNet TCP/TLS/UDP/KCP runtime tests plus CHTTP WebSocket protocol integration tests;
 4. standalone ORM transaction/recovery tests and cluster TurboRaft log/snapshot replay tests;
 5. FMQ release regression and full TurboFlow CTest.
 
@@ -384,7 +382,7 @@ CONNACK/PUBACK/PUBREC/PUBREL/PUBCOMP/SUBACK/UNSUBACK/PINGRESP/DISCONNECT/AUTH co
 MQTT 5 property iterator,
 UTF-8/topic/shared-filter/ACL parsers, PUBLISH protocol/data bridge, and SecurityRealm MQTT
 matcher are implemented with focused tests. The bidirectional `flowie_endpoint` adapter now owns
-TCP/TLS/WS/WSS/Pipe listener startup, accepted connections, same-lane receive/framing/parser
+TCP/TLS/UDP/KCP listener startup through CNet and WS/WSS startup through CHTTP WebSocket, accepted connections, same-owner receive/framing/parser
 state, connection limits, stop/drain, and Connection, QueueBuffer, plus ProtocolAggregate
 resource snapshots. Incomplete receive bytes remain private connection state and are not a Queue.
 The QueueBuffer resource accounts for the real bounded outbound path. Cross-thread commands first
@@ -401,9 +399,9 @@ external-session mode CONNECT follows that path; in managed mode it is consumed 
 admission. The route survives owned
 message clone/worker boundaries but is never durable. Reply stages emit encoded control packets
 to the same endpoint adapter; an owner-lane TurboUtils hash map resolves the route in O(1), and
-the connection handler does not leave CoroNet ownership while an active send can still use its
+the connection handler does not leave network ownership while an active send can still use its
 socket. Focused tests cover direct and worker-Disruptor graph plans. A private,
-single-CoroNet-lane session owner now
+single-owner session runtime now
 copies client identity, fences reconnects by generation, applies complete SUBSCRIBE and
 UNSUBSCRIBE packets atomically, bounds inbound inflight records, and can advance QoS 1/2 only
 after a selected received/accepted/processed/durable settlement. It produces
@@ -423,7 +421,7 @@ owned PUBLISH packets cross into the configured worker
 Disruptor stage. ProtocolAggregate is the public management resource for MQTT session state. Its
 owner-native Status schema v2 reports transport, session load/capacity, retained count/capacity, persistence/security
 binding state, lifecycle, and admission state without exposing client IDs, topics, credentials, or
-payload. QUIESCE and RESUME execute on the CoroNet owner lane. QUIESCE keeps the OS listener bound
+payload. QUIESCE and RESUME execute on the endpoint owner lane. QUIESCE keeps the OS listener bound
 and preserves established MQTT connections/sessions, but closes MQTT admission for newly accepted
 connections; RESUME reopens that admission. A command changes generation exactly once, repeated
 idempotency keys replay the prior result, and stale generation/deadline/concurrent commands fail
@@ -432,7 +430,7 @@ resources because they are protocol state, not transport connections.
 
 The same bidirectional endpoint adapter can be named as an explicit graph sink. For a complete
 PUBLISH it submits one bounded fan-out command; the graph lane never reads mutable session state.
-After a session-owner commit, the CoroNet owner lane incrementally updates a derived subscription
+After a session-owner commit, the endpoint owner lane incrementally updates a derived subscription
 selector, matches each unique filter, merges overlapping ordinary subscriptions to one delivery per
 session, and selects one active member per exact shared filter with an independent round-robin
 cursor. Startup, clean-start replacement, and an explicitly invalid selector use an atomic full
@@ -501,15 +499,13 @@ descriptors, connection peaks, and bounded diagnostic logs. The 2026-08-24 EU De
 three tiers. These results are correctness and resource evidence for that host/build/workload, not a
 portable connection-rate, latency, or production-capacity SLA.
 
-The endpoint derives the private CoroNet object-pool capacity from `max_connections` plus fixed
-headroom and exposes `coroutine_stack_size` and `stream_recv_buffer_bytes` for that private context.
-Explicit values on borrowed, transferred-owned, or pool-lane contexts fail with `TURBO_ENOTSUP`
-because their host owns capacity. Flowie defaults each of CoroNet's two ping-pong receive chunks to
-4 KiB; MQTT framing reassembles packets across chunks up to `max_packet_size`. Before this change,
-two fixed 128 KiB receive chunks plus a 32 KiB coroutine stack accounted for about 288 KiB of fixed
-per-connection capacity. The private-context minimum stack is 64 KiB for managed
-security and MQTT 5 AUTH state, so 4 KiB receive chunks now account for about 72 KiB
-(`2 * 4 KiB + 64 KiB`). Explicit 32 KiB configurations must migrate to at least 64 KiB. The remote
+The endpoint derives the private Salts executor capacity from `max_connections` plus fixed
+headroom and exposes `coroutine_stack_size` for that executor plus `stream_recv_buffer_bytes` for CNet streams.
+Explicit values on borrowed, transferred-owned, or pool-lane contexts fail with `SALTS_ENOTSUP`
+because their host owns capacity. Flowie defaults the CNet stream receive buffer to 4 KiB and MQTT
+framing reassembles packets incrementally up to `max_packet_size`; TLS independently raises its bounded
+BIO storage to CNet's 17 KiB minimum. The private-executor minimum stack is 64 KiB for managed
+security and MQTT 5 AUTH state. Explicit 32 KiB configurations must migrate to at least 64 KiB. The remote
 runner records peak and settled memory for every tier instead of treating the theoretical pool
 capacity as committed memory. Capacity changes must be validated by repeated runs on a stable host;
 a single Debug high-water measurement is not a connection- or subscription-rate benchmark.
@@ -542,7 +538,7 @@ before the owner changes its in-memory fact. A reserved binary key prefix separa
 versioned `FRET` records from the existing client-id keyed session records. Startup restores valid
 non-expired retained records and CAS-deletes expired records before opening the listener.
 
-Finite MQTT 5 session expiry is scheduled on the same CoroNet owner lane with a reusable wait.
+Finite MQTT 5 session expiry is scheduled on the same endpoint owner lane with a reusable wait.
 Disconnect records a monotonic deadline fenced by session generation; reconnect clears the old
 deadline, and expiry removes the inactive session and its selector memberships on the owner lane.
 An already-invalid selector is left invalid for the next atomic repair. A zero interval removes
@@ -592,7 +588,7 @@ change or CONNECT re-authorization failure closes the connection.
 These ingress/session owners remain internal and their headers are not installed. The endpoint
 now has a tested graph-to-socket control reply path, but it is not yet a complete MQTT broker.
 The transport contract runs real MQTT 3.1, MQTT 3.1.1, and MQTT 5 CONNECT, PING, and shutdown
-traffic over TCP, TLS, WS, WSS, and Pipe. TLS/WSS use a verified test CA and certificate; a
+traffic over TCP, TLS, WS, and WSS. TLS/WSS use a verified test CA and certificate; a
 successful config projection is not accepted as transport evidence.
 `flowie_server` is the first product host migrated to the shared product-provider registry. It
 resolves one Flowie profile as the allowed product boundary, preflights all adapter kinds before
@@ -632,8 +628,8 @@ details of that service and cannot be configured through an `auth_provider` chan
 third-party HTTPS assertion service; its Repository contributes only local enabled/Role/Group/ACL
 authorization facts. TurboDB ORM, the control Repository, and Graph adapters never form a fallback
 authentication chain. The CONNECT
-coroutine invokes TurboHTTP directly; DNS, TCP, TLS, send, and receive waits yield on the CoroNet
-owner loop instead of blocking its thread. Redirects and retries are disabled, request/response
+request invokes CHTTP directly; DNS, TCP, TLS, send, and receive are bounded by the CHTTP client
+runtime. Redirects and retries are disabled, request/response
 sizes and timeouts are bounded, the service token is acquired by reference for every request, and
 all transport, certificate, status, content-type, version, or principal-validation failures deny
 authentication without a database or anonymous fallback. The returned principal is then evaluated
@@ -683,7 +679,7 @@ settlement policies. `received` advances the session owner before graph admissio
 only after the synchronous TurboFlow publication returns successfully, including configured
 worker-stage completion. `accepted` requires the selected graph admission stage to consume the
 one-shot settlement envelope explicitly and route the settlement command back to the Flowie owner.
-That callback only enters the endpoint's bounded reply command queue; the CoroNet owner lane still
+That callback only enters the endpoint's bounded reply command queue; the endpoint owner lane still
 owns session mutation and socket send. An arbitrary successful stage is not an ACCEPTED boundary.
 The current endpoint config exposes this typed policy and intentionally rejects every non-current
 layout.
@@ -715,9 +711,9 @@ mutate status instead.
 
 The composition tests exercise multiple concrete graphs. Endpoint admission feeds `rules.apply`,
 which mutates private status and routes each MQTT PUBLISH either to the existing Flowie endpoint
-fan-out sink or to the existing CoroNet TCP socket sink. Provider-neutral ORM repository tests exercise
+fan-out sink or to the existing CNet TCP socket sink. Provider-neutral ORM repository tests exercise
 commit faults and recovery independently. The product host resolves a RuleSet
-program only when configured, while the Graph explicitly names every CoroNet, HTTP, Redis, or PostgreSQL
+program only when configured, while the Graph explicitly names every CNet, CHTTP, Redis, or PostgreSQL
 source/sink adapter. The host does not infer routes, facts providers, storage destinations, or
 unregistered adapter kinds.
 

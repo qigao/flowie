@@ -1,16 +1,16 @@
 #include "flowie_stl_error_internal.h"
 
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
-#include <rocida/stl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
+#include <cstl.h>
 
 #include "flowie_cluster_owner_directory_internal.h"
 
-#include "turbo_error.h"
-#include "turbo_str.h"
-#include "turbo_thread.h"
-#include <rocida/stl.h>
+#include "salts_error.h"
+#include "salts_str.h"
+#include "salts_thread.h"
+#include <cstl.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +24,7 @@ struct flowie_cluster_owner_directory_s {
   vec_t scratch;
   uint64_t revision;
   uint32_t last_revision_shard;
-  turbo_mutex_t mutex;
+  salts_mutex_t mutex;
   int mutex_initialized;
   int active_initialized;
   int scratch_initialized;
@@ -105,7 +105,7 @@ static void flowie_cluster_owner_directory_free(flowie_cluster_owner_directory_t
   if (!directory) return;
   if (directory->scratch_initialized) vec_destroy(&directory->scratch);
   if (directory->active_initialized) vec_destroy(&directory->active);
-  if (directory->mutex_initialized) turbo_mutex_destroy(&directory->mutex);
+  if (directory->mutex_initialized) salts_mutex_destroy(&directory->mutex);
   tstr_freep(&directory->listener_id);
   tstr_freep(&directory->cluster_id);
   free(directory);
@@ -125,39 +125,39 @@ int flowie_cluster_owner_directory_create(const flowie_cluster_owner_directory_c
       !config->listener_id.data || config->listener_id.len == 0u ||
       config->listener_id.len > FLOWIE_CLUSTER_LISTENER_ID_MAX ||
       memchr(config->listener_id.data, '\0', config->listener_id.len))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   directory = (flowie_cluster_owner_directory_t *)calloc(1u, sizeof(*directory));
-  if (!directory) return TURBO_ENOMEM;
+  if (!directory) return SALTS_ENOMEM;
   directory->hash_version = config->hash_version;
   directory->shard_count = config->shard_count;
   directory->cluster_id = tstr_from_v(config->cluster_id);
   directory->listener_id = tstr_from_v(config->listener_id);
   if (!directory->cluster_id || !directory->listener_id) {
-    rc = TURBO_ENOMEM;
+    rc = SALTS_ENOMEM;
     goto fail;
   }
-  turbo_mutex_init(&directory->mutex);
+  salts_mutex_init(&directory->mutex);
   directory->mutex_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&directory->active, sizeof(flowie_cluster_owner_directory_entry_t), _Alignof(flowie_cluster_owner_directory_entry_t), SIZE_MAX));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   directory->active_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&directory->scratch, sizeof(flowie_cluster_owner_directory_entry_t), _Alignof(flowie_cluster_owner_directory_entry_t), SIZE_MAX));
-  if (rc != TURBO_OK) goto fail;
+  if (rc != SALTS_OK) goto fail;
   directory->scratch_initialized = 1;
   rc = flowie_stl_error(vec_reserve(&directory->active, config->shard_count));
-  if (rc == TURBO_OK) rc = flowie_stl_error(vec_reserve(&directory->scratch, config->shard_count));
-  if (rc != TURBO_OK) goto fail;
+  if (rc == SALTS_OK) rc = flowie_stl_error(vec_reserve(&directory->scratch, config->shard_count));
+  if (rc != SALTS_OK) goto fail;
   for (uint32_t shard_id = 0u; shard_id < config->shard_count; ++shard_id) {
     flowie_cluster_owner_directory_entry_t entry =
         FLOWIE_CLUSTER_OWNER_DIRECTORY_ENTRY_INIT;
     entry.shard_id = shard_id;
     entry.owner.shard_id = shard_id;
     rc = flowie_stl_error(vec_push(&directory->active, &entry));
-    if (rc != TURBO_OK) goto fail;
+    if (rc != SALTS_OK) goto fail;
   }
   directory->last_revision_shard = UINT32_MAX;
   *out = directory;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   flowie_cluster_owner_directory_free(directory);
@@ -170,38 +170,38 @@ int flowie_cluster_owner_directory_replace(
     uint64_t revision) {
   size_t index;
   int rc;
-  if (!directory || !entries || entry_count != directory->shard_count) return TURBO_EINVAL;
-  turbo_mutex_lock(&directory->mutex);
+  if (!directory || !entries || entry_count != directory->shard_count) return SALTS_EINVAL;
+  salts_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    turbo_mutex_unlock(&directory->mutex);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&directory->mutex);
+    return SALTS_EBUSY;
   }
   if (revision == directory->revision && vec_size(&directory->active) != 0u) {
     rc = flowie_cluster_owner_directory_entries_equal(&directory->active, entries, entry_count)
-             ? TURBO_OK
-             : TURBO_EPROTO;
-    turbo_mutex_unlock(&directory->mutex);
+             ? SALTS_OK
+             : SALTS_EPROTO;
+    salts_mutex_unlock(&directory->mutex);
     return rc;
   }
-  turbo_mutex_unlock(&directory->mutex);
+  salts_mutex_unlock(&directory->mutex);
   vec_clear(&directory->scratch);
   for (index = 0u; index < entry_count; ++index) {
     if (!flowie_cluster_owner_directory_entry_valid(&entries[index], (uint32_t)index))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     rc = flowie_stl_error(vec_push(&directory->scratch, &entries[index]));
-    if (rc != TURBO_OK) return rc;
+    if (rc != SALTS_OK) return rc;
   }
-  turbo_mutex_lock(&directory->mutex);
+  salts_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    turbo_mutex_unlock(&directory->mutex);
+    salts_mutex_unlock(&directory->mutex);
     vec_clear(&directory->scratch);
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   }
   if (revision == directory->revision && vec_size(&directory->active) != 0u) {
     rc = flowie_cluster_owner_directory_entries_equal(&directory->active, entries, entry_count)
-             ? TURBO_OK
-             : TURBO_EPROTO;
-    turbo_mutex_unlock(&directory->mutex);
+             ? SALTS_OK
+             : SALTS_EPROTO;
+    salts_mutex_unlock(&directory->mutex);
     vec_clear(&directory->scratch);
     return rc;
   }
@@ -212,9 +212,9 @@ int flowie_cluster_owner_directory_replace(
     directory->revision = revision;
     directory->last_revision_shard = UINT32_MAX;
   }
-  turbo_mutex_unlock(&directory->mutex);
+  salts_mutex_unlock(&directory->mutex);
   vec_clear(&directory->scratch);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int flowie_cluster_owner_directory_apply(
@@ -225,31 +225,31 @@ int flowie_cluster_owner_directory_apply(
   if (!directory || !entry || revision == 0u ||
       entry->shard_id >= directory->shard_count ||
       !flowie_cluster_owner_directory_entry_valid(entry, entry->shard_id))
-    return TURBO_EINVAL;
-  turbo_mutex_lock(&directory->mutex);
+    return SALTS_EINVAL;
+  salts_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    turbo_mutex_unlock(&directory->mutex);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&directory->mutex);
+    return SALTS_EBUSY;
   }
   current = (flowie_cluster_owner_directory_entry_t *)vec_at(
       &directory->active, entry->shard_id);
   if (!current) {
-    turbo_mutex_unlock(&directory->mutex);
-    return TURBO_EPROTO;
+    salts_mutex_unlock(&directory->mutex);
+    return SALTS_EPROTO;
   }
   if (revision == directory->revision) {
     equal = directory->last_revision_shard == entry->shard_id &&
             current->local_deadline_ns == entry->local_deadline_ns &&
             flowie_cluster_owner_directory_owner_equal(&current->owner,
                                                         &entry->owner);
-    turbo_mutex_unlock(&directory->mutex);
-    return equal ? TURBO_OK : TURBO_EPROTO;
+    salts_mutex_unlock(&directory->mutex);
+    return equal ? SALTS_OK : SALTS_EPROTO;
   }
   *current = *entry;
   directory->revision = revision;
   directory->last_revision_shard = entry->shard_id;
-  turbo_mutex_unlock(&directory->mutex);
-  return TURBO_OK;
+  salts_mutex_unlock(&directory->mutex);
+  return SALTS_OK;
 }
 
 int flowie_cluster_owner_directory_resolve_shard(flowie_cluster_owner_directory_t *directory,
@@ -257,19 +257,19 @@ int flowie_cluster_owner_directory_resolve_shard(flowie_cluster_owner_directory_
                                                  flowie_cluster_owner_token_t *out) {
   const flowie_cluster_owner_directory_entry_t *entry;
   uint64_t now_ns;
-  int rc = TURBO_EBUSY;
+  int rc = SALTS_EBUSY;
   if (out) *out = (flowie_cluster_owner_token_t)FLOWIE_CLUSTER_OWNER_TOKEN_INIT;
-  if (!directory || !out || shard_id >= directory->shard_count) return TURBO_EINVAL;
-  now_ns = turbo_hrtime();
-  turbo_mutex_lock(&directory->mutex);
+  if (!directory || !out || shard_id >= directory->shard_count) return SALTS_EINVAL;
+  now_ns = salts_hrtime();
+  salts_mutex_lock(&directory->mutex);
   entry = (const flowie_cluster_owner_directory_entry_t *)vec_at_const(&directory->active,
                                                                              shard_id);
   if (entry && entry->local_deadline_ns > now_ns &&
       flowie_cluster_owner_directory_token_valid(&entry->owner, shard_id)) {
     *out = entry->owner;
-    rc = TURBO_OK;
+    rc = SALTS_OK;
   }
-  turbo_mutex_unlock(&directory->mutex);
+  salts_mutex_unlock(&directory->mutex);
   return rc;
 }
 
@@ -278,24 +278,24 @@ int flowie_cluster_owner_directory_resolve(void *ctx, flowie_mqtt_span_t client_
   flowie_cluster_owner_directory_t *directory = (flowie_cluster_owner_directory_t *)ctx;
   uint32_t shard_id = 0u;
   int rc;
-  if (!directory || !client_id.data || client_id.size == 0u || !out) return TURBO_EINVAL;
+  if (!directory || !client_id.data || client_id.size == 0u || !out) return SALTS_EINVAL;
   rc = flowie_cluster_shard_for_key(
       directory->hash_version, FLOWIE_CLUSTER_KEY_SESSION,
       (const uint8_t *)directory->cluster_id, tstr_len(directory->cluster_id),
       (const uint8_t *)directory->listener_id, tstr_len(directory->listener_id), client_id.data,
       client_id.size, directory->shard_count, &shard_id);
-  return rc == TURBO_OK ? flowie_cluster_owner_directory_resolve_shard(directory, shard_id, out)
+  return rc == SALTS_OK ? flowie_cluster_owner_directory_resolve_shard(directory, shard_id, out)
                         : rc;
 }
 
 int flowie_cluster_owner_directory_revision(flowie_cluster_owner_directory_t *directory,
                                             uint64_t *out_revision) {
   if (out_revision) *out_revision = 0u;
-  if (!directory || !out_revision) return TURBO_EINVAL;
-  turbo_mutex_lock(&directory->mutex);
+  if (!directory || !out_revision) return SALTS_EINVAL;
+  salts_mutex_lock(&directory->mutex);
   *out_revision = directory->revision;
-  turbo_mutex_unlock(&directory->mutex);
-  return TURBO_OK;
+  salts_mutex_unlock(&directory->mutex);
+  return SALTS_OK;
 }
 
 void flowie_cluster_owner_directory_destroy(flowie_cluster_owner_directory_t *directory) {

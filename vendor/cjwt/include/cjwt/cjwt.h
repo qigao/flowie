@@ -1,0 +1,353 @@
+/* SPDX-FileCopyrightText: 2017-2022 Comcast Cable Communications Management, LLC */
+/* SPDX-License-Identifier: Apache-2.0 */
+#ifndef __CJWT_H__
+#define __CJWT_H__
+
+#include <stdint.h>
+#include <stdio.h>
+
+#include <json_parser.h>
+
+/*----------------------------------------------------------------------------*/
+/*                                   Macros                                   */
+/*----------------------------------------------------------------------------*/
+
+/* If you specify OPT_ALLOW_ALG_NONE as part of the options bitmask you
+ * are allowing `alg_none` to be supported.
+ *
+ * ---ALG_NONE IS INSECURE AND SHOULD NEVER BE USED IN PRODUCTION---
+ */
+#define OPT_ALLOW_ALG_NONE (1 << 0)
+
+
+/* If you specify OPT_ALLOW_ANY_TIME as part of the options bitmask you
+ * are telling cjwt to ignore enforcing the 'nbf' and 'exp' declarations
+ * from the JWT and always accept the JWT.
+ *
+ * ---ACCEPTING TOKENS OUTSIDE THEIR INTENDED WINDOW IS DANGEROUS---
+ */
+#define OPT_ALLOW_ANY_TIME (1 << 1)
+
+
+/* If you specify OPT_ALLOW_ANY_TYP as part of the options bitmask you
+ * are telling cjwt to not strictly enforce the 'typ' processing rules for
+ * that header.  CJWT already ignores the case of 'JWT', but this disables
+ * the check entirely.
+ *
+ * This is mainly a strict compliance option & does not impact security.
+ */
+#define OPT_ALLOW_ANY_TYP (1 << 2)
+
+/* If you specify OPT_ALLOW_ONLY_HS_ALG as part of the options bitmask you
+ * are allowing only the use of HMAC-SHA algorithms (HS256, HS384, HS512).
+ * Otherwise only public key algorithms are allowed.
+ *
+ * Symmetric algorithms and the unknown key type passed in pose a security
+ * risk since an attacker can treate the provided public key as the secret
+ * key and sign their own JWTs with the public key as a symmetric key.
+ */
+#define OPT_ALLOW_ONLY_HS_ALG (1 << 3)
+
+/*----------------------------------------------------------------------------*/
+/*                               Data Structures                              */
+/*----------------------------------------------------------------------------*/
+
+
+/* All possible error codes from all the cjwt functions. Future versions may
+ * return other values.
+ *
+ * Always add new return codes last.  Do not remove any.  The return codes
+ * must remain the same.
+ */
+typedef enum {
+    CJWTE_OK = 0,
+    CJWTE_INVALID_PARAMETERS,          /*  1 */
+    CJWTE_INVALID_SECTIONS,            /*  2 */
+    CJWTE_OUT_OF_MEMORY,               /*  3 */
+    CJWTE_LIBRARY_BUG_SHA,             /*  4 */
+    CJWTE_LIBRARY_BUG_RSA,             /*  5 */
+    CJWTE_HEADER_MISSING,              /*  6 */
+    CJWTE_HEADER_INVALID_BASE64,       /*  7 */
+    CJWTE_HEADER_INVALID_JSON,         /*  8 */
+    CJWTE_HEADER_MISSING_ALG,          /*  9 */
+    CJWTE_HEADER_UNSUPPORTED_ALG,      /* 10 */
+    CJWTE_PAYLOAD_MISSING,             /* 11 */
+    CJWTE_PAYLOAD_INVALID_BASE64,      /* 12 */
+    CJWTE_PAYLOAD_INVALID_JSON,        /* 13 */
+    CJWTE_PAYLOAD_AUD_NOT_VALID,       /* 14 */
+    CJWTE_PAYLOAD_EXPECTED_STRING,     /* 15 */
+    CJWTE_PAYLOAD_EXPECTED_NUMBER,     /* 16 */
+    CJWTE_SIGNATURE_MISSING,           /* 17 */
+    CJWTE_SIGNATURE_INVALID_BASE64,    /* 18 */
+    CJWTE_SIGNATURE_UNSUPPORTED_ALG,   /* 19 */
+    CJWTE_SIGNATURE_VALIDATION_FAILED, /* 20 */
+    CJWTE_SIGNATURE_MISSING_KEY,       /* 21 */
+    CJWTE_SIGNATURE_INVALID_KEY,       /* 22 */
+    CJWTE_TIME_BEFORE_NBF,             /* 23 */
+    CJWTE_TIME_AFTER_EXP,              /* 24 */
+    CJWTE_HEADER_UNSUPPORTED_TYP,      /* 25 */
+    CJWTE_HEADER_UNSUPPORTED_UNKNOWN,  /* 26 */
+    CJWTE_KEY_TOO_LARGE,               /* 27 */
+    CJWTE_SIGNATURE_KEY_TOO_LARGE,     /* 28 */
+    CJWTE_UNKNOWN_ALG,                 /* 29 */
+
+    CJWTE_LAST /* never use! */
+} cjwt_code_t;
+
+
+/**
+ * The jwt defined algorithms.
+ */
+typedef enum {
+    alg_none = 0, /* Only allowed if an option is set to prevent dangerous
+                   * conditions where an attacker could bypass security
+                   * checks.  DO NOT USE THIS IN A PRODUCTION ENVIRONMENT. */
+    alg_es256,
+    alg_es384,
+    alg_es512,
+    alg_hs256,
+    alg_hs384,
+    alg_hs512,
+    alg_ps256,
+    alg_ps384,
+    alg_ps512,
+    alg_rs256,
+    alg_rs384,
+    alg_rs512,
+    alg_es256k,
+    alg_eddsa,
+
+    /* JWE Key Management Algs */
+    alg_rsa_oaep,
+    alg_rsa_oaep_256,
+    alg_dir,
+    alg_a128kw,
+    alg_a192kw,
+    alg_a256kw,
+    alg_pbes2_hs256_a128kw,
+    alg_pbes2_hs384_a192kw,
+    alg_pbes2_hs512_a256kw,
+
+    num_algorithms
+} cjwt_alg_t;
+
+typedef enum {
+    enc_unknown = 0,
+    enc_a128gcm,
+    enc_a192gcm,
+    enc_a256gcm,
+    enc_a128cbc_hs256,
+    enc_a192cbc_hs384,
+    enc_a256cbc_hs512,
+
+    num_enc_algorithms
+} cjwt_enc_t;
+
+typedef struct {
+    cjwt_alg_t alg;
+    cjwt_enc_t enc;
+
+    char *kid;
+
+    json_value_t *private_headers;
+
+    /* Unsupported:
+     *  jku
+     *  jwk
+     *  x5u
+     *  x5c
+     *  x5t
+     *  x5ts256
+     *  cty
+     *  crit
+     */
+} cjwt_header_t;
+
+typedef struct cjwt_aud_list {
+    int count;
+    char **names;
+} cjwt_aud_list_t;
+
+typedef struct {
+    cjwt_header_t header;
+
+    char *iss;
+    char *sub;
+    char *jti;
+    cjwt_aud_list_t aud;
+
+    int64_t *exp; /* Time is seconds since Jan 1, 1970 */
+    int64_t *nbf; /* Time is seconds since Jan 1, 1970 */
+    int64_t *iat; /* Time is seconds since Jan 1, 1970 */
+
+    json_value_t *private_claims;
+} cjwt_t;
+
+typedef enum {
+    CJWT_KTY_UNKNOWN = 0,
+    CJWT_KTY_RSA,
+    CJWT_KTY_EC,
+    CJWT_KTY_OCT,
+    CJWT_KTY_OKP
+} cjwt_kty_t;
+
+typedef struct {
+    cjwt_kty_t kty;
+    char *kid;
+    char *use;
+    char *alg;
+
+    /* Key data (internal use or for the caller to inspect) */
+    json_value_t *key_json;
+} cjwt_jwk_t;
+
+typedef struct {
+    int count;
+    cjwt_jwk_t **keys;
+} cjwt_jwks_t;
+
+/*----------------------------------------------------------------------------*/
+/*                             External Functions                             */
+/*----------------------------------------------------------------------------*/
+
+
+/**
+ *  The function to use to decode and validate a JWT.
+ *
+ *  @note This function allocates memory associated with the output jwt that
+ *        must be freed.  cjwt_destroy() must be called to destroy the object
+ *        when it is no longer needed.
+ *
+ *  @note This code defaults secure so `alg_none` is not allowed unless
+ *        OPT_ALLOW_ALG_NONE is specified as an option.
+ *
+ *  @note This code defaults strict so only claims with a valid time window
+ *        are accepted unless OPT_ALLOW_ANY_TIME is specified as an option.
+ *
+ *  @note The key for HS signed JWTs is the plain text secret.
+ * 
+ *  @note To accept HS signed JWTs, OPT_ALLOW_ONLY_HS_ALG must be specified as
+ *        an option.  This option disables the use of public key algorithms.
+ *        This is done to prevent an attacker from using a public key as a
+ *        symmetric key and signing their own JWTs.
+ *
+ *  @note The key for PS, RS and EC signed JWTs expect the text from the PEM
+ *        file including the -----BEGIN PUBLIC KEY----- and
+ *        -----END PUBLIC KEY----- lines.
+ *
+ *  @note The 'time' parameter is seconds since Jan 1, 1970.
+ * 
+ *  @note It is strongly encouraged to validate the 'alg' header to ensure
+ *        that the JWT is signed with the expected algorithm.  This can be
+ *        done by checking the 'alg' header against a known value in the cjwt_t
+ *        object passed out via the jwt parameter.
+ *
+ *  @param text     [IN]  the original JWT text
+ *  @param text_len [IN]  length of the original text
+ *  @param options  [IN]  a bitmask of the options (see #defines at top of file)
+ *  @param key      [IN]  the public key to use for validating the signature
+ *  @param key_len  [IN]  the length of the key in bytes
+ *  @param time     [IN]  the time to use for evaluation of time based claims
+ *  @param skew     [IN]  the allowed time skew to accept in seconds
+ *  @param jwt      [OUT] the resulting JWT if found to be valid,
+ *                        set to NULL if not successful
+ *
+ *  @return  CJWTE_OK if successful, reason for failure otherwise
+ */
+cjwt_code_t cjwt_decode(const char *text, size_t text_len, uint32_t options,
+                        const uint8_t *key, size_t key_len,
+                        int64_t time, int64_t skew, cjwt_t **jwt);
+
+/**
+ *  Decodes and validates a JWT using a JWK.
+ */
+cjwt_code_t cjwt_decode_with_jwk(const char *text, size_t text_len, uint32_t options,
+                                 const cjwt_jwk_t *jwk,
+                                 int64_t time, int64_t skew, cjwt_t **jwt);
+
+
+/**
+ *  The function to use to encode and sign a JWT.
+ *
+ *  @note The 'key' parameter for HS signed JWTs is the plain text secret.
+ *
+ *  @note The 'key' parameter for PS, RS and EC signed JWTs expects the text from the PEM
+ *        file including the -----BEGIN PRIVATE KEY----- and
+ *        -----END PRIVATE KEY----- lines.
+ *
+ *  @param jwt      [IN]  the JWT structure to encode
+ *  @param key      [IN]  the private key to use for signing
+ *  @param key_len  [IN]  the length of the key in bytes
+ *  @param output   [OUT] the resulting JWT string if successful,
+ *                        must be freed by the caller using free()
+ *
+ *  @return  CJWTE_OK if successful, reason for failure otherwise
+ */
+cjwt_code_t cjwt_encode(const cjwt_t *jwt, const uint8_t *key, size_t key_len, char **output);
+
+/**
+ *  Parses a JWK JSON string.
+ *
+ *  @param json_str [IN]  the JWK JSON string
+ *  @param jwk      [OUT] the resulting JWK structure
+ *
+ *  @return  CJWTE_OK if successful
+ */
+cjwt_code_t cjwt_jwk_parse(const char *json_str, cjwt_jwk_t **jwk);
+
+/**
+ *  Cleans up a JWK object.
+ */
+void cjwt_jwk_destroy(cjwt_jwk_t *jwk);
+
+/**
+ *  Parses a JWKS (JSON Web Key Set) JSON string.
+ *
+ *  @param json_str [IN]  the JWKS JSON string
+ *  @param jwks     [OUT] the resulting JWKS structure
+ *
+ *  @return  CJWTE_OK if successful
+ */
+cjwt_code_t cjwt_jwks_parse(const char *json_str, cjwt_jwks_t **jwks);
+
+/**
+ *  Cleans up a JWKS object.
+ */
+void cjwt_jwks_destroy(cjwt_jwks_t *jwks);
+
+
+/**
+ *  The function that cleans up cjwt object allocations.
+ *
+ *  @param jwt  [IN] the to be freed cjwt
+ */
+void cjwt_destroy(cjwt_t *jwt);
+
+
+/**
+ *  This is a helper function that will walk the jwt and print out the contents
+ *  to the specified stream.
+ *
+ *  @param stream the output stream to use (stdout or stderr)
+ *  @param jwt    the JWT to output
+ */
+void cjwt_print(FILE *stream, cjwt_t *jwt);
+
+
+/**
+ *  Provides a simple way to take a string and convert it to the alg.
+ *
+ *  @param s   the string to inspect
+ *  @param len the length of the string (or SIZE_MAX if unknown length)
+ *  @param alg the resulting alg enum val if found
+ *
+ *  @return CJWTE_OK if found, reason for failure otherwise
+ *
+ *  Failure reasons:
+ *      CJWTE_INVALID_PARAMETERS
+ *      CJWTE_UNKNOWN_ALG
+ */
+cjwt_code_t cjwt_alg_string_to_enum(const char *s, size_t len, cjwt_alg_t *alg);
+
+#endif
+

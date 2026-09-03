@@ -2,8 +2,8 @@
 #define FLOWIE_CONTROL_AUTH_IRIS_ENDPOINT_INTERNAL_H
 
 #include "flowie_control_auth_iris_adapter_internal.h"
+#include "flowie_control_http_server_internal.h"
 #include "flowie_control_service_credential_internal.h"
-#include "iris/iris_app.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,11 +67,11 @@ int flowie_control_auth_iris_endpoint_create(
 void flowie_control_auth_iris_endpoint_destroy(flowie_control_auth_iris_endpoint_t *endpoint);
 
 /**
- * Bind exactly POST /v4/authenticate on one Iris app. The caller keeps ownership
+ * Bind exactly POST /v4/authenticate on one CHTTP app. The caller keeps ownership
  * of both objects and must stop the app before destroying the endpoint.
  */
 int flowie_control_auth_iris_endpoint_register(flowie_control_auth_iris_endpoint_t *endpoint,
-                                               iris_app_t *app);
+                                               flowie_control_http_app_t *app);
 
 /** Direct handler form for composition roots that register routes themselves. */
 void flowie_control_auth_iris_endpoint_handle(flowie_control_auth_iris_endpoint_t *endpoint,
@@ -79,7 +79,7 @@ void flowie_control_auth_iris_endpoint_handle(flowie_control_auth_iris_endpoint_
 
 /**
  * Produce one owned JSON response without sending it. The caller releases
- * body_out with turbo_json_serialize_free(). This seam is also used by tests.
+ * body_out with json_serialize_free(). This seam is also used by tests.
  */
 int flowie_control_auth_iris_endpoint_process(flowie_control_auth_iris_endpoint_t *endpoint,
                                               Req *req, int *status_out, char **body_out,
@@ -87,9 +87,8 @@ int flowie_control_auth_iris_endpoint_process(flowie_control_auth_iris_endpoint_
 
 /**
  * Execute one decoded request using an already verified transport identity.
- * With the local executor enabled this function must run inside a CoroNet
- * coroutine. A deadline only abandons the response; accepted synchronous work
- * remains owned by the executor and is drained during endpoint destruction.
+ * Production HTTP handlers already run in the app's bounded worker pool; this
+ * direct seam keeps the same synchronous error and ownership contract for tests.
  */
 int flowie_control_auth_iris_endpoint_authenticate_verified(
     flowie_control_auth_iris_endpoint_t *endpoint, const flowie_control_verified_caller_t *caller,

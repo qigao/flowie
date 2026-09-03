@@ -1,12 +1,13 @@
 #ifndef FLOWIE_SERVER_CONFIG_INTERNAL_H
 #define FLOWIE_SERVER_CONFIG_INTERNAL_H
 
-#include "flowie.h"
+#include "flowie_security.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct flowie_server_config_s flowie_server_config_t;
+typedef struct flowie_endpoint_config_s flowie_endpoint_config_t;
 
 typedef struct flowie_server_http_provider_config_s {
   char url[2049];

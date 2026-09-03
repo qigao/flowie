@@ -3,7 +3,7 @@
 
 #include "flowie_export.h"
 #include "platform.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -205,7 +205,7 @@ typedef struct flowie_protocol_settlement_request_s {
 
 #define FLOWIE_PROTOCOL_SETTLEMENT_REQUEST_INIT                                               \
   {sizeof(flowie_protocol_settlement_request_t), FLOWIE_PROTOCOL_MESSAGE_INIT,            \
-   FLOWIE_PROTOCOL_SETTLE_RECEIVED, TURBO_OK, 0u, 0u}
+   FLOWIE_PROTOCOL_SETTLE_RECEIVED, SALTS_OK, 0u, 0u}
 
 /**
  * Message-owned request for one later primitive settlement boundary.
@@ -246,7 +246,7 @@ FLOWIE_C_API int flowie_pattern_selector_init(flowie_pattern_selector_t *selecto
 FLOWIE_C_API int flowie_pattern_selection_begin(
     flowie_pattern_selector_t *selector, flowie_pattern_selection_t selection,
     size_t candidate_count, flowie_pattern_selection_iterator_t *iterator);
-/** Returns TURBO_ENOENT after every candidate has been produced exactly once. */
+/** Returns SALTS_ENOENT after every candidate has been produced exactly once. */
 FLOWIE_C_API int flowie_pattern_selection_next(
     flowie_pattern_selection_iterator_t *iterator, size_t *candidate_index);
 FLOWIE_C_API int flowie_pattern_route_validate(const flowie_pattern_route_t *route);

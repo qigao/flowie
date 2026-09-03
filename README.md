@@ -1,6 +1,6 @@
 # Flowie
 
-Flowie 是独立的 MQTT server/client 仓库。它拥有 MQTT 协议、Broker Core、会话、订阅、保留消息、认证边界和 CoroNet 网络生命周期，不依赖任何上层编排产品。
+Flowie 是独立的 MQTT server/client 仓库。它拥有 MQTT 协议、Broker Core、会话、订阅、保留消息、认证边界和 Salts 网络生命周期，不依赖任何上层编排产品。
 
 依赖方向是单向的：
 
@@ -9,7 +9,7 @@ Flowie 是独立的 MQTT server/client 仓库。它拥有 MQTT 协议、Broker C
           ↓
     Flowie::Flowie
           ↓
-Flowie::Protocol + CoroNet
+Flowie::Protocol + Salts::CNet/CHTTP
 ```
 
 Flowie 的公开 API 不包含上层编排类型。业务系统通过下游 adapter 链接 `Flowie::Flowie` 并完成消息类型映射。
@@ -35,7 +35,7 @@ ctest --test-dir build/Msvc --output-on-failure
 flowie_server --host 0.0.0.0 --port 1883 --transport tcp
 ```
 
-WebSocket listener 可使用 `--transport ws --path /mqtt`。TLS/WSS 沿用 CoroNet 的证书环境变量 `TURBONET_TLS_CERT_FILE` 和 `TURBONET_TLS_KEY_FILE`。
+WebSocket listener 可使用 `--transport ws --path /mqtt`。TCP/TLS 由 Salts CNet 承载，WS/WSS 由 Salts CHTTP WebSocket 承载；TLS/WSS 证书通过 `SALTS_TLS_CERT_FILE` 和 `SALTS_TLS_KEY_FILE` 配置。
 
 只校验启动参数而不监听：
 

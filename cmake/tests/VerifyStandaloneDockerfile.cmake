@@ -13,9 +13,9 @@ if(NOT _dockerfile MATCHES "-DFLOWIE_BUILD_CLUSTER=OFF")
           "Standalone Docker build must explicitly set FLOWIE_BUILD_CLUSTER=OFF")
 endif()
 
-if(NOT _dockerfile MATCHES "-DTURBO_ENABLE_CAPTURE=OFF")
+if(NOT _dockerfile MATCHES "-DSALTS_UTILS_ENABLE_CAPTURE=OFF")
   message(FATAL_ERROR
-          "Standalone Docker build must explicitly disable TurboParser capture")
+          "Standalone Docker build must explicitly disable SaltsUtils capture")
 endif()
 
 if(NOT _dockerfile MATCHES "-DTURBODB_BUILD_REDIS=OFF" OR

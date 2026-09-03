@@ -4,7 +4,7 @@
 
 #include "monocypher.h"
 #include "platform.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@ struct flowie_control_management_session_store_s {
 
 static uint64_t flowie_control_management_session_default_clock(void *ctx) {
   (void)ctx;
-  return turbo_realtime_ms() / 1000u;
+  return salts_realtime_ms() / 1000u;
 }
 
 static int flowie_control_management_session_text_valid(const char *value, size_t maximum) {
@@ -77,7 +77,7 @@ int flowie_control_management_session_store_create(
   flowie_control_management_session_store_t *store = NULL;
   if (out) *out = NULL;
   if (!config || config->size < sizeof(*config) ||
-      flowie_control_repository_validate(config->repository) != TURBO_OK ||
+      flowie_control_repository_validate(config->repository) != SALTS_OK ||
       !config->auth_service ||
       !flowie_control_management_session_text_valid(config->method,
                                                      FLOWIE_SECURITY_TYPE_MAX) ||
@@ -87,9 +87,9 @@ int flowie_control_management_session_store_create(
       config->max_sessions_per_principal > FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL ||
       config->ttl_seconds < 60u ||
       config->ttl_seconds > FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_TTL_SECONDS || !out)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   store = (flowie_control_management_session_store_t *)calloc(1u, sizeof(*store));
-  if (!store) return TURBO_ENOMEM;
+  if (!store) return SALTS_ENOMEM;
   store->repository = *config->repository;
   store->auth_service = config->auth_service;
   store->capacity = config->capacity;
@@ -100,7 +100,7 @@ int flowie_control_management_session_store_create(
   store->clock_ctx = config->clock_ctx;
   memcpy(store->method, config->method, strlen(config->method) + 1u);
   *out = store;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void flowie_control_management_session_store_destroy(
@@ -135,7 +135,7 @@ static int flowie_control_management_session_authenticate(
       !secret || secret_size == 0u || secret_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX ||
       !flowie_control_management_session_text_valid(remote_address,
                                                      FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   request.identity = presented_identity;
   request.method = store->method;
   request.secret = secret;
@@ -145,10 +145,10 @@ static int flowie_control_management_session_authenticate(
   rc = flowie_control_auth_service_authenticate_root(
       store->auth_service, domain_id, FLOWIE_CONTROL_MANAGEMENT_SESSION_SCOPE, &request, 0,
       NULL, &principal, NULL);
-  if (rc != TURBO_OK) goto done;
+  if (rc != SALTS_OK) goto done;
   rc = flowie_control_management_identity_resolve_principal(
       &store->repository, principal.domain_id, principal.principal_id, &caller);
-  if (rc == TURBO_OK) {
+  if (rc == SALTS_OK) {
     memcpy(caller_domain_out, caller.domain_id, strlen(caller.domain_id) + 1u);
     memcpy(caller_actor_out, caller.actor, strlen(caller.actor) + 1u);
     caller_out->domain_id = caller_domain_out;
@@ -178,19 +178,19 @@ static int flowie_control_management_session_issue(
       !flowie_control_management_session_text_valid(caller->actor,
                                                      FLOWIE_SECURITY_ID_MAX) ||
       caller->permissions == 0u || principal_expires_at == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   now = store->clock(store->clock_ctx);
   if (now == 0u || now > UINT64_MAX - store->ttl_seconds) {
-    rc = TURBO_EIO;
+    rc = SALTS_EIO;
     goto done;
   }
   if (principal_expires_at <= now) {
-    rc = TURBO_EPERM;
+    rc = SALTS_EPERM;
     goto done;
   }
-  rc = turbo_secure_random(token_random, sizeof(token_random));
-  if (rc == TURBO_OK) rc = turbo_secure_random(csrf_random, sizeof(csrf_random));
-  if (rc != TURBO_OK) goto done;
+  rc = salts_secure_random(token_random, sizeof(token_random));
+  if (rc == SALTS_OK) rc = salts_secure_random(csrf_random, sizeof(csrf_random));
+  if (rc != SALTS_OK) goto done;
   flowie_control_management_session_hex(token_random, token_out);
   flowie_control_management_session_hex(csrf_random, record.csrf);
   memcpy(record.domain_id, caller->domain_id, strlen(caller->domain_id) + 1u);
@@ -202,7 +202,7 @@ static int flowie_control_management_session_issue(
                                         store->max_sessions_per_principal, now);
 
 done:
-  if (rc != TURBO_OK && token_out) token_out[0] = '\0';
+  if (rc != SALTS_OK && token_out) token_out[0] = '\0';
   flowie_control_credential_wipe(&record, sizeof(record));
   flowie_control_credential_wipe(token_random, sizeof(token_random));
   flowie_control_credential_wipe(csrf_random, sizeof(csrf_random));
@@ -228,11 +228,11 @@ int flowie_control_management_session_login(
       !secret || secret_size == 0u || secret_size > FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX ||
       !flowie_control_management_session_text_valid(remote_address,
                                                      FLOWIE_CONTROL_AUTH_REMOTE_ADDRESS_MAX))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   rc = flowie_control_management_session_authenticate(
       store, domain_id, presented_identity, secret, secret_size, remote_address, &caller,
       caller_domain, caller_actor, &principal_expires_at);
-  if (rc == TURBO_OK)
+  if (rc == SALTS_OK)
     rc = flowie_control_management_session_issue(store, &caller, principal_expires_at, token_out);
   flowie_control_credential_wipe(&caller, sizeof(caller));
   flowie_control_credential_wipe(caller_domain, sizeof(caller_domain));
@@ -254,16 +254,16 @@ int flowie_control_management_session_resolve(
   if (identity_out && identity_out->size >= sizeof(*identity_out)) *identity_out = identity;
   if (!store || !flowie_control_management_session_token_valid(token) || !identity_out ||
       identity_out->size < sizeof(*identity_out))
-    return TURBO_EPERM;
+    return SALTS_EPERM;
   now = store->clock(store->clock_ctx);
-  if (now == 0u) return TURBO_EIO;
+  if (now == 0u) return SALTS_EIO;
   flowie_control_management_session_digest(token, digest);
   rc = store->repository.session->resolve(store->repository.ctx, digest, now, &record);
-  if (rc == TURBO_ENOENT) rc = TURBO_EPERM;
-  if (rc != TURBO_OK) goto done;
+  if (rc == SALTS_ENOENT) rc = SALTS_EPERM;
+  if (rc != SALTS_OK) goto done;
   rc = flowie_control_management_identity_resolve_principal(
       &store->repository, record.domain_id, record.principal_id, &caller);
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     (void)flowie_control_management_session_revoke(store, token);
     goto done;
   }
@@ -282,8 +282,8 @@ done:
 int flowie_control_management_session_revoke(
     flowie_control_management_session_store_t *store, const char *token) {
   uint8_t digest[FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE] = {0};
-  int rc = TURBO_ENOENT;
-  if (!store || !flowie_control_management_session_token_valid(token)) return TURBO_EPERM;
+  int rc = SALTS_ENOENT;
+  if (!store || !flowie_control_management_session_token_valid(token)) return SALTS_EPERM;
   flowie_control_management_session_digest(token, digest);
   rc = store->repository.session->revoke(store->repository.ctx, digest);
   flowie_control_credential_wipe(digest, sizeof(digest));

@@ -1,7 +1,7 @@
 #include "flowie_cluster_topology_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -52,7 +52,7 @@ static void flowie_cluster_topology_test_check_operation(
   flowie_cluster_topology_operation_t operation = FLOWIE_CLUSTER_TOPOLOGY_OPERATION_INIT;
   uint8_t expected_boot[FLOWIE_CLUSTER_BOOT_ID_SIZE];
   flowie_cluster_topology_test_boot(expected_boot, boot_seed);
-  check_equal(flowie_cluster_topology_plan_operation_at(plan, index, &operation), TURBO_OK);
+  check_equal(flowie_cluster_topology_plan_operation_at(plan, index, &operation), SALTS_OK);
   check_equal(operation.kind, kind);
   check_equal(operation.peer.node_id.len, strlen(node_id));
   check_equal(operation.peer.node_id.data, node_id, operation.peer.node_id.len);
@@ -87,7 +87,7 @@ spec("flowie cluster membership topology") {
     membership.member_count = sizeof(members) / sizeof(members[0]);
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_OK);
+                 SALTS_OK);
     check_not_null(plan);
     check_equal(flowie_cluster_topology_plan_revision(plan), 10u);
     check_equal(flowie_cluster_topology_plan_operation_count(plan), 3u);
@@ -124,7 +124,7 @@ spec("flowie cluster membership topology") {
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, current,
                                                     sizeof(current) / sizeof(current[0]), &plan),
-                 TURBO_OK);
+                 SALTS_OK);
     node_c[0] = 'x';
     desired_c[0] = 'x';
     current_c[0] = 'x';
@@ -157,21 +157,21 @@ spec("flowie cluster membership topology") {
     membership.member_count = sizeof(members) / sizeof(members[0]);
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, &current, 1u, &plan),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_topology_plan_operation_count(plan), 0u);
     flowie_cluster_topology_plan_destroy(plan);
 
     plan = NULL;
     current.advertised_endpoint = vstr_from_cstr("127.0.0.1:7999");
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, &current, 1u, &plan),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_null(plan);
 
     membership.membership_revision = 11u;
     members[0].revision = 11u;
     members[1].revision = 11u;
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, &current, 1u, &plan),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     check_null(plan);
   }
 
@@ -194,39 +194,39 @@ spec("flowie cluster membership topology") {
     members[0].node_id = vstr_from_cstr("node-c");
     members[1].node_id = vstr_from_cstr("node-b");
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     members[0].node_id = vstr_from_cstr("node-b");
     members[1].node_id = vstr_from_cstr("node-c");
 
     flowie_cluster_topology_test_boot(members[0].boot_id, 99u);
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     flowie_cluster_topology_test_boot(members[0].boot_id, 2u);
 
     membership.members = &members[1];
     membership.member_count = 1u;
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EBUSY);
+                 SALTS_EBUSY);
     membership.members = members;
     membership.member_count = 2u;
 
     config.max_nodes = 1u;
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     config.max_nodes = 8u;
 
     memset(long_endpoint, 'x', sizeof(long_endpoint));
     members[1].advertised_endpoint.data = long_endpoint;
     members[1].advertised_endpoint.len = 129u;
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     members[1].advertised_endpoint = vstr_from_cstr("127.0.0.1:7103");
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, &peer, 1u, &plan),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     config.max_endpoint_size = FLOWIE_CLUSTER_ADVERTISED_ENDPOINT_MAX + 1u;
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 TURBO_EINVAL);
+                 SALTS_EINVAL);
     check_null(plan);
   }
 }

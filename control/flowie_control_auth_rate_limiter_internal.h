@@ -51,7 +51,7 @@ int flowie_control_auth_rate_limiter_create(
     flowie_control_auth_rate_limiter_t **out);
 void flowie_control_auth_rate_limiter_destroy(flowie_control_auth_rate_limiter_t *limiter);
 
-/** Consume one caller and one identity token atomically, or return TURBO_EBUSY. */
+/** Consume one caller and one identity token atomically, or return SALTS_EBUSY. */
 int flowie_control_auth_rate_limiter_acquire(flowie_control_auth_rate_limiter_t *limiter,
                                              const char *peer_certificate_sha256,
                                              const char *domain_id,

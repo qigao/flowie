@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <string.h>
 
@@ -16,11 +16,11 @@ spec("flowie cluster peer MQTT reply action codec") {
     check_equal(flowie_cluster_peer_mqtt_reply_encode(
                      FLOWIE_MQTT_VERSION_5, (flowie_mqtt_span_t){disconnect, sizeof(disconnect)}, 1,
                      FLOWIE_PROTOCOL_SETTLE_DURABLE, 128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(tstr_len(encoded), sizeof(expected_header) + sizeof(disconnect));
     check_equal(encoded, expected_header, sizeof(expected_header));
     check_equal(flowie_cluster_peer_mqtt_reply_decode(encoded, tstr_len(encoded), 128u, &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.mqtt_version, FLOWIE_MQTT_VERSION_5);
     check_equal(decoded.close_after_send, 1);
     check_equal(decoded.settlement_point, FLOWIE_PROTOCOL_SETTLE_DURABLE);
@@ -35,10 +35,10 @@ spec("flowie cluster peer MQTT reply action codec") {
     check_equal(flowie_cluster_peer_mqtt_reply_encode(
                      FLOWIE_MQTT_VERSION_3_1_1, (flowie_mqtt_span_t){NULL, 0u}, 0,
                      (flowie_protocol_settlement_point_t)0, 128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(tstr_len(encoded), FLOWIE_CLUSTER_PEER_MQTT_REPLY_HEADER_SIZE);
     check_equal(flowie_cluster_peer_mqtt_reply_decode(encoded, tstr_len(encoded), 128u, &decoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(decoded.mqtt_version, FLOWIE_MQTT_VERSION_3_1_1);
     check_equal(decoded.packet.type, 0);
     check_equal(decoded.close_after_send, 0);
@@ -54,21 +54,21 @@ spec("flowie cluster peer MQTT reply action codec") {
     check_equal(flowie_cluster_peer_mqtt_reply_encode(
                      FLOWIE_MQTT_VERSION_5, (flowie_mqtt_span_t){pingreq, sizeof(pingreq)}, 0,
                      (flowie_protocol_settlement_point_t)0, 128u, &encoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     check_null(encoded);
     check_equal(flowie_cluster_peer_mqtt_reply_encode(
                      FLOWIE_MQTT_VERSION_5, (flowie_mqtt_span_t){pingresp, sizeof(pingresp)}, 0,
                      FLOWIE_PROTOCOL_SETTLE_ACCEPTED, 128u, &encoded),
-                 TURBO_OK);
+                 SALTS_OK);
     check_equal(flowie_cluster_peer_mqtt_reply_decode(encoded, tstr_len(encoded), 1u, &decoded),
-                 TURBO_EMSGSIZE);
+                 SALTS_EMSGSIZE);
     encoded[17] |= 0x80u;
     check_equal(flowie_cluster_peer_mqtt_reply_decode(encoded, tstr_len(encoded), 128u, &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     encoded[17] &= 0x7fu;
     encoded[18] = 0u;
     check_equal(flowie_cluster_peer_mqtt_reply_decode(encoded, tstr_len(encoded), 128u, &decoded),
-                 TURBO_EPROTO);
+                 SALTS_EPROTO);
     tstr_free(encoded);
   }
 }

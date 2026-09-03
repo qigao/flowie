@@ -3,7 +3,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdlib.h>
 
@@ -21,7 +21,7 @@ static repository_fixture_t repository_fixture_open(void) {
   check_not_null(fixture.path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &fixture.store), TURBO_OK);
+  check_equal(flowie_control_store_open(&config, &fixture.store), SALTS_OK);
   fixture.repository = flowie_control_store_repository(fixture.store);
   check_not_null(fixture.repository);
   return fixture;
@@ -41,43 +41,43 @@ spec("Flowie control repository provider contract") {
     flowie_control_repository_auth_ops_t auth = *candidate.auth;
     flowie_control_repository_policy_ops_t policy = *candidate.policy;
 
-    check_equal(flowie_control_repository_validate(fixture.repository), TURBO_OK);
+    check_equal(flowie_control_repository_validate(fixture.repository), SALTS_OK);
 
     candidate.version = FLOWIE_CONTROL_REPOSITORY_VERSION + 1u;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     candidate.capabilities &= ~FLOWIE_CONTROL_REPOSITORY_ATOMIC_COMMANDS;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     candidate.policy = NULL;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     candidate.session = NULL;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     auth.principal_snapshot = NULL;
     candidate.auth = &auth;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     auth = *candidate.auth;
     auth.external_principal_snapshot = NULL;
     candidate.auth = &auth;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     policy = *candidate.policy;
     policy.bundle_load = NULL;
     candidate.policy = &policy;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     policy = *candidate.policy;
     policy.bundle_release = NULL;
     candidate.policy = &policy;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
     candidate = *fixture.repository;
     policy = *candidate.policy;
     policy.dry_run = NULL;
     candidate.policy = &policy;
-    check_equal(flowie_control_repository_validate(&candidate), TURBO_EINVAL);
+    check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);
 
     repository_fixture_close(&fixture);
   }

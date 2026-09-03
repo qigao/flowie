@@ -4,7 +4,7 @@
 
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "turbo_error.h"
+#include "salts_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,17 +34,17 @@ spec("Flowie controller bootstrap runtime") {
                    key_file);
     check_equal(flowie_control_test_runtime_turbodb(&config, database_path), 0);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_create(&config, &runtime), SALTS_OK);
     check_not_null(runtime);
-    check_equal(flowie_control_runtime_destroy(runtime), TURBO_OK);
+    check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
     check_equal(flowie_control_test_turbodb_init(&test_database, database_path), 0);
     store_config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&store_config, &store), TURBO_OK);
+    check_equal(flowie_control_store_open(&store_config, &store), SALTS_OK);
     check_equal(flowie_control_store_repository(store)->auth->credential_verify(
                     flowie_control_store_repository(store)->ctx, "system", "admin",
                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, &credential),
-                TURBO_OK);
+                SALTS_OK);
     flowie_control_store_destroy(store);
     check_equal(tt_remove_file(database_path), 0);
     free(database_path);

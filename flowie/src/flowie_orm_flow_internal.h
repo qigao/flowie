@@ -37,7 +37,7 @@ typedef int (*flowie_orm_row_visit_fn)(void *ctx, const flowie_orm_row_t *row,
 orm_status_t flowie_orm_connect(const orm_config_t *config,
                                 orm_connection_t **out_connection,
                                 orm_error_t *error);
-int flowie_orm_status_to_turbo(orm_status_t status);
+int flowie_orm_status_to_salts(orm_status_t status);
 int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
                            const flowie_orm_column_t *columns, size_t column_count,
                            size_t max_rows, size_t max_buffer_bytes,

@@ -1,6 +1,6 @@
 #include "flowie_control_repository_internal.h"
 
-#include "turbo_error.h"
+#include "salts_error.h"
 
 static int turbodb_domain_create(void *ctx, const flowie_control_domain_create_command_t *command,
                                  flowie_control_command_result_t *result) {
@@ -338,7 +338,7 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->ctx || !repository->user || !repository->auth || !repository->credential ||
       !repository->group || !repository->role || !repository->policy || !repository->session ||
       !repository->audit)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (!repository->user->domain_create || !repository->user->domain_get ||
       !repository->user->domain_list || !repository->user->create || !repository->user->disable ||
       !repository->user->get || !repository->user->list || !repository->auth->credential_verify ||
@@ -361,14 +361,14 @@ int flowie_control_repository_validate(const flowie_control_repository_t *reposi
       !repository->session->issue || !repository->session->resolve ||
       !repository->session->revoke || !repository->audit->revision || !repository->audit->list ||
       !repository->audit->count)
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 int flowie_control_repository_bind_turbodb(flowie_control_store_t *store,
                                            flowie_control_repository_t *repository) {
   flowie_control_repository_t bound = FLOWIE_CONTROL_REPOSITORY_INIT;
-  if (!store || !repository || repository->size < sizeof(*repository)) return TURBO_EINVAL;
+  if (!store || !repository || repository->size < sizeof(*repository)) return SALTS_EINVAL;
   bound.capabilities = FLOWIE_CONTROL_REPOSITORY_REQUIRED_CAPABILITIES;
   bound.ctx = store;
   bound.user = &TURBODB_USER_OPS;
@@ -380,5 +380,5 @@ int flowie_control_repository_bind_turbodb(flowie_control_store_t *store,
   bound.session = &TURBODB_SESSION_OPS;
   bound.audit = &TURBODB_AUDIT_OPS;
   *repository = bound;
-  return TURBO_OK;
+  return SALTS_OK;
 }
