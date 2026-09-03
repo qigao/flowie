@@ -18,8 +18,8 @@ Domain，形成跨租户主体混淆。
 2. 每次认证远程调用 IdP introspection。密钥轮换简单，但每次认证都增加网络依赖；仓库已有
    `external_https` provider 承载这一模式。
 3. 继续通过已安装的 `TurboHttp::Cjwt` 验证 JWT。该方案会把已退役的 TurboHTTP 包重新带入控制面，
-   拒绝采用。当前签名验证由私有 cjwt target 完成，JWKS 则通过 Salts::CHTTP 获取；密钥和工作量均有
-   硬上限。
+   拒绝采用。当前签名验证由私有 cjwt target 完成，其中 Ed448 由 `Salts::Crypto` 提供；JWKS 则通过
+   `Salts::CHTTP` 获取，密钥和工作量均有硬上限。
 
 ## 信任边界与声明契约
 

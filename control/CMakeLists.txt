@@ -224,7 +224,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
             ${PROJECT_SOURCE_DIR}/vendor/cjwt/src)
   target_link_libraries(flowie_control_cjwt
                         PUBLIC Salts::JsonParser
-                        PRIVATE Salts::Core OpenSSL::Crypto Flowie::Ed448Crypto)
+                        PRIVATE Salts::Core Salts::Crypto OpenSSL::Crypto)
 
   add_library(
     flowie_control_jwt_jwks_authenticator STATIC

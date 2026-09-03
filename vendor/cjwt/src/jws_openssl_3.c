@@ -11,6 +11,7 @@
 #include <openssl/crypto.h>
 #include <openssl/objects.h>
 #include <limits.h>
+#include <salts/crypto.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <platform.h>
@@ -20,54 +21,33 @@
 #include "jws.h"
 #include "utils.h"
 
-#define TURBO_CRYPTO_OK 0
-#define TURBO_CRYPTO_SHA256_SIZE 32U
-#define TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE 57U
-#define TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE 57U
-#define TURBO_CRYPTO_ED448_SIGNATURE_SIZE 114U
+#define CJWT_CRYPTO_OK 0
+#define CJWT_SHA256_SIZE 32U
 
-/* The retained Ed448 archive predates the Salts namespace migration. */
-int turbo_secure_random(void *buffer, size_t length)
-{
-    return salts_secure_random(buffer, length);
-}
-
-static int turbo_crypto_verify(const uint8_t *left, const uint8_t *right, size_t size)
+static int cjwt_crypto_verify(const uint8_t *left, const uint8_t *right, size_t size)
 {
     if ((!left || !right) && size != 0U) return -1;
-    return CRYPTO_memcmp(left, right, size) == 0 ? TURBO_CRYPTO_OK : -1;
+    return CRYPTO_memcmp(left, right, size) == 0 ? CJWT_CRYPTO_OK : -1;
 }
 
-static void turbo_crypto_wipe(void *data, size_t size)
+static void cjwt_crypto_wipe(void *data, size_t size)
 {
     if (data && size != 0U) OPENSSL_cleanse(data, size);
 }
 
-static int turbo_crypto_hmac_sha256(const uint8_t *key, size_t key_size,
-                                    const uint8_t *message, size_t message_size,
-                                    uint8_t output[TURBO_CRYPTO_SHA256_SIZE])
+static int cjwt_crypto_hmac_sha256(const uint8_t *key, size_t key_size,
+                                   const uint8_t *message, size_t message_size,
+                                   uint8_t output[CJWT_SHA256_SIZE])
 {
     unsigned int output_size = 0U;
     if ((!key && key_size != 0U) || (!message && message_size != 0U) || !output ||
         key_size > INT_MAX)
         return -1;
     return HMAC(EVP_sha256(), key, (int)key_size, message, message_size, output, &output_size) &&
-                   output_size == TURBO_CRYPTO_SHA256_SIZE
-               ? TURBO_CRYPTO_OK
+                   output_size == CJWT_SHA256_SIZE
+               ? CJWT_CRYPTO_OK
                : -1;
 }
-
-int turbo_crypto_ed448_public_key(
-    const uint8_t private_key[TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE],
-    uint8_t public_key[TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE]);
-
-int turbo_crypto_ed448_sign(
-    const uint8_t private_key[TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE], const uint8_t *message,
-    size_t message_size, uint8_t signature[TURBO_CRYPTO_ED448_SIGNATURE_SIZE]);
-
-int turbo_crypto_ed448_verify(
-    const uint8_t public_key[TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE], const uint8_t *message,
-    size_t message_size, const uint8_t signature[TURBO_CRYPTO_ED448_SIGNATURE_SIZE]);
 
 /*----------------------------------------------------------------------------*/
 /*                                   Macros                                   */
@@ -112,33 +92,33 @@ cjwt_code_t verify_hmac(const EVP_MD *sha, const struct sig_input *in)
         && (1 == HMAC_Update(hmac_ctx, in->full.data, in->full.len))
         && (1 == HMAC_Final(hmac_ctx, buff, &size))
         && (in->sig.len == size)
-        && (TURBO_CRYPTO_OK == turbo_crypto_verify(in->sig.data, buff, size)))
+        && (CJWT_CRYPTO_OK == cjwt_crypto_verify(in->sig.data, buff, size)))
     {
         rv = CJWTE_OK;
     }
     HMAC_CTX_free(hmac_ctx);
-    turbo_crypto_wipe(buff, sizeof(buff));
+    cjwt_crypto_wipe(buff, sizeof(buff));
     return rv;
 }
 
 static cjwt_code_t verify_hmac_sha256(const struct sig_input *in)
 {
-    uint8_t digest[TURBO_CRYPTO_SHA256_SIZE];
+    uint8_t digest[CJWT_SHA256_SIZE];
     cjwt_code_t rv = CJWTE_SIGNATURE_VALIDATION_FAILED;
 
     if (!in || (!in->key.data && in->key.len != 0U) ||
         (!in->full.data && in->full.len != 0U)) {
         return CJWTE_INVALID_PARAMETERS;
     }
-    if (turbo_crypto_hmac_sha256(in->key.data, in->key.len,
-                                in->full.data, in->full.len,
-                                digest) == TURBO_CRYPTO_OK &&
+    if (cjwt_crypto_hmac_sha256(in->key.data, in->key.len,
+                               in->full.data, in->full.len,
+                               digest) == CJWT_CRYPTO_OK &&
         in->sig.len == sizeof(digest) &&
-        turbo_crypto_verify(in->sig.data, digest, sizeof(digest)) ==
-            TURBO_CRYPTO_OK) {
+        cjwt_crypto_verify(in->sig.data, digest, sizeof(digest)) ==
+            CJWT_CRYPTO_OK) {
         rv = CJWTE_OK;
     }
-    turbo_crypto_wipe(digest, sizeof(digest));
+    cjwt_crypto_wipe(digest, sizeof(digest));
     return rv;
 }
 
@@ -279,7 +259,7 @@ static cjwt_code_t verify_ed448(const struct sig_input *in)
     const uint8_t *public_key;
 
     if (!in || in->full.len > UINT32_MAX) return CJWTE_INVALID_PARAMETERS;
-    if (in->sig.len != TURBO_CRYPTO_ED448_SIGNATURE_SIZE) {
+    if (in->sig.len != SALTS_CRYPTO_ED448_SIGNATURE_SIZE) {
         return CJWTE_SIGNATURE_VALIDATION_FAILED;
     }
 
@@ -290,14 +270,14 @@ static cjwt_code_t verify_ed448(const struct sig_input *in)
         public_key = (const uint8_t *)in->pkey;
     } else {
         if (!in->key.data
-            || in->key.len != TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE) {
+            || in->key.len != SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE) {
             return CJWTE_SIGNATURE_INVALID_KEY;
         }
         public_key = in->key.data;
     }
 
-    return turbo_crypto_ed448_verify(public_key, in->full.data, in->full.len,
-                                      in->sig.data) == TURBO_CRYPTO_OK
+    return salts_crypto_ed448_verify(public_key, in->full.data, in->full.len,
+                                     in->sig.data) == SALTS_CRYPTO_OK
                ? CJWTE_OK
                : CJWTE_SIGNATURE_VALIDATION_FAILED;
 }
@@ -343,7 +323,7 @@ cjwt_code_t jws_verify_signature(const cjwt_t *jwt, const struct sig_input *in)
         case alg_eddsa:
             if (in->pkey_type == JWS_PKEY_ED448_PUBLIC
                 || (!in->pkey
-                    && in->key.len == TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE)) {
+                    && in->key.len == SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE)) {
                 return verify_ed448(in);
             }
             if (in->pkey && in->pkey_type == JWS_PKEY_EVP
@@ -382,7 +362,7 @@ static cjwt_code_t sign_hmac(const EVP_MD *sha, const uint8_t *full, size_t full
         }
     }
     HMAC_CTX_free(hmac_ctx);
-    turbo_crypto_wipe(buff, sizeof(buff));
+    cjwt_crypto_wipe(buff, sizeof(buff));
     return rv;
 }
 
@@ -390,15 +370,15 @@ static cjwt_code_t sign_hmac_sha256(const uint8_t *full, size_t full_len,
                                     const uint8_t *key, size_t key_len,
                                     uint8_t **sig, size_t *sig_len)
 {
-    uint8_t digest[TURBO_CRYPTO_SHA256_SIZE];
+    uint8_t digest[CJWT_SHA256_SIZE];
     cjwt_code_t rv = CJWTE_OUT_OF_MEMORY;
 
     if (!sig || !sig_len || (!full && full_len != 0U) ||
         (!key && key_len != 0U)) {
         return CJWTE_INVALID_PARAMETERS;
     }
-    if (turbo_crypto_hmac_sha256(key, key_len, full, full_len, digest) !=
-        TURBO_CRYPTO_OK) {
+    if (cjwt_crypto_hmac_sha256(key, key_len, full, full_len, digest) !=
+        CJWT_CRYPTO_OK) {
         return CJWTE_SIGNATURE_VALIDATION_FAILED;
     }
 
@@ -408,7 +388,7 @@ static cjwt_code_t sign_hmac_sha256(const uint8_t *full, size_t full_len,
         *sig_len = sizeof(digest);
         rv = CJWTE_OK;
     }
-    turbo_crypto_wipe(digest, sizeof(digest));
+    cjwt_crypto_wipe(digest, sizeof(digest));
     return rv;
 }
 
@@ -505,21 +485,21 @@ static cjwt_code_t sign_ed448(const uint8_t *full, size_t full_len,
     uint8_t *output;
 
     if (!sig || !sig_len || !key
-        || key_len != TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE
+        || key_len != SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE
         || full_len > UINT32_MAX) {
         return CJWTE_INVALID_PARAMETERS;
     }
 
-    output = malloc(TURBO_CRYPTO_ED448_SIGNATURE_SIZE);
+    output = malloc(SALTS_CRYPTO_ED448_SIGNATURE_SIZE);
     if (!output) return CJWTE_OUT_OF_MEMORY;
-    if (turbo_crypto_ed448_sign(key, full, full_len, output) != TURBO_CRYPTO_OK) {
-        turbo_crypto_wipe(output, TURBO_CRYPTO_ED448_SIGNATURE_SIZE);
+    if (salts_crypto_ed448_sign(key, full, full_len, output) != SALTS_CRYPTO_OK) {
+        cjwt_crypto_wipe(output, SALTS_CRYPTO_ED448_SIGNATURE_SIZE);
         free(output);
         return CJWTE_SIGNATURE_INVALID_KEY;
     }
 
     *sig = output;
-    *sig_len = TURBO_CRYPTO_ED448_SIGNATURE_SIZE;
+    *sig_len = SALTS_CRYPTO_ED448_SIGNATURE_SIZE;
     return CJWTE_OK;
 }
 
@@ -560,7 +540,7 @@ cjwt_code_t jws_sign(const cjwt_alg_t alg, const uint8_t *full, size_t full_len,
             return sign_most(EVP_sha256(), full, full_len, key, key_len, EVP_PKEY_EC, 0, sig, sig_len);
 
         case alg_eddsa:
-            if (key_len == TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE) {
+            if (key_len == SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE) {
                 return sign_ed448(full, full_len, key, key_len, sig, sig_len);
             }
             return sign_most(NULL, full, full_len, key, key_len, EVP_PKEY_ED25519, 0, sig, sig_len);
@@ -698,7 +678,7 @@ static cjwt_code_t process_ed448_jwk(json_value_t *json, void **pkey,
     size_t private_len = 0;
     uint8_t *public_key = json_to_bytes(json, "x", &public_len);
     uint8_t *private_key = json_to_bytes(json, "d", &private_len);
-    uint8_t derived[TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE] = {0};
+    uint8_t derived[SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE] = {0};
     const uint8_t *key_to_copy = public_key;
     uint8_t *out = NULL;
     cjwt_code_t rv = CJWTE_INVALID_PARAMETERS;
@@ -706,32 +686,32 @@ static cjwt_code_t process_ed448_jwk(json_value_t *json, void **pkey,
     if ((!public_json && !private_json)
         || (public_json
             && (!public_key
-                || public_len != TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE))
+                || public_len != SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE))
         || (private_json
             && (!private_key
-                || private_len != TURBO_CRYPTO_ED448_PRIVATE_KEY_SIZE))) {
+                || private_len != SALTS_CRYPTO_ED448_PRIVATE_KEY_SIZE))) {
         goto cleanup;
     }
 
     if (private_key) {
-        if (turbo_crypto_ed448_public_key(private_key, derived)
-            != TURBO_CRYPTO_OK) {
+        if (salts_crypto_ed448_public_key(private_key, derived)
+            != SALTS_CRYPTO_OK) {
             goto cleanup;
         }
         if (public_key
-            && turbo_crypto_verify(derived, public_key, sizeof(derived))
-                   != TURBO_CRYPTO_OK) {
+            && cjwt_crypto_verify(derived, public_key, sizeof(derived))
+                   != CJWT_CRYPTO_OK) {
             goto cleanup;
         }
         key_to_copy = derived;
     }
 
-    out = malloc(TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE);
+    out = malloc(SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE);
     if (!out) {
         rv = CJWTE_OUT_OF_MEMORY;
         goto cleanup;
     }
-    memcpy(out, key_to_copy, TURBO_CRYPTO_ED448_PUBLIC_KEY_SIZE);
+    memcpy(out, key_to_copy, SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE);
     *pkey = out;
     *pkey_type = JWS_PKEY_ED448_PUBLIC;
     out = NULL;
@@ -739,8 +719,8 @@ static cjwt_code_t process_ed448_jwk(json_value_t *json, void **pkey,
 
 cleanup:
     free(out);
-    turbo_crypto_wipe(derived, sizeof(derived));
-    if (private_key) turbo_crypto_wipe(private_key, private_len);
+    cjwt_crypto_wipe(derived, sizeof(derived));
+    if (private_key) cjwt_crypto_wipe(private_key, private_len);
     free(private_key);
     free(public_key);
     return rv;
@@ -782,12 +762,12 @@ static cjwt_code_t process_okp_jwk(json_value_t *json, void **pkey,
         if (public_len != sizeof(derived)
             || EVP_PKEY_get_raw_public_key(out, derived, &derived_len) != 1
             || derived_len != public_len
-            || turbo_crypto_verify(derived, public_key, public_len) != TURBO_CRYPTO_OK)
+            || cjwt_crypto_verify(derived, public_key, public_len) != CJWT_CRYPTO_OK)
         {
-            turbo_crypto_wipe(derived, sizeof(derived));
+            cjwt_crypto_wipe(derived, sizeof(derived));
             goto cleanup;
         }
-        turbo_crypto_wipe(derived, sizeof(derived));
+        cjwt_crypto_wipe(derived, sizeof(derived));
     }
 
     *pkey = out;
@@ -797,7 +777,7 @@ static cjwt_code_t process_okp_jwk(json_value_t *json, void **pkey,
 
 cleanup:
     EVP_PKEY_free(out);
-    turbo_crypto_wipe(private_key, private_len);
+    cjwt_crypto_wipe(private_key, private_len);
     free(private_key);
     free(public_key);
     return rv;

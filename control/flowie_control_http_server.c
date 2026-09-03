@@ -18,6 +18,7 @@ enum {
   FLOWIE_CONTROL_HTTP_DEFAULT_QUEUE_CAPACITY = 128,
   FLOWIE_CONTROL_HTTP_CONNECTION_CAPACITY = 128,
   FLOWIE_CONTROL_HTTP_COMMAND_CAPACITY = 256,
+  FLOWIE_CONTROL_HTTP_COMMAND_BUFFER_CAPACITY = 64 * 1024 * 1024,
   FLOWIE_CONTROL_HTTP_REQUEST_CAPACITY = 256,
   FLOWIE_CONTROL_HTTP_COMPLETION_BATCH_CAPACITY = 64,
   FLOWIE_CONTROL_HTTP_EVENT_CAPACITY = 256,
@@ -125,14 +126,22 @@ static void flowie_control_http_job_destroy(flowie_control_http_job_t *job) {
 
 static const char *flowie_control_http_method_name(chttp_method method) {
   switch (method) {
-  case CHTTP_METHOD_GET: return "GET";
-  case CHTTP_METHOD_HEAD: return "HEAD";
-  case CHTTP_METHOD_POST: return "POST";
-  case CHTTP_METHOD_PUT: return "PUT";
-  case CHTTP_METHOD_DELETE: return "DELETE";
-  case CHTTP_METHOD_PATCH: return "PATCH";
-  case CHTTP_METHOD_OPTIONS: return "OPTIONS";
-  default: return NULL;
+  case CHTTP_METHOD_GET:
+    return "GET";
+  case CHTTP_METHOD_HEAD:
+    return "HEAD";
+  case CHTTP_METHOD_POST:
+    return "POST";
+  case CHTTP_METHOD_PUT:
+    return "PUT";
+  case CHTTP_METHOD_DELETE:
+    return "DELETE";
+  case CHTTP_METHOD_PATCH:
+    return "PATCH";
+  case CHTTP_METHOD_OPTIONS:
+    return "OPTIONS";
+  default:
+    return NULL;
   }
 }
 
@@ -150,27 +159,27 @@ static void flowie_control_http_peer_format(const cnet_stream_peer *peer, char *
                        (unsigned int)peer->address[1], (unsigned int)peer->address[2],
                        (unsigned int)peer->address[3], (unsigned int)peer->port);
   } else if (peer->family == CNET_DATAGRAM_ADDRESS_IPV6) {
-    written = snprintf(
-        output, capacity, "[%x:%x:%x:%x:%x:%x:%x:%x]:%u",
-        ((unsigned int)peer->address[0] << 8u) | peer->address[1],
-        ((unsigned int)peer->address[2] << 8u) | peer->address[3],
-        ((unsigned int)peer->address[4] << 8u) | peer->address[5],
-        ((unsigned int)peer->address[6] << 8u) | peer->address[7],
-        ((unsigned int)peer->address[8] << 8u) | peer->address[9],
-        ((unsigned int)peer->address[10] << 8u) | peer->address[11],
-        ((unsigned int)peer->address[12] << 8u) | peer->address[13],
-        ((unsigned int)peer->address[14] << 8u) | peer->address[15], (unsigned int)peer->port);
+    written = snprintf(output, capacity, "[%x:%x:%x:%x:%x:%x:%x:%x]:%u",
+                       ((unsigned int)peer->address[0] << 8u) | peer->address[1],
+                       ((unsigned int)peer->address[2] << 8u) | peer->address[3],
+                       ((unsigned int)peer->address[4] << 8u) | peer->address[5],
+                       ((unsigned int)peer->address[6] << 8u) | peer->address[7],
+                       ((unsigned int)peer->address[8] << 8u) | peer->address[9],
+                       ((unsigned int)peer->address[10] << 8u) | peer->address[11],
+                       ((unsigned int)peer->address[12] << 8u) | peer->address[13],
+                       ((unsigned int)peer->address[14] << 8u) | peer->address[15],
+                       (unsigned int)peer->port);
   }
   if (written < 0 || (size_t)written >= capacity) output[0] = '\0';
 }
 
 static flowie_control_http_job_t *
-flowie_control_http_job_create(flowie_control_http_app_t *app,
-                               flowie_control_http_route_t *route,
+flowie_control_http_job_create(flowie_control_http_app_t *app, flowie_control_http_route_t *route,
                                const chttp_server_request_view *request) {
   const char *method = flowie_control_http_method_name(request ? request->method : 0);
   flowie_control_http_job_t *job;
-  if (!app || !route || !request || !method || request->header_count > app->limits.max_headers_count)
+  if (!app || !route || !request || !method ||
+      request->header_count > app->limits.max_headers_count)
     return NULL;
   job = (flowie_control_http_job_t *)calloc(1u, sizeof(*job));
   if (!job) return NULL;
@@ -203,11 +212,10 @@ flowie_control_http_job_create(flowie_control_http_app_t *app,
     job->peer_certificate_sha256 = (char *)malloc(sizeof("sha256:") - 1u + digest_size + 1u);
     if (!job->peer_certificate_sha256) goto fail;
     memcpy(job->peer_certificate_sha256, "sha256:", sizeof("sha256:") - 1u);
-    memcpy(job->peer_certificate_sha256 + sizeof("sha256:") - 1u,
-           request->peer_certificate_sha256, digest_size + 1u);
+    memcpy(job->peer_certificate_sha256 + sizeof("sha256:") - 1u, request->peer_certificate_sha256,
+           digest_size + 1u);
   }
-  flowie_control_http_peer_format(request->peer, job->remote_address,
-                                  sizeof(job->remote_address));
+  flowie_control_http_peer_format(request->peer, job->remote_address, sizeof(job->remote_address));
   return job;
 
 fail:
@@ -234,8 +242,7 @@ static int flowie_control_http_query_decode(const char *begin, size_t size, char
       int high;
       int low;
       if (read + 2u >= size || (high = flowie_control_http_hex_value(begin[read + 1u])) < 0 ||
-          (low = flowie_control_http_hex_value(begin[read + 2u])) < 0 ||
-          (high == 0 && low == 0)) {
+          (low = flowie_control_http_hex_value(begin[read + 2u])) < 0 || (high == 0 && low == 0)) {
         free(value);
         return SALTS_EPROTO;
       }
@@ -304,8 +311,7 @@ static int flowie_control_http_query_parse(const char *target, request_t *query)
   for (const char *scan = cursor; *scan; ++scan)
     if (*scan == '&') ++count;
   ++count;
-  if (count > FLOWIE_CONTROL_HTTP_QUERY_CAPACITY || count > (size_t)INT_MAX)
-    return SALTS_EPROTO;
+  if (count > FLOWIE_CONTROL_HTTP_QUERY_CAPACITY || count > (size_t)INT_MAX) return SALTS_EPROTO;
   query->items = (request_item_t *)calloc(count, sizeof(*query->items));
   if (!query->items) return SALTS_ENOMEM;
   query->capacity = (int)count;
@@ -373,8 +379,8 @@ void set_header(Res *response, const char *name, const char *value) {
     size_t capacity = response->header_capacity ? response->header_capacity * 2u : 8u;
     if (capacity > FLOWIE_CONTROL_HTTP_RESPONSE_HEADER_CAPACITY)
       capacity = FLOWIE_CONTROL_HTTP_RESPONSE_HEADER_CAPACITY;
-    headers = (flowie_control_http_header_t *)realloc(response->headers,
-                                                       capacity * sizeof(*headers));
+    headers =
+        (flowie_control_http_header_t *)realloc(response->headers, capacity * sizeof(*headers));
     if (!headers) {
       response->error = SALTS_ENOMEM;
       return;
@@ -395,8 +401,7 @@ void set_header(Res *response, const char *name, const char *value) {
   ++response->header_count;
 }
 
-void reply(Res *response, int status, const char *content_type, const void *body,
-           size_t body_len) {
+void reply(Res *response, int status, const char *content_type, const void *body, size_t body_len) {
   char *content_type_copy;
   void *body_copy = NULL;
   if (!response || response->completed || status < 100 || status > 599 ||
@@ -414,13 +419,14 @@ void reply(Res *response, int status, const char *content_type, const void *body
     return;
   }
   if (body_len > 0u) {
-    body_copy = malloc(body_len);
+    body_copy = malloc(body_len + 1u);
     if (!body_copy) {
       free(content_type_copy);
       response->error = SALTS_ENOMEM;
       return;
     }
     memcpy(body_copy, body, body_len);
+    ((unsigned char *)body_copy)[body_len] = 0u;
   }
   response->status = (unsigned int)status;
   response->content_type = content_type_copy;
@@ -429,8 +435,7 @@ void reply(Res *response, int status, const char *content_type, const void *body
   response->completed = 1;
 }
 
-void set_cookie(Res *response, const char *name, const char *value,
-                cookie_options_t *options) {
+void set_cookie(Res *response, const char *name, const char *value, cookie_options_t *options) {
   char buffer[1024];
   int written;
   if (!response || !flowie_control_http_text_valid(name) ||
@@ -545,10 +550,8 @@ static void flowie_control_http_job_run(void *arg) {
     reply(&response, BAD_REQUEST, "text/plain; charset=utf-8", "Invalid query", 13u);
   } else {
     chain = (Chain){job->route->handler, 0};
-    if (job->app->middleware)
-      (void)job->app->middleware(&request, &response, &chain);
-    else
-      (void)next(&chain, &request, &response);
+    if (job->app->middleware) (void)job->app->middleware(&request, &response, &chain);
+    else (void)next(&chain, &request, &response);
   }
   if (!response.completed && response.error == SALTS_OK)
     reply(&response, NO_CONTENT, "text/plain; charset=utf-8", NULL, 0u);
@@ -563,8 +566,7 @@ done:
   flowie_control_http_job_destroy(job);
 }
 
-static int flowie_control_http_chttp_handler(void *user,
-                                             const chttp_server_request_view *request,
+static int flowie_control_http_chttp_handler(void *user, const chttp_server_request_view *request,
                                              chttp_server_response *response) {
   static const char unavailable[] = "Service unavailable";
   flowie_control_http_route_t *route = (flowie_control_http_route_t *)user;
@@ -586,13 +588,9 @@ static int flowie_control_http_chttp_handler(void *user,
   }
   rc = salts_threadpool_try_submit(app->workers, flowie_control_http_job_run, job);
   if (rc == SALTS_OK) return SALTS_OK;
-  deferred = (chttp_server_deferred_response){sizeof(deferred),
-                                               SERVICE_UNAVAILABLE,
-                                               "text/plain; charset=utf-8",
-                                               NULL,
-                                               0u,
-                                               unavailable,
-                                               sizeof(unavailable) - 1u};
+  deferred = (chttp_server_deferred_response){
+      sizeof(deferred), SERVICE_UNAVAILABLE,     "text/plain; charset=utf-8", NULL, 0u,
+      unavailable,      sizeof(unavailable) - 1u};
   (void)chttp_server_deferred_reply(&job->deferred, &deferred);
   flowie_control_http_job_destroy(job);
   return SALTS_OK;
@@ -611,16 +609,14 @@ flowie_control_http_app_t *flowie_control_http_app_create(void) {
 int flowie_control_http_app_configure(flowie_control_http_app_t *app,
                                       const flowie_control_http_limits_t *limits,
                                       size_t worker_count, size_t worker_queue_capacity) {
-  if (!app || !limits || app->initialized || worker_count == 0u ||
-      worker_count > INT_MAX || worker_queue_capacity == 0u ||
-      limits->max_header_name_length == 0u || limits->max_header_value_length == 0u ||
-      limits->max_url_length == 0u || limits->max_request_body_size == 0u ||
-      limits->max_headers_count == 0u || limits->max_headers_count > INT_MAX ||
-      limits->max_header_value_length > SIZE_MAX - 4u ||
+  if (!app || !limits || app->initialized || worker_count == 0u || worker_count > INT_MAX ||
+      worker_queue_capacity == 0u || limits->max_header_name_length == 0u ||
+      limits->max_header_value_length == 0u || limits->max_url_length == 0u ||
+      limits->max_request_body_size == 0u || limits->max_headers_count == 0u ||
+      limits->max_headers_count > INT_MAX || limits->max_header_value_length > SIZE_MAX - 4u ||
       limits->max_header_name_length > SIZE_MAX - limits->max_header_value_length - 4u ||
       limits->max_headers_count >
-          SIZE_MAX /
-              (limits->max_header_name_length + limits->max_header_value_length + 4u))
+          SIZE_MAX / (limits->max_header_name_length + limits->max_header_value_length + 4u))
     return SALTS_EINVAL;
   app->limits = *limits;
   app->worker_count = worker_count;
@@ -664,8 +660,7 @@ void *flowie_control_http_app_lookup_context(flowie_control_http_app_t *app, con
 }
 
 static int flowie_control_http_app_route(flowie_control_http_app_t *app, chttp_method method,
-                                         const char *path,
-                                         flowie_control_http_handler_fn handler) {
+                                         const char *path, flowie_control_http_handler_fn handler) {
   if (!app || !path || path[0] != '/' || !handler || app->initialized) return SALTS_EINVAL;
   for (size_t index = 0u; index < app->route_count; ++index)
     if (app->routes[index].method == method && strcmp(app->routes[index].path, path) == 0)
@@ -728,24 +723,23 @@ int flowie_control_http_tls_validate(const flowie_control_http_tls_config_t *tls
   cnet_tls_server server = {0};
   cnet_tls_server_config config = {0};
   int rc;
-  if (!tls || tls->size < sizeof(*tls) || !tls->cert_file || !tls->cert_file[0] ||
-      !tls->key_file || !tls->key_file[0])
+  if (!tls || tls->size < sizeof(*tls) || !tls->cert_file || !tls->cert_file[0] || !tls->key_file ||
+      !tls->key_file[0])
     return SALTS_EINVAL;
   config.size = sizeof(config);
   config.cert_file = tls->cert_file;
   config.key_file = tls->key_file;
   config.key_password = tls->key_password;
   config.ca_file = tls->ca_file;
-  config.client_auth = tls->client_auth_required ? CNET_TLS_CLIENT_AUTH_REQUIRED
-                                                  : CNET_TLS_CLIENT_AUTH_NONE;
+  config.client_auth =
+      tls->client_auth_required ? CNET_TLS_CLIENT_AUTH_REQUIRED : CNET_TLS_CLIENT_AUTH_NONE;
   rc = cnet_tls_server_init(&server, &config);
   if (rc != SALTS_OK) return rc;
   return cnet_tls_server_destroy(&server);
 }
 
 int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char *host,
-                                      uint16_t port,
-                                      const flowie_control_http_tls_config_t *tls) {
+                                      uint16_t port, const flowie_control_http_tls_config_t *tls) {
   chttp_server_config config = {0};
   cnet_tls_server_config tls_config = {0};
   salts_threadpool_config_t worker_config;
@@ -766,25 +760,25 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   tls_config.key_file = tls->key_file;
   tls_config.key_password = tls->key_password;
   tls_config.ca_file = tls->ca_file;
-  tls_config.client_auth = tls->client_auth_required ? CNET_TLS_CLIENT_AUTH_REQUIRED
-                                                     : CNET_TLS_CLIENT_AUTH_NONE;
+  tls_config.client_auth =
+      tls->client_auth_required ? CNET_TLS_CLIENT_AUTH_REQUIRED : CNET_TLS_CLIENT_AUTH_NONE;
   config.host = host;
   config.port = port;
   config.backlog = FLOWIE_CONTROL_HTTP_CONNECTION_CAPACITY;
   config.network.backend = flowie_control_http_native_backend();
   config.network.connection_capacity = FLOWIE_CONTROL_HTTP_CONNECTION_CAPACITY;
   config.network.command_capacity = FLOWIE_CONTROL_HTTP_COMMAND_CAPACITY;
+  config.network.command_buffer_bytes = FLOWIE_CONTROL_HTTP_COMMAND_BUFFER_CAPACITY;
   config.network.request_capacity = FLOWIE_CONTROL_HTTP_REQUEST_CAPACITY;
   config.network.completion_batch_capacity = FLOWIE_CONTROL_HTTP_COMPLETION_BATCH_CAPACITY;
   config.network.event_capacity = FLOWIE_CONTROL_HTTP_EVENT_CAPACITY;
-  if (app->limits.max_request_body_size >
-      SIZE_MAX - FLOWIE_CONTROL_HTTP_IO_OVERHEAD_CAPACITY) {
+  if (app->limits.max_request_body_size > SIZE_MAX - FLOWIE_CONTROL_HTTP_IO_OVERHEAD_CAPACITY) {
     rc = SALTS_ERANGE;
     goto fail;
   }
-  config.network.max_send_bytes =
-      FLOWIE_CONTROL_HTTP_RESPONSE_BODY_CAPACITY + FLOWIE_CONTROL_HTTP_IO_OVERHEAD_CAPACITY +
-      FLOWIE_CONTROL_HTTP_RESPONSE_WIRE_OVERHEAD;
+  config.network.max_send_bytes = FLOWIE_CONTROL_HTTP_RESPONSE_BODY_CAPACITY +
+                                  FLOWIE_CONTROL_HTTP_IO_OVERHEAD_CAPACITY +
+                                  FLOWIE_CONTROL_HTTP_RESPONSE_WIRE_OVERHEAD;
   config.network.receive_buffer_bytes =
       app->limits.max_request_body_size + FLOWIE_CONTROL_HTTP_IO_OVERHEAD_CAPACITY;
   config.network.connect_timeout_ms = FLOWIE_CONTROL_HTTP_IO_TIMEOUT_MS;
@@ -841,8 +835,8 @@ int flowie_control_http_app_stop(flowie_control_http_app_t *app, uint32_t timeou
   int rc;
   if (!app) return SALTS_EINVAL;
   if (!app->started) return SALTS_OK;
-  rc = chttp_server_stop(&app->server, timeout_ms ? timeout_ms
-                                                  : FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
+  rc = chttp_server_stop(&app->server,
+                         timeout_ms ? timeout_ms : FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
   if (rc != SALTS_OK) return rc;
   app->started = 0;
   salts_threadpool_shutdown(app->workers);
@@ -855,8 +849,10 @@ void flowie_control_http_app_destroy(flowie_control_http_app_t *app) {
   if (app->started) (void)flowie_control_http_app_stop(app, FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
   if (app->initialized) (void)chttp_server_destroy(&app->server);
   salts_threadpool_destroy(app->workers);
-  for (size_t index = 0u; index < app->route_count; ++index) free(app->routes[index].path);
-  for (size_t index = 0u; index < app->context_count; ++index) free(app->contexts[index].path);
+  for (size_t index = 0u; index < app->route_count; ++index)
+    free(app->routes[index].path);
+  for (size_t index = 0u; index < app->context_count; ++index)
+    free(app->contexts[index].path);
   memset(app, 0, sizeof(*app));
   free(app);
 }

@@ -65,7 +65,6 @@ if(FLOWIE_BUILD_TESTS)
       -DFLOWIE_VCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}
       -DFLOWIE_SALTS_ROOT=$ENV{SALTS_ROOT}
       -DFLOWIE_SALTS_UTILS_ROOT=$ENV{SALTS_UTILS_ROOT}
-      -DFLOWIE_TURBONET_ROOT=$ENV{TURBONET_ROOT}
       -DFLOWIE_TURBODB_ROOT=$ENV{TURBODB_ROOT}
       -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyDefaultNoCluster.cmake)
   set_tests_properties(
@@ -73,7 +72,7 @@ if(FLOWIE_BUILD_TESTS)
     PROPERTIES LABELS "flowie;build-contract;cluster" TIMEOUT 300)
 endif()
 
- 
+
 if(NOT DEFINED ENV{SALTS_ROOT} OR "$ENV{SALTS_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_ROOT must name the installed Salts profile")
 endif()
@@ -84,17 +83,6 @@ find_package(Salts CONFIG REQUIRED
              PATHS "$ENV{SALTS_ROOT}" NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-if(FLOWIE_BUILD_CONTROL)
-  if(NOT DEFINED ENV{TURBONET_ROOT} OR "$ENV{TURBONET_ROOT}" STREQUAL "")
-    message(FATAL_ERROR "TURBONET_ROOT is required for the legacy Ed448 crypto archive")
-  endif()
-  find_library(FLOWIE_ED448_CRYPTO_LIBRARY NAMES turbo_crypto
-               PATHS "$ENV{TURBONET_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
-  add_library(flowie_ed448_crypto STATIC IMPORTED GLOBAL)
-  add_library(Flowie::Ed448Crypto ALIAS flowie_ed448_crypto)
-  set_target_properties(flowie_ed448_crypto PROPERTIES
-                        IMPORTED_LOCATION "${FLOWIE_ED448_CRYPTO_LIBRARY}")
-endif()
 find_package(xxHash CONFIG REQUIRED)
 find_package(Orm CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
