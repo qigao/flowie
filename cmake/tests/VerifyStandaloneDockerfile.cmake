@@ -31,3 +31,11 @@ foreach(_cluster_reference IN ITEMS flow_mq turbo_raft flowmq turboraft)
             "${_cluster_reference}")
   endif()
 endforeach()
+
+foreach(_removed_dependency IN ITEMS turbonet turbo_net rocida)
+  if(_dockerfile_lower MATCHES "${_removed_dependency}")
+    message(FATAL_ERROR
+            "Standalone Dockerfile must build against Salts/SaltsUtils without "
+            "the removed dependency: ${_removed_dependency}")
+  endif()
+endforeach()
