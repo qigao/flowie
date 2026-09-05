@@ -39,6 +39,7 @@ typedef struct flow_mtls_test_server_s {
   int status;
   int require_peer_certificate;
   int peer_verified;
+  int abrupt_close;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
 } flow_mtls_test_server_t;
@@ -151,7 +152,7 @@ static void flow_mtls_test_server_main(void *arg) {
   server->status = 0;
 done:
   X509_free(peer);
-  if (ssl) SSL_shutdown(ssl);
+  if (ssl && !server->abrupt_close) SSL_shutdown(ssl);
   SSL_free(ssl);
   if (client != FLOW_MTLS_TEST_INVALID_SOCKET) flow_mtls_test_close_socket(client);
   SSL_CTX_free(ctx);
@@ -159,7 +160,7 @@ done:
 
 static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
                                           size_t response_size, uint32_t response_delay_ms,
-                                          int require_peer_certificate) {
+                                          int require_peer_certificate, int abrupt_close) {
   struct sockaddr_storage address;
   int family = AF_INET6;
 #ifdef _WIN32
@@ -173,6 +174,7 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   if (!server || (!response && response_size != 0u)) return -1;
   memset(server, 0, sizeof(*server));
   server->require_peer_certificate = require_peer_certificate ? 1 : 0;
+  server->abrupt_close = abrupt_close ? 1 : 0;
   server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET) {
     int ipv6_only = 0;
@@ -226,12 +228,16 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
 static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
                                                const uint8_t *response, size_t response_size,
                                                uint32_t response_delay_ms) {
-  return flow_mtls_test_server_start_ex(server, response, response_size, response_delay_ms, 1);
+  return flow_mtls_test_server_start_ex(server, response, response_size, response_delay_ms, 1, 0);
 }
 
 static int flow_tls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
                                       size_t response_size) {
-  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 0);
+  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 0, 0);
+}
+
+static int flow_tls_test_server_start_abrupt(flow_mtls_test_server_t *server) {
+  return flow_mtls_test_server_start_ex(server, NULL, 0u, 0u, 0, 1);
 }
 
 static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
