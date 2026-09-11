@@ -1,7 +1,7 @@
 #include "flowie_server_http_security_internal.h"
 
 #include "base64_utils.h"
-#include <chttp/chttp.h>
+#include <http_client/http.h>
 #include "salts_error.h"
 #include <json_parser.h>
 #include <uri_parser.h>

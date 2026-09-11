@@ -7,7 +7,7 @@
 #include "salts_error.h"
 #include "salts_fs.h"
 #include <json_parser.h>
-#include "salts_str.h"
+#include "tstr.h"
 
 #include <stdio.h>
 #include <stdlib.h>

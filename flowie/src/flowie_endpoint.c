@@ -26,7 +26,7 @@
 #include "flowie_bitmap_index_internal.h"
 #include "flowie_execution.h"
 #include <cstl.h>
-#include "salts_str.h"
+#include "tstr.h"
 #include "salts_thread.h"
 #include "salts_uuid.h"
 #include "tlog.h"

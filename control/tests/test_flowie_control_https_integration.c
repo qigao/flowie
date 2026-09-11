@@ -7,7 +7,7 @@
 
 #include "platform.h"
 #include "base64_utils.h"
-#include <chttp/chttp.h>
+#include <http_client/http.h>
 #include "tinytest.h"
 #include "salts_error.h"
 #include "salts_process.h"

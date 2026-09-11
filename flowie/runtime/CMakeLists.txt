@@ -40,7 +40,7 @@ target_include_directories(
   PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 target_link_libraries(
   flowie_net_runtime
-  PUBLIC Salts::Core Salts::CNet Salts::CHTTP)
+  PUBLIC Salts::Core Salts::CNet CHttp::Server)
 
 if(FLOWIE_BUILD_TESTS)
   add_subdirectory(tests)

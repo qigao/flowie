@@ -3,7 +3,7 @@
 
 #include "tinytest.h"
 #include "salts_error.h"
-#include "salts_str.h"
+#include "tstr.h"
 
 #include <stdio.h>
 #include <string.h>

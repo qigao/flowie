@@ -2,7 +2,7 @@
 #include "flowie_orm_flow_internal.h"
 
 #include <orm.h>
-#include <salts_str.h>
+#include <tstr.h>
 
 #include <ctype.h>
 #include <limits.h>

@@ -1,12 +1,12 @@
 #include "flowie_control_jwt_jwks_authenticator_internal.h"
 
-#include <chttp/chttp.h>
+#include <http_client/http.h>
 #include "cjwt/cjwt.h"
 #include "platform.h"
 #include "salts_error.h"
 #include <json_parser.h>
 #include <uri_parser.h>
-#include "salts_str.h"
+#include "tstr.h"
 #include "salts_thread.h"
 
 #include <openssl/ssl.h>

@@ -50,6 +50,29 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
+FROM build_toolchain AS chttp_builder
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=chttp . /src/chttp
+RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
+    set -eux; parallel="$(nproc)"; \
+    case "$FLOWIE_PROFILE" in \
+      debug) chttp_build_type=Debug ;; \
+      release) chttp_build_type=Release ;; \
+      *) echo "unsupported FLOWIE_PROFILE: $FLOWIE_PROFILE" >&2; exit 2 ;; \
+    esac; \
+    SALTS_ROOT="/opt/salts/$FLOWIE_PROFILE" \
+      cmake -S /src/chttp -B /src/chttp/build/docker -G Ninja \
+        -DCMAKE_BUILD_TYPE="$chttp_build_type" \
+        -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
+        -DVCPKG_INSTALLED_DIR=/src/chttp/vcpkg_installed \
+        -DVCPKG_TARGET_TRIPLET=x64-linux \
+        -DVCPKG_MANIFEST_MODE=ON \
+        -DCMAKE_INSTALL_PREFIX="/opt/http-services/$FLOWIE_PROFILE" \
+        -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+        -DENABLE_TESTS=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF \
+        -DBUILD_EXAMPLES=OFF; \
+    cmake --build /src/chttp/build/docker --target install --parallel "$parallel"
+
 FROM build_toolchain AS salts_utils_builder
 COPY --from=salts_builder /opt/salts/ /opt/salts/
 COPY --from=salts_utils . /src/salts-utils
@@ -83,9 +106,11 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
 FROM build_toolchain AS builder
 ARG SOURCE_REVISION=unknown
 COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=chttp_builder /opt/http-services/ /opt/http-services/
 COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
 COPY --from=turbodb_builder /opt/turbodb/ /opt/turbodb/
 COPY --from=salts_builder /src/salts/vcpkg_installed/ /src/salts/vcpkg_installed/
+COPY --from=chttp_builder /src/chttp/vcpkg_installed/ /src/chttp/vcpkg_installed/
 COPY --from=salts_utils_builder /src/salts-utils/vcpkg_installed/ /src/salts-utils/vcpkg_installed/
 COPY --from=turbodb_builder /src/turbodb/vcpkg_installed/ /src/turbodb/vcpkg_installed/
 COPY . /src/flowie
@@ -109,11 +134,14 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
     install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control-data" \
       /opt/flowie-runtime/bin/flowie-control-data; \
     for libdir in \
-      "/opt/salts/$FLOWIE_PROFILE/lib" "/opt/salts-utils/$FLOWIE_PROFILE/lib" \
+      "/opt/salts/$FLOWIE_PROFILE/lib" "/opt/http-services/$FLOWIE_PROFILE/lib" \
+      "/opt/salts-utils/$FLOWIE_PROFILE/lib" \
       "/opt/turbodb/$FLOWIE_PROFILE/lib" \
       "/opt/flowie/$FLOWIE_PROFILE/lib" \
       /src/salts/vcpkg_installed/x64-linux/debug/lib \
       /src/salts/vcpkg_installed/x64-linux/lib \
+      /src/chttp/vcpkg_installed/x64-linux/debug/lib \
+      /src/chttp/vcpkg_installed/x64-linux/lib \
       /src/salts-utils/vcpkg_installed/x64-linux/debug/lib \
       /src/salts-utils/vcpkg_installed/x64-linux/lib \
       /src/turbodb/vcpkg_installed/x64-linux/debug/lib \

@@ -19,7 +19,7 @@ Domain，形成跨租户主体混淆。
    `external_https` provider 承载这一模式。
 3. 继续通过已安装的 `TurboHttp::Cjwt` 验证 JWT。该方案会把已退役的 TurboHTTP 包重新带入控制面，
    拒绝采用。当前签名验证由私有 cjwt target 完成，其中 Ed448 由 `Salts::Crypto` 提供；JWKS 则通过
-   `Salts::CHTTP` 获取，密钥和工作量均有硬上限。
+   `CHttp::Client` 获取，密钥和工作量均有硬上限。
 
 ## 信任边界与声明契约
 
@@ -45,7 +45,7 @@ Domain，形成跨租户主体混淆。
 输入；只有完成 JSON/JWK 结构检查后才能在写锁下替换 snapshot。认证 worker 在读锁内借用当前
 snapshot，返回后借用失效。不存在第二份可独立推进的 key cache。
 
-网络 fetch 通过 Salts::CHTTP 发起，使用 HTTPS、严格 peer verification、禁用 redirect/retry，并限制
+网络 fetch 通过 `CHttp::Client` 发起，使用 HTTPS、严格 peer verification、禁用 redirect/retry，并限制
 timeout、header 和 body。JWKS 解析及每次签名验证提交到 provider 拥有的有界
 `salts_threadpool`，不会阻塞 CHTTP 的网络所有者线程。
 

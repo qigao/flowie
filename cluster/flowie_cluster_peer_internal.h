@@ -5,7 +5,7 @@
 
 #include "salts_error.h"
 #include "flowie_security.h"
-#include "salts_str.h"
+#include "tstr.h"
 #include <cnet/cnet.h>
 
 #include <stddef.h>

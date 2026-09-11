@@ -2,7 +2,7 @@
 #include "flowie_control_rpc_internal.h"
 #include "tls_test_support.h"
 
-#include <chttp/chttp.h>
+#include <http_client/http.h>
 #include "salts_error.h"
 #include "tinytest.h"
 
