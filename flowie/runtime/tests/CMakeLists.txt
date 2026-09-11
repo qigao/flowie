@@ -11,14 +11,14 @@ set_tests_properties(
 cmake_add_test(
   test_flow_net_runtime
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flow_net_runtime.c
-  LIBS Flowie::NetRuntime Salts::TinyTest
+  LIBS Flowie::NetRuntime CHttp::Client CHttp::Server Salts::TinyTest
   FOLDER "flowie/runtime/tests")
 if(WIN32)
   target_link_libraries(test_flow_net_runtime PRIVATE ws2_32)
   set_tests_properties(
     test_flow_net_runtime
     PROPERTIES ENVIRONMENT_MODIFICATION
-               "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>")
+               "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CNet>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>")
 endif()
 set_tests_properties(
   test_flow_net_runtime

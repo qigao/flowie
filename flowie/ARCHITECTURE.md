@@ -13,7 +13,8 @@ composition forms are defined in
 Flowie does not embed or link the TurboMQTT client, broker, socket, queue, worker, processor,
 sink, or plugin runtime. The server application and
 the independent `flowie_client` SDK share only the Flowie protocol module; the client SDK builds
-its own single-owner Salts transport state: CNet for TCP/TLS and CHTTP WebSocket for WS/WSS. The protocol knowledge migrated from TurboMQTT
+its own single-owner transport state: Salts CNet for TCP/TLS and the independent Chttp client for
+WS/WSS. The protocol knowledge migrated from TurboMQTT
 remains deterministic and free of I/O:
 
 - MQTT packet framing and fundamental constants;
@@ -41,7 +42,10 @@ authority.
 Flowie endpoint Core owns its `Flowie::NetRuntime` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph
 dispatch sink into that Core and exposes graph operations without duplicating state. Reusable code below this boundary is limited to the
-protocol-neutral Salts executor wrapper and CNet/CHTTP network runtime under `flowie/runtime`.
+protocol-neutral Salts executor wrapper, Salts CNet, and the independent Chttp server runtime under
+`flowie/runtime`. Chttp is linked by role: `CHttp::Client` owns outbound HTTP/WebSocket operations,
+while `CHttp::Server` owns HTTP/WebSocket listeners. Salts remains the source of CNet, Core,
+Coroutine, and shared error codes.
 
 In standalone mode MQTT protocol facts have one source of truth: Flowie's typed protocol repository
 over `Orm::C`. Session, subscription, inflight, retained, and Will mutations commit to that
@@ -68,8 +72,8 @@ persistence remain internal owner behavior rather than invented graph operations
 
 | Layer | Owner | Mutable state | Forbidden dependencies |
 |---|---|---|---|
-| `flowie_protocol` | caller-owned parse invocation | none; results borrow input bytes | CNet/CHTTP, sockets, queues, graph runtime, storage |
-| `flowie_client` | DLL-owned Salts worker | one outbound CNet or CHTTP WebSocket transport, framing, packet IDs, inbound QoS 2 state, bounded async command queue | Flowie endpoint, graph runtime, server session or persistence state |
+| `flowie_protocol` | caller-owned parse invocation | none; results borrow input bytes | Salts CNet/Chttp, sockets, queues, graph runtime, storage |
+| `flowie_client` | DLL-owned Salts worker | one outbound Salts CNet or Chttp WebSocket transport, framing, packet IDs, inbound QoS 2 state, bounded async command queue | Flowie endpoint, graph runtime, server session or persistence state |
 | endpoint Core | Flowie endpoint owner | listener lifecycle, limits, connection registry | direct callback or graph adapter mutation of connection/session state |
 | optional graph adapter | TurboFlow composition | source name, route-owner registration, graph settlement result | socket/session ownership |
 | connection resource | Flowie network owner | generation-fenced transport handle, receive buffer, negotiated version | MQTT parser performing reads or writes |
@@ -89,7 +93,7 @@ state machine or transport; cross-thread submissions wake that owner through the
 inbound PUBLISH, and unsolicited-disconnect callbacks run on the worker and may enqueue more async
 commands, but may not perform synchronous client I/O or destroy the client. Destruction marks the
 queue closed, interrupts pending I/O, completes accepted queued commands with `SALTS_ESHUTDOWN`,
-joins the worker, and only then frees the CNet/CHTTP transport and client state.
+joins the worker, and only then frees the Salts CNet/Chttp transport and client state.
 
 Stream transport and application dispatch are separate bounded paths:
 
@@ -97,7 +101,7 @@ Stream transport and application dispatch are separate bounded paths:
 - direct admission: owned packet -> required Core callback; or
 - graph admission: owned packet -> optional TurboFlow adapter/source -> inline/worker stage.
 - reply admission: encoded control packet + message-owned route -> bounded endpoint Queue ->
-  owner-lane route lookup -> CNet or CHTTP WebSocket send.
+  owner-lane route lookup -> Salts CNet or Chttp WebSocket send.
 
 When `manage_sessions` is enabled, CONNECT is the protocol-owner exception to application
 publication. The endpoint's private session primitive consumes the complete CONNECT on the same

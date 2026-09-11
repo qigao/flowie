@@ -1,7 +1,7 @@
 #include "flowie_control_external_https_authenticator_internal.h"
 
 #include "base64_utils.h"
-#include <chttp/chttp.h>
+#include <http_client/http.h>
 #include <json_parser.h>
 #include <uri_parser.h>
 #include "monocypher.h"

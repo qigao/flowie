@@ -93,6 +93,7 @@ credential 与对应 Role。
 cpp/
   turbodb/
   turbonet/
+    chttp/
     salts/
     salts-utils/
     flowie/
@@ -107,6 +108,7 @@ export FLOWIE_SERVER_IMAGE="flowie-server:local"
 docker buildx build \
   --file deploy/server/Dockerfile \
   --build-context salts=../salts \
+  --build-context chttp=../chttp \
   --build-context salts_utils=../salts-utils \
   --build-context turbo_db=../../turbodb \
   --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
@@ -115,7 +117,7 @@ docker buildx build \
   .
 ```
 
-Dockerfile 分别构建并安装 Salts、SaltsUtils 和 TurboDB，然后从当前 Flowie 源码安装 `flowie_server`、
+Dockerfile 分别构建并安装 Salts、Chttp、SaltsUtils 和 TurboDB，然后从当前 Flowie 源码安装 `flowie_server`、
 `flowie-control` 和 `flowie-control-data`。Standalone 镜像固定使用 `FLOWIE_BUILD_CLUSTER=OFF`，构建图和
 运行层均不引用 FlowMQ/TurboRaft。构建层与最终运行层分别对三个 executable 执行 `ldd`，任一动态库缺失
 都会使镜像构建失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest

@@ -1,5 +1,7 @@
 #include "flow_net_runtime.h"
 
+#include <http_client/http.h>
+
 #include "../../tests/flowie_test_socket.h"
 #include "tinytest.h"
 

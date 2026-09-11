@@ -5,7 +5,7 @@ add_executable(
   flowie_server_http_security.c
   flowie_server_turbodb_config.c)
 target_link_libraries(
-  flowie_server PRIVATE Flowie::App Orm::C Salts::CHTTP Salts::CmdParser
+  flowie_server PRIVATE Flowie::App Orm::C CHttp::Client Salts::CmdParser
                         Salts::CYaml Salts::JsonParser Salts::UriParser)
 cmake_target_enable_boringssl_linkage(flowie_server)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
@@ -29,7 +29,7 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_http_security
     SOURCES tests/test_flowie_server_http_security.c flowie_server_http_security.c
-    LIBS Flowie::Protocol Orm::C Salts::CHTTP Salts::JsonParser Salts::UriParser
+    LIBS Flowie::Protocol Orm::C CHttp::Client Salts::JsonParser Salts::UriParser
          Salts::Core Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
@@ -41,7 +41,7 @@ if(FLOWIE_BUILD_TESTS)
     set_tests_properties(
       test_flowie_server_http_security
       PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
   endif()
 
   add_test(

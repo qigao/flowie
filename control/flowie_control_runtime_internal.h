@@ -18,7 +18,7 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
                                   flowie_control_runtime_t **out);
 
 /**
- * Start and stop the owned Salts::CHTTP HTTPS listener without installing process signal handlers.
+ * Start and stop the owned CHttp::Server HTTPS listener without installing process signal handlers.
  *
  * These calls are caller-serialized. start() binds the configured endpoint before it returns;
  * stop() drains deferred replies, closes accepted connections, and joins the CHTTP owner.

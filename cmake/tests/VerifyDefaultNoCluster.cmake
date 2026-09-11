@@ -1,5 +1,6 @@
 foreach(_required IN ITEMS FLOWIE_SOURCE_DIR FLOWIE_BINARY_DIR FLOWIE_GENERATOR
-                           FLOWIE_SALTS_ROOT FLOWIE_SALTS_UTILS_ROOT
+                           FLOWIE_SALTS_ROOT FLOWIE_HTTP_SERVICES_ROOT
+                           FLOWIE_SALTS_UTILS_ROOT
                            FLOWIE_TURBODB_ROOT)
   if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
     message(FATAL_ERROR "${_required} is required")
@@ -7,6 +8,7 @@ foreach(_required IN ITEMS FLOWIE_SOURCE_DIR FLOWIE_BINARY_DIR FLOWIE_GENERATOR
 endforeach()
 
 set(ENV{SALTS_ROOT} "${FLOWIE_SALTS_ROOT}")
+set(ENV{HTTP_SERVICES_ROOT} "${FLOWIE_HTTP_SERVICES_ROOT}")
 set(ENV{SALTS_UTILS_ROOT} "${FLOWIE_SALTS_UTILS_ROOT}")
 set(ENV{TURBODB_ROOT} "${FLOWIE_TURBODB_ROOT}")
 

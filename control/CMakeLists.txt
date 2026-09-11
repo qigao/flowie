@@ -206,7 +206,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   target_link_libraries(
     flowie_control_external_https_authenticator
     PUBLIC flowie_control_core
-    PRIVATE Salts::CHTTP Salts::Core Salts::JsonParser
+    PRIVATE CHttp::Client Salts::Core Salts::JsonParser
             Salts::UriParser OpenSSL::SSL OpenSSL::Crypto monocypher)
 
   add_library(
@@ -237,7 +237,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
                                     ${PROJECT_SOURCE_DIR}/flowie/include)
   target_link_libraries(
     flowie_control_jwt_jwks_authenticator
-    PRIVATE flowie_control_cjwt Salts::CHTTP Salts::Core
+    PRIVATE flowie_control_cjwt CHttp::Client Salts::Core
             Salts::JsonParser Salts::UriParser OpenSSL::SSL OpenSSL::Crypto)
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
@@ -286,7 +286,7 @@ target_link_libraries(flowie_control_startup
   target_include_directories(flowie_control_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(flowie_control_http
                         PUBLIC Salts::Core
-                        PRIVATE Salts::CHTTP Salts::JsonParser)
+                        PRIVATE CHttp::Server Salts::JsonParser)
 
   add_library(flowie_control_iris_adapter STATIC flowie_control_auth_iris_adapter.c
                                                  flowie_control_auth_iris_adapter_internal.h
@@ -311,7 +311,7 @@ target_link_libraries(flowie_control_startup
     flowie_control_iris_adapter
     PRIVATE FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR="${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}")
   target_link_libraries(flowie_control_iris_adapter
-                        PRIVATE flowie_control_http Salts::CHTTP Salts::Core Salts::Coroutine Salts::JsonParser
+                        PRIVATE flowie_control_http CHttp::Server Salts::Core Salts::Coroutine Salts::JsonParser
                                 Salts::Mustache monocypher $<LINK_ONLY:flowie>
                         PUBLIC flowie_control_core Flowie::Protocol)
 
@@ -322,7 +322,7 @@ target_link_libraries(flowie_control_startup
     target_include_directories(flowie_control_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(flowie_control_runtime
                           PUBLIC flowie_control_startup flowie_control_core
-                          PRIVATE flowie_control_iris_adapter Salts::CHTTP Salts::Core
+                          PRIVATE flowie_control_iris_adapter CHttp::Server Salts::Core
                                   monocypher)
       target_link_libraries(flowie_control_runtime
                             PRIVATE flowie_control_external_https_authenticator)
@@ -349,7 +349,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_http
         SOURCES tests/test_flowie_control_http.c
-        LIBS flowie_control_http Salts::CHTTP Salts::TinyTest
+        LIBS flowie_control_http CHttp::Client CHttp::Server Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       set_tests_properties(test_flowie_control_http
@@ -375,7 +375,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_https_integration
         SOURCES tests/test_flowie_control_https_integration.c
-        LIBS flowie_control_runtime flowie_control_core Salts::CHTTP
+        LIBS flowie_control_runtime flowie_control_core CHttp::Client CHttp::Server
              Salts::Coroutine Salts::Core Salts::TinyTest OpenSSL::Crypto
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
         FOLDER "flowie/control/tests")
@@ -392,7 +392,7 @@ target_link_libraries(flowie_control_startup
         set_tests_properties(
           test_flowie_control_http
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         target_link_libraries(test_flowie_control_runtime PRIVATE ws2_32)
         target_link_libraries(test_flowie_control_https_integration PRIVATE ws2_32)
         set_target_properties(
@@ -410,15 +410,15 @@ target_link_libraries(flowie_control_startup
         set_tests_properties(
           test_flowie_control_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_bootstrap_runtime
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_tests_properties(
           test_flowie_control_https_integration
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       endif()
     endif()
 
@@ -585,7 +585,7 @@ if(BUILD_TESTS)
     cmake_add_test(
       test_flowie_control_jwt_jwks_authenticator
       SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
-      LIBS flowie_control_jwt_jwks_authenticator flowie_control_cjwt Salts::CHTTP
+      LIBS flowie_control_jwt_jwks_authenticator flowie_control_cjwt CHttp::Client
            Salts::JsonParser Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
@@ -608,11 +608,11 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_external_https_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_tests_properties(
         test_flowie_control_jwt_jwks_authenticator
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
   cmake_add_test(
     test_flowie_control_principal_cache
@@ -696,7 +696,7 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_auth_iris_adapter
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
         set_target_properties(
           test_flowie_control_management_rpc
           PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -704,7 +704,7 @@ if(BUILD_TESTS)
         set_tests_properties(
           test_flowie_control_management_rpc
           PROPERTIES ENVIRONMENT_MODIFICATION
-                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
       set_target_properties(
         test_flowie_control_dashboard
         PROPERTIES RUNTIME_OUTPUT_DIRECTORY
@@ -712,6 +712,6 @@ if(BUILD_TESTS)
       set_tests_properties(
         test_flowie_control_dashboard
         PROPERTIES ENVIRONMENT_MODIFICATION
-                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::CHTTP>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+                   "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
     endif()
 endif()

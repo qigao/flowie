@@ -23,7 +23,7 @@ target_include_directories(
   PRIVATE ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(
   ${TARGET_NAME}
-  PRIVATE Flowie::Protocol Salts::Core Salts::CSTL Salts::CNet Salts::CHTTP
+  PRIVATE Flowie::Protocol Salts::Core Salts::CSTL Salts::CNet CHttp::Client
           monocypher)
 
 install(FILES ${FLOWIE_CLIENT_HEADERS} DESTINATION include)

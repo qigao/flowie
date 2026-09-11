@@ -9,7 +9,7 @@ Flowie 是独立的 MQTT server/client 仓库。它拥有 MQTT 协议、Broker C
           ↓
     Flowie::Flowie
           ↓
-Flowie::Protocol + Salts::CNet/CHTTP
+Flowie::Protocol + Salts::CNet + CHttp::Client/Server
 ```
 
 Flowie 的公开 API 不包含上层编排类型。业务系统通过下游 adapter 链接 `Flowie::Flowie` 并完成消息类型映射。
@@ -29,13 +29,20 @@ ctest --test-dir build/Msvc --output-on-failure
 - `FLOWIE_BUILD_SERVER`：构建独立 MQTT server，默认开启。
 - `FLOWIE_BUILD_TESTS`：构建测试，默认开启。
 
+HTTP 与 WebSocket 能力来自独立的 [qigao/chttp](https://github.com/qigao/chttp) SDK。
+配置 Flowie 前将 `HTTP_SERVICES_ROOT` 指向已安装的 profile；默认布局为
+`http-services/debug` 或 `http-services/release`，Android 使用
+`http-services-android/<profile>`。出站 HTTP 和 WebSocket client 链接
+`CHttp::Client`，HTTP 和 WebSocket listener 链接 `CHttp::Server`。Salts 继续提供
+CNet、Core、Coroutine 与错误码。
+
 ## 运行独立 Broker
 
 ```powershell
 flowie_server --host 0.0.0.0 --port 1883 --transport tcp
 ```
 
-WebSocket listener 可使用 `--transport ws --path /mqtt`。TCP/TLS 由 Salts CNet 承载，WS/WSS 由 Salts CHTTP WebSocket 承载；TLS/WSS 证书通过 `SALTS_TLS_CERT_FILE` 和 `SALTS_TLS_KEY_FILE` 配置。
+WebSocket listener 可使用 `--transport ws --path /mqtt`。TCP/TLS 由 Salts CNet 承载，WS/WSS 由独立 Chttp SDK 的 WebSocket server 承载；TLS/WSS 证书通过 `SALTS_TLS_CERT_FILE` 和 `SALTS_TLS_KEY_FILE` 配置。
 
 只校验启动参数而不监听：
 

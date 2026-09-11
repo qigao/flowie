@@ -1,6 +1,6 @@
 #include "flowie_control_http_server_internal.h"
 
-#include <chttp/chttp.h>
+#include <http_server/http.h>
 
 #include "salts_error.h"
 #include "salts_thread.h"
