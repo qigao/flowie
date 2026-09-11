@@ -5,7 +5,7 @@
 #include <json_parser.h>
 #include <uri_parser.h>
 #include "monocypher.h"
-#include "salts_str.h"
+#include "tstr.h"
 #include <salts/error_codes.h>
 
 #include <openssl/ssl.h>

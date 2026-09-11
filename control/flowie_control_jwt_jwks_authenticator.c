@@ -6,7 +6,7 @@
 #include "salts_error.h"
 #include <json_parser.h>
 #include <uri_parser.h>
-#include "salts_str.h"
+#include "tstr.h"
 #include "salts_thread.h"
 
 #include <openssl/ssl.h>

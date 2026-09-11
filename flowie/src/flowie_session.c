@@ -9,7 +9,7 @@
 
 #include "salts_error.h"
 #include <ltv_parser.h>
-#include "salts_str.h"
+#include "tstr.h"
 #include <cstl.h>
 
 #include <limits.h>

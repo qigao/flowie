@@ -14,7 +14,7 @@
 #include "monocypher.h"
 #include "salts_bytes.h"
 #include "salts_error.h"
-#include "salts_str.h"
+#include "tstr.h"
 #include "salts_thread.h"
 
 #include <limits.h>

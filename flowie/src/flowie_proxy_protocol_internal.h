@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "flowie.h"
-#include "salts_str.h"
+#include "tstr.h"
 
 #ifdef __cplusplus
 extern "C" {
