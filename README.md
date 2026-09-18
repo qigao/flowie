@@ -36,6 +36,11 @@ HTTP 与 WebSocket 能力来自独立的 [qigao/chttp](https://github.com/qigao/
 `CHttp::Client`，HTTP 和 WebSocket listener 链接 `CHttp::Server`。Salts 继续提供
 CNet、Core、Coroutine 与错误码。
 
+JSON、YAML、命令行和 LTV 解析器由 SaltsUtils SDK 提供，仍使用 `Salts::` 目标名。
+`SALTS_UTILS_ROOT` 必须指向匹配的安装 profile（`salts-utils/debug` 或
+`salts-utils/release`；Android 为 `salts-utils-android/<profile>`）。这些解析器也用于
+Broker 和 server，因此关闭控制面后仍需该依赖。
+
 ## 运行独立 Broker
 
 ```powershell

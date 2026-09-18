@@ -1,5 +1,5 @@
 #include "flowie.h"
-#include "flowie_test_socket.h"
+#include "flowie_test_cnet.h"
 
 #include "tinytest.h"
 #include "salts_error.h"
@@ -84,7 +84,7 @@ typedef struct flowie_endurance_client_profile_s {
 
 typedef struct flowie_endurance_client_s {
   const flowie_endurance_client_profile_t *profile;
-  flowie_test_socket_t socket;
+  flowie_test_cnet_client_t * client;
   flowie_endurance_state_t state;
   uint32_t next_sequence;
 } flowie_endurance_client_t;
@@ -313,7 +313,7 @@ static int flowie_endurance_payload_validate(const uint8_t *payload, size_t payl
   return memcmp(payload, rebuilt, sizeof(rebuilt)) == 0 ? SALTS_OK : SALTS_EPROTO;
 }
 
-static int flowie_endurance_recv_packet(flowie_test_socket_t socket, uint8_t *wire, size_t capacity,
+static int flowie_endurance_recv_packet(flowie_test_cnet_client_t * client, uint8_t *wire, size_t capacity,
                                         size_t *wire_size) {
   uint32_t remaining = 0u;
   uint32_t multiplier = 1u;
@@ -321,12 +321,12 @@ static int flowie_endurance_recv_packet(flowie_test_socket_t socket, uint8_t *wi
   int rc;
   if (!wire || capacity < 2u || !wire_size) return SALTS_EINVAL;
   *wire_size = 0u;
-  rc = flowie_test_recv_exact(socket, wire, 1u);
+  rc = flowie_test_cnet_recv_exact(client, wire, 1u);
   if (rc != SALTS_OK) return rc;
   for (;;) {
     uint8_t byte;
     if (fixed_size >= 5u) return SALTS_EPROTO;
-    rc = flowie_test_recv_exact(socket, &byte, 1u);
+    rc = flowie_test_cnet_recv_exact(client, &byte, 1u);
     if (rc != SALTS_OK) return rc;
     wire[fixed_size++] = byte;
     remaining += (uint32_t)(byte & UINT8_C(0x7f)) * multiplier;
@@ -335,13 +335,13 @@ static int flowie_endurance_recv_packet(flowie_test_socket_t socket, uint8_t *wi
     multiplier *= 128u;
   }
   if ((size_t)remaining > capacity - fixed_size) return SALTS_EMSGSIZE;
-  rc = flowie_test_recv_exact(socket, wire + fixed_size, remaining);
+  rc = flowie_test_cnet_recv_exact(client, wire + fixed_size, remaining);
   if (rc != SALTS_OK) return rc;
   *wire_size = fixed_size + (size_t)remaining;
   return SALTS_OK;
 }
 
-static int flowie_endurance_recv_control(flowie_test_socket_t socket, flowie_mqtt_version_t version,
+static int flowie_endurance_recv_control(flowie_test_cnet_client_t * client, flowie_mqtt_version_t version,
                                          flowie_endurance_control_t *result) {
   flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
   flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
@@ -352,7 +352,7 @@ static int flowie_endurance_recv_control(flowie_test_socket_t socket, flowie_mqt
   int rc;
   if (!result) return SALTS_EINVAL;
   memset(result, 0, sizeof(*result));
-  rc = flowie_endurance_recv_packet(socket, wire, sizeof(wire), &wire_size);
+  rc = flowie_endurance_recv_packet(client, wire, sizeof(wire), &wire_size);
   if (rc != SALTS_OK) return rc;
   options.version = version;
   options.max_packet_size = sizeof(wire);
@@ -370,7 +370,7 @@ static int flowie_endurance_recv_control(flowie_test_socket_t socket, flowie_mqt
   return SALTS_OK;
 }
 
-static int flowie_endurance_send_control(flowie_test_socket_t socket, flowie_mqtt_version_t version,
+static int flowie_endurance_send_control(flowie_test_cnet_client_t * client, flowie_mqtt_version_t version,
                                          flowie_mqtt_packet_type_t type, uint16_t packet_id) {
   flowie_mqtt_control_packet_t control = FLOWIE_MQTT_CONTROL_PACKET_INIT;
   uint8_t wire[16];
@@ -381,7 +381,7 @@ static int flowie_endurance_send_control(flowie_test_socket_t socket, flowie_mqt
   if (flowie_mqtt_control_packet_encode(&control, wire, sizeof(wire), &wire_size) !=
       FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
-  return flowie_test_send(socket, wire, wire_size);
+  return flowie_test_cnet_send(client, wire, wire_size);
 }
 
 static int
@@ -397,10 +397,10 @@ flowie_endurance_recv_publish_stage_on_topic(flowie_endurance_client_t *client,
   size_t consumed = 0u;
   int rc;
   size_t expected_topic_size;
-  if (!client || client->socket == FLOWIE_TEST_INVALID_SOCKET || !expected || !expected_topic)
+  if (!client || client->client == FLOWIE_TEST_INVALID_CNET_CLIENT || !expected || !expected_topic)
     return SALTS_EINVAL;
   expected_topic_size = strlen(expected_topic);
-  rc = flowie_endurance_recv_packet(client->socket, wire, sizeof(wire), &wire_size);
+  rc = flowie_endurance_recv_packet(client->client, wire, sizeof(wire), &wire_size);
   if (rc != SALTS_OK) return rc;
   options.version = client->profile->version;
   options.max_packet_size = sizeof(wire);
@@ -432,7 +432,7 @@ static int flowie_endurance_recv_publish_on_topic(flowie_endurance_client_t *cli
   uint16_t packet_id = 0u;
   int rc = flowie_endurance_recv_publish_stage_on_topic(client, expected, expected_topic, 1u, 0u,
                                                         &packet_id);
-  return rc == SALTS_OK ? flowie_endurance_send_control(client->socket, client->profile->version,
+  return rc == SALTS_OK ? flowie_endurance_send_control(client->client, client->profile->version,
                                                         FLOWIE_MQTT_PACKET_PUBACK, packet_id)
                         : rc;
 }
@@ -458,11 +458,11 @@ static int flowie_endurance_recv_shared_publish(flowie_endurance_client_t *first
   int second_ready;
   int rc;
   if (!first || !second || !expected || !expected_topic || !winner_index ||
-      first->socket == FLOWIE_TEST_INVALID_SOCKET || second->socket == FLOWIE_TEST_INVALID_SOCKET)
+      first->client == FLOWIE_TEST_INVALID_CNET_CLIENT || second->client == FLOWIE_TEST_INVALID_CNET_CLIENT)
     return SALTS_EINVAL;
   for (size_t step = 0u; step < FLOWIE_ENDURANCE_WAIT_STEPS; ++step) {
-    first_ready = flowie_test_socket_readable(first->socket, 0u);
-    second_ready = flowie_test_socket_readable(second->socket, 0u);
+    first_ready = flowie_test_cnet_readable(first->client, 0u);
+    second_ready = flowie_test_cnet_readable(second->client, 0u);
     if (first_ready && second_ready) return SALTS_EPROTO;
     if (first_ready || second_ready) {
       *winner_index = first_ready ? 0u : 1u;
@@ -471,10 +471,10 @@ static int flowie_endurance_recv_shared_publish(flowie_endurance_client_t *first
       rc = flowie_endurance_recv_publish_stage_on_topic(winner, expected, expected_topic, 1u, 0u,
                                                         &packet_id);
       if (rc != SALTS_OK) return rc;
-      rc = flowie_endurance_send_control(winner->socket, winner->profile->version,
+      rc = flowie_endurance_send_control(winner->client, winner->profile->version,
                                          FLOWIE_MQTT_PACKET_PUBACK, packet_id);
       if (rc != SALTS_OK) return rc;
-      return flowie_test_socket_readable(other->socket, 50u) ? SALTS_EPROTO : SALTS_OK;
+      return flowie_test_cnet_readable(other->client, 50u) ? SALTS_EPROTO : SALTS_OK;
     }
     salts_sleep_ms(1u);
   }
@@ -531,11 +531,11 @@ static int flowie_endurance_connect_with_will(flowie_endurance_client_t *client,
   if (flowie_mqtt_connect_packet_encode(&connect, wire, sizeof(wire), &wire_size) !=
       FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
-  client->socket = flowie_test_connect(port);
-  if (client->socket == FLOWIE_TEST_INVALID_SOCKET) return SALTS_EIO;
-  rc = flowie_test_send(client->socket, wire, wire_size);
+  client->client = flowie_test_cnet_connect(port);
+  if (client->client == FLOWIE_TEST_INVALID_CNET_CLIENT) return SALTS_EIO;
+  rc = flowie_test_cnet_send(client->client, wire, wire_size);
   if (rc == SALTS_OK)
-    rc = flowie_endurance_recv_control(client->socket, client->profile->version, &connack);
+    rc = flowie_endurance_recv_control(client->client, client->profile->version, &connack);
   if (rc != SALTS_OK) return rc;
   if (connack.type != FLOWIE_MQTT_PACKET_CONNACK || connack.reason_code != 0u ||
       connack.session_present != expected_session_present)
@@ -571,9 +571,9 @@ static int flowie_endurance_subscribe_filter_qos(flowie_endurance_client_t *clie
   if (flowie_mqtt_subscribe_packet_encode(&subscribe, wire, sizeof(wire), &wire_size) !=
       FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
-  rc = flowie_test_send(client->socket, wire, wire_size);
+  rc = flowie_test_cnet_send(client->client, wire, wire_size);
   if (rc == SALTS_OK)
-    rc = flowie_endurance_recv_control(client->socket, client->profile->version, &suback);
+    rc = flowie_endurance_recv_control(client->client, client->profile->version, &suback);
   if (rc != SALTS_OK || suback.type != FLOWIE_MQTT_PACKET_SUBACK ||
       suback.packet_id != subscribe.packet_id || suback.reason_code_count != 1u ||
       suback.first_reason_code != qos)
@@ -607,9 +607,9 @@ static int flowie_endurance_unsubscribe_filter(flowie_endurance_client_t *client
   if (flowie_mqtt_unsubscribe_packet_encode(&unsubscribe, wire, sizeof(wire), &wire_size) !=
       FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
-  rc = flowie_test_send(client->socket, wire, wire_size);
+  rc = flowie_test_cnet_send(client->client, wire, wire_size);
   if (rc == SALTS_OK)
-    rc = flowie_endurance_recv_control(client->socket, client->profile->version, &unsuback);
+    rc = flowie_endurance_recv_control(client->client, client->profile->version, &unsuback);
   if (rc != SALTS_OK || unsuback.type != FLOWIE_MQTT_PACKET_UNSUBACK ||
       unsuback.packet_id != unsubscribe.packet_id ||
       (client->profile->version == FLOWIE_MQTT_VERSION_5 &&
@@ -642,18 +642,18 @@ static int flowie_endurance_publish_qos_on_topic(flowie_endurance_client_t *publ
   if (flowie_mqtt_publish_packet_encode(&publish, wire, sizeof(wire), &wire_size) !=
       FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
-  rc = flowie_test_send(publisher->socket, wire, wire_size);
+  rc = flowie_test_cnet_send(publisher->client, wire, wire_size);
   if (rc == SALTS_OK)
-    rc = flowie_endurance_recv_control(publisher->socket, publisher->profile->version, &control);
+    rc = flowie_endurance_recv_control(publisher->client, publisher->profile->version, &control);
   if (rc != SALTS_OK ||
       control.type != (qos == 1u ? FLOWIE_MQTT_PACKET_PUBACK : FLOWIE_MQTT_PACKET_PUBREC) ||
       control.packet_id != packet_id || control.reason_code >= UINT8_C(0x80))
     return SALTS_EPROTO;
   if (qos == 2u) {
-    rc = flowie_endurance_send_control(publisher->socket, publisher->profile->version,
+    rc = flowie_endurance_send_control(publisher->client, publisher->profile->version,
                                        FLOWIE_MQTT_PACKET_PUBREL, packet_id);
     if (rc == SALTS_OK)
-      rc = flowie_endurance_recv_control(publisher->socket, publisher->profile->version, &control);
+      rc = flowie_endurance_recv_control(publisher->client, publisher->profile->version, &control);
     if (rc != SALTS_OK || control.type != FLOWIE_MQTT_PACKET_PUBCOMP ||
         control.packet_id != packet_id || control.reason_code >= UINT8_C(0x80))
       return SALTS_EPROTO;
@@ -674,10 +674,10 @@ static int flowie_endurance_publish(flowie_endurance_client_t *publisher,
 static int flowie_endurance_disconnect(flowie_endurance_client_t *client) {
   static const uint8_t disconnect[] = {0xe0u, 0x00u};
   int rc;
-  if (!client || client->socket == FLOWIE_TEST_INVALID_SOCKET) return SALTS_EINVAL;
-  rc = flowie_test_send(client->socket, disconnect, sizeof(disconnect));
-  flowie_test_socket_close(client->socket);
-  client->socket = FLOWIE_TEST_INVALID_SOCKET;
+  if (!client || client->client == FLOWIE_TEST_INVALID_CNET_CLIENT) return SALTS_EINVAL;
+  rc = flowie_test_cnet_send(client->client, disconnect, sizeof(disconnect));
+  flowie_test_cnet_close(client->client);
+  client->client = FLOWIE_TEST_INVALID_CNET_CLIENT;
   if (rc != SALTS_OK) return rc;
   return flowie_endurance_transition(client, FLOWIE_ENDURANCE_STATE_REMOVED);
 }
@@ -686,15 +686,15 @@ static int flowie_endurance_expect_takeover(flowie_endurance_client_t *client) {
   flowie_endurance_control_t disconnect = {0};
   int rc;
   if (!client || !client->profile || client->profile->version != FLOWIE_MQTT_VERSION_5 ||
-      client->socket == FLOWIE_TEST_INVALID_SOCKET)
+      client->client == FLOWIE_TEST_INVALID_CNET_CLIENT)
     return SALTS_EINVAL;
-  rc = flowie_endurance_recv_control(client->socket, client->profile->version, &disconnect);
+  rc = flowie_endurance_recv_control(client->client, client->profile->version, &disconnect);
   if (rc != SALTS_OK || disconnect.type != FLOWIE_MQTT_PACKET_DISCONNECT ||
       disconnect.reason_code != UINT8_C(0x8e))
     return SALTS_EPROTO;
   rc = flowie_endurance_transition(client, FLOWIE_ENDURANCE_STATE_TAKEN_OVER);
-  flowie_test_socket_close(client->socket);
-  client->socket = FLOWIE_TEST_INVALID_SOCKET;
+  flowie_test_cnet_close(client->client);
+  client->client = FLOWIE_TEST_INVALID_CNET_CLIENT;
   if (rc != SALTS_OK) return rc;
   return flowie_endurance_transition(client, FLOWIE_ENDURANCE_STATE_REMOVED);
 }
@@ -806,7 +806,7 @@ spec("Flowie MQTT persistent-instance endurance") {
   }
 
   it("rejects illegal client-state transitions") {
-    flowie_endurance_client_t client = {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t client = {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_CNET_CLIENT,
                                         FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     check_equal(flowie_endurance_transition(&client, FLOWIE_ENDURANCE_STATE_SUBSCRIBED),
                  SALTS_EPROTO);
@@ -842,16 +842,16 @@ spec("Flowie MQTT persistent-instance endurance") {
 
   it("ENDURANCE-001 preserves fan-out and persistent replay on one broker instance") {
     flowie_endurance_client_t clients[] = {
-        {&FLOWIE_ENDURANCE_PROFILES[0], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[0], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
-        {&FLOWIE_ENDURANCE_PROFILES[1], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[1], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
-        {&FLOWIE_ENDURANCE_PROFILES[2], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[2], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
-        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
     };
-    flowie_endurance_client_t resumed = {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t resumed = {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_CNET_CLIENT,
                                          FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT, 0u};
     flowie_endurance_history_t history = {0};
     flowie_endurance_message_key_t offline[FLOWIE_ENDURANCE_OFFLINE_MESSAGES];
@@ -859,7 +859,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     size_t message_count = 0u;
     uint64_t operation_id = 1u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -898,8 +898,8 @@ spec("Flowie MQTT persistent-instance endurance") {
       flowie_endurance_history_append(&history, &operation);
     }
 
-    flowie_test_socket_close(clients[3].socket);
-    clients[3].socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(clients[3].client);
+    clients[3].client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(
         flowie_endurance_transition(&clients[3], FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
         SALTS_OK);
@@ -963,12 +963,12 @@ spec("Flowie MQTT persistent-instance endurance") {
 
   it("ENDURANCE-002 preserves one persistent session through repeated client-ID takeover") {
     flowie_endurance_client_t publisher = {&FLOWIE_ENDURANCE_PROFILES[1],
-                                           FLOWIE_TEST_INVALID_SOCKET,
+                                           FLOWIE_TEST_INVALID_CNET_CLIENT,
                                            FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_client_t subscribers[] = {
-        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
-        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_SOCKET, FLOWIE_ENDURANCE_STATE_ABSENT,
+        {&FLOWIE_ENDURANCE_PROFILES[3], FLOWIE_TEST_INVALID_CNET_CLIENT, FLOWIE_ENDURANCE_STATE_ABSENT,
          0u},
     };
     flowie_endurance_history_t history = {0};
@@ -977,7 +977,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     uint64_t operation_id = 1u;
     size_t takeover_count = 0u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -1065,16 +1065,16 @@ spec("Flowie MQTT persistent-instance endurance") {
         FLOWIE_ENDURANCE_READ_PAUSED,
     };
     flowie_endurance_client_t publisher = {&FLOWIE_ENDURANCE_PROFILES[1],
-                                           FLOWIE_TEST_INVALID_SOCKET,
+                                           FLOWIE_TEST_INVALID_CNET_CLIENT,
                                            FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t slow = {&slow_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t slow = {&slow_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t healthy = {&FLOWIE_ENDURANCE_PROFILES[2], FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t healthy = {&FLOWIE_ENDURANCE_PROFILES[2], FLOWIE_TEST_INVALID_CNET_CLIENT,
                                          FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_final_snapshot_t final = {0};
     uint64_t root_seed = 0u;
     uint64_t operation_id = 1u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow =
         flowie_endurance_flow_with_limits(port, FLOWIE_ENDURANCE_SEND_HWM_BYTES, 1u);
     uint64_t started_at = salts_hrtime();
@@ -1101,8 +1101,8 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_equal(flowie_endurance_publish(&publisher, &isolation_trigger), SALTS_OK);
     check_equal(flowie_endurance_recv_publish(&healthy, &isolation_trigger), SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 2u), SALTS_OK);
-    flowie_test_socket_close(slow.socket);
-    slow.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(slow.client);
+    slow.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(flowie_endurance_transition(&slow, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
                  SALTS_OK);
 
@@ -1141,9 +1141,9 @@ spec("Flowie MQTT persistent-instance endurance") {
         FLOWIE_ENDURANCE_READ_NORMAL,
     };
     flowie_endurance_client_t publisher = {&FLOWIE_ENDURANCE_PROFILES[1],
-                                           FLOWIE_TEST_INVALID_SOCKET,
+                                           FLOWIE_TEST_INVALID_CNET_CLIENT,
                                            FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t subscriber = {&subscriber_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t subscriber = {&subscriber_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                             FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_final_snapshot_t final = {0};
     flowie_endurance_control_t control = {0};
@@ -1151,7 +1151,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint16_t delivery_packet_id = 0u;
     uint16_t replay_packet_id = 0u;
     uint64_t root_seed = 0u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -1171,8 +1171,8 @@ spec("Flowie MQTT persistent-instance endurance") {
         SALTS_OK);
     check_not_equal(delivery_packet_id, 0u);
 
-    flowie_test_socket_close(subscriber.socket);
-    subscriber.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(subscriber.client);
+    subscriber.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(
         flowie_endurance_transition(&subscriber, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
         SALTS_OK);
@@ -1181,39 +1181,39 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_equal(flowie_endurance_recv_publish_stage(&subscriber, &key, 2u, 1u, &replay_packet_id),
                  SALTS_OK);
     check_equal(replay_packet_id, delivery_packet_id);
-    check_equal(flowie_endurance_send_control(subscriber.socket, subscriber.profile->version,
+    check_equal(flowie_endurance_send_control(subscriber.client, subscriber.profile->version,
                                                FLOWIE_MQTT_PACKET_PUBREC, replay_packet_id),
                  SALTS_OK);
     check_equal(
-        flowie_endurance_recv_control(subscriber.socket, subscriber.profile->version, &control),
+        flowie_endurance_recv_control(subscriber.client, subscriber.profile->version, &control),
         SALTS_OK);
     check_equal(control.type, FLOWIE_MQTT_PACKET_PUBREL);
     check_equal(control.packet_id, delivery_packet_id);
 
-    flowie_test_socket_close(subscriber.socket);
-    subscriber.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(subscriber.client);
+    subscriber.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(
         flowie_endurance_transition(&subscriber, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
         SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 1u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&subscriber, port, 1u), SALTS_OK);
     check_equal(
-        flowie_endurance_recv_control(subscriber.socket, subscriber.profile->version, &control),
+        flowie_endurance_recv_control(subscriber.client, subscriber.profile->version, &control),
         SALTS_OK);
     check_equal(control.type, FLOWIE_MQTT_PACKET_PUBREL);
     check_equal(control.packet_id, delivery_packet_id);
-    check_equal(flowie_endurance_send_control(subscriber.socket, subscriber.profile->version,
+    check_equal(flowie_endurance_send_control(subscriber.client, subscriber.profile->version,
                                                FLOWIE_MQTT_PACKET_PUBREC, delivery_packet_id),
                  SALTS_OK);
     check_equal(
-        flowie_endurance_recv_control(subscriber.socket, subscriber.profile->version, &control),
+        flowie_endurance_recv_control(subscriber.client, subscriber.profile->version, &control),
         SALTS_OK);
     check_equal(control.type, FLOWIE_MQTT_PACKET_PUBREL);
     check_equal(control.packet_id, delivery_packet_id);
-    check_equal(flowie_endurance_send_control(subscriber.socket, subscriber.profile->version,
+    check_equal(flowie_endurance_send_control(subscriber.client, subscriber.profile->version,
                                                FLOWIE_MQTT_PACKET_PUBCOMP, delivery_packet_id),
                  SALTS_OK);
-    check_false(flowie_test_socket_readable(subscriber.socket, 50u));
+    check_false(flowie_test_cnet_readable(subscriber.client, 50u));
 
     check_equal(flowie_endurance_disconnect(&publisher), SALTS_OK);
     check_equal(flowie_endurance_disconnect(&subscriber), SALTS_OK);
@@ -1253,11 +1253,11 @@ spec("Flowie MQTT persistent-instance endurance") {
         FLOWIE_ENDURANCE_READ_NORMAL,
     };
     flowie_endurance_client_t subscriber = {&FLOWIE_ENDURANCE_PROFILES[2],
-                                            FLOWIE_TEST_INVALID_SOCKET,
+                                            FLOWIE_TEST_INVALID_CNET_CLIENT,
                                             FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t delayed = {&delayed_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t delayed = {&delayed_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                          FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t expiry = {&expiry_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t expiry = {&expiry_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                         FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_final_snapshot_t final = {0};
     flowie_endurance_message_key_t canceled_key;
@@ -1267,7 +1267,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     flowie_endurance_will_t canceled_will;
     flowie_endurance_will_t expiry_will;
     uint64_t root_seed = 0u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -1300,23 +1300,23 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_equal(flowie_endurance_subscribe(&subscriber), SALTS_OK);
 
     check_equal(flowie_endurance_connect_with_will(&delayed, port, 0u, &canceled_will), SALTS_OK);
-    flowie_test_socket_close(delayed.socket);
-    delayed.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(delayed.client);
+    delayed.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(flowie_endurance_transition(&delayed, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
                  SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 1u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&delayed, port, 1u), SALTS_OK);
     salts_sleep_ms(FLOWIE_ENDURANCE_WILL_OBSERVATION_MS);
-    check_false(flowie_test_socket_readable(subscriber.socket, 50u));
+    check_false(flowie_test_cnet_readable(subscriber.client, 50u));
     check_equal(flowie_endurance_disconnect(&delayed), SALTS_OK);
 
     check_equal(flowie_endurance_connect_with_will(&expiry, port, 0u, &expiry_will), SALTS_OK);
-    flowie_test_socket_close(expiry.socket);
-    expiry.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(expiry.client);
+    expiry.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(flowie_endurance_transition(&expiry, FLOWIE_ENDURANCE_STATE_REMOVED), SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 1u), SALTS_OK);
     check_equal(flowie_endurance_recv_publish(&subscriber, &expiry_key), SALTS_OK);
-    check_false(flowie_test_socket_readable(subscriber.socket, 50u));
+    check_false(flowie_test_cnet_readable(subscriber.client, 50u));
 
     check_equal(flowie_endurance_disconnect(&subscriber), SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 0u), SALTS_OK);
@@ -1387,17 +1387,17 @@ spec("Flowie MQTT persistent-instance endurance") {
         8u,
         FLOWIE_ENDURANCE_READ_NORMAL};
     flowie_endurance_client_t publisher = {&FLOWIE_ENDURANCE_PROFILES[1],
-                                           FLOWIE_TEST_INVALID_SOCKET,
+                                           FLOWIE_TEST_INVALID_CNET_CLIENT,
                                            FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t exact = {&exact_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t exact = {&exact_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                        FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t plus = {&plus_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t plus = {&plus_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t hash = {&hash_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t hash = {&hash_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t shared_a = {&shared_a_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t shared_a = {&shared_a_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                           FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t shared_b = {&shared_b_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t shared_b = {&shared_b_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                           FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_final_snapshot_t final = {0};
     uint64_t root_seed = 0u;
@@ -1406,7 +1406,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     size_t hash_deliveries = 0u;
     size_t shared_deliveries[2] = {0u, 0u};
     int exact_active = 1;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -1454,7 +1454,7 @@ spec("Flowie MQTT persistent-instance endurance") {
           flowie_endurance_recv_shared_publish(&shared_a, &shared_b, &key, topic, &shared_winner),
           SALTS_OK);
       ++shared_deliveries[shared_winner];
-      if (!exact_expected) check_false(flowie_test_socket_readable(exact.socket, 20u));
+      if (!exact_expected) check_false(flowie_test_cnet_readable(exact.client, 20u));
     }
 
     check_equal(exact_deliveries, 4u);
@@ -1526,15 +1526,15 @@ spec("Flowie MQTT persistent-instance endurance") {
         8u,
         FLOWIE_ENDURANCE_READ_NORMAL};
     flowie_endurance_client_t publisher = {&FLOWIE_ENDURANCE_PROFILES[1],
-                                           FLOWIE_TEST_INVALID_SOCKET,
+                                           FLOWIE_TEST_INVALID_CNET_CLIENT,
                                            FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t qos2 = {&qos2_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t qos2 = {&qos2_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t offline = {&offline_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t offline = {&offline_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                          FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t slow = {&slow_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t slow = {&slow_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
-    flowie_endurance_client_t will = {&will_profile, FLOWIE_TEST_INVALID_SOCKET,
+    flowie_endurance_client_t will = {&will_profile, FLOWIE_TEST_INVALID_CNET_CLIENT,
                                       FLOWIE_ENDURANCE_STATE_ABSENT, 0u};
     flowie_endurance_message_key_t qos2_key;
     flowie_endurance_message_key_t offline_key;
@@ -1546,7 +1546,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint16_t qos2_packet_id = 0u;
     uint16_t slow_packet_id = 0u;
     uint64_t root_seed = 0u;
-    unsigned short port = flowie_test_port();
+    unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = salts_hrtime();
 
@@ -1574,8 +1574,8 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_equal(flowie_endurance_connect_at(&slow, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_subscribe_filter_qos(&slow, slow_topic, 1u), SALTS_OK);
 
-    flowie_test_socket_close(offline.socket);
-    offline.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(offline.client);
+    offline.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(flowie_endurance_transition(&offline, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
                  SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 3u), SALTS_OK);
@@ -1596,19 +1596,19 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_not_equal(slow_packet_id, 0u);
 
     check_equal(flowie_endurance_connect_with_will(&will, port, 0u, &pending_will), SALTS_OK);
-    flowie_test_socket_close(will.socket);
-    will.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(will.client);
+    will.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     check_equal(flowie_endurance_transition(&will, FLOWIE_ENDURANCE_STATE_OFFLINE_PERSISTENT),
                  SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 3u), SALTS_OK);
 
     check_equal(flowie_endurance_stop_drained(flow, 4u, &final), SALTS_OK);
-    flowie_test_socket_close(slow.socket);
-    slow.socket = FLOWIE_TEST_INVALID_SOCKET;
-    flowie_test_socket_close(qos2.socket);
-    qos2.socket = FLOWIE_TEST_INVALID_SOCKET;
-    flowie_test_socket_close(publisher.socket);
-    publisher.socket = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_close(slow.client);
+    slow.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+    flowie_test_cnet_close(qos2.client);
+    qos2.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+    flowie_test_cnet_close(publisher.client);
+    publisher.client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     printf("ENDURANCE_RESULT id=MQTT-ENDURANCE-007 seed=%" PRIu64
            " pending_qos2=1 pending_offline=1 pending_inflight=1 pending_will=1"
            " duration_ns=%" PRIu64 " connections_final=%" PRIu64 " inflight_final=%" PRIu64

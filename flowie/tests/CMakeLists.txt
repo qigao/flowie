@@ -31,7 +31,7 @@ set_tests_properties(test_flowie_session_delivery_index
 cmake_add_test(
   test_flowie_transport_baseline
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_transport_baseline.c
-  LIBS Flowie::App Flowie::Client Salts::TinyTest
+  LIBS Flowie::App Flowie::Client Salts::CNet Salts::TinyTest
   FOLDER "flowie/tests")
 if(WIN32)
   target_link_libraries(test_flowie_transport_baseline PRIVATE ws2_32)

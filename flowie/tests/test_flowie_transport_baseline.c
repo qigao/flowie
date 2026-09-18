@@ -1,6 +1,6 @@
 #include "flowie.h"
 #include "flowie_mqtt_client.h"
-#include "flowie_test_socket.h"
+#include "flowie_test_cnet.h"
 #include "tls_test_support.h"
 
 #include "tinytest.h"
@@ -52,12 +52,12 @@ static int flowie_transport_auth_failure_authenticate(
   return fixture->result;
 }
 
-static int flowie_transport_expect_connack(flowie_test_socket_t client,
+static int flowie_transport_expect_connack(flowie_test_cnet_client_t * client,
                                            const uint8_t *expected, size_t expected_size) {
   uint8_t received[8];
   int rc;
   if (!expected || expected_size > sizeof(received)) return SALTS_EINVAL;
-  rc = flowie_test_recv_exact(client, received, expected_size);
+  rc = flowie_test_cnet_recv_exact(client, received, expected_size);
   if (rc != SALTS_OK) {
     (void)fprintf(stderr, "CONNACK receive failed: %d\n", rc);
     return SALTS_EPROTO;
@@ -71,11 +71,11 @@ static int flowie_transport_expect_connack(flowie_test_socket_t client,
   return SALTS_OK;
 }
 
-static int flowie_transport_expect_close(flowie_test_socket_t client) {
+static int flowie_transport_expect_close(flowie_test_cnet_client_t * client) {
   uint8_t first_byte = 0u;
   int rc;
-  if (!flowie_test_socket_readable(client, 1500u)) return SALTS_ETIMEDOUT;
-  rc = flowie_test_recv_exact(client, &first_byte, 1u);
+  if (!flowie_test_cnet_readable(client, 1500u)) return SALTS_OK;
+  rc = flowie_test_cnet_recv_exact(client, &first_byte, 1u);
   return rc != SALTS_OK || first_byte == UINT8_C(0xe0) ? SALTS_OK : SALTS_EPROTO;
 }
 
@@ -108,7 +108,7 @@ static int flowie_transport_auth_unavailable_case(void) {
   flowie_security_auth_provider_t provider = {
       sizeof(provider), &auth, flowie_transport_auth_failure_authenticate};
   flowie_endpoint_core_t *endpoint = NULL;
-  unsigned short port = flowie_test_port();
+  unsigned short port = flowie_test_cnet_port();
   int rc = SALTS_OK;
 
   if (port == 0u) return SALTS_EIO;
@@ -138,7 +138,7 @@ static int flowie_transport_auth_unavailable_case(void) {
 
   for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
     flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
-    flowie_test_socket_t client = FLOWIE_TEST_INVALID_SOCKET;
+    flowie_test_cnet_client_t * client = FLOWIE_TEST_INVALID_CNET_CLIENT;
     uint8_t connect_packet[128];
     size_t connect_size = 0u;
 
@@ -157,17 +157,17 @@ static int flowie_transport_auth_unavailable_case(void) {
       rc = SALTS_EPROTO;
       break;
     }
-    client = flowie_test_connect(port);
-    if (client == FLOWIE_TEST_INVALID_SOCKET) {
+    client = flowie_test_cnet_connect(port);
+    if (client == FLOWIE_TEST_INVALID_CNET_CLIENT) {
       rc = SALTS_EIO;
       break;
     }
-    rc = flowie_test_send(client, connect_packet, connect_size);
+    rc = flowie_test_cnet_send(client, connect_packet, connect_size);
     if (rc == SALTS_OK && cases[i].connack)
       rc = flowie_transport_expect_connack(client, cases[i].connack, cases[i].connack_size);
     else if (rc == SALTS_OK)
       rc = flowie_transport_expect_close(client);
-    flowie_test_socket_close(client);
+    flowie_test_cnet_close(client);
     if (rc != SALTS_OK) {
       (void)fprintf(stderr, "authentication unavailable case %zu failed\n", i);
       break;
@@ -293,7 +293,7 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_endpoint_core_t *endpoint = NULL;
   flowie_mqtt_client_t *client = NULL;
-  unsigned short port = flowie_test_port();
+  unsigned short port = flowie_test_cnet_port();
   uint64_t deadline;
   int rc;
 

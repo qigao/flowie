@@ -1,6 +1,3 @@
-add_subdirectory(protocol)
-add_subdirectory(client)
-
 set(TARGET_NAME flowie)
 
 add_library(flowie_orm_flow STATIC src/flowie_orm_flow.c)
@@ -59,7 +56,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Flowie::Protocol Orm::C Salts::Core Salts::Coroutine
-  PRIVATE Flowie::NetRuntime Salts::CSTL Salts::LtvParser roaring::roaring xxHash::xxhash)
+  PRIVATE Flowie::Connection Salts::CSTL Salts::LtvParser roaring::roaring xxHash::xxhash)
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
 endif()

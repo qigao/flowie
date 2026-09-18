@@ -7,6 +7,7 @@
 #include "salts_cmeta_data.h"
 #include "salts_cmeta_fixed_width.h"
 #include "salts_error.h"
+#include <salts/thread.h>
 
 #include <cmeta/data.h>
 #include <cmeta/struct.h>
@@ -37,29 +38,20 @@ static const cmeta_type_desc flowie_orm_row_type = {
     .traits = &flowie_orm_row_traits,
     .identity = &flowie_orm_row_identity,
 };
-static const cmeta_data_buffer_shape flowie_orm_owned_buffer_shape = {
-    .ownership = CMETA_DATA_BUFFER_OWNED,
-};
-static const cmeta_data_desc flowie_orm_text_data = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "flowie.orm.Text",
-    .display_name = "Flowie ORM text",
-    .kind = CMETA_DATA_STRING,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &flowie_orm_owned_buffer_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops,
-};
-static const cmeta_data_desc flowie_orm_blob_data = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "flowie.orm.Blob",
-    .display_name = "Flowie ORM blob",
-    .kind = CMETA_DATA_BYTES,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &flowie_orm_owned_buffer_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops,
-};
+static cmeta_data_desc flowie_orm_text_data;
+static cmeta_data_desc flowie_orm_blob_data;
+static salts_once_t flowie_orm_data_once = SALTS_ONCE_INIT;
+
+static void flowie_orm_data_init(void) {
+  flowie_orm_text_data = salts_tstr_cmeta_data;
+  flowie_orm_text_data.stable_id = "flowie.orm.Text";
+  flowie_orm_text_data.display_name = "Flowie ORM text";
+  flowie_orm_text_data.kind = CMETA_DATA_STRING;
+  flowie_orm_blob_data = salts_tstr_cmeta_data;
+  flowie_orm_blob_data.stable_id = "flowie.orm.Blob";
+  flowie_orm_blob_data.display_name = "Flowie ORM blob";
+  flowie_orm_blob_data.kind = CMETA_DATA_BYTES;
+}
 
 static int flowie_orm_driver_is(orm_string_view_t driver, const char *name) {
   const size_t name_size = name ? strlen(name) : 0u;
@@ -107,6 +99,7 @@ static int flowie_orm_column_metadata(const flowie_orm_column_t *column, size_t 
   size_t offset = 0u;
   if (!column || !column->name || !column->name[0] || !layout || !field)
     return SALTS_EINVAL;
+  salts_once(&flowie_orm_data_once, flowie_orm_data_init);
   switch (column->kind) {
     case FLOWIE_ORM_COLUMN_UINT64:
       data = &salts_uint64_cmeta_data;

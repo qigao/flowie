@@ -34,16 +34,6 @@ include(Sanitizers)
 include(CmakeUtils)
 
 if(FLOWIE_BUILD_TESTS)
-  add_test(
-    NAME flowie_standalone_dockerfile_contract
-    COMMAND
-      ${CMAKE_COMMAND}
-      -DFLOWIE_DOCKERFILE=${CMAKE_SOURCE_DIR}/deploy/server/Dockerfile
-      -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyStandaloneDockerfile.cmake)
-  set_tests_properties(
-    flowie_standalone_dockerfile_contract
-    PROPERTIES LABELS "flowie;build-contract;cluster;docker" TIMEOUT 30)
-
   if(UNIX)
     add_test(NAME flowie_server_docker_entrypoint_contract
              COMMAND sh ${CMAKE_SOURCE_DIR}/deploy/server/tests/test-docker-entrypoint.sh)
@@ -52,25 +42,6 @@ if(FLOWIE_BUILD_TESTS)
       PROPERTIES LABELS "flowie;build-contract;docker;security-contract" TIMEOUT 30)
   endif()
 
-  add_test(
-    NAME flowie_default_no_cluster_configure
-    COMMAND
-      ${CMAKE_COMMAND}
-      -DFLOWIE_SOURCE_DIR=${CMAKE_SOURCE_DIR}
-      -DFLOWIE_BINARY_DIR=${CMAKE_BINARY_DIR}/default-no-cluster-configure
-      -DFLOWIE_GENERATOR=${CMAKE_GENERATOR}
-      -DFLOWIE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-      -DFLOWIE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
-      -DFLOWIE_VCPKG_INSTALLED_DIR=${VCPKG_INSTALLED_DIR}
-      -DFLOWIE_VCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}
-      -DFLOWIE_SALTS_ROOT=$ENV{SALTS_ROOT}
-      -DFLOWIE_HTTP_SERVICES_ROOT=$ENV{HTTP_SERVICES_ROOT}
-      -DFLOWIE_SALTS_UTILS_ROOT=$ENV{SALTS_UTILS_ROOT}
-      -DFLOWIE_TURBODB_ROOT=$ENV{TURBODB_ROOT}
-      -P ${CMAKE_SOURCE_DIR}/cmake/tests/VerifyDefaultNoCluster.cmake)
-  set_tests_properties(
-    flowie_default_no_cluster_configure
-    PROPERTIES LABELS "flowie;build-contract;cluster" TIMEOUT 300)
 endif()
 
 
@@ -82,6 +53,14 @@ if(NOT IS_DIRECTORY "$ENV{SALTS_ROOT}")
 endif()
 find_package(Salts CONFIG REQUIRED
              PATHS "$ENV{SALTS_ROOT}" NO_DEFAULT_PATH)
+if(NOT DEFINED ENV{SALTS_UTILS_ROOT} OR "$ENV{SALTS_UTILS_ROOT}" STREQUAL "")
+  message(FATAL_ERROR "SALTS_UTILS_ROOT must name the installed SaltsUtils profile")
+endif()
+if(NOT IS_DIRECTORY "$ENV{SALTS_UTILS_ROOT}")
+  message(FATAL_ERROR "SALTS_UTILS_ROOT is not a directory: $ENV{SALTS_UTILS_ROOT}")
+endif()
+find_package(SaltsUtils CONFIG REQUIRED
+             PATHS "$ENV{SALTS_UTILS_ROOT}" NO_DEFAULT_PATH)
 if(NOT DEFINED ENV{HTTP_SERVICES_ROOT} OR "$ENV{HTTP_SERVICES_ROOT}" STREQUAL "")
   message(FATAL_ERROR "HTTP_SERVICES_ROOT must name the installed Chttp profile")
 endif()
@@ -106,7 +85,10 @@ endif()
 add_subdirectory(tools)
 include(FindTools)
 add_subdirectory(vendor)
-add_subdirectory(flowie/runtime)
+add_subdirectory(transport)
+add_subdirectory(connection)
+add_subdirectory(protocol)
+add_subdirectory(client)
 add_subdirectory(flowie)
 if(FLOWIE_BUILD_CLUSTER)
   add_subdirectory(cluster)

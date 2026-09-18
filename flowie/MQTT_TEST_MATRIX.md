@@ -21,7 +21,7 @@ broker suite 的场景分类相比，固定版本跨 broker 互操作、持续 s
 独立执行环境。本矩阵使这些范围可逐项复验并进入分层 gate；已经进入 release gate 的子集仍按具体
 测试证据界定。
 
-首批实现已落在 `flowie/protocol/tests/test_flowie_mqtt_protocol_matrix.c`，并注册为
+首批实现已落在 `protocol/tests/test_flowie_mqtt_protocol_matrix.c`，并注册为
 `test_flowie_mqtt_protocol_matrix`。它覆盖 MQTT-PROTO-001 的 fixed-header 组合、PROTO-005/008
 的 VBI 与分片/粘包边界、PROTO-002/003/004/006 的 CONNECT/PUBLISH property 代表性矩阵及
 PROTO-007 的 MQTT 5 control reason-code 合法集合，以及 PROTO-009 的 43 个 packet type/level
@@ -113,7 +113,7 @@ fuzz corpus 使用原始 `.bin` 与独立 metadata；soak/benchmark 明细可使
 
 ## A. 协议合法性与 parser
 
-`flowie/protocol/tests/test_flowie_mqtt_protocol_matrix.c` 不打开网络，输入是完整或
+`protocol/tests/test_flowie_mqtt_protocol_matrix.c` 不打开网络，输入是完整或
 分片 wire bytes，oracle 来自 MQTT 3.1、3.1.1、5 的对应规范与 Flowie 明确记录的 level 3 差异。
 
 | ID | 优先级 | 支持/环境标签 | 前置条件与事件序列 | 预期 wire/错误 | 权威终态、隔离 | 标签/超时 |
@@ -310,7 +310,7 @@ wire、owner 和持久化三类断言同时成立。
   `flowie/tests/test_flowie_mqtt_endurance.c` 的 `MQTT-ENDURANCE-006/007` 覆盖。
 - `cluster/tests/test_flowie_cluster_raft_store.c` 验证 term/vote、日志与快照恢复；
   `cluster/tests/test_flowie_cluster_state_machine.c` 验证 owner/PUBLISH 数据只在 commit 后应用。
-- client 本地功能测试与可选公网 smoke 已分别在 `flowie/client/tests/test_flowie_mqtt_client.c` 与
+- client 本地功能测试与可选公网 smoke 已分别在 `client/tests/test_flowie_mqtt_client.c` 与
   `test_flowie_mqtt_client_live.c`；发布兼容性证据来自固定 broker，不能依赖公网 endpoint 的可用性。
 
 新增 CTest target 时，先沿用相邻 `cmake_add_test(...)`、TinyTest fixture 和 CNet helper。只有 failure

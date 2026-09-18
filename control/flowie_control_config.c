@@ -1,8 +1,8 @@
 #include "flowie_control_config_internal.h"
 
 #include "salts_error.h"
-#include <cyaml/cyaml.h>
-#include <cyaml/cyaml_json_adapter.h>
+#include <cyaml.h>
+#include <cyaml_json_adapter.h>
 #include <json_parser.h>
 
 #include <math.h>
