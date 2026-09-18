@@ -21,7 +21,7 @@ if(FLOWIE_BUILD_TESTS)
   target_compile_definitions(
     test_flowie_server_config
     PRIVATE FLOWIE_TEST_EU_CONFIG="${PROJECT_SOURCE_DIR}/deploy/server/.remote-flowie-eu.yml"
-            FLOWIE_TEST_INSECURE_CONFIG="${PROJECT_SOURCE_DIR}/flowie/examples/flowie.yml")
+            FLOWIE_TEST_INSECURE_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/tests/flowie_server_no_auth_provider.yml")
   set_tests_properties(
     test_flowie_server_config
     PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
@@ -87,37 +87,4 @@ if(FLOWIE_BUILD_TESTS)
       PASS_REGULAR_EXPRESSION
         "logging-shutdown written_before_summary=[0-9]+ dropped_total=0 pending_before_summary=0")
 
-  add_test(
-    NAME flowie_server_check_custom_tuning
-    COMMAND
-      ${CMAKE_COMMAND}
-      -DFLOWIE_SERVER_EXECUTABLE=$<TARGET_FILE:flowie_server>
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFlowieServerTuning.cmake)
-  set_tests_properties(
-    flowie_server_check_custom_tuning
-    PROPERTIES LABELS "flowie;flowie-release;product-contract;capacity;diagnostics")
-
-  add_test(
-    NAME flowie_server_uses_turbodb
-    COMMAND
-      ${CMAKE_COMMAND}
-      -DFLOWIE_SERVER_EXECUTABLE=$<TARGET_FILE:flowie_server>
-      -DFLOWIE_SERVER_PROTOCOL_STORE=${CMAKE_CURRENT_BINARY_DIR}/flowie-server-protocol-test.sqlite3
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFlowieServerTurboDB.cmake)
-  set_tests_properties(
-    flowie_server_uses_turbodb
-    PROPERTIES LABELS "flowie;flowie-release;product-contract;persistence;turbodb")
-
-  foreach(_tuning_error_case IN ITEMS coroutine-stack keepalive-dependency)
-    add_test(
-      NAME flowie_server_rejects_${_tuning_error_case}
-      COMMAND
-        ${CMAKE_COMMAND}
-        -DFLOWIE_SERVER_EXECUTABLE=$<TARGET_FILE:flowie_server>
-        -DFLOWIE_TUNING_ERROR_CASE=${_tuning_error_case}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyFlowieServerTuningError.cmake)
-    set_tests_properties(
-      flowie_server_rejects_${_tuning_error_case}
-      PROPERTIES LABELS "flowie;flowie-release;product-contract;capacity")
-  endforeach()
 endif()

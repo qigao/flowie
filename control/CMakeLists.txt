@@ -5,14 +5,6 @@ cmake_add_grammar(FLOWIE_CONTROL_ACL
   FOLDER "flowie/control/acl")
 
 unset(FLOWIE_CONTROL_TBE_COMPILER CACHE)
-if(NOT DEFINED ENV{SALTS_UTILS_ROOT} OR "$ENV{SALTS_UTILS_ROOT}" STREQUAL "")
-  message(FATAL_ERROR "SALTS_UTILS_ROOT must name the installed SaltsUtils profile")
-endif()
-if(NOT IS_DIRECTORY "$ENV{SALTS_UTILS_ROOT}")
-  message(FATAL_ERROR "SALTS_UTILS_ROOT is not a directory: $ENV{SALTS_UTILS_ROOT}")
-endif()
-find_package(SaltsUtils CONFIG REQUIRED
-             PATHS "$ENV{SALTS_UTILS_ROOT}" NO_DEFAULT_PATH)
 find_program(FLOWIE_CONTROL_TBE_COMPILER
              NAMES tbe_compiler tbe_compiler.exe
              PATHS "$ENV{SALTS_UTILS_ROOT}/bin"
@@ -357,7 +349,7 @@ target_link_libraries(flowie_control_startup
       cmake_add_test(
         test_flowie_control_runtime
         SOURCES tests/test_flowie_control_runtime.c
-        LIBS flowie_control_runtime Salts::TinyTest
+        LIBS flowie_control_runtime Salts::CNet Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
       cmake_target_enable_boringssl_linkage(test_flowie_control_runtime)
@@ -462,7 +454,7 @@ if(BUILD_TESTS)
     FOLDER "flowie/control/tests")
   target_compile_definitions(
     test_flowie_control_config
-    PRIVATE FLOWIE_CONTROL_TEST_CONFIG_PATH="${PROJECT_SOURCE_DIR}/flowie/examples/flowie-control.yml")
+    PRIVATE FLOWIE_CONTROL_TEST_CONFIG_PATH="${PROJECT_SOURCE_DIR}/deploy/server/control.yml.example")
   set_tests_properties(test_flowie_control_config
                        PROPERTIES LABELS "flowie;control-plane;security-contract")
   if(WIN32)

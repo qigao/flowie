@@ -89,7 +89,7 @@ set_tests_properties(flowie_server_check_dev_product
 cmake_add_test(
   test_flowie_dev_server_bdd
   SOURCES test_flowie_dev_server_bdd.c
-  LIBS Flowie::Client Salts::Core Salts::TinyTest
+  LIBS Flowie::Client Salts::CNet Salts::Core Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
   FOLDER "flowie/server/tests")
 target_compile_definitions(
@@ -109,7 +109,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS Salts::Core Salts::TinyTest
+    LIBS Salts::CNet Salts::Core Salts::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(
@@ -129,7 +129,7 @@ if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
   cmake_add_test(
     test_flowie_mosquitto_fixed_interop
     SOURCES test_flowie_mosquitto_interop.c
-    LIBS Salts::Core Salts::TinyTest
+    LIBS Salts::CNet Salts::Core Salts::TinyTest
     INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   target_compile_definitions(

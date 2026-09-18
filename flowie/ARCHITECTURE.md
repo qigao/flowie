@@ -39,11 +39,11 @@ authority.
 
 ## Layers and ownership
 
-Flowie endpoint Core owns its `Flowie::NetRuntime` listener and accepted connection handles; it does not depend on
+Flowie endpoint Core owns its `Flowie::Connection` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph
 dispatch sink into that Core and exposes graph operations without duplicating state. Reusable code below this boundary is limited to the
 protocol-neutral Salts executor wrapper, Salts CNet, and the independent Chttp server runtime under
-`flowie/runtime`. Chttp is linked by role: `CHttp::Client` owns outbound HTTP/WebSocket operations,
+the dedicated `transport` and `connection` modules. Chttp is linked by role: `CHttp::Client` owns outbound HTTP/WebSocket operations,
 while `CHttp::Server` owns HTTP/WebSocket listeners. Salts remains the source of CNet, Core,
 Coroutine, and shared error codes.
 

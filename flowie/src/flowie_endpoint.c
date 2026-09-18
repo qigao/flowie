@@ -11,7 +11,7 @@
 #include "flow_connection.h"
 #include "flow_execution.h"
 #include "flow_io_policy.h"
-#include "flow_net_runtime.h"
+#include "flowie_connection.h"
 #include <cnet/websocket.h>
 #include "flowie_cluster_internal.h"
 #include "flowie_ingress_internal.h"
@@ -104,7 +104,7 @@ typedef struct flowie_reply_request_s {
 
 struct flowie_endpoint_connection_s {
   flowie_endpoint_t *endpoint;
-  tf_net_connection network;
+  flowie_connection network;
   flowie_ingress_t *ingress;
   char remote_address[TF_NET_PEER_TEXT_CAPACITY];
   char transport_peer_address[TF_NET_PEER_TEXT_CAPACITY];
@@ -237,7 +237,7 @@ struct flowie_endpoint_s {
   flowie_endpoint_core_message_fn application_dispatch;
   void *application_dispatch_ctx;
   tf_execution_t execution;
-  tf_net_server server;
+  flowie_server server;
   vec_t clients;
   hash_map_t routes;
   vec_t sessions;
@@ -1479,7 +1479,7 @@ static int flowie_session_create(flowie_endpoint_t *endpoint,
   return SALTS_OK;
 }
 
-static tf_net_transport flowie_net_transport(flowie_transport_t transport) {
+static flowie_transport flowie_net_transport(flowie_transport_t transport) {
   switch (transport) {
   case FLOWIE_TRANSPORT_TCP:
     return TF_NET_TRANSPORT_TCP;
@@ -1494,7 +1494,7 @@ static tf_net_transport flowie_net_transport(flowie_transport_t transport) {
   case FLOWIE_TRANSPORT_WSS:
     return TF_NET_TRANSPORT_WSS;
   default:
-    return (tf_net_transport)0;
+    return (flowie_transport)0;
   }
 }
 
@@ -1542,7 +1542,7 @@ static int flowie_endpoint_config_validate(const flowie_endpoint_config_t *confi
        config->settlement.qos2 != FLOWIE_PROTOCOL_SETTLE_PROCESSED &&
        config->settlement.qos2 != FLOWIE_PROTOCOL_SETTLE_DURABLE))
     return SALTS_ENOTSUP;
-  if (flowie_net_transport(config->transport) == (tf_net_transport)0) return SALTS_ENOTSUP;
+  if (flowie_net_transport(config->transport) == (flowie_transport)0) return SALTS_ENOTSUP;
   if (config->host == NULL || config->host[0] == '\0' || config->port < 0 ||
       config->port > UINT16_MAX)
     return SALTS_EINVAL;
@@ -2114,8 +2114,8 @@ static int flowie_connection_topic_aliases_init(flowie_endpoint_connection_t *co
   return SALTS_OK;
 }
 
-static int flowie_client_add(flowie_endpoint_t *endpoint, tf_net_connection network,
-                             const tf_net_peer_info *peer,
+static int flowie_client_add(flowie_endpoint_t *endpoint, flowie_connection network,
+                             const flowie_peer_info *peer,
                              flowie_endpoint_connection_t **out) {
   flowie_endpoint_connection_t *connection;
   tf_io_budget_config_t budget_config;
@@ -2130,7 +2130,7 @@ static int flowie_client_add(flowie_endpoint_t *endpoint, tf_net_connection netw
   if (!connection) return SALTS_ENOMEM;
   connection->endpoint = endpoint;
   connection->network = network;
-  rc = tf_net_peer_format(peer, connection->remote_address,
+  rc = flowie_peer_format(peer, connection->remote_address,
                           sizeof(connection->remote_address));
   if (rc != SALTS_OK) {
     free(connection);
@@ -2237,7 +2237,7 @@ static void flowie_client_remove(flowie_endpoint_t *endpoint,
 }
 
 static flowie_endpoint_connection_t *flowie_connection_find_network(
-    flowie_endpoint_t *endpoint, tf_net_connection network) {
+    flowie_endpoint_t *endpoint, flowie_connection network) {
   if (endpoint == NULL || network.slot == 0u || network.generation == 0u) return NULL;
   for (size_t index = 0u; index < vec_size(&endpoint->clients); ++index) {
     flowie_endpoint_connection_t *const *slot =
@@ -2321,7 +2321,7 @@ static void flowie_connection_close(flowie_endpoint_connection_t *connection, in
     (void)salts_coro_executor_await_complete(connection->endpoint->execution.executor,
                                              connection->cluster_await, status);
   if (connection->network.slot != 0u)
-    (void)tf_net_server_close(&connection->endpoint->server, connection->network, status);
+    (void)flowie_server_close(&connection->endpoint->server, connection->network, status);
   flowie_connection_fail_reply_queue(connection);
 }
 
@@ -3505,7 +3505,7 @@ static int flowie_connection_reply_drain(flowie_endpoint_connection_t *connectio
 
     rc = SALTS_OK;
     for (size_t index = 0u; index < request_count && rc == SALTS_OK; ++index)
-      rc = tf_net_server_send(&connection->endpoint->server, connection->network,
+      rc = flowie_server_send(&connection->endpoint->server, connection->network,
                               flowie_reply_packet_data(requests[index]),
                               flowie_reply_packet_size(requests[index]));
     if (rc == SALTS_OK) {
@@ -4756,7 +4756,7 @@ static int flowie_endpoint_prepare_disconnect(flowie_endpoint_connection_t *conn
   if (rc != SALTS_OK) return rc;
   connection->closing = 1;
   *stop_pump = 1;
-  return tf_net_server_close(&connection->endpoint->server, connection->network,
+  return flowie_server_close(&connection->endpoint->server, connection->network,
                              SALTS_ENOTCONN);
 }
 
@@ -6240,20 +6240,20 @@ static int flowie_endpoint_session_prepare(void *ctx, flowie_ingress_t *ingress,
 
 typedef struct flowie_net_open_call_s {
   flowie_endpoint_t *endpoint;
-  tf_net_connection network;
-  tf_net_peer_info peer;
+  flowie_connection network;
+  flowie_peer_info peer;
 } flowie_net_open_call_t;
 
 typedef struct flowie_net_receive_call_s {
   flowie_endpoint_t *endpoint;
-  tf_net_connection network;
+  flowie_connection network;
   const void *data;
   size_t size;
 } flowie_net_receive_call_t;
 
 typedef struct flowie_net_close_call_s {
   flowie_endpoint_t *endpoint;
-  tf_net_connection network;
+  flowie_connection network;
   int status;
 } flowie_net_close_call_t;
 
@@ -6401,8 +6401,8 @@ static int flowie_net_close_apply(void *arg) {
   return SALTS_OK;
 }
 
-static int flowie_net_open(void *user, tf_net_connection network,
-                           const tf_net_peer_info *peer) {
+static int flowie_net_open(void *user, flowie_connection network,
+                           const flowie_peer_info *peer) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
   flowie_net_open_call_t call;
   if (endpoint == NULL || peer == NULL) return SALTS_EINVAL;
@@ -6411,7 +6411,7 @@ static int flowie_net_open(void *user, tf_net_connection network,
                            flowie_timeout_ns(endpoint));
 }
 
-static int flowie_net_receive(void *user, tf_net_connection network, const void *data,
+static int flowie_net_receive(void *user, flowie_connection network, const void *data,
                               size_t size) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
   flowie_net_receive_call_t call = {endpoint, network, data, size};
@@ -6420,7 +6420,7 @@ static int flowie_net_receive(void *user, tf_net_connection network, const void 
                                 flowie_timeout_ns(endpoint));
 }
 
-static void flowie_net_close(void *user, tf_net_connection network, int status) {
+static void flowie_net_close(void *user, flowie_connection network, int status) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
   flowie_net_close_call_t call = {endpoint, network, status};
   if (endpoint != NULL)
@@ -6555,7 +6555,7 @@ static int flowie_endpoint_consume(flowie_endpoint_t *endpoint, flowie_message_t
 
 static int flowie_listener_start_call(void *arg) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)arg;
-  tf_net_server_config config = TF_NET_SERVER_CONFIG_INIT;
+  flowie_server_config config = TF_NET_SERVER_CONFIG_INIT;
   cnet_tls_server_config tls_config = {0};
   const native_io_backend_kind backend = flowie_native_io_backend();
   uint32_t network_timeout_ms;
@@ -6638,7 +6638,7 @@ static int flowie_listener_start_call(void *arg) {
   config.command_bytes_capacity = endpoint->network_command_bytes;
   config.max_message_bytes = endpoint->max_packet_size;
   config.poll_slice_ms = FLOWIE_NET_POLL_SLICE_MS;
-  config.observer = (tf_net_observer){flowie_net_open, flowie_net_receive, flowie_net_close, NULL,
+  config.observer = (flowie_observer){flowie_net_open, flowie_net_receive, flowie_net_close, NULL,
                                       endpoint};
 
   if (endpoint->transport == FLOWIE_TRANSPORT_TLS || endpoint->transport == FLOWIE_TRANSPORT_WSS) {
@@ -6667,14 +6667,14 @@ static int flowie_listener_start_call(void *arg) {
   } else {
     rc = SALTS_OK;
   }
-  if (rc == SALTS_OK) rc = tf_net_server_init(&endpoint->server, &config);
+  if (rc == SALTS_OK) rc = flowie_server_init(&endpoint->server, &config);
   if (rc == SALTS_OK) {
-    rc = tf_net_server_start(&endpoint->server);
+    rc = flowie_server_start(&endpoint->server);
     network_started = rc == SALTS_OK;
   }
   if (rc == SALTS_OK && endpoint->manage_sessions) rc = flowie_expiry_schedule(endpoint);
   if (rc != SALTS_OK && endpoint->server.impl && !network_started)
-    (void)tf_net_server_destroy(&endpoint->server);
+    (void)flowie_server_destroy(&endpoint->server);
   return rc;
 }
 
@@ -6698,11 +6698,11 @@ static int flowie_network_stop(flowie_endpoint_t *endpoint) {
   int rc;
   int destroy_rc;
   if (!endpoint || !endpoint->server.impl) return endpoint ? SALTS_OK : SALTS_EINVAL;
-  rc = tf_net_server_stop(&endpoint->server, (uint32_t)(endpoint->timeout_ms
+  rc = flowie_server_stop(&endpoint->server, (uint32_t)(endpoint->timeout_ms
                                                             ? endpoint->timeout_ms
                                                             : FLOWIE_ENDPOINT_DEFAULT_TIMEOUT_MS));
   if (rc == SALTS_ETIMEDOUT) return rc;
-  destroy_rc = tf_net_server_destroy(&endpoint->server);
+  destroy_rc = flowie_server_destroy(&endpoint->server);
   return rc == SALTS_OK ? destroy_rc : rc;
 }
 

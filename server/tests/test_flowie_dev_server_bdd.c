@@ -1,5 +1,5 @@
 #include "flowie_mqtt_client.h"
-#include "flowie_test_socket.h"
+#include "flowie_test_cnet.h"
 
 #include "platform.h"
 #include "tinytest.h"
@@ -286,13 +286,13 @@ static int flowie_dev_wait_until_listening(salts_process_t *process, unsigned sh
   uint64_t deadline = salts_monotonic_ms() + FLOWIE_DEV_TEST_TIMEOUT_MS;
   while (salts_monotonic_ms() < deadline) {
     salts_process_result_t result;
-    flowie_test_socket_t socket_handle;
+    flowie_test_cnet_client_t *client_handle;
     int rc = salts_process_poll(process, &result);
     if (rc == SALTS_OK) return SALTS_ECONNREFUSED;
     if (rc != SALTS_EBUSY) return rc;
-    socket_handle = flowie_test_connect(port);
-    if (socket_handle != FLOWIE_TEST_INVALID_SOCKET) {
-      flowie_test_socket_close(socket_handle);
+    client_handle = flowie_test_cnet_connect(port);
+    if (client_handle != FLOWIE_TEST_INVALID_CNET_CLIENT) {
+      flowie_test_cnet_close(client_handle);
       return SALTS_OK;
     }
     salts_sleep_ms(10u);
@@ -439,7 +439,7 @@ static int flowie_dev_server_start(flowie_dev_server_fixture_t *fixture) {
   int rc;
   if (!fixture) return SALTS_EINVAL;
   memset(fixture, 0, sizeof(*fixture));
-  fixture->port = flowie_test_port();
+  fixture->port = flowie_test_cnet_port();
   if (fixture->port == 0u) return SALTS_EIO;
   rc = flowie_dev_write_config(fixture->port, &fixture->config_path);
   if (rc != SALTS_OK) return rc;
@@ -660,7 +660,7 @@ static int flowie_dev_run_immediate_publisher_close_scenario(void) {
   flowie_dev_server_fixture_t server;
   flowie_dev_client_state_t subscriber_state;
   flowie_mqtt_client_t *subscriber = NULL;
-  flowie_test_socket_t publisher = FLOWIE_TEST_INVALID_SOCKET;
+  flowie_test_cnet_client_t * publisher = FLOWIE_TEST_INVALID_CNET_CLIENT;
   uint8_t response[sizeof(connack)];
   const char *failure_stage = "initialization";
   int rc;
@@ -682,22 +682,22 @@ static int flowie_dev_run_immediate_publisher_close_scenario(void) {
   if (rc != SALTS_OK) goto cleanup;
 
   failure_stage = "publish QoS 0 and close before the asynchronous graph returns";
-  publisher = flowie_test_connect(server.port);
-  if (publisher == FLOWIE_TEST_INVALID_SOCKET) {
+  publisher = flowie_test_cnet_connect(server.port);
+  if (publisher == FLOWIE_TEST_INVALID_CNET_CLIENT) {
     rc = SALTS_ECONNREFUSED;
     goto cleanup;
   }
-  rc = flowie_test_send(publisher, connect_packet, sizeof(connect_packet));
+  rc = flowie_test_cnet_send(publisher, connect_packet, sizeof(connect_packet));
   if (rc != SALTS_OK) goto cleanup;
-  rc = flowie_test_recv_exact(publisher, response, sizeof(response));
+  rc = flowie_test_cnet_recv_exact(publisher, response, sizeof(response));
   if (rc != SALTS_OK || memcmp(response, connack, sizeof(connack)) != 0) {
     rc = SALTS_EPROTO;
     goto cleanup;
   }
-  rc = flowie_test_send(publisher, publish_packet, sizeof(publish_packet));
+  rc = flowie_test_cnet_send(publisher, publish_packet, sizeof(publish_packet));
   if (rc != SALTS_OK) goto cleanup;
-  flowie_test_socket_close(publisher);
-  publisher = FLOWIE_TEST_INVALID_SOCKET;
+  flowie_test_cnet_close(publisher);
+  publisher = FLOWIE_TEST_INVALID_CNET_CLIENT;
   rc = flowie_dev_expect_message_flags(&subscriber_state, 1, topic, payload, 0u, 0u);
   if (rc != SALTS_OK) goto cleanup;
   rc = flowie_dev_disconnect_client(subscriber, &subscriber_state);
@@ -706,7 +706,7 @@ cleanup:
   if (rc != SALTS_OK)
     (void)fprintf(stderr, "flowie dev immediate-close BDD failed at %s: status=%d\n",
                   failure_stage, rc);
-  flowie_test_socket_close(publisher);
+  flowie_test_cnet_close(publisher);
   flowie_mqtt_client_destroy(subscriber);
   return flowie_dev_server_stop(&server, rc);
 }
@@ -1053,7 +1053,7 @@ spec("Flowie dev server") {
         check_equal(flowie_dev_run_scenario(FLOWIE_MQTT_VERSION_5), SALTS_OK);
       }
     }
-    when("a QoS 0 publisher closes immediately after its socket accepts the packet") {
+    when("a QoS 0 publisher closes immediately after its CNet client accepts the packet") {
       then("the owned graph message still fans out without the publisher connection") {
         check_equal(flowie_dev_run_immediate_publisher_close_scenario(), SALTS_OK);
       }

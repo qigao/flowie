@@ -120,7 +120,7 @@
 ### 6.2 接收与帧解析（事实）
 
 - **Mosquitto**：`packet__read_single`（`lib/packet_mosq.c:473`）逐包解析：先读固定头 + remaining length，再按 `remaining_length` malloc 一块 payload 读 body；一个事件循环周期只推进一个包，跨事件累积在 `in_packet.packet_buffer`/pos。
-- **flowie**：CoroNet 每连接固定两个接收 chunk（`stream_recv_buffer_bytes`，默认 4096/个，`flowie_endpoint.c:202`），MQTT 帧跨 chunk 重组。`flowie_ingress_feed`（`flowie/src/flowie_ingress.c:235`）把输入追加进 framing 的 `turbo_byte_buffer` 并循环 `flowie_ingress_pump`，一次 feed 可解析出多个完整包；解析器为 `flowie_mqtt_packet_parse`（`flowie/protocol/`）。
+- **flowie**：CoroNet 每连接固定两个接收 chunk（`stream_recv_buffer_bytes`，默认 4096/个，`flowie_endpoint.c:202`），MQTT 帧跨 chunk 重组。`flowie_ingress_feed`（`flowie/src/flowie_ingress.c:235`）把输入追加进 framing 的 `turbo_byte_buffer` 并循环 `flowie_ingress_pump`，一次 feed 可解析出多个完整包；解析器为 `flowie_mqtt_packet_parse`（`protocol/`）。
 
 ### 6.3 发送与出站（事实）
 

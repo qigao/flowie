@@ -1,4 +1,4 @@
-#include "flowie_test_socket.h"
+#include "flowie_test_cnet.h"
 
 #include "tinytest.h"
 #include "salts_error.h"
@@ -189,17 +189,19 @@ cleanup:
 
 static int flowie_interop_wait_listener(salts_process_t *process, unsigned short port) {
   const uint64_t deadline = salts_monotonic_ms() + FLOWIE_INTEROP_TIMEOUT_MS;
+  char port_text[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
+  int written = snprintf(port_text, sizeof(port_text), "%u", (unsigned int)port);
+  if (written <= 0 || (size_t)written >= sizeof(port_text)) return SALTS_EMSGSIZE;
   while (salts_monotonic_ms() < deadline) {
     salts_process_result_t result;
-    flowie_test_socket_t socket_handle;
-    int rc = salts_process_poll(process, &result);
-    if (rc == SALTS_OK) return SALTS_ECONNREFUSED;
-    if (rc != SALTS_EBUSY) return rc;
-    socket_handle = flowie_test_connect(port);
-    if (socket_handle != FLOWIE_TEST_INVALID_SOCKET) {
-      flowie_test_socket_close(socket_handle);
-      return SALTS_OK;
-    }
+    const char *args[] = {"-h", "127.0.0.1", "-p", port_text, "-V", "mqttv5",
+                          "-t", "flowie/interop/readiness", "-m", "ready", "-q", "0",
+                          "-i", "flowie-interop-readiness", NULL};
+    int process_status = salts_process_poll(process, &result);
+    if (process_status == SALTS_OK) return SALTS_ECONNREFUSED;
+    if (process_status != SALTS_EBUSY) return process_status;
+    int rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, args);
+    if (rc == SALTS_OK) return SALTS_OK;
     salts_sleep_ms(10u);
   }
   return SALTS_ETIMEDOUT;
@@ -217,7 +219,7 @@ static int flowie_interop_broker_start(flowie_interop_broker_t *broker) {
   const char *args[] = {NULL, FLOWIE_DEV_GRAPH_PATH, NULL};
   int rc;
   broker->host = "127.0.0.1";
-  broker->port = flowie_test_port();
+  broker->port = flowie_test_cnet_port();
   if (broker->port == 0u) return SALTS_EIO;
   rc = flowie_interop_write_config(broker->port, &broker->config_path);
   if (rc != SALTS_OK) return rc;

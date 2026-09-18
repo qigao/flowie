@@ -47,13 +47,13 @@ message FlowieControlDomain {
  db_check(ck_flowie_control_user_updated_sqlite, sqlite, "updated_at > 0"),
  db_check(ck_flowie_control_user_updated_postgresql, postgresql, "updated_at > 0")]
 message FlowieControlUser {
-  [db_primary_key(1)] string domain_id;
-  [db_primary_key(2)] string principal_id;
-  string principal_type;
   int32 enabled;
   int64 revision;
   int64 created_at;
   int64 updated_at;
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  string principal_type;
 }
 
 [db_table(flowie_control_credential),
@@ -79,18 +79,18 @@ message FlowieControlUser {
  db_check(ck_flowie_control_credential_updated_sqlite, sqlite, "updated_at > 0"),
  db_check(ck_flowie_control_credential_updated_postgresql, postgresql, "updated_at > 0")]
 message FlowieControlCredential {
-  [db_primary_key(1)] string domain_id;
-  [db_primary_key(2)] string principal_id;
   int32 kdf_algorithm;
   int32 memory_blocks;
   int32 passes;
   int32 lanes;
-  bytes salt;
-  bytes verifier;
   int32 enabled;
   int64 revision;
   int64 created_at;
   int64 updated_at;
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string principal_id;
+  bytes salt;
+  bytes verifier;
 }
 
 [db_table(flowie_control_group),
@@ -111,14 +111,14 @@ message FlowieControlCredential {
  db_check(ck_flowie_control_group_parent_depth_sqlite, sqlite, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)"),
  db_check(ck_flowie_control_group_parent_depth_postgresql, postgresql, "(parent_group_id IS NULL AND depth = 0) OR (parent_group_id IS NOT NULL AND depth > 0)")]
 message FlowieControlGroup {
-  [db_primary_key(1)] string domain_id;
-  [db_primary_key(2)] string group_id;
-  optional string parent_group_id;
   int32 depth;
   int32 enabled;
   int64 revision;
   int64 created_at;
   int64 updated_at;
+  optional string parent_group_id;
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string group_id;
 }
 
 [db_table(flowie_control_role),
@@ -132,12 +132,12 @@ message FlowieControlGroup {
  db_check(ck_flowie_control_role_updated_sqlite, sqlite, "updated_at > 0"),
  db_check(ck_flowie_control_role_updated_postgresql, postgresql, "updated_at > 0")]
 message FlowieControlRole {
-  [db_primary_key(1)] string domain_id;
-  [db_primary_key(2)] string role_id;
   int32 enabled;
   int64 revision;
   int64 created_at;
   int64 updated_at;
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(2)] string role_id;
 }
 
 [db_table(flowie_control_membership),
@@ -148,11 +148,11 @@ message FlowieControlRole {
  db_check(ck_flowie_control_membership_created_sqlite, sqlite, "created_at > 0"),
  db_check(ck_flowie_control_membership_created_postgresql, postgresql, "created_at > 0")]
 message FlowieControlMembership {
+  int64 revision;
+  int64 created_at;
   [db_primary_key(1)] string domain_id;
   [db_primary_key(2)] string principal_id;
   [db_primary_key(3)] string group_id;
-  int64 revision;
-  int64 created_at;
 }
 
 [db_table(flowie_control_user_role),
@@ -163,11 +163,11 @@ message FlowieControlMembership {
  db_check(ck_flowie_control_user_role_created_sqlite, sqlite, "created_at > 0"),
  db_check(ck_flowie_control_user_role_created_postgresql, postgresql, "created_at > 0")]
 message FlowieControlUserRole {
+  int64 revision;
+  int64 created_at;
   [db_primary_key(1)] string domain_id;
   [db_primary_key(2)] string principal_id;
   [db_primary_key(3)] string role_id;
-  int64 revision;
-  int64 created_at;
 }
 
 [db_table(flowie_control_management_session_sequence),
@@ -197,13 +197,13 @@ message FlowieControlManagementSessionSequence {
  db_check(ck_flowie_control_management_session_last_used_sqlite, sqlite, "last_used > 0"),
  db_check(ck_flowie_control_management_session_last_used_postgresql, postgresql, "last_used > 0")]
 message FlowieControlManagementSession {
+  int64 expires_at;
+  int64 issued_sequence;
+  int64 last_used;
   [db_primary_key(1)] bytes token_digest;
   string domain_id;
   string principal_id;
   string csrf;
-  int64 expires_at;
-  int64 issued_sequence;
-  int64 last_used;
 }
 
 [db_table(flowie_control_audit),
@@ -213,14 +213,14 @@ message FlowieControlManagementSession {
  db_check(ck_flowie_control_audit_occurred_sqlite, sqlite, "occurred_at > 0"),
  db_check(ck_flowie_control_audit_occurred_postgresql, postgresql, "occurred_at > 0")]
 message FlowieControlAudit {
+  int64 result_revision;
+  int64 occurred_at;
   [db_primary_key(1)] string request_id;
   string actor;
   string operation;
   string domain_id;
   string target_id;
   string target_detail;
-  int64 result_revision;
-  int64 occurred_at;
 }
 
 [db_table(flowie_control_policy_draft),
@@ -239,13 +239,13 @@ message FlowieControlAudit {
  db_check(ck_flowie_control_policy_draft_updated_sqlite, sqlite, "updated_at > 0"),
  db_check(ck_flowie_control_policy_draft_updated_postgresql, postgresql, "updated_at > 0")]
 message FlowieControlPolicyDraft {
-  [db_primary_key(1)] string domain_id;
   [db_primary_key(2)] int32 subject_kind;
-  [db_primary_key(3)] string subject_id;
   int32 ordinal;
-  string rule_document;
   int64 revision;
   int64 updated_at;
+  [db_primary_key(1)] string domain_id;
+  [db_primary_key(3)] string subject_id;
+  string rule_document;
 }
 
 [db_table(flowie_control_published_bundle),
@@ -254,9 +254,9 @@ message FlowieControlPolicyDraft {
  db_check(ck_flowie_control_published_bundle_expiry_sqlite, sqlite, "expires_at >= 0"),
  db_check(ck_flowie_control_published_bundle_expiry_postgresql, postgresql, "expires_at >= 0")]
 message FlowieControlPublishedBundle {
-  [db_primary_key(1)] string namespace_name;
   int64 policy_version;
   int64 expires_at;
+  [db_primary_key(1)] string namespace_name;
 }
 
 [db_table(flowie_control_published_rule),
@@ -267,8 +267,8 @@ message FlowieControlPublishedBundle {
  db_check(ck_flowie_control_published_rule_line_sqlite, sqlite, "length(rule_line) > 0"),
  db_check(ck_flowie_control_published_rule_line_postgresql, postgresql, "length(rule_line) > 0")]
 message FlowieControlPublishedRule {
-  [db_primary_key(1)] string namespace_name;
   [db_primary_key(2)] int32 ordinal;
+  [db_primary_key(1)] string namespace_name;
   string rule_line;
 }
 
@@ -277,6 +277,6 @@ message FlowieControlPublishedRule {
  db_check(ck_flowie_control_policy_publish_result_version_sqlite, sqlite, "policy_version > 0"),
  db_check(ck_flowie_control_policy_publish_result_version_postgresql, postgresql, "policy_version > 0")]
 message FlowieControlPolicyPublishResult {
-  [db_primary_key(1)] string request_id;
   int64 policy_version;
+  [db_primary_key(1)] string request_id;
 }

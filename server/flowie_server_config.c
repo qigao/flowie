@@ -4,7 +4,7 @@
 
 #include "salts_error.h"
 #include "salts_fs.h"
-#include <cyaml/cyaml.h>
+#include <cyaml.h>
 
 #include <errno.h>
 #include <limits.h>

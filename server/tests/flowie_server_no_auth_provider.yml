@@ -1,0 +1,22 @@
+version: 1
+
+profiles:
+  flowie:
+    endpoint: mqtt.endpoint
+
+channels: {}
+
+adapters:
+  mqtt.endpoint:
+    kind: flowie_endpoint
+    config:
+      transport: tcp
+      host: 127.0.0.1
+      port: 1883
+      max_packet_size: 4096
+      coroutine_stack_size: 65536
+      stream_recv_buffer_bytes: 4096
+      send_hwm_bytes: 4096
+      manage_sessions: true
+      security_realm: mqtt.security
+      auth_method: password

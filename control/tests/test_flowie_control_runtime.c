@@ -2,7 +2,7 @@
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_test_turbodb.h"
 
-#include "flowie_test_socket.h"
+#include "flowie_test_cnet.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
 #include "salts_error.h"
@@ -469,7 +469,7 @@ spec("Flowie controller runtime") {
     check_equal(
         tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
     (void)snprintf(config.listener.host, sizeof(config.listener.host), "%s", "127.0.0.1");
-    config.listener.port = flowie_test_port();
+    config.listener.port = flowie_test_cnet_port();
     check_true(config.listener.port != 0u);
     (void)snprintf(config.listener.tls.cert_file, sizeof(config.listener.tls.cert_file), "%s",
                    cert_file);
