@@ -23,9 +23,8 @@ Flowie does not push MQTT-specific state back into Salts. Dependency direction r
 
 ```text
 Salts
-  ├── salts-utils
-  ├── salts-net
-  └── DataBind
+  ├── salts-utils (including DataBind)
+  └── salts-net
         ↓
       CHTTP
         ↓
