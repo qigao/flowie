@@ -236,10 +236,19 @@ static int flowie_transport_tcp_sg_burst_case(void) {
     goto done;
   }
   rc = flowie_test_cnet_send(client, connect_packet, connect_size);
-  if (rc != SALTS_OK) goto done;
+  if (rc != SALTS_OK) {
+    (void)fprintf(stderr, "SG burst CONNECT send failed: %d\n", rc);
+    goto done;
+  }
   rc = flowie_test_cnet_recv_mqtt5_connack(
       client, 0u, (uint16_t)FLOWIE_TRANSPORT_SG_BURST_ITEMS, 4096u);
-  if (rc != SALTS_OK) goto done;
+  if (rc != SALTS_OK) {
+    (void)fprintf(stderr,
+                  "SG burst CONNACK failed: rc=%d received=%zu connected=%d closed=%d failed=%d status=%d\n",
+                  rc, client->received_size, client->connected, client->closed, client->failed,
+                  client->status);
+    goto done;
+  }
 
   if (flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_5, pingreq, sizeof(pingreq),
                                  &pingreq_size) != FLOWIE_MQTT_PARSE_OK ||
@@ -258,9 +267,18 @@ static int flowie_transport_tcp_sg_burst_case(void) {
    * as two retained SG logical writes without changing stream order.
    */
   rc = flowie_test_cnet_send(client, burst, sizeof(burst));
-  if (rc != SALTS_OK) goto done;
+  if (rc != SALTS_OK) {
+    (void)fprintf(stderr, "SG burst PINGREQ send failed: %d\n", rc);
+    goto done;
+  }
   rc = flowie_test_cnet_recv_exact(client, replies, sizeof(replies));
-  if (rc != SALTS_OK) goto done;
+  if (rc != SALTS_OK) {
+    (void)fprintf(stderr,
+                  "SG burst PINGRESP receive failed: rc=%d received=%zu expected=%zu connected=%d closed=%d failed=%d status=%d\n",
+                  rc, client->received_size, sizeof(replies), client->connected, client->closed,
+                  client->failed, client->status);
+    goto done;
+  }
   for (size_t i = 0u; i < FLOWIE_TRANSPORT_SG_BURST_ITEMS; ++i) {
     if (memcmp(replies + i * sizeof(expected_pingresp), expected_pingresp,
                sizeof(expected_pingresp)) != 0) {
