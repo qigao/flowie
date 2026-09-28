@@ -134,6 +134,7 @@ struct flowie_endpoint_connection_s {
   int send_queue_initialized;
   int send_budget_initialized;
   int send_drain_active;
+  int defer_reply_drain;
   int processing_input;
   int connack_admitted;
   int connack_sent;
@@ -3629,9 +3630,10 @@ static int flowie_connection_schedule_reply_drain(flowie_endpoint_connection_t *
   if (connection->send_drain_active) return SALTS_OK;
   connection->send_drain_active = 1;
   /* Replies admitted by the connection's own ingress callback are drained
-   * immediately after flowie_ingress_feed returns. External replies already
-   * execute on the endpoint owner shard and can drain directly. */
-  if (connection->processing_input) return SALTS_OK;
+   * immediately after flowie_ingress_feed returns. The endpoint-level reply
+   * drain also defers consecutive replies for one connection so they reach
+   * this queue as one bounded batch instead of one network command each. */
+  if (connection->processing_input || connection->defer_reply_drain) return SALTS_OK;
   rc = flowie_connection_reply_drain(connection);
   if (rc == SALTS_OK) return rc;
   connection->send_drain_active = 0;
@@ -3708,8 +3710,19 @@ static int flowie_connection_reply_enqueue_with_priority(
   return rc;
 }
 
+static int
+flowie_connection_reply_batch_flush(flowie_endpoint_connection_t **deferred_connection) {
+  flowie_endpoint_connection_t *connection;
+  if (!deferred_connection || !(connection = *deferred_connection)) return SALTS_OK;
+  *deferred_connection = NULL;
+  connection->defer_reply_drain = 0;
+  if (!connection->send_drain_active || connection->processing_input) return SALTS_OK;
+  return flowie_connection_reply_drain(connection);
+}
+
 static void flowie_reply_drain_task(coro_t *co, void *arg) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)arg;
+  flowie_endpoint_connection_t *deferred_connection = NULL;
   (void)co;
   for (;;) {
     flowie_reply_request_t *request = NULL;
@@ -3719,6 +3732,7 @@ static void flowie_reply_drain_task(coro_t *co, void *arg) {
     if (deque_pop_front(&endpoint->send_queue, &request) != STL_OK) {
       endpoint->send_drain_active = 0;
       salts_mutex_unlock(&endpoint->send_queue_mutex);
+      (void)flowie_connection_reply_batch_flush(&deferred_connection);
       flowie_connection_usage(endpoint);
       flowie_task_end(endpoint);
       return;
@@ -3726,6 +3740,7 @@ static void flowie_reply_drain_task(coro_t *co, void *arg) {
     salts_mutex_unlock(&endpoint->send_queue_mutex);
     connection = flowie_connection_find(endpoint, &request->route);
     if (request->kind == FLOWIE_REPLY_PUBLISH_FANOUT) {
+      (void)flowie_connection_reply_batch_flush(&deferred_connection);
       flowie_mqtt_version_t version = request->protocol_version;
       if (flowie_mqtt_version_is_supported(version)) {
         rc = flowie_fanout_apply(endpoint, request, request->publisher_session_id, version);
@@ -3737,6 +3752,13 @@ static void flowie_reply_drain_task(coro_t *co, void *arg) {
       flowie_reply_request_release(endpoint, request);
       flowie_connection_usage(endpoint);
       continue;
+    }
+    if (connection != deferred_connection) {
+      (void)flowie_connection_reply_batch_flush(&deferred_connection);
+      if (connection) {
+        connection->defer_reply_drain = 1;
+        deferred_connection = connection;
+      }
     }
     rc = connection ? SALTS_OK : SALTS_ENOTCONN;
     if (rc == SALTS_OK && request->kind == FLOWIE_REPLY_PROTOCOL_SETTLEMENT)
