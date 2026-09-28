@@ -1,0 +1,214 @@
+name: Flowie published full graph
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  FLOWIE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  SALTS_VERSION: "1.8.3"
+  SALTS_UTILS_VERSION: "4.1.3"
+  CHTTP_VERSION: "1.1.4"
+  TURBODB_VERSION: "1.0.0"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-published-full-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux x64 published full graph
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact Flowie head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FLOWIE_HEAD_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Configure shared vcpkg binary cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - name: Restore canonical re2c host tool
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+        with:
+          version: "4.6.3"
+
+      - name: Prepare host tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          test -n "${VCPKG_ROOT:-}"
+          test -n "${QIGAO_VCPKG_TOOLCHAIN_FILE:-}"
+          test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
+          test "${VCPKG_NUGET_REPOSITORY:-}" = "https://github.com/qigao/vcpkg-cache"
+
+      - name: Restore published native SDK graph
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          packages="$RUNNER_TEMP/flowie-published-sdk"
+          config="$RUNNER_TEMP/flowie-published-sdk.config"
+          project="$RUNNER_TEMP/flowie-published-sdk.csproj"
+
+          cat > "$config" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources><clear /></packageSources>
+          </configuration>
+          EOF
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+
+          cat > "$project" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Salts.Native" Version="[$SALTS_VERSION]" />
+              <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
+              <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
+              <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
+            </ItemGroup>
+          </Project>
+          EOF
+          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
+
+          salts_root="$packages/salts.native/$SALTS_VERSION/sdk/linux-x64"
+          salts_utils_root="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
+          chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
+          turbodb_root="$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
+
+          test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
+          test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
+          test -f "$turbodb_root/lib/cmake/Orm/OrmConfig.cmake"
+          grep -Fq "version=$TURBODB_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
+          grep -Fq "salts=$SALTS_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
+          grep -Fq "saltsutils=$SALTS_UTILS_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
+
+          {
+            echo "SALTS_ROOT=$salts_root"
+            echo "SALTS_UTILS_ROOT=$salts_utils_root"
+            echo "HTTP_SERVICES_ROOT=$chttp_root"
+            echo "TURBODB_ROOT=$turbodb_root"
+            echo "QIGAO_NUGET_PACKAGES=$packages"
+          } >> "$GITHUB_ENV"
+
+      - name: Restore Flowie vcpkg graph from shared cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
+          log="$RUNNER_TEMP/flowie-vcpkg.log"
+          rm -rf "$install_root" "$VCPKG_BINARY_CACHE"
+          mkdir -p "$VCPKG_BINARY_CACHE"
+          set +e
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root="$GITHUB_WORKSPACE" \
+            --x-install-root="$install_root" \
+            --triplet x64-linux \
+            --only-binarycaching 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          if grep -Eq '^Building [^:]+:x64-linux' "$log"; then
+            echo "Flowie dependency source build detected" >&2
+            exit 1
+          fi
+          grep -Eq 'Restored [1-9][0-9]* package\(s\) from NuGet' "$log"
+          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
+
+      - name: Configure published full graph
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build/published-full -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
+            -DVCPKG_MANIFEST_MODE=OFF \
+            -DFLOWIE_BUILD_TESTS=ON \
+            -DFLOWIE_BUILD_CONTROL=OFF \
+            -DFLOWIE_BUILD_CLUSTER=OFF \
+            -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF \
+            -DFLOWIE_TURBODB_LIVE_TESTS=OFF \
+            -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF \
+            -DFLOWIE_MQTT_SOAK_TESTS=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF
+
+      - name: Build complete non-cluster Flowie graph
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build/published-full --parallel 2
+
+      - name: Run deterministic published-package tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export LD_LIBRARY_PATH="$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir build/published-full \
+            -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$' \
+            --no-tests=error --output-on-failure --timeout 180
+
+      - name: Install Flowie SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/flowie"
+          cmake --install build/published-full --prefix "$prefix"
+          test -f "$prefix/lib/cmake/Flowie/FlowieConfig.cmake"
+          test -f "$prefix/lib/cmake/Flowie/FlowieTargets.cmake"
+          echo "FLOWIE_ROOT=$prefix" >> "$GITHUB_ENV"
+
+      - name: Verify installed Flowie consumer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          consumer="$RUNNER_TEMP/flowie-installed-consumer"
+          rm -rf "$consumer"
+          mkdir -p "$consumer"
+          cat > "$consumer/CMakeLists.txt" <<'EOF'
+          cmake_minimum_required(VERSION 3.25)
+          project(FlowieInstalledConsumer LANGUAGES C CXX)
+          find_package(Flowie 1.0.0 EXACT CONFIG REQUIRED
+                       PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
+          foreach(required_target IN ITEMS Flowie::Protocol Flowie::Client Flowie::Flowie)
+            if(NOT TARGET ${required_target})
+              message(FATAL_ERROR "missing installed target ${required_target}")
+            endif()
+          endforeach()
+          EOF
+          cmake -S "$consumer" -B "$consumer/build" -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
+            -DVCPKG_MANIFEST_MODE=OFF
+
+      - name: Verify exact head and clean tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FLOWIE_HEAD_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
