@@ -581,7 +581,7 @@ static int flowie_command_progress(flowie_server_impl *server) {
   }
 }
 
-static int flowie_stream_accept(flowie_server_impl *server) {static int flowie_stream_accept(flowie_server_impl *server) {
+static int flowie_stream_accept(flowie_server_impl *server) {
   for (;;) {
     flowie_stream_peer *peer = flowie_stream_peer_acquire(server);
     cnet_observer observer;
