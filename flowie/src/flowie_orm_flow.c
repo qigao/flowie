@@ -5,7 +5,6 @@
 #endif
 
 #include "salts_cmeta_data.h"
-#include "salts_cmeta_fixed_width.h"
 #include "salts_error.h"
 #include <salts/thread.h>
 
@@ -102,11 +101,11 @@ static int flowie_orm_column_metadata(const flowie_orm_column_t *column, size_t 
   salts_once(&flowie_orm_data_once, flowie_orm_data_init);
   switch (column->kind) {
     case FLOWIE_ORM_COLUMN_UINT64:
-      data = &salts_uint64_cmeta_data;
+      data = &cmeta_data_uint64;
       offset = offsetof(flowie_orm_row_t, unsigned_values) + index * sizeof(uint64_t);
       break;
     case FLOWIE_ORM_COLUMN_INT64:
-      data = &salts_int64_cmeta_data;
+      data = &cmeta_data_int64;
       offset = offsetof(flowie_orm_row_t, signed_values) + index * sizeof(int64_t);
       break;
     case FLOWIE_ORM_COLUMN_TEXT:

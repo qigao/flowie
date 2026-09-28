@@ -73,7 +73,7 @@ find_package(Chttp 1.1.4 EXACT CONFIG REQUIRED
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
-find_package(Orm CONFIG REQUIRED
+find_package(Orm 2.1.0 EXACT CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 if(FLOWIE_BUILD_CLUSTER)
   find_package(FlowMQ CONFIG REQUIRED
