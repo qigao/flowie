@@ -68,7 +68,7 @@ if(NOT IS_DIRECTORY "$ENV{HTTP_SERVICES_ROOT}")
   message(FATAL_ERROR
           "HTTP_SERVICES_ROOT is not a directory: $ENV{HTTP_SERVICES_ROOT}")
 endif()
-find_package(Chttp CONFIG REQUIRED
+find_package(Chttp 1.1.4 EXACT CONFIG REQUIRED
              PATHS "$ENV{HTTP_SERVICES_ROOT}" NO_DEFAULT_PATH)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
