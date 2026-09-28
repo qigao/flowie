@@ -126,7 +126,7 @@ static int flowie_command_slice_clone(const mem_slice_t *source, mem_slice_t *ou
   if (base == NULL || used == 0u) return SALTS_EINVAL;
   base_address = (uintptr_t)base;
   data_address = (uintptr_t)source->data;
-  if (data_address < base_address || data_address - base_address > SIZE_MAX) return SALTS_EINVAL;
+  if (data_address < base_address) return SALTS_EINVAL;
   offset = (size_t)(data_address - base_address);
   if (offset > used || source->length > used - offset) return SALTS_EINVAL;
   *out = mem_slice(source->buffer, offset, source->length);
