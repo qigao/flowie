@@ -51,7 +51,7 @@ endif()
 if(NOT IS_DIRECTORY "$ENV{SALTS_ROOT}")
   message(FATAL_ERROR "SALTS_ROOT is not a directory: $ENV{SALTS_ROOT}")
 endif()
-find_package(Salts CONFIG REQUIRED
+find_package(Salts 1.8.3 EXACT CONFIG REQUIRED
              PATHS "$ENV{SALTS_ROOT}" NO_DEFAULT_PATH)
 if(NOT DEFINED ENV{SALTS_UTILS_ROOT} OR "$ENV{SALTS_UTILS_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_UTILS_ROOT must name the installed SaltsUtils profile")
@@ -59,7 +59,7 @@ endif()
 if(NOT IS_DIRECTORY "$ENV{SALTS_UTILS_ROOT}")
   message(FATAL_ERROR "SALTS_UTILS_ROOT is not a directory: $ENV{SALTS_UTILS_ROOT}")
 endif()
-find_package(SaltsUtils CONFIG REQUIRED
+find_package(SaltsUtils 4.1.3 EXACT CONFIG REQUIRED
              PATHS "$ENV{SALTS_UTILS_ROOT}" NO_DEFAULT_PATH)
 if(NOT DEFINED ENV{HTTP_SERVICES_ROOT} OR "$ENV{HTTP_SERVICES_ROOT}" STREQUAL "")
   message(FATAL_ERROR "HTTP_SERVICES_ROOT must name the installed Chttp profile")
