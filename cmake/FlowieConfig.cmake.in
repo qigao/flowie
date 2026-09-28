@@ -26,7 +26,7 @@ if(NOT DEFINED ENV{TURBODB_ROOT} OR "$ENV{TURBODB_ROOT}" STREQUAL "")
   set(Flowie_NOT_FOUND_MESSAGE "TURBODB_ROOT must name the installed TurboDB profile")
   return()
 endif()
-find_dependency(Orm CONFIG REQUIRED PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
+find_dependency(Orm 1.0.0 EXACT CONFIG REQUIRED PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 
 include("${CMAKE_CURRENT_LIST_DIR}/FlowieTargets.cmake")
 
