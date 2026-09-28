@@ -65,7 +65,7 @@ typedef struct flowie_server_config {
   cnet_packet_endpoint_config packet;
   const cnet_tls_server_config *tls;
   size_t command_capacity;
-  /** Aggregate copied payload bytes retained by the cross-thread command ring. */
+  /** Aggregate queued payload bytes retained by the cross-thread command mailbox. */
   size_t command_bytes_capacity;
   size_t max_message_bytes;
   uint32_t poll_slice_ms;
@@ -88,6 +88,14 @@ int flowie_server_port(const flowie_server *server, uint16_t *out_port);
 /** Thread-safe copied admission; queue saturation returns SALTS_ENOBUFS. */
 int flowie_server_send(flowie_server *server, flowie_connection connection, const void *data,
                        size_t size);
+
+/**
+ * Thread-safe retained scatter/gather admission for TCP/TLS streams.
+ * Each canonical slice is retained before this call returns SALTS_OK, so the
+ * caller may release its slice references immediately after successful admission.
+ */
+int flowie_server_send_slicev(flowie_server *server, flowie_connection connection,
+                              const mem_slice_t *segments, size_t segment_count);
 int flowie_server_close(flowie_server *server, flowie_connection connection, int status);
 
 int flowie_server_stop(flowie_server *server, uint32_t timeout_ms);
