@@ -1,0 +1,117 @@
+name: Flowie connection CNet SG
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  FLOWIE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CHTTP_VERSION: "1.1.4"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-connection-cnet-sg-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux x64 connection SG
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact Flowie head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FLOWIE_HEAD_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Restore Salts SDK baseline and vcpkg cache
+        uses: qigao/chttp/.github/actions/setup-salts-sdk@v1.1.4
+
+      - name: Restore CHttp 1.1.4 SDK
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          packages="$RUNNER_TEMP/flowie-native-sdk"
+          config="$RUNNER_TEMP/flowie-native-sdk.config"
+          project="$RUNNER_TEMP/flowie-native-sdk.csproj"
+
+          cat > "$config" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources><clear /></packageSources>
+          </configuration>
+          EOF
+
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+
+          cat > "$project" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
+            </ItemGroup>
+          </Project>
+          EOF
+
+          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
+
+          chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
+          test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
+          test -f "$chttp_root/lib/cmake/Chttp/ChttpTargets.cmake"
+          echo "HTTP_SERVICES_ROOT=$chttp_root" >> "$GITHUB_ENV"
+
+      - name: Restore Flowie vcpkg graph from shared cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
+          rm -rf "$install_root"
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root="$GITHUB_WORKSPACE" \
+            --x-install-root="$install_root" \
+            --triplet x64-linux \
+            --only-binarycaching
+          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
+
+      - name: Configure focused connection test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S .github/ci/connection-sg -B build/connection-sg -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
+            -DVCPKG_MANIFEST_MODE=OFF
+
+      - name: Build focused connection test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build/connection-sg --target test_flowie_connection_ci --parallel 2
+
+      - name: Run focused connection test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export LD_LIBRARY_PATH="$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir build/connection-sg -R '^flowie_connection_ci$' \
+            --no-tests=error --output-on-failure
+
+      - name: Verify exact head and tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FLOWIE_HEAD_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
