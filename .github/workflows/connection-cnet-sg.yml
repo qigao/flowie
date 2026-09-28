@@ -1,8 +1,6 @@
 name: Flowie connection CNet SG
 
 on:
-  push:
-    branches: [feat/salts-1.8.3-cnet-retained-sg]
   pull_request:
     branches: [master]
   workflow_dispatch:
