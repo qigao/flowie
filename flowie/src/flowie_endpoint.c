@@ -2281,6 +2281,26 @@ static size_t flowie_reply_packet_size(const flowie_reply_request_t *request) {
   return request->packet ? tstr_len(request->packet) : request->packet_size;
 }
 
+static void flowie_reply_external_packet_free(void *data, void *user_data) {
+  (void)user_data;
+  tstr_free((tstr)data);
+}
+
+static int flowie_reply_request_make_retainable(flowie_reply_request_t *request) {
+  mem_buffer_t *buffer;
+  size_t bytes;
+  if (request == NULL) return SALTS_EINVAL;
+  if (request->packet_buffer != NULL) return SALTS_OK;
+  if (request->packet == NULL || (bytes = tstr_len(request->packet)) == 0u) return SALTS_EINVAL;
+  buffer = mem_wrap_external(request->packet, bytes, flowie_reply_external_packet_free, NULL);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  request->packet_buffer = buffer;
+  request->packet_offset = 0u;
+  request->packet_size = bytes;
+  request->packet = NULL;
+  return SALTS_OK;
+}
+
 static void flowie_reply_request_release(flowie_endpoint_t *endpoint,
                                          flowie_reply_request_t *request) {
   if (!request) return;
@@ -3444,6 +3464,77 @@ static int flowie_reply_request_expiry_prepare(flowie_endpoint_connection_t *con
   return SALTS_OK;
 }
 
+static int flowie_connection_reply_send_batch(flowie_endpoint_connection_t *connection,
+                                              flowie_reply_request_t **requests,
+                                              size_t request_count) {
+  size_t request_index;
+  int rc;
+  if (connection == NULL || connection->endpoint == NULL || requests == NULL ||
+      request_count == 0u)
+    return SALTS_EINVAL;
+
+  if (connection->endpoint->transport != FLOWIE_TRANSPORT_TCP) {
+    for (request_index = 0u; request_index < request_count; ++request_index) {
+      rc = flowie_server_send(&connection->endpoint->server, connection->network,
+                              flowie_reply_packet_data(requests[request_index]),
+                              flowie_reply_packet_size(requests[request_index]));
+      if (rc != SALTS_OK) return rc;
+    }
+    return SALTS_OK;
+  }
+
+  /*
+   * Convert tstr ownership into a Salts ref-counted external buffer without
+   * copying the packet. If the wrapper pool/allocation is exhausted, preserve
+   * the existing copied mailbox path instead of turning an optimization into a
+   * new delivery failure.
+   */
+  for (request_index = 0u; request_index < request_count; ++request_index) {
+    if (flowie_reply_request_make_retainable(requests[request_index]) != SALTS_OK) {
+      for (request_index = 0u; request_index < request_count; ++request_index) {
+        rc = flowie_server_send(&connection->endpoint->server, connection->network,
+                                flowie_reply_packet_data(requests[request_index]),
+                                flowie_reply_packet_size(requests[request_index]));
+        if (rc != SALTS_OK) return rc;
+      }
+      return SALTS_OK;
+    }
+  }
+
+  request_index = 0u;
+  while (request_index < request_count) {
+    mem_slice_t slices[CNET_RETAINED_VECTOR_MAX] = {0};
+    size_t slice_count = 0u;
+    size_t total_size = 0u;
+    size_t consumed = 0u;
+
+    while (request_index + consumed < request_count &&
+           slice_count < CNET_RETAINED_VECTOR_MAX) {
+      flowie_reply_request_t *request = requests[request_index + consumed];
+      const size_t bytes = flowie_reply_packet_size(request);
+      mem_slice_t slice;
+      if (slice_count != 0u && bytes > connection->endpoint->max_packet_size - total_size)
+        break;
+      slice = mem_slice(request->packet_buffer, request->packet_offset, bytes);
+      if (slice.buffer == NULL) {
+        for (size_t i = 0u; i < slice_count; ++i) mem_slice_release(&slices[i]);
+        return SALTS_EPROTO;
+      }
+      slices[slice_count++] = slice;
+      total_size += bytes;
+      ++consumed;
+    }
+
+    if (slice_count == 0u) return SALTS_EPROTO;
+    rc = flowie_server_send_slicev(&connection->endpoint->server, connection->network, slices,
+                                   slice_count);
+    for (size_t i = 0u; i < slice_count; ++i) mem_slice_release(&slices[i]);
+    if (rc != SALTS_OK) return rc;
+    request_index += consumed;
+  }
+  return SALTS_OK;
+}
+
 static int flowie_connection_reply_drain(flowie_endpoint_connection_t *connection) {
   flowie_reply_request_t *requests[FLOWIE_REPLY_SEND_BATCH_MAX_ITEMS];
   int result = SALTS_OK;
@@ -3503,11 +3594,7 @@ static int flowie_connection_reply_drain(flowie_endpoint_connection_t *connectio
         break;
     }
 
-    rc = SALTS_OK;
-    for (size_t index = 0u; index < request_count && rc == SALTS_OK; ++index)
-      rc = flowie_server_send(&connection->endpoint->server, connection->network,
-                              flowie_reply_packet_data(requests[index]),
-                              flowie_reply_packet_size(requests[index]));
+    rc = flowie_connection_reply_send_batch(connection, requests, request_count);
     if (rc == SALTS_OK) {
       connection->outbound_qos_inflight =
           (uint16_t)(connection->outbound_qos_inflight + qos_delivery_count);
