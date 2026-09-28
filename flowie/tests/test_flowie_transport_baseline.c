@@ -13,6 +13,7 @@
 #include <string.h>
 
 #define FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS 10000u
+#define FLOWIE_TRANSPORT_SG_BURST_ITEMS 64u
 
 typedef struct flowie_transport_baseline_state_s {
   atomic_int done;
@@ -182,6 +183,99 @@ done:
   }
   flowie_endpoint_core_destroy(endpoint);
   flowie_security_realm_destroy(realm);
+  return rc;
+}
+
+static int flowie_transport_tcp_sg_burst_case(void) {
+  static const uint8_t expected_pingresp[] = {0xd0u, 0x00u};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+  uint8_t connect_packet[128];
+  uint8_t pingreq[4];
+  uint8_t burst[FLOWIE_TRANSPORT_SG_BURST_ITEMS * 2u];
+  uint8_t replies[sizeof(burst)];
+  size_t connect_size = 0u;
+  size_t pingreq_size = 0u;
+  unsigned short port = flowie_test_cnet_port();
+  int rc = SALTS_OK;
+
+  if (port == 0u) return SALTS_EIO;
+  config.transport = FLOWIE_TRANSPORT_TCP;
+  config.host = "127.0.0.1";
+  config.port = (int)port;
+  config.max_connections = 1u;
+  config.max_packet_size = 4096u;
+  config.recv_timeout_ms = FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+  config.manage_sessions = 1;
+  config.max_sessions = 1u;
+  config.max_subscriptions_per_session = 1u;
+  config.max_inflight_per_session = FLOWIE_TRANSPORT_SG_BURST_ITEMS;
+  options.on_message = flowie_transport_baseline_on_message;
+
+  rc = flowie_endpoint_core_create("transport-sg-burst", &config, &options, &endpoint);
+  if (rc != SALTS_OK) goto done;
+  rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.keep_alive = 30u;
+  connect.client_id =
+      (flowie_mqtt_span_t){(const uint8_t *)"flowie-sg-burst", sizeof("flowie-sg-burst") - 1u};
+  if (flowie_mqtt_connect_packet_encode(&connect, connect_packet, sizeof(connect_packet),
+                                        &connect_size) != FLOWIE_MQTT_PARSE_OK) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  client = flowie_test_cnet_connect(port);
+  if (client == FLOWIE_TEST_INVALID_CNET_CLIENT) {
+    rc = SALTS_EIO;
+    goto done;
+  }
+  rc = flowie_test_cnet_send(client, connect_packet, connect_size);
+  if (rc != SALTS_OK) goto done;
+  rc = flowie_test_cnet_recv_mqtt5_connack(
+      client, 0u, (uint16_t)FLOWIE_TRANSPORT_SG_BURST_ITEMS, 4096u);
+  if (rc != SALTS_OK) goto done;
+
+  if (flowie_mqtt_pingreq_encode(FLOWIE_MQTT_VERSION_5, pingreq, sizeof(pingreq),
+                                 &pingreq_size) != FLOWIE_MQTT_PARSE_OK ||
+      pingreq_size != sizeof(expected_pingresp)) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  for (size_t i = 0u; i < FLOWIE_TRANSPORT_SG_BURST_ITEMS; ++i)
+    memcpy(burst + i * pingreq_size, pingreq, pingreq_size);
+
+  /*
+   * One TCP write gives ingress one buffer containing 64 PINGREQ packets.
+   * processing_input keeps the connection reply drain deferred until all 64
+   * PINGRESP packets are queued. The endpoint batch limit is 64 while CNet's
+   * retained vector limit is 32, so the production path must lower this batch
+   * as two retained SG logical writes without changing stream order.
+   */
+  rc = flowie_test_cnet_send(client, burst, sizeof(burst));
+  if (rc != SALTS_OK) goto done;
+  rc = flowie_test_cnet_recv_exact(client, replies, sizeof(replies));
+  if (rc != SALTS_OK) goto done;
+  for (size_t i = 0u; i < FLOWIE_TRANSPORT_SG_BURST_ITEMS; ++i) {
+    if (memcmp(replies + i * sizeof(expected_pingresp), expected_pingresp,
+               sizeof(expected_pingresp)) != 0) {
+      rc = SALTS_EPROTO;
+      break;
+    }
+  }
+
+done:
+  flowie_test_cnet_close(client);
+  if (endpoint) {
+    int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK && stop_rc != SALTS_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
   return rc;
 }
 
@@ -433,6 +527,10 @@ done:
 spec("Flowie TCP/TLS/WS/WSS release baseline") {
   it("reports authentication provider unavailability in CONNACK") {
     check_equal(flowie_transport_auth_unavailable_case(), SALTS_OK);
+  }
+
+  it("chunks one 64-reply TCP batch across the retained CNet SG vector limit") {
+    check_equal(flowie_transport_tcp_sg_burst_case(), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TCP") {
