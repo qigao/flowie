@@ -285,6 +285,68 @@ spec("Flowie CNet and CHTTP transport connection") {
   }
 
 
+  it("retains TCP scatter gather slices across the non-owner mailbox") {
+    static const unsigned char inbound[] = "sg-inbound";
+    static const unsigned char first[] = "sg-first";
+    static const unsigned char second[] = "sg-second";
+    flowie_connection_test_probe probe = {0};
+    flowie_server server = {0};
+    flowie_server_config config = flowie_connection_test_config(&probe, TF_NET_TRANSPORT_TCP);
+    flowie_connection connection;
+    flowie_test_cnet_client_t *client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+    mem_buffer_t *first_buffer = NULL;
+    mem_buffer_t *second_buffer = NULL;
+    mem_slice_t slices[2] = {0};
+    unsigned char expected[sizeof(first) + sizeof(second)] = {0};
+    unsigned char received[sizeof(expected)] = {0};
+    uint16_t port = 0u;
+
+    check_equal(flowie_server_init(&server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&server), SALTS_OK);
+    check_equal(flowie_server_port(&server, &port), SALTS_OK);
+    client = flowie_test_cnet_connect(port);
+    check_true(client != FLOWIE_TEST_INVALID_CNET_CLIENT);
+    check_equal(flowie_test_cnet_send(client, inbound, sizeof(inbound)), SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.opened), SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.received), SALTS_OK);
+
+    connection.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
+    connection.generation = atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    first_buffer = mem_get_buffer(mem_global(), sizeof(first));
+    second_buffer = mem_get_buffer(mem_global(), sizeof(second));
+    check_not_null(first_buffer);
+    check_not_null(second_buffer);
+    memcpy(mem_buffer_data(first_buffer), first, sizeof(first));
+    memcpy(mem_buffer_data(second_buffer), second, sizeof(second));
+    mem_set_used(first_buffer, sizeof(first));
+    mem_set_used(second_buffer, sizeof(second));
+    slices[0] = mem_slice(first_buffer, 0u, sizeof(first));
+    slices[1] = mem_slice(second_buffer, 0u, sizeof(second));
+    check_not_null(slices[0].buffer);
+    check_not_null(slices[1].buffer);
+
+    check_equal(flowie_server_send_slicev(&server, connection, slices, 2u), SALTS_OK);
+    mem_slice_release(&slices[0]);
+    mem_slice_release(&slices[1]);
+    mem_buffer_release(first_buffer);
+    mem_buffer_release(second_buffer);
+    first_buffer = NULL;
+    second_buffer = NULL;
+
+    memcpy(expected, first, sizeof(first));
+    memcpy(expected + sizeof(first), second, sizeof(second));
+    check_equal(flowie_test_cnet_recv_exact(client, received, sizeof(received)), SALTS_OK);
+    check_equal(memcmp(received, expected, sizeof(expected)), 0);
+
+    check_equal(flowie_server_close(&server, connection, FLOWIE_CONNECTION_TEST_CLOSE_STATUS),
+                SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.closed), SALTS_OK);
+    flowie_test_cnet_close(client);
+    check_equal(flowie_server_stop(&server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_destroy(&server), SALTS_OK);
+  }
+
+
   it("uses the same Flowie connection contract for UDP") {
     flowie_connection_test_packet_round_trip(TF_NET_TRANSPORT_UDP, CNET_PACKET_UDP, 0u);
   }
