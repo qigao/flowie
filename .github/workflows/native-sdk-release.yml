@@ -1,0 +1,48 @@
+name: Flowie native SDK release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: flowie-native-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          expected="v$version"
+          test "$GITHUB_REF_TYPE" = "tag"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "release tag mismatch: pushed=$GITHUB_REF_NAME expected=$expected" >&2
+            exit 1
+          fi
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Publish Flowie.Native
+    needs: validate
+    uses: ./.github/workflows/native-sdk-pipeline.yml
+    with:
+      publish: true
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+    secrets: inherit
