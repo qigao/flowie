@@ -1,0 +1,37 @@
+name: Flowie native SDK qualification
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "cmake/**"
+      - "tools/**"
+      - "vendor/**"
+      - "transport/**"
+      - "connection/**"
+      - "protocol/**"
+      - "client/**"
+      - "flowie/**"
+      - "packaging/nuget/**"
+      - "vcpkg.json"
+      - ".github/workflows/native-sdk-pipeline.yml"
+      - ".github/workflows/native-sdk-qualification.yml"
+      - ".github/workflows/native-sdk-release.yml"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-native-sdk-qualification-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: Qualify Flowie.Native
+    uses: ./.github/workflows/native-sdk-pipeline.yml
+    with:
+      source_sha: ${{ github.event.pull_request.head.sha }}
+    secrets: inherit

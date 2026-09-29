@@ -1,6 +1,6 @@
 {
   "name": "flowie",
-  "version-semver": "1.0.0",
+  "version-semver": "1.0.1",
   "dependencies": [
     {
       "name": "c-ares"

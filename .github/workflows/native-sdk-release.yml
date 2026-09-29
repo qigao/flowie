@@ -6,8 +6,8 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+  packages: read
 
 concurrency:
   group: flowie-native-release-${{ github.ref }}
@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       source_sha: ${{ steps.meta.outputs.source_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,12 +39,59 @@ jobs:
             exit 1
           fi
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$expected" >> "$GITHUB_OUTPUT"
 
-  release:
-    name: Publish Flowie.Native
+  build:
+    name: Build and qualify Flowie.Native
     needs: validate
     uses: ./.github/workflows/native-sdk-pipeline.yml
     with:
-      publish: true
       source_sha: ${{ needs.validate.outputs.source_sha }}
     secrets: inherit
+
+  publish:
+    name: Publish Flowie.Native
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Flowie.Native.${{ needs.validate.outputs.version }}
+          path: dist
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish to qigao GitHub Packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text
+          dotnet nuget push "dist/Flowie.Native.$VERSION.nupkg" \
+            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pkg="dist/Flowie.Native.$VERSION.nupkg"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; refusing to mutate immutable release identity" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "$pkg" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "Flowie $VERSION" --generate-notes
