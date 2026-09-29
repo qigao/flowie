@@ -674,10 +674,230 @@ jobs:
           export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           "$consumer/build/flowie_release_consumer"
 
+  qualify_windows:
+    name: Qualify packed Flowie.Native (Windows x64)
+    needs: [metadata, pack]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Flowie.Native.${{ needs.metadata.outputs.version }}
+          path: dist
+
+      - name: Prepare Windows qualification host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install ninja -y --no-progress
+          $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+          $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+
+      - name: Restore packed Windows SDK and dependencies
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $config = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows.config"
+          $project = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows.csproj"
+          $packages = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows-packages"
+          '<configuration><packageSources><clear /></packageSources></configuration>' | Set-Content -LiteralPath $config
+          dotnet nuget add source (Join-Path $env:GITHUB_WORKSPACE "dist") --name local --configfile $config
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json --name github --username qigao --password $env:GITHUB_TOKEN --store-password-in-clear-text --configfile $config
+          @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+            <ItemGroup><PackageReference Include="Flowie.Native" Version="[${{ needs.metadata.outputs.version }}]" /></ItemGroup>
+          </Project>
+          "@ | Set-Content -LiteralPath $project
+          dotnet restore $project --packages $packages --configfile $config --no-cache
+          if ($LASTEXITCODE -ne 0) { throw "failed to restore packed Flowie.Native on Windows" }
+          "FLOWIE_ROOT=$(Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64")" >> $env:GITHUB_ENV
+          "SALTS_ROOT=$(Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
+          "SALTS_UTILS_ROOT=$(Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
+          "HTTP_SERVICES_ROOT=$(Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
+          "TURBODB_ROOT=$(Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
+
+      - name: Restore Windows consumer graph from shared cache only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed"
+          if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=x64-windows" --only-binarycaching
+          if ($LASTEXITCODE -ne 0) { throw "Windows consumer cache-only restore failed" }
+          "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
+
+      - name: Configure, build and run Windows external consumer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $consumer = Join-Path $env:RUNNER_TEMP "flowie-release-consumer-windows"
+          New-Item -ItemType Directory -Force -Path $consumer | Out-Null
+          @'
+          cmake_minimum_required(VERSION 3.25)
+          project(FlowieReleaseConsumer LANGUAGES C CXX)
+          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+                       PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
+          add_executable(flowie_release_consumer main.c)
+          target_link_libraries(flowie_release_consumer PRIVATE
+                                Flowie::Flowie Flowie::Client Flowie::Protocol)
+          '@ | Set-Content -LiteralPath (Join-Path $consumer "CMakeLists.txt")
+          @'
+          #include <flowie.h>
+          #include <flowie_mqtt_client.h>
+          #include <flowie_mqtt_protocol.h>
+          int main(void) {
+            flowie_endpoint_config_t endpoint = FLOWIE_ENDPOINT_CONFIG_INIT;
+            return endpoint.size == sizeof(endpoint) ? 0 : 1;
+          }
+          '@ | Set-Content -LiteralPath (Join-Path $consumer "main.c")
+          $cmd = @"
+          call "$env:VSINSTALL\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "PATH=$env:FLOWIE_ROOT\bin;$env:HTTP_SERVICES_ROOT\bin;$env:TURBODB_ROOT\bin;$env:SALTS_UTILS_ROOT\bin;$env:SALTS_ROOT\bin;$env:VCPKG_INSTALLED_DIR\x64-windows\bin;%PATH%"
+          cmake -S "$consumer" -B "$consumer\build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:QIGAO_VCPKG_TOOLCHAIN_FILE" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_INSTALLED_DIR="$env:VCPKG_INSTALLED_DIR" -DVCPKG_MANIFEST_MODE=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build "$consumer\build" --parallel 2
+          if errorlevel 1 exit /b 1
+          "$consumer\build\flowie_release_consumer.exe"
+          "@
+          cmd.exe /d /s /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "Windows packed consumer qualification failed" }
+
+  qualify_android:
+    name: Qualify packed Flowie.Native (Android arm64-v8a)
+    needs: [metadata, pack]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Flowie.Native.${{ needs.metadata.outputs.version }}
+          path: dist
+
+      - name: Prepare Android qualification host
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          test -n "${ANDROID_NDK_HOME:-}"
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+
+      - name: Restore packed Android SDK and dependencies
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/flowie-qualify-android.config"
+          project="$RUNNER_TEMP/flowie-qualify-android.csproj"
+          packages="$RUNNER_TEMP/flowie-qualify-android-packages"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source "$GITHUB_WORKSPACE/dist" --name local --configfile "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          cat > "$project" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+            <ItemGroup><PackageReference Include="Flowie.Native" Version="[${{ needs.metadata.outputs.version }}]" /></ItemGroup>
+          </Project>
+          EOF
+          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
+          {
+            echo "FLOWIE_ROOT=$packages/flowie.native/${{ needs.metadata.outputs.version }}/sdk/android-arm64-v8a"
+            echo "SALTS_ROOT=$packages/salts.native/$SALTS_VERSION/sdk/android-arm64-v8a"
+            echo "SALTS_UTILS_ROOT=$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/android-arm64-v8a"
+            echo "HTTP_SERVICES_ROOT=$packages/chttp.native/$CHTTP_VERSION/sdk/android-arm64-v8a"
+            echo "TURBODB_ROOT=$packages/turbodb.native/$TURBODB_VERSION/sdk/android-arm64-v8a"
+          } >> "$GITHUB_ENV"
+
+      - name: Restore Android consumer graph from shared cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
+          rm -rf "$install_root"
+          "$VCPKG_ROOT/vcpkg" install \
+            --x-manifest-root="$GITHUB_WORKSPACE" \
+            --x-install-root="$install_root" \
+            --triplet arm64-android \
+            --only-binarycaching
+          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
+
+      - name: Configure and link Android external consumer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          consumer="$RUNNER_TEMP/flowie-release-consumer-android"
+          mkdir -p "$consumer"
+          cat > "$consumer/CMakeLists.txt" <<'EOF'
+          cmake_minimum_required(VERSION 3.25)
+          project(FlowieReleaseConsumer LANGUAGES C CXX)
+          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+                       PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
+          add_executable(flowie_release_consumer main.c)
+          target_link_libraries(flowie_release_consumer PRIVATE
+                                Flowie::Flowie Flowie::Client Flowie::Protocol)
+          EOF
+          cat > "$consumer/main.c" <<'EOF'
+          #include <flowie.h>
+          #include <flowie_mqtt_client.h>
+          #include <flowie_mqtt_protocol.h>
+          int main(void) {
+            flowie_endpoint_config_t endpoint = FLOWIE_ENDPOINT_CONFIG_INIT;
+            return endpoint.size == sizeof(endpoint) ? 0 : 1;
+          }
+          EOF
+          cmake -S "$consumer" -B "$consumer/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Android \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-android \
+            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
+            -DVCPKG_MANIFEST_MODE=OFF \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_shared
+          cmake --build "$consumer/build" --parallel 2
+
   publish:
     name: Publish package and GitHub Release
     if: ${{ inputs.publish }}
-    needs: [metadata, qualify]
+    needs: [metadata, qualify, qualify_windows, qualify_android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
