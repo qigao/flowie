@@ -7,7 +7,7 @@ on:
 
 env:
   FLOWIE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-  CHTTP_VERSION: "1.1.4"
+  CHTTP_VERSION: "1.1.5"
 
 permissions:
   contents: read
@@ -31,9 +31,9 @@ jobs:
           persist-credentials: false
 
       - name: Restore Salts SDK baseline and vcpkg cache
-        uses: qigao/chttp/.github/actions/setup-salts-sdk@v1.1.4
+        uses: qigao/chttp/.github/actions/setup-salts-sdk@v1.1.5
 
-      - name: Restore CHttp 1.1.4 SDK
+      - name: Restore CHttp 1.1.5 SDK
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
