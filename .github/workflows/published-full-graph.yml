@@ -214,12 +214,27 @@ jobs:
               message(FATAL_ERROR "missing installed target ${required_target}")
             endif()
           endforeach()
+          add_executable(flowie_installed_consumer main.c)
+          target_link_libraries(flowie_installed_consumer PRIVATE
+                                Flowie::Flowie Flowie::Client Flowie::Protocol)
+          EOF
+          cat > "$consumer/main.c" <<'EOF'
+          #include <flowie.h>
+          #include <flowie_mqtt_client.h>
+          #include <flowie_mqtt_protocol.h>
+          int main(void) {
+            flowie_endpoint_config_t endpoint = FLOWIE_ENDPOINT_CONFIG_INIT;
+            return endpoint.size == sizeof(endpoint) ? 0 : 1;
+          }
           EOF
           cmake -S "$consumer" -B "$consumer/build" -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
             -DVCPKG_MANIFEST_MODE=OFF
+          cmake --build "$consumer/build" --parallel 2
+          export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          "$consumer/build/flowie_installed_consumer"
 
       - name: Verify exact head and clean tracked source
         if: always()
