@@ -196,6 +196,14 @@ jobs:
           if-no-files-found: error
           compression-level: 9
 
+      - name: Verify exact source revision and clean tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
   windows:
     name: Windows x64 SDK
     needs: metadata
