@@ -3,9 +3,6 @@ name: Flowie native SDK pipeline
 on:
   workflow_call:
     inputs:
-      publish:
-        required: true
-        type: boolean
       source_sha:
         required: true
         type: string
@@ -893,50 +890,3 @@ jobs:
             -DANDROID_PLATFORM=android-26 \
             -DANDROID_STL=c++_shared
           cmake --build "$consumer/build" --parallel 2
-
-  publish:
-    name: Publish package and GitHub Release
-    if: ${{ inputs.publish }}
-    needs: [metadata, qualify, qualify_windows, qualify_android]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Publish to qigao GitHub Packages
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json             --name github --username qigao --password "$GITHUB_TOKEN"             --store-password-in-clear-text
-          dotnet nuget push "dist/Flowie.Native.${{ needs.metadata.outputs.version }}.nupkg"             --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
-
-      - name: Create or update GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          pkg="dist/Flowie.Native.$VERSION.nupkg"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$pkg" --repo "$GITHUB_REPOSITORY" --clobber
-            exit 0
-          fi
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
-            gh release create "$tag" "$pkg" --repo "$GITHUB_REPOSITORY"               --verify-tag --title "Flowie $VERSION" --generate-notes
-          else
-            gh release create "$tag" "$pkg" --repo "$GITHUB_REPOSITORY"               --target "$SOURCE_SHA" --title "Flowie $VERSION" --generate-notes
-          fi
