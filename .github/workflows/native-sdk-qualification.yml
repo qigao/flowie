@@ -33,6 +33,5 @@ jobs:
     name: Qualify Flowie.Native
     uses: ./.github/workflows/native-sdk-pipeline.yml
     with:
-      publish: false
       source_sha: ${{ github.event.pull_request.head.sha }}
     secrets: inherit
