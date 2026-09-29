@@ -1,1 +1,3 @@
-add_subdirectory(lemon)
+if(NOT CMAKE_CROSSCOMPILING)
+  add_subdirectory(lemon)
+endif()
