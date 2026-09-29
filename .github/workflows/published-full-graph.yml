@@ -9,7 +9,7 @@ env:
   FLOWIE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   SALTS_VERSION: "1.8.3"
   SALTS_UTILS_VERSION: "4.1.3"
-  CHTTP_VERSION: "1.1.4"
+  CHTTP_VERSION: "1.1.5"
   TURBODB_VERSION: "1.0.1"
   FLOWMQ_VERSION: "1.1.1"
   TURBORAFT_VERSION: "0.2.0"
