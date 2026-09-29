@@ -73,7 +73,7 @@ if(NOT IS_DIRECTORY "${FLOWIE_HTTP_SERVICES_ROOT_PATH}")
   message(FATAL_ERROR
           "HTTP_SERVICES_ROOT is not a directory: $ENV{HTTP_SERVICES_ROOT}")
 endif()
-find_package(Chttp 1.1.4 EXACT CONFIG REQUIRED
+find_package(Chttp 1.1.5 EXACT CONFIG REQUIRED
              PATHS "${FLOWIE_HTTP_SERVICES_ROOT_PATH}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
