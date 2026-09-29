@@ -76,10 +76,10 @@ find_package(xxHash CONFIG REQUIRED)
 find_package(Orm 2.1.0 EXACT CONFIG REQUIRED
              PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH)
 if(FLOWIE_BUILD_CLUSTER)
-  find_package(FlowMQ CONFIG REQUIRED
+  find_package(FlowMQ 1.1.1 EXACT CONFIG REQUIRED
                PATHS "$ENV{FLOWMQ_ROOT}" NO_DEFAULT_PATH)
   find_package(
-    TurboRaft CONFIG REQUIRED COMPONENTS Service WalStorage DataStream FlowMQ
+    TurboRaft 0.2.0 EXACT CONFIG REQUIRED COMPONENTS Service WalStorage DataStream FlowMQ
     PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH)
 endif()
 add_subdirectory(tools)

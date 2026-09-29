@@ -61,7 +61,7 @@ static tr_raft_transport_payload_t flowie_publish_router_ack(
 }
 
 spec("flowie cluster publish router") {
-  it("submits one descriptor after routing all durable ACKs") {
+  it("submits one descriptor after routing a durable majority") {
     static const uint8_t client_id[] = "publisher-a";
     static const uint8_t packet[] = {0x30u, 0x07u, 0x00u, 0x01u, 'a',
                                      0x00u, 'o',   'k',   '!'};
@@ -109,10 +109,8 @@ spec("flowie cluster publish router") {
     check_equal(flowie_cluster_publish_router_outbound_count(router), 1u);
     ack = flowie_publish_router_ack(&test.chunks[0]);
     check_equal(flowie_cluster_publish_router_handle(router, &ack), SALTS_OK);
-    check_equal(test.proposal_count, 0u);
-    check_equal(flowie_cluster_publish_router_outbound_count(router), 1u);
-    ack = flowie_publish_router_ack(&test.chunks[1]);
-    check_equal(flowie_cluster_publish_router_handle(router, &ack), SALTS_OK);
+    /* submit_durable marks the local staging object durable, so one remote
+     * durable ACK completes the 2/3 majority and retires the outbound entry. */
     check_equal(test.proposal_count, 1u);
     check_equal(test.command_id, 99u);
     check_equal(test.proposal_size, TR_RAFT_DATA_DESCRIPTOR_ENCODED_SIZE);

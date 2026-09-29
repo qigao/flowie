@@ -41,7 +41,7 @@ static int flowie_publish_stream_commit(
 }
 
 spec("flowie cluster TurboRaft publish DATA stream") {
-  it("gates the 56-byte descriptor proposal on durable quorum") {
+  it("gates the 56-byte descriptor proposal on durable majority") {
     tr_raft_conf_t configuration = {0};
     tr_raft_data_chunk_t first_chunk = {0};
     tr_raft_data_ack_t ack = {0};
@@ -84,12 +84,8 @@ spec("flowie cluster TurboRaft publish DATA stream") {
            sizeof(ack.stream_digest));
     check_equal(flowie_cluster_publish_quorum_acknowledge(quorum, &ack),
                  SALTS_OK);
-    check_equal(flowie_cluster_publish_quorum_make_proposal(
-                     quorum, 99u, descriptor, &proposal),
-                 SALTS_EBUSY);
-    ack.from = 3u;
-    check_equal(flowie_cluster_publish_quorum_acknowledge(quorum, &ack),
-                 SALTS_OK);
+    /* TurboRaft 0.2 data durability follows the Raft voting contract:
+     * local durable + one remote durable is a 2/3 majority. */
     check_equal(flowie_cluster_publish_quorum_make_proposal(
                      quorum, 99u, descriptor, &proposal),
                  SALTS_OK);

@@ -5,29 +5,39 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define FLOWIE_CLUSTER_RAFT_PRIMARY_GROUP_ID ((tr_raft_group_id_t)1u)
+
 struct flowie_cluster_raft_runtime_s {
   flowie_cluster_raft_store_t *store;
   tr_raft_flowmq_peer_service_t *peers;
   flowie_cluster_raft_payload_fn on_payload;
   void *payload_ctx;
+  tr_raft_group_id_t group_id;
   int started;
 };
-
-static int flowie_cluster_raft_runtime_message(
-    void *ctx, const tr_raft_message_t *message) {
-  flowie_cluster_raft_runtime_t *runtime =
-      (flowie_cluster_raft_runtime_t *)ctx;
-  return runtime && runtime->store
-             ? flowie_cluster_raft_store_step(runtime->store, message)
-             : SALTS_EINVAL;
-}
 
 static int flowie_cluster_raft_runtime_payload(
     void *ctx, const tr_raft_transport_payload_t *payload) {
   flowie_cluster_raft_runtime_t *runtime =
       (flowie_cluster_raft_runtime_t *)ctx;
-  if (!runtime || !payload || !runtime->on_payload) return SALTS_EPROTO;
+  if (!runtime || !payload || payload->group_id != runtime->group_id)
+    return SALTS_EPROTO;
+  if (payload->kind == TR_RAFT_WIRE_PAYLOAD_RAFT)
+    return runtime->store
+               ? flowie_cluster_raft_store_step(runtime->store,
+                                                &payload->data.raft)
+               : SALTS_EINVAL;
+  if (!runtime->on_payload) return SALTS_EPROTO;
   return runtime->on_payload(runtime->payload_ctx, payload);
+}
+
+static int flowie_cluster_raft_runtime_message_enqueue(
+    void *ctx, const tr_raft_message_t *message) {
+  flowie_cluster_raft_runtime_t *runtime =
+      (flowie_cluster_raft_runtime_t *)ctx;
+  if (!runtime || !runtime->peers || !message) return SALTS_EINVAL;
+  return tr_raft_flowmq_peer_service_enqueue_group(
+      runtime->peers, runtime->group_id, message);
 }
 
 static int flowie_cluster_raft_runtime_topology_valid(
@@ -38,7 +48,6 @@ static int flowie_cluster_raft_runtime_topology_valid(
       config->store.voter_count == 0u ||
       config->peers.peer_count + 1u != config->store.voter_count ||
       (config->peers.peer_count != 0u && !config->peers.peers) ||
-      config->peers.on_message || config->peers.message_context ||
       config->peers.on_payload || config->peers.payload_context)
     return 0;
   for (voter_index = 0u; voter_index < config->store.voter_count;
@@ -70,16 +79,16 @@ int flowie_cluster_raft_runtime_create(
   if (!runtime) return SALTS_ENOMEM;
   runtime->on_payload = config->on_payload;
   runtime->payload_ctx = config->payload_ctx;
+  runtime->group_id = FLOWIE_CLUSTER_RAFT_PRIMARY_GROUP_ID;
   peer_config = config->peers;
-  peer_config.on_message = flowie_cluster_raft_runtime_message;
-  peer_config.message_context = runtime;
   peer_config.on_payload = flowie_cluster_raft_runtime_payload;
   peer_config.payload_context = runtime;
   rc = tr_raft_flowmq_peer_service_create(&peer_config, &runtime->peers);
   if (rc != SALTS_OK) goto fail;
   store_config = config->store;
-  store_config.transport.context = runtime->peers;
-  store_config.transport.enqueue = tr_raft_flowmq_peer_service_enqueue;
+  store_config.transport.context = runtime;
+  store_config.transport.enqueue =
+      flowie_cluster_raft_runtime_message_enqueue;
   rc = flowie_cluster_raft_store_open(&store_config, &runtime->store);
   if (rc != SALTS_OK) goto fail;
   *out = runtime;
@@ -158,8 +167,13 @@ int flowie_cluster_raft_runtime_drive(
 int flowie_cluster_raft_runtime_enqueue_payload(
     flowie_cluster_raft_runtime_t *runtime,
     const tr_raft_transport_payload_t *payload) {
+  tr_raft_transport_payload_t grouped;
   if (!runtime || !runtime->started || !payload) return SALTS_EINVAL;
-  return tr_raft_flowmq_peer_service_enqueue_payload(runtime->peers, payload);
+  if (payload->group_id != 0u && payload->group_id != runtime->group_id)
+    return SALTS_EINVAL;
+  grouped = *payload;
+  grouped.group_id = runtime->group_id;
+  return tr_raft_flowmq_peer_service_enqueue_payload(runtime->peers, &grouped);
 }
 
 int flowie_cluster_raft_runtime_propose(
