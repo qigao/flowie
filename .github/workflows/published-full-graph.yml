@@ -11,6 +11,8 @@ env:
   SALTS_UTILS_VERSION: "4.1.3"
   CHTTP_VERSION: "1.1.4"
   TURBODB_VERSION: "1.0.0"
+  FLOWMQ_VERSION: "1.1.1"
+  TURBORAFT_VERSION: "0.2.0"
 
 permissions:
   contents: read
@@ -86,6 +88,8 @@ jobs:
               <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
               <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
               <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
+              <PackageReference Include="FlowMQ.Native" Version="[$FLOWMQ_VERSION]" />
+              <PackageReference Include="TurboRaft.Native" Version="[$TURBORAFT_VERSION]" />
             </ItemGroup>
           </Project>
           EOF
@@ -95,20 +99,32 @@ jobs:
           salts_utils_root="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
           chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
           turbodb_root="$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
+          flowmq_root="$packages/flowmq.native/$FLOWMQ_VERSION/sdk/linux-x64"
+          turboraft_root="$packages/turboraft.native/$TURBORAFT_VERSION/sdk/linux-x64"
 
           test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
           test -f "$turbodb_root/lib/cmake/Orm/OrmConfig.cmake"
+          test -f "$flowmq_root/lib/cmake/FlowMQ/FlowMQConfig.cmake"
+          test -f "$turboraft_root/lib/cmake/TurboRaft/TurboRaftConfig.cmake"
           grep -Fq "version=$TURBODB_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
           grep -Fq "salts=$SALTS_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
           grep -Fq "saltsutils=$SALTS_UTILS_VERSION" "$turbodb_root/turbodb-sdk-manifest.txt"
+          grep -Fq "version=$FLOWMQ_VERSION" "$flowmq_root/flowmq-sdk-manifest.txt"
+          grep -Fq "salts=$SALTS_VERSION" "$flowmq_root/flowmq-sdk-manifest.txt"
+          grep -Fq "salts_utils=$SALTS_UTILS_VERSION" "$flowmq_root/flowmq-sdk-manifest.txt"
+          grep -Fq "version=$TURBORAFT_VERSION" "$turboraft_root/turboraft-sdk-manifest.txt"
+          grep -Fq "package_version=$TURBORAFT_VERSION" "$turboraft_root/turboraft-sdk-manifest.txt"
+          grep -Fq "flowmq=$FLOWMQ_VERSION" "$turboraft_root/turboraft-sdk-manifest.txt"
 
           {
             echo "SALTS_ROOT=$salts_root"
             echo "SALTS_UTILS_ROOT=$salts_utils_root"
             echo "HTTP_SERVICES_ROOT=$chttp_root"
             echo "TURBODB_ROOT=$turbodb_root"
+            echo "FLOWMQ_ROOT=$flowmq_root"
+            echo "TURBORAFT_ROOT=$turboraft_root"
             echo "QIGAO_NUGET_PACKAGES=$packages"
           } >> "$GITHUB_ENV"
 
@@ -148,7 +164,7 @@ jobs:
             -DVCPKG_MANIFEST_MODE=OFF \
             -DFLOWIE_BUILD_TESTS=ON \
             -DFLOWIE_BUILD_CONTROL=ON \
-            -DFLOWIE_BUILD_CLUSTER=OFF \
+            -DFLOWIE_BUILD_CLUSTER=ON \
             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF \
             -DFLOWIE_TURBODB_LIVE_TESTS=OFF \
             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF \
@@ -156,7 +172,7 @@ jobs:
             -DENABLE_SANITIZER_ADDRESS=OFF \
             -DENABLE_SANITIZER_UNDEFINED=OFF
 
-      - name: Build complete non-cluster Flowie graph including Control
+      - name: Build complete Flowie graph including Control and Cluster
         shell: bash
         run: |
           set -euxo pipefail
@@ -166,9 +182,9 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          export LD_LIBRARY_PATH="$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH="$TURBORAFT_ROOT/lib:$TURBORAFT_ROOT/bin:$FLOWMQ_ROOT/lib:$FLOWMQ_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           ctest --test-dir build/published-full \
-            -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$' \
+            -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster.*|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$' \
             --no-tests=error --output-on-failure --timeout 180
 
       - name: Install Flowie SDK
