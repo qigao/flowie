@@ -258,10 +258,10 @@ jobs:
           "@ | Set-Content -LiteralPath $project
           dotnet restore $project --packages $packages --configfile $config --no-cache
           if ($LASTEXITCODE -ne 0) { throw "failed to restore Windows producer SDKs" }
-          $salts = Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64"
-          $utils = Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64"
-          $chttp = Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64"
-          $turbodb = Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64"
+          $salts = (Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\\','/')
+          $utils = (Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\\','/')
+          $chttp = (Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\\','/')
+          $turbodb = (Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\\','/')
           foreach ($file in @(
             (Join-Path $salts "lib/cmake/Salts/SaltsConfig.cmake"),
             (Join-Path $utils "lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"),
@@ -726,11 +726,11 @@ jobs:
           "@ | Set-Content -LiteralPath $project
           dotnet restore $project --packages $packages --configfile $config --no-cache
           if ($LASTEXITCODE -ne 0) { throw "failed to restore packed Flowie.Native on Windows" }
-          "FLOWIE_ROOT=$(Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64")" >> $env:GITHUB_ENV
-          "SALTS_ROOT=$(Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
-          "SALTS_UTILS_ROOT=$(Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
-          "HTTP_SERVICES_ROOT=$(Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
-          "TURBODB_ROOT=$(Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64")" >> $env:GITHUB_ENV
+          "FLOWIE_ROOT=$((Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
+          "SALTS_ROOT=$((Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
+          "SALTS_UTILS_ROOT=$((Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
+          "HTTP_SERVICES_ROOT=$((Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
+          "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
 
       - name: Restore Windows consumer graph from shared cache only
         shell: pwsh
