@@ -29,7 +29,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          version="$(python3 -c 'import re; s=open("CMakeLists.txt", encoding="utf-8").read(); m=re.search(r"project\\s*\\(\\s*Flowie\\s+VERSION\\s+([0-9]+\\.[0-9]+\\.[0-9]+)", s, re.I); print(m.group(1) if m else "")')"
           expected="v$version"
           test "$GITHUB_REF_TYPE" = "tag"
           if [ "$GITHUB_REF_NAME" != "$expected" ]; then
