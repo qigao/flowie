@@ -1480,6 +1480,10 @@ static int flowie_session_create(flowie_endpoint_t *endpoint,
   return SALTS_OK;
 }
 
+static int flowie_transport_retained_sg(flowie_transport_t transport) {
+  return transport == FLOWIE_TRANSPORT_TCP || transport == FLOWIE_TRANSPORT_TLS;
+}
+
 static flowie_transport flowie_net_transport(flowie_transport_t transport) {
   switch (transport) {
   case FLOWIE_TRANSPORT_TCP:
@@ -3474,7 +3478,7 @@ static int flowie_connection_reply_send_batch(flowie_endpoint_connection_t *conn
       request_count == 0u)
     return SALTS_EINVAL;
 
-  if (connection->endpoint->transport != FLOWIE_TRANSPORT_TCP) {
+  if (!flowie_transport_retained_sg(connection->endpoint->transport)) {
     for (request_index = 0u; request_index < request_count; ++request_index) {
       rc = flowie_server_send(&connection->endpoint->server, connection->network,
                               flowie_reply_packet_data(requests[request_index]),
@@ -3585,7 +3589,7 @@ static int flowie_connection_reply_drain(flowie_endpoint_connection_t *connectio
           (((uint8_t)flowie_reply_packet_data(request)[0] >> 4u) == FLOWIE_MQTT_PACKET_DISCONNECT);
       next = deque_front(&connection->send_queue);
       if (request->expiry_at_epoch_seconds != 0u ||
-          connection->endpoint->transport != FLOWIE_TRANSPORT_TCP || terminal_batch ||
+          !flowie_transport_retained_sg(connection->endpoint->transport) || terminal_batch ||
           request_count == FLOWIE_REPLY_SEND_BATCH_MAX_ITEMS || !next || !*next ||
           (*next)->expiry_at_epoch_seconds != 0u ||
           ((*next)->qos_delivery &&
