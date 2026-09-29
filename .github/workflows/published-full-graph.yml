@@ -147,7 +147,7 @@ jobs:
             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
             -DVCPKG_MANIFEST_MODE=OFF \
             -DFLOWIE_BUILD_TESTS=ON \
-            -DFLOWIE_BUILD_CONTROL=OFF \
+            -DFLOWIE_BUILD_CONTROL=ON \
             -DFLOWIE_BUILD_CLUSTER=OFF \
             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF \
             -DFLOWIE_TURBODB_LIVE_TESTS=OFF \
@@ -156,7 +156,7 @@ jobs:
             -DENABLE_SANITIZER_ADDRESS=OFF \
             -DENABLE_SANITIZER_UNDEFINED=OFF
 
-      - name: Build complete non-cluster Flowie graph
+      - name: Build complete non-cluster Flowie graph including Control
         shell: bash
         run: |
           set -euxo pipefail
