@@ -39,7 +39,7 @@ static tr_raft_data_ack_t flowie_publish_egress_ack(
 }
 
 spec("flowie cluster publish egress transfer group") {
-  it("transfers event ownership and gates its descriptor on all durable targets") {
+  it("transfers event ownership and gates its descriptor on durable majority") {
     static const uint8_t client_id[] = "publisher-a";
     static const uint8_t packet[] = {0x30u, 0x07u, 0x00u, 0x01u, 'a',
                                      0x00u, 'o',   'k',   '!'};
@@ -90,12 +90,8 @@ spec("flowie cluster publish egress transfer group") {
     ack = flowie_publish_egress_ack(&test.chunks[0]);
     check_equal(flowie_cluster_publish_egress_acknowledge(egress, &ack),
                  SALTS_OK);
-    check_equal(flowie_cluster_publish_egress_make_proposal(
-                     egress, 99u, descriptor, &proposal),
-                 SALTS_EBUSY);
-    ack = flowie_publish_egress_ack(&test.chunks[1]);
-    check_equal(flowie_cluster_publish_egress_acknowledge(egress, &ack),
-                 SALTS_OK);
+    /* The local durable copy plus one remote durable copy is the 2/3
+     * TurboRaft data quorum for this FINAL configuration. */
     check_equal(flowie_cluster_publish_egress_make_proposal(
                      egress, 99u, descriptor, &proposal),
                  SALTS_OK);
