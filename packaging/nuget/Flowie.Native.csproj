@@ -4,10 +4,10 @@
     <IsPackable>true</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <PackageId>Flowie.Native</PackageId>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">1.0.0</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">1.0.1</PackageVersion>
     <Authors>qigao</Authors>
-    <Description>Flowie native MQTT server/client C/C++ SDK for Linux x64.</Description>
-    <PackageTags>flowie;mqtt;broker;client;native;c;cpp;cmake</PackageTags>
+    <Description>Flowie native MQTT server/client C/C++ SDK for Linux x64, Windows x64, and Android arm64-v8a.</Description>
+    <PackageTags>flowie;mqtt;broker;client;native;c;cpp;cmake;windows;android</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/qigao/flowie</RepositoryUrl>
@@ -20,7 +20,7 @@
     <PackageReference Include="Salts.Native" Version="[1.8.3]" />
     <PackageReference Include="SaltsUtils.Native" Version="[4.1.3]" />
     <PackageReference Include="CHttp.Native" Version="[1.1.4]" />
-    <PackageReference Include="TurboDB.Native" Version="[1.0.0]" />
+    <PackageReference Include="TurboDB.Native" Version="[1.0.1]" />
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="$(PackageRoot)/sdk/**/*" Pack="true" PackagePath="sdk/" />
   </ItemGroup>
