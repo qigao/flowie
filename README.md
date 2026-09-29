@@ -10,7 +10,7 @@ Flowie owns MQTT protocol behavior, broker core state, sessions, subscriptions, 
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-**Current package baseline:** Salts **1.8.3** + SaltsUtils **4.1.3** + CHttp **1.1.4** + TurboDB **1.0.1**. **Cluster baseline:** FlowMQ **1.1.1** + TurboRaft **0.2.0**.
+**Current package baseline:** Salts **1.8.3** + SaltsUtils **4.1.3** + CHttp **1.1.5** + TurboDB **1.0.1**. **Cluster baseline:** FlowMQ **1.1.1** + TurboRaft **0.2.0**.
 
 - **Salts::CNet** provides TCP/TLS transport and explicit connection/session progress.
 - **Salts Core / Coroutine / runtime primitives** provide common systems facilities.
