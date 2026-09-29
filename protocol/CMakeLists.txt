@@ -45,6 +45,8 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(${TARGET_NAME} PUBLIC Salts::Core)
 
+install(FILES ${FLOWIE_PROTOCOL_HEADERS} DESTINATION include)
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
