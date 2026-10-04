@@ -342,10 +342,16 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
 }
 
 static void flowie_client_transport_abrupt_tls_close(void) {
+  /*
+   * The broker closes locally with SALTS_ECONNABORTED. That local reason is
+   * not transmitted to the remote peer; the Linux CNet transport observes
+   * the abrupt TCP/TLS peer close as ECONNRESET and preserves that terminal
+   * status for the MQTT client.
+   */
   flowie_client_transport_case(
       FLOWIE_MQTT_CLIENT_TRANSPORT_TLS, TF_NET_TRANSPORT_TLS,
       FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE,
-      FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_ECONNABORTED);
+      FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_ECONNRESET);
 }
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
@@ -373,7 +379,7 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                  FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS, SALTS_EPROTO);
   }
 
-  it("reports an abrupt TLS EOF after CONNECT as an aborted connection") {
+  it("reports an abrupt TLS peer close after CONNECT as a reset") {
     flowie_client_transport_abrupt_tls_close();
   }
 }
