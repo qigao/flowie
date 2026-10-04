@@ -2179,7 +2179,8 @@ static int flowie_client_add(flowie_endpoint_t *endpoint,
   uint64_t generation;
   int rc;
   if (!endpoint || !flowie_owner_lane_valid(runtime_owner) ||
-      runtime_owner->endpoint != endpoint || !peer || network.slot == 0u ||
+      runtime_owner->endpoint != endpoint || !peer || network.owner == 0u ||
+      network.owner != runtime_owner->index + 1u || network.slot == 0u ||
       network.generation == 0u || !out)
     return SALTS_EINVAL;
   *out = NULL;
@@ -2298,11 +2299,15 @@ static void flowie_client_remove(flowie_endpoint_t *endpoint,
 
 static flowie_endpoint_connection_t *flowie_connection_find_network(
     flowie_endpoint_t *endpoint, flowie_connection network) {
-  if (endpoint == NULL || network.slot == 0u || network.generation == 0u) return NULL;
+  if (endpoint == NULL || network.owner == 0u || network.slot == 0u ||
+      network.generation == 0u)
+    return NULL;
   for (size_t index = 0u; index < vec_size(&endpoint->clients); ++index) {
     flowie_endpoint_connection_t *const *slot =
         (flowie_endpoint_connection_t *const *)vec_at_const(&endpoint->clients, index);
-    if (slot != NULL && *slot != NULL && (*slot)->network.slot == network.slot &&
+    if (slot != NULL && *slot != NULL &&
+        (*slot)->network.owner == network.owner &&
+        (*slot)->network.slot == network.slot &&
         (*slot)->network.generation == network.generation)
       return *slot;
   }
