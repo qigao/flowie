@@ -38,6 +38,7 @@ typedef struct flowie_stream_peer {
   struct flowie_server_impl *owner;
   cnet_connection connection;
   cnet_stream_peer peer;
+  uint32_t generation;
   int close_status;
   bool used;
   bool opened;
@@ -209,8 +210,17 @@ static bool flowie_token_valid(const char *value) {
   return true;
 }
 
-static flowie_connection flowie_stream_handle(cnet_connection connection) {
-  return (flowie_connection){connection.slot, connection.generation};
+static flowie_connection flowie_stream_handle(
+    const flowie_stream_peer *peer) {
+  const flowie_server_impl *server;
+  size_t index;
+  if (peer == NULL || (server = peer->owner) == NULL ||
+      server->stream_peers == NULL || peer < server->stream_peers ||
+      peer >= server->stream_peers + server->config.stream.connection_capacity ||
+      peer->generation == 0u)
+    return (flowie_connection){0};
+  index = (size_t)(peer - server->stream_peers);
+  return (flowie_connection){(uint32_t)(index + 1u), peer->generation};
 }
 
 static flowie_connection flowie_packet_handle(cnet_packet_session session) {
@@ -227,22 +237,25 @@ static bool flowie_handle_equal(flowie_connection left, flowie_connection right)
 
 static flowie_stream_peer *flowie_stream_peer_find(flowie_server_impl *server,
                                                     flowie_connection connection) {
+  flowie_stream_peer *peer;
   size_t index;
-  for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
-    flowie_stream_peer *peer = &server->stream_peers[index];
-    if (peer->used && peer->connection.slot == connection.slot &&
-        peer->connection.generation == connection.generation)
-      return peer;
-  }
-  return NULL;
+  if (server == NULL || connection.slot == 0u ||
+      connection.generation == 0u)
+    return NULL;
+  index = (size_t)connection.slot - 1u;
+  if (index >= server->config.stream.connection_capacity) return NULL;
+  peer = &server->stream_peers[index];
+  return peer->used && peer->generation == connection.generation ? peer : NULL;
 }
 
 static flowie_stream_peer *flowie_stream_peer_acquire(flowie_server_impl *server) {
   size_t index;
   for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
     flowie_stream_peer *peer = &server->stream_peers[index];
-    if (peer->used) continue;
-    *peer = (flowie_stream_peer){.owner = server, .used = true};
+    const uint32_t generation = peer->generation;
+    if (peer->used || generation == UINT32_MAX) continue;
+    *peer = (flowie_stream_peer){
+        .owner = server, .generation = generation, .used = true};
     return peer;
   }
   return NULL;
@@ -262,7 +275,10 @@ static void flowie_stream_state(void *user, cnet_connection connection,
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
   int status = error == NULL ? SALTS_OK : error->status;
-  if (peer == NULL || (server = peer->owner) == NULL || !peer->used) return;
+  if (peer == NULL || (server = peer->owner) == NULL || !peer->used ||
+      peer->connection.slot != connection.slot ||
+      peer->connection.generation != connection.generation)
+    return;
   if (state == CNET_CONNECTION_CONNECTED) {
     flowie_peer_info info = {.peer = peer->peer};
     if (server->config.transport == TF_NET_TRANSPORT_TLS) {
@@ -275,7 +291,7 @@ static void flowie_stream_state(void *user, cnet_connection connection,
     }
     peer->opened = true;
     status = server->config.observer.on_open(
-        server->config.observer.user, flowie_stream_handle(connection), &info);
+        server->config.observer.user, flowie_stream_handle(peer), &info);
     if (status == SALTS_OK) status = cnet_receive(&server->stream, connection, 1u);
     if (status != SALTS_OK) {
       peer->close_status = status;
@@ -283,13 +299,14 @@ static void flowie_stream_state(void *user, cnet_connection connection,
       (void)cnet_close(&server->stream, connection);
     }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
-    const flowie_connection handle = flowie_stream_handle(connection);
+    const flowie_connection handle = flowie_stream_handle(peer);
     const bool opened = peer->opened;
     if (peer->close_status_set) status = peer->close_status;
     peer->used = false;
     peer->opened = false;
     peer->close_status_set = false;
     peer->connection = (cnet_connection){0};
+    peer->peer = (cnet_stream_peer){0};
     if (opened) server->config.observer.on_close(server->config.observer.user, handle, status);
   }
 }
@@ -299,9 +316,12 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
   int status;
-  if (peer == NULL || view == NULL || (server = peer->owner) == NULL || !peer->used) return;
+  if (peer == NULL || view == NULL || (server = peer->owner) == NULL ||
+      !peer->used || peer->connection.slot != connection.slot ||
+      peer->connection.generation != connection.generation)
+    return;
   status = server->config.observer.on_receive(server->config.observer.user,
-                                               flowie_stream_handle(connection), view->data,
+                                               flowie_stream_handle(peer), view->data,
                                                view->size);
   if (status == SALTS_OK) status = cnet_receive(&server->stream, connection, 1u);
   if (status != SALTS_OK) {
@@ -313,10 +333,13 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
 
 static void flowie_stream_send(void *user, cnet_connection connection, size_t size) {
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
-  if (peer == NULL || peer->owner == NULL || !peer->used) return;
+  if (peer == NULL || peer->owner == NULL || !peer->used ||
+      peer->connection.slot != connection.slot ||
+      peer->connection.generation != connection.generation)
+    return;
   if (peer->owner->config.observer.on_send != NULL)
     peer->owner->config.observer.on_send(peer->owner->config.observer.user,
-                                         flowie_stream_handle(connection), size);
+                                         flowie_stream_handle(peer), size);
 }
 
 static cnet_observer flowie_stream_observer(flowie_stream_peer *peer) {
@@ -615,6 +638,7 @@ static int flowie_stream_accept(flowie_server_impl *server) {
       peer->used = false;
       return status;
     }
+    ++peer->generation;
     peer->connection = connection;
     peer->peer = address;
   }
