@@ -581,7 +581,7 @@ jobs:
           grep -F 'id="Salts.Native" version="[1.8.18]"' "$RUNNER_TEMP/flowie.nuspec"
           grep -F 'id="SaltsUtils.Native" version="[4.1.18]"' "$RUNNER_TEMP/flowie.nuspec"
           grep -F 'id="CHttp.Native" version="[1.1.10]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="TurboDB.Native" version="[1.0.1]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="TurboDB.Native" version="[2.1.0]"' "$RUNNER_TEMP/flowie.nuspec"
 
       - uses: actions/upload-artifact@v4
         with:
