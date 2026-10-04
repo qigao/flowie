@@ -5,6 +5,7 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
+#include <salts_buffer.h>
 
 #include <stdio.h>
 #include <limits.h>
@@ -196,11 +197,17 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect(unsigned short port) 
 
 static int flowie_test_cnet_send(flowie_test_cnet_client_t *client, const uint8_t *data,
                                  size_t size) {
+  mem_buffer_t *buffer;
   int status;
   if (!client || !data || size == 0u || !client->connected || client->closed)
     return SALTS_EINVAL;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
   client->sent = 0;
-  status = cnet_send(&client->network, client->connection, data, size);
+  status = cnet_send_buffer(&client->network, client->connection, buffer);
+  mem_buffer_release(buffer);
   if (status != SALTS_OK) return status;
   (void)flowie_test_cnet_poll(client, 0u);
   return SALTS_OK;

@@ -1,6 +1,6 @@
 #include "flowie_mqtt_client.h"
 #include "flowie_connection.h"
-#include "mtls_test_server.h"
+#include "tls_test_support.h"
 #include "tinytest.h"
 
 #include <salts/clock.h>
@@ -20,7 +20,8 @@ enum {
 typedef enum flowie_client_transport_connack_mode {
   FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID = 0,
   FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT,
-  FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET
+  FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET,
+  FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE
 } flowie_client_transport_connack_mode;
 
 typedef struct flowie_client_transport_broker {
@@ -34,6 +35,7 @@ typedef struct flowie_client_transport_broker {
   atomic_int closes;
   atomic_int error;
   flowie_client_transport_connack_mode connack_mode;
+  int expected_close_status;
 } flowie_client_transport_broker;
 
 typedef struct flowie_client_transport_probe {
@@ -80,7 +82,7 @@ static int flowie_client_transport_open(void *user, flowie_connection connection
   flowie_client_transport_broker *broker = (flowie_client_transport_broker *)user;
   (void)connection;
   if (broker == NULL || peer == NULL) return SALTS_EINVAL;
-  atomic_fetch_add_explicit(&broker->opens, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&broker->opens, 1, memory_order_release);
   return SALTS_OK;
 }
 
@@ -103,19 +105,22 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
     if (status != SALTS_OK) return status;
     switch (broker->input[0] >> 4u) {
     case FLOWIE_MQTT_PACKET_CONNECT:
-      atomic_fetch_add_explicit(&broker->connects, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->connects, 1, memory_order_release);
       if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT)
         status = SALTS_OK;
       else if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET)
         status = flowie_server_send(broker->server, connection, pingresp, sizeof(pingresp));
-      else status = flowie_server_send(broker->server, connection, connack, sizeof(connack));
+      else if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE)
+        status = SALTS_ECONNABORTED;
+      else
+        status = flowie_server_send(broker->server, connection, connack, sizeof(connack));
       break;
     case FLOWIE_MQTT_PACKET_PINGREQ:
-      atomic_fetch_add_explicit(&broker->pings, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->pings, 1, memory_order_release);
       status = flowie_server_send(broker->server, connection, pingresp, sizeof(pingresp));
       break;
     case FLOWIE_MQTT_PACKET_DISCONNECT:
-      atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_release);
       status = SALTS_OK;
       break;
     default: status = SALTS_EPROTO; break;
@@ -131,9 +136,10 @@ static void flowie_client_transport_close(void *user, flowie_connection connecti
   flowie_client_transport_broker *broker = (flowie_client_transport_broker *)user;
   (void)connection;
   if (broker == NULL) return;
-  if (status != SALTS_OK && status != SALTS_EOF && status != SALTS_ECONNRESET)
+  if (status != broker->expected_close_status &&
+      status != SALTS_EOF && status != SALTS_ECONNRESET)
     atomic_store_explicit(&broker->error, status, memory_order_release);
-  atomic_fetch_add_explicit(&broker->closes, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&broker->closes, 1, memory_order_release);
 }
 
 static void flowie_client_transport_connect_complete(
@@ -211,7 +217,11 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
   flowie_mqtt_client_config_t client_config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  cnet_tls_server_config tls_config = {0};
   flowie_mqtt_client_t *client = NULL;
+  char cert_path[512] = {0};
+  char key_path[512] = {0};
+  char ca_path[512] = {0};
   uint16_t port = 0u;
   uint64_t deadline;
 
@@ -229,15 +239,37 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   atomic_init(&probe.errors, 0);
   broker.server = &server;
   broker.connack_mode = connack_mode;
+  broker.expected_close_status =
+      connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE
+          ? SALTS_ECONNABORTED
+          : SALTS_OK;
 
   server_config.transport = server_transport;
   server_config.host = "127.0.0.1";
   server_config.port = 0u;
+  server_config.stream = flowie_client_transport_network();
+  if (server_transport == TF_NET_TRANSPORT_TLS ||
+      server_transport == TF_NET_TRANSPORT_WSS) {
+    check_equal(tls_test_write_server_files(cert_path, sizeof(cert_path),
+                                            key_path, sizeof(key_path)), 0);
+    check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
+    tls_config = (cnet_tls_server_config){
+        .size = sizeof(tls_config),
+        .cert_file = cert_path,
+        .key_file = key_path,
+        .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+    server_config.tls = &tls_config;
+    server_config.stream.tls_io_buffer_bytes =
+        server_config.stream.receive_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES
+            ? CNET_TLS_MIN_IO_BUFFER_BYTES
+            : server_config.stream.receive_buffer_bytes;
+    server_config.stream.tls_handshake_timeout_ms =
+        FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  }
   server_config.backlog = 4u;
   server_config.path = "/mqtt";
   server_config.websocket_subprotocol =
       server_transport == TF_NET_TRANSPORT_WS ? "mqtt" : NULL;
-  server_config.stream = flowie_client_transport_network();
   server_config.command_capacity = 8u;
   server_config.command_bytes_capacity = 8192u;
   server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
@@ -256,6 +288,9 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   client_config.timeout_ms = client_timeout_ms;
   client_config.socket_recv_buffer_bytes = 32768u;
   client_config.socket_send_buffer_bytes = 32768u;
+  if (client_transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ||
+      client_transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS)
+    client_config.tls.ca_file = ca_path;
   client_config.on_connect = flowie_client_transport_connect_complete;
   client_config.on_ping = flowie_client_transport_ping_complete;
   client_config.on_disconnect = flowie_client_transport_disconnect_complete;
@@ -275,79 +310,48 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
               expected_connect_status);
+  if (connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE) {
+    const uint64_t server_deadline =
+        salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+    while ((atomic_load_explicit(&broker.opens, memory_order_acquire) == 0 ||
+            atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
+            atomic_load_explicit(&broker.closes, memory_order_acquire) == 0) &&
+           salts_monotonic_ms() < server_deadline)
+      salts_sleep_ms(1u);
+  }
   if (expected_connect_status == SALTS_OK) {
     check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
   }
   check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
-  check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed),
+  check_equal(atomic_load_explicit(&broker.opens, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire),
               expected_connect_status == SALTS_OK ? 1 : 0);
-  check_equal(atomic_load_explicit(&broker.disconnects, memory_order_relaxed),
+  check_equal(atomic_load_explicit(&broker.disconnects, memory_order_acquire),
               expected_connect_status == SALTS_OK ? 1 : 0);
   check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), SALTS_OK);
 
   flowie_mqtt_client_destroy(client);
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
   check_equal(flowie_server_destroy(&server), SALTS_OK);
+  tls_test_remove_file(ca_path);
+  tls_test_remove_file(key_path);
+  tls_test_remove_file(cert_path);
 }
 
 static void flowie_client_transport_abrupt_tls_close(void) {
-  static const unsigned char client_id[] = "cnet-client-tls-eof";
-  flow_mtls_test_server_t server;
-  flowie_client_transport_probe probe = {0};
-  flowie_mqtt_client_config_t client_config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
-  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
-  flowie_mqtt_client_t *client = NULL;
-  char ca_path[512] = {0};
-  uint64_t deadline;
-
-  atomic_init(&probe.done, 0);
-  atomic_init(&probe.connect_status, SALTS_EBUSY);
-  atomic_init(&probe.ping_status, SALTS_EBUSY);
-  atomic_init(&probe.disconnect_status, SALTS_EBUSY);
-  atomic_init(&probe.submit_status, SALTS_EBUSY);
-  atomic_init(&probe.errors, 0);
-
-  check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
-  check_equal(flow_tls_test_server_start_abrupt(&server), 0);
-
-  client_config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
-  client_config.host = "localhost";
-  client_config.port = (int)server.port;
-  client_config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
-  client_config.socket_recv_buffer_bytes = 32768u;
-  client_config.socket_send_buffer_bytes = 32768u;
-  client_config.tls.ca_file = ca_path;
-  client_config.on_connect = flowie_client_transport_connect_complete;
-  client_config.on_ping = flowie_client_transport_ping_complete;
-  client_config.on_disconnect = flowie_client_transport_disconnect_complete;
-  client_config.on_error = flowie_client_transport_error;
-  client_config.user_data = &probe;
-  check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
-
-  connect.version = FLOWIE_MQTT_VERSION_5;
-  connect.clean_start = 1u;
-  connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
-  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
-  deadline = salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
-  while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
-
-  check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
-  check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
-              SALTS_ECONNABORTED);
-  check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
-  flow_mtls_test_server_join(&server);
-  check_equal(server.status, 0);
-  check_greater(server.request_size, (size_t)0u);
-  check_equal(server.request[0] >> 4u, FLOWIE_MQTT_PACKET_CONNECT);
-
-  flowie_mqtt_client_destroy(client);
-  tls_test_remove_file(ca_path);
+  /*
+   * The broker closes locally with SALTS_ECONNABORTED. That local reason is
+   * not transmitted to the remote peer; the Linux CNet transport observes
+   * the abrupt TCP/TLS peer close as ECONNRESET and preserves that terminal
+   * status for the MQTT client.
+   */
+  flowie_client_transport_case(
+      FLOWIE_MQTT_CLIENT_TRANSPORT_TLS, TF_NET_TRANSPORT_TLS,
+      FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE,
+      FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_ECONNRESET);
 }
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
@@ -375,7 +379,7 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                  FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS, SALTS_EPROTO);
   }
 
-  it("reports an abrupt TLS EOF after CONNECT as an aborted connection") {
+  it("reports an abrupt TLS peer close after CONNECT as a reset") {
     flowie_client_transport_abrupt_tls_close();
   }
 }
