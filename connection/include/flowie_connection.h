@@ -77,11 +77,38 @@ typedef struct flowie_server_config {
    CNET_STREAM_SOCKET_OPTIONS_INIT, CNET_LISTENER_OPTIONS_INIT,                                   \
    CNET_PACKET_ENDPOINT_CONFIG_INIT, NULL, 0u, 0u, 0u, 0u, {NULL, NULL, NULL, NULL, NULL}}
 
+/**
+ * Versioned pre-start execution policy. owner_count=1 preserves the historical
+ * single-owner runtime. owner_count>1 enables fixed owner-affine execution for
+ * TCP/TLS and delegates the same policy to CHTTP for WS/WSS.
+ *
+ * UDP/KCP do not claim multi-owner support: requesting owner_count>1 for a
+ * packet transport returns SALTS_ENOTSUP rather than silently falling back.
+ */
+typedef struct flowie_server_execution_options {
+  size_t size;
+  uint32_t version;
+  size_t owner_count;
+} flowie_server_execution_options;
+
+#define FLOWIE_SERVER_EXECUTION_OPTIONS_VERSION 1u
+#define FLOWIE_SERVER_EXECUTION_OPTIONS_INIT                                  \
+  {sizeof(flowie_server_execution_options),                                   \
+   FLOWIE_SERVER_EXECUTION_OPTIONS_VERSION, 1u}
+
 typedef struct flowie_server {
   void *impl;
 } flowie_server;
 
 int flowie_server_init(flowie_server *server, const flowie_server_config *config);
+
+/**
+ * Copies execution policy before start.
+ * owner_count must be in [1, stream.connection_capacity].
+ */
+int flowie_server_set_execution_options(
+    flowie_server *server, const flowie_server_execution_options *options);
+
 int flowie_server_start(flowie_server *server);
 int flowie_server_port(const flowie_server *server, uint16_t *out_port);
 
