@@ -249,7 +249,7 @@ struct flowie_endpoint_s {
   void *application_dispatch_ctx;
   tf_execution_t execution;
   flowie_server server;
-  flowie_endpoint_owner_lane_t owner_lane;
+  flowie_endpoint_owner_lane_t *owner_lanes;
   size_t owner_lane_count;
   vec_t clients;
   hash_map_t routes;
@@ -336,22 +336,35 @@ struct flowie_endpoint_s {
 
 static flowie_endpoint_owner_lane_t *
 flowie_endpoint_primary_owner(flowie_endpoint_t *endpoint) {
-  if (endpoint == NULL || endpoint->owner_lane_count != 1u ||
-      endpoint->owner_lane.endpoint != endpoint ||
-      endpoint->owner_lane.execution != &endpoint->execution ||
-      endpoint->owner_lane.server != &endpoint->server ||
-      endpoint->owner_lane.index != 0u)
+  flowie_endpoint_owner_lane_t *owner;
+  if (endpoint == NULL || endpoint->owner_lanes == NULL ||
+      endpoint->owner_lane_count == 0u)
     return NULL;
-  return &endpoint->owner_lane;
+  owner = &endpoint->owner_lanes[0];
+  if (owner->endpoint != endpoint ||
+      owner->execution != &endpoint->execution ||
+      owner->server != &endpoint->server ||
+      owner->index != 0u)
+    return NULL;
+  return owner;
 }
 
 static int flowie_owner_lane_valid(const flowie_endpoint_owner_lane_t *owner) {
-  return owner != NULL && owner->endpoint != NULL &&
-         owner == &owner->endpoint->owner_lane &&
-         owner->endpoint->owner_lane_count == 1u &&
-         owner->execution == &owner->endpoint->execution &&
-         owner->server == &owner->endpoint->server &&
-         owner->index == 0u;
+  flowie_endpoint_t *endpoint;
+  size_t index;
+  if (owner == NULL || (endpoint = owner->endpoint) == NULL ||
+      endpoint->owner_lanes == NULL || endpoint->owner_lane_count == 0u)
+    return 0;
+  if (owner < endpoint->owner_lanes ||
+      owner >= endpoint->owner_lanes + endpoint->owner_lane_count)
+    return 0;
+  index = (size_t)(owner - endpoint->owner_lanes);
+  if (owner->index != index) return 0;
+  if (endpoint->owner_lane_count == 1u)
+    return index == 0u &&
+           owner->execution == &endpoint->execution &&
+           owner->server == &endpoint->server;
+  return owner->execution != NULL && owner->server != NULL;
 }
 
 static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_request_t *request);
@@ -7077,6 +7090,9 @@ static void flowie_endpoint_shutdown(void *ctx) {
   tstr_freep(&endpoint->tls_client_ca_file);
   tstr_freep(&endpoint->security_realm_channel);
   tstr_freep(&endpoint->security_auth_method);
+  free(endpoint->owner_lanes);
+  endpoint->owner_lanes = NULL;
+  endpoint->owner_lane_count = 0u;
   free(endpoint);
 }
 
@@ -7380,12 +7396,18 @@ static int flowie_register_endpoint_internal(
     return SALTS_ENOTSUP;
   endpoint = (flowie_endpoint_t *)calloc(1, sizeof(*endpoint));
   if (!endpoint) return SALTS_ENOMEM;
-  endpoint->owner_lane = (flowie_endpoint_owner_lane_t){
+  endpoint->owner_lanes = (flowie_endpoint_owner_lane_t *)calloc(
+      1u, sizeof(*endpoint->owner_lanes));
+  if (endpoint->owner_lanes == NULL) {
+    free(endpoint);
+    return SALTS_ENOMEM;
+  }
+  endpoint->owner_lane_count = 1u;
+  endpoint->owner_lanes[0] = (flowie_endpoint_owner_lane_t){
       .endpoint = endpoint,
       .execution = &endpoint->execution,
       .server = &endpoint->server,
       .index = 0u};
-  endpoint->owner_lane_count = 1u;
   if (proxy) {
     rc = flowie_proxy_protocol_policy_create(proxy, &endpoint->proxy_policy);
     if (rc != SALTS_OK) {
