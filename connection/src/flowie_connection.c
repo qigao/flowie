@@ -4,6 +4,7 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,18 +36,27 @@ typedef struct flowie_command {
 } flowie_command;
 
 typedef struct flowie_stream_owner_lane flowie_stream_owner_lane;
+typedef struct flowie_stream_peer flowie_stream_peer;
 
-typedef struct flowie_stream_peer {
+typedef struct flowie_stream_admission {
+  cnet_accepted_stream accepted;
+  flowie_stream_peer *peer;
+} flowie_stream_admission;
+
+struct flowie_stream_peer {
   struct flowie_server_impl *owner;
   flowie_stream_owner_lane *runtime_owner;
   cnet_connection connection;
   cnet_stream_peer peer;
+  atomic_size_t route_owner;
+  atomic_uint_fast64_t route_connection;
+  atomic_uint route_generation;
   uint32_t generation;
   int close_status;
   bool used;
   bool opened;
   bool close_status_set;
-} flowie_stream_peer;
+};
 
 typedef struct flowie_packet_peer {
   uint32_t generation;
@@ -69,16 +79,26 @@ struct flowie_stream_owner_lane {
   struct flowie_server_impl *server;
   cnet_client stream;
   flowie_command *commands;
+  flowie_stream_admission *admissions;
   size_t command_head;
   size_t command_count;
   size_t command_payload_bytes_used;
+  size_t admission_head;
+  size_t admission_count;
+  size_t admission_capacity;
+  size_t connection_capacity;
+  atomic_size_t active_connections;
   salts_mutex_t mutex;
+  salts_mutex_t admission_mutex;
   salts_thread_t thread;
   size_t index;
   int terminal_status;
   bool sync_initialized;
+  bool admission_sync_initialized;
+  bool admission_open;
   bool stream_initialized;
   bool thread_started;
+  bool ready;
   bool worker_done;
 };
 
@@ -87,8 +107,12 @@ typedef struct flowie_server_impl {
   char *host;
   char *path;
   char *websocket_subprotocol;
+  flowie_server_execution_options execution;
   flowie_stream_owner_lane *stream_owners;
   size_t stream_owner_count;
+  size_t next_admission_owner;
+  size_t workers_ready;
+  size_t workers_done;
   cnet_listener listener;
   cnet_tls_server tls;
   cnet_packet_endpoint packet;
@@ -119,6 +143,32 @@ typedef struct flowie_server_impl {
   bool stop_requested;
   bool worker_done;
 } flowie_server_impl;
+
+static uint64_t flowie_stream_connection_pack(cnet_connection connection) {
+  return ((uint64_t)connection.generation << 32u) |
+         (uint64_t)connection.slot;
+}
+
+static cnet_connection flowie_stream_connection_unpack(uint64_t value) {
+  return (cnet_connection){.slot = (uint32_t)value,
+                           .generation = (uint32_t)(value >> 32u)};
+}
+
+static flowie_stream_owner_lane *flowie_stream_route_owner(
+    flowie_server_impl *server, flowie_connection connection) {
+  flowie_stream_peer *peer;
+  size_t route;
+  const size_t index = connection.slot != 0u
+                           ? (size_t)connection.slot - 1u
+                           : SIZE_MAX;
+  if (server == NULL || index >= server->config.stream.connection_capacity ||
+      server->stream_owners == NULL || server->stream_owner_count == 0u)
+    return NULL;
+  peer = &server->stream_peers[index];
+  route = atomic_load_explicit(&peer->route_owner, memory_order_acquire);
+  if (route == 0u || route > server->stream_owner_count) return NULL;
+  return &server->stream_owners[route - 1u];
+}
 
 static flowie_stream_owner_lane *flowie_stream_primary_owner(
     flowie_server_impl *server) {
