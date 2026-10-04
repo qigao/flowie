@@ -321,30 +321,86 @@ static bool flowie_handle_equal(flowie_connection left, flowie_connection right)
   return left.slot == right.slot && left.generation == right.generation;
 }
 
-static flowie_stream_peer *flowie_stream_peer_find(flowie_server_impl *server,
-                                                    flowie_connection connection) {
-  flowie_stream_peer *peer;
+static flowie_stream_peer *flowie_stream_peer_acquire(
+    flowie_server_impl *server) {
   size_t index;
-  if (server == NULL || connection.slot == 0u ||
-      connection.generation == 0u)
-    return NULL;
-  index = (size_t)connection.slot - 1u;
-  if (index >= server->config.stream.connection_capacity) return NULL;
-  peer = &server->stream_peers[index];
-  return peer->used && peer->generation == connection.generation ? peer : NULL;
-}
-
-static flowie_stream_peer *flowie_stream_peer_acquire(flowie_server_impl *server) {
-  size_t index;
+  flowie_stream_peer *selected = NULL;
+  if (server == NULL) return NULL;
+  salts_mutex_lock(&server->mutex);
   for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
     flowie_stream_peer *peer = &server->stream_peers[index];
-    const uint32_t generation = peer->generation;
-    if (peer->used || generation == UINT32_MAX) continue;
-    *peer = (flowie_stream_peer){
-        .owner = server, .generation = generation, .used = true};
-    return peer;
+    uint32_t generation;
+    if (peer->used || peer->generation == UINT32_MAX) continue;
+    generation = peer->generation + 1u;
+    if (generation == 0u) continue;
+    peer->owner = server;
+    peer->runtime_owner = NULL;
+    peer->connection = (cnet_connection){0};
+    peer->peer = (cnet_stream_peer){0};
+    peer->generation = generation;
+    peer->close_status = SALTS_OK;
+    peer->close_status_set = false;
+    peer->opened = false;
+    peer->used = true;
+    atomic_store_explicit(&peer->route_connection, 0u,
+                          memory_order_release);
+    atomic_store_explicit(&peer->route_generation, generation,
+                          memory_order_release);
+    selected = peer;
+    break;
   }
-  return NULL;
+  salts_mutex_unlock(&server->mutex);
+  return selected;
+}
+
+static void flowie_stream_peer_release_unopened(flowie_stream_peer *peer) {
+  flowie_server_impl *server;
+  if (peer == NULL || (server = peer->owner) == NULL) return;
+  atomic_store_explicit(&peer->route_connection, 0u, memory_order_release);
+  salts_mutex_lock(&server->mutex);
+  peer->runtime_owner = NULL;
+  peer->connection = (cnet_connection){0};
+  peer->peer = (cnet_stream_peer){0};
+  peer->close_status = SALTS_OK;
+  peer->close_status_set = false;
+  peer->opened = false;
+  peer->used = false;
+  salts_mutex_unlock(&server->mutex);
+}
+
+static int flowie_stream_owner_connection(
+    flowie_stream_owner_lane *owner, flowie_connection handle,
+    cnet_connection *out_connection, flowie_stream_peer **out_peer) {
+  flowie_server_impl *server;
+  flowie_stream_peer *peer;
+  size_t route;
+  uint32_t generation;
+  uint64_t packed;
+  const size_t index =
+      handle.slot != 0u ? (size_t)handle.slot - 1u : SIZE_MAX;
+  if (out_connection == NULL) return SALTS_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (out_peer != NULL) *out_peer = NULL;
+  if (owner == NULL || (server = owner->server) == NULL ||
+      index >= server->config.stream.connection_capacity ||
+      handle.generation == 0u)
+    return SALTS_EINVAL;
+  peer = &server->stream_peers[index];
+  route = atomic_load_explicit(&peer->route_owner, memory_order_acquire);
+  if (route != owner->index + 1u) return SALTS_ENOENT;
+  generation =
+      atomic_load_explicit(&peer->route_generation, memory_order_acquire);
+  if (generation != handle.generation) return SALTS_ENOENT;
+  packed =
+      atomic_load_explicit(&peer->route_connection, memory_order_acquire);
+  if (packed == 0u) return SALTS_ENOENT;
+  *out_connection = flowie_stream_connection_unpack(packed);
+  if (!cnet_connection_valid(*out_connection)) {
+    *out_connection = (cnet_connection){0};
+    return SALTS_EPROTO;
+  }
+  if (out_peer != NULL) *out_peer = peer;
+  return SALTS_OK;
 }
 
 static flowie_packet_peer *flowie_packet_peer_find(flowie_server_impl *server,
