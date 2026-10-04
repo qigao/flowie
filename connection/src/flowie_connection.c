@@ -230,6 +230,7 @@ static bool flowie_handle_equal(flowie_connection left, flowie_connection right)
 static flowie_stream_peer *flowie_stream_peer_find(flowie_server_impl *server,
                                                     flowie_connection connection) {
   size_t index;
+  if (connection.owner != 1u) return NULL;
   for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
     flowie_stream_peer *peer = &server->stream_peers[index];
     if (peer->used && peer->connection.slot == connection.slot &&
@@ -463,7 +464,8 @@ static int flowie_ws_open(void *user, chttp_websocket *websocket,
   salts_mutex_unlock(&server->mutex);
   if (peer == NULL) return SALTS_ENOBUFS;
   status = server->config.observer.on_open(
-      server->config.observer.user, (flowie_connection){(uint32_t)(index + 1u), peer->generation},
+      server->config.observer.user,
+      (flowie_connection){1u, (uint32_t)(index + 1u), peer->generation},
       &peer->peer);
   if (status != SALTS_OK) {
     salts_mutex_lock(&server->mutex);
@@ -490,7 +492,8 @@ static void flowie_ws_event(void *user, chttp_websocket *websocket,
   {
     flowie_ws_peer *peer = flowie_ws_peer_find_session(server, session);
     if (peer != NULL) {
-    handle = (flowie_connection){(uint32_t)(peer - server->ws_peers + 1u), peer->generation};
+    handle = (flowie_connection){
+        1u, (uint32_t)(peer - server->ws_peers + 1u), peer->generation};
       opened = peer->opened;
       close_status_set = peer->close_status_set;
       close_status = peer->close_status;
@@ -561,6 +564,8 @@ static int flowie_command_progress(flowie_server_impl *server) {
         peer->close_status_set = true;
         status = cnet_close(&server->stream, peer->connection);
       }
+    } else if (command.connection.owner != 1u) {
+      status = SALTS_ENOENT;
     } else if (command.kind == TF_NET_COMMAND_SEND) {
       status = cnet_packet_send(&server->packet,
                                 (cnet_packet_session){command.connection.slot,
