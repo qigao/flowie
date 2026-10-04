@@ -117,7 +117,7 @@ jobs:
           test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
-          test -f "$turbodb_root/lib/cmake/Orm/OrmConfig.cmake"
+          test -f "$turbodb_root/lib/cmake/TurboDB/TurboDBConfig.cmake"
           test -f "$flowmq_root/lib/cmake/FlowMQ/FlowMQConfig.cmake"
           test -f "$turboraft_root/lib/cmake/TurboRaft/TurboRaftConfig.cmake"
 
@@ -280,7 +280,7 @@ jobs:
             (Join-Path $salts "lib/cmake/Salts/SaltsConfig.cmake"),
             (Join-Path $utils "lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"),
             (Join-Path $chttp "lib/cmake/Chttp/ChttpConfig.cmake"),
-            (Join-Path $turbodb "lib/cmake/Orm/OrmConfig.cmake")
+            (Join-Path $turbodb "lib/cmake/TurboDB/TurboDBConfig.cmake")
           )) {
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "missing producer SDK file: $file" }
           }
@@ -433,7 +433,7 @@ jobs:
           test -f "$salts/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$utils/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp/lib/cmake/Chttp/ChttpConfig.cmake"
-          test -f "$turbodb/lib/cmake/Orm/OrmConfig.cmake"
+          test -f "$turbodb/lib/cmake/TurboDB/TurboDBConfig.cmake"
           {
             echo "SALTS_ROOT=$salts"
             echo "SALTS_UTILS_ROOT=$utils"
