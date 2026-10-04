@@ -70,6 +70,8 @@ typedef struct flowie_endpoint_owner_lane_s flowie_endpoint_owner_lane_t;
 
 struct flowie_endpoint_owner_lane_s {
   flowie_endpoint_t *endpoint;
+  tf_execution_t execution_storage;
+  flowie_server server_storage;
   tf_execution_t *execution;
   flowie_server *server;
   size_t index;
@@ -247,8 +249,6 @@ struct flowie_endpoint_s {
   void *ingress_dispatch_ctx;
   flowie_endpoint_core_message_fn application_dispatch;
   void *application_dispatch_ctx;
-  tf_execution_t execution;
-  flowie_server server;
   flowie_endpoint_owner_lane_t *owner_lanes;
   size_t owner_lane_count;
   vec_t clients;
@@ -342,8 +342,8 @@ flowie_endpoint_primary_owner(flowie_endpoint_t *endpoint) {
     return NULL;
   owner = &endpoint->owner_lanes[0];
   if (owner->endpoint != endpoint ||
-      owner->execution != &endpoint->execution ||
-      owner->server != &endpoint->server ||
+      owner->execution != &owner->execution_storage ||
+      owner->server != &owner->server_storage ||
       owner->index != 0u)
     return NULL;
   return owner;
@@ -360,11 +360,32 @@ static int flowie_owner_lane_valid(const flowie_endpoint_owner_lane_t *owner) {
     return 0;
   index = (size_t)(owner - endpoint->owner_lanes);
   if (owner->index != index) return 0;
-  if (endpoint->owner_lane_count == 1u)
-    return index == 0u &&
-           owner->execution == &endpoint->execution &&
-           owner->server == &endpoint->server;
-  return owner->execution != NULL && owner->server != NULL;
+  return owner->execution == &owner->execution_storage &&
+         owner->server == &owner->server_storage;
+}
+
+static tf_execution_t *flowie_endpoint_execution(flowie_endpoint_t *endpoint) {
+  flowie_endpoint_owner_lane_t *owner = flowie_endpoint_primary_owner(endpoint);
+  return owner != NULL ? owner->execution : NULL;
+}
+
+static flowie_server *flowie_endpoint_server(flowie_endpoint_t *endpoint) {
+  flowie_endpoint_owner_lane_t *owner = flowie_endpoint_primary_owner(endpoint);
+  return owner != NULL ? owner->server : NULL;
+}
+
+static tf_execution_t *
+flowie_connection_execution(flowie_endpoint_connection_t *connection) {
+  return connection != NULL && flowie_owner_lane_valid(connection->runtime_owner)
+             ? connection->runtime_owner->execution
+             : NULL;
+}
+
+static flowie_server *
+flowie_connection_server(flowie_endpoint_connection_t *connection) {
+  return connection != NULL && flowie_owner_lane_valid(connection->runtime_owner)
+             ? connection->runtime_owner->server
+             : NULL;
 }
 
 static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_request_t *request);
@@ -1773,7 +1794,7 @@ static void flowie_principal_deadline_apply(flowie_endpoint_t *endpoint,
   session->principal_deadline_ns = deadline_ns;
   session->principal_expires_at = session->principal.expires_at;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)salts_coro_executor_await_complete(flowie_endpoint_execution(endpoint)->executor,
                                              endpoint->expiry_await, SALTS_EINTR);
 }
 
@@ -1952,17 +1973,17 @@ static void flowie_expiry_task(coro_t *co, void *arg) {
 
 static int flowie_expiry_schedule(flowie_endpoint_t *endpoint) {
   int rc;
-  if (!endpoint || !endpoint->execution.executor) return SALTS_EINVAL;
+  if (!endpoint || !flowie_endpoint_execution(endpoint)->executor) return SALTS_EINVAL;
   if (endpoint->expiry_task_active) {
     if (endpoint->expiry_await_active)
-      (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+      (void)salts_coro_executor_await_complete(flowie_endpoint_execution(endpoint)->executor,
                                                endpoint->expiry_await, SALTS_EINTR);
     return SALTS_OK;
   }
   rc = flowie_task_try_begin(endpoint);
   if (rc != SALTS_OK) return rc;
   endpoint->expiry_task_active = 1;
-  rc = tf_execution_post(&endpoint->execution, flowie_expiry_task, endpoint);
+  rc = tf_execution_post(flowie_endpoint_execution(endpoint), flowie_expiry_task, endpoint);
   if (rc == SALTS_OK) return SALTS_OK;
   endpoint->expiry_task_active = 0;
   flowie_task_end(endpoint);
@@ -2398,10 +2419,10 @@ static void flowie_connection_close(flowie_endpoint_connection_t *connection, in
   connection->closing = 1;
   if (connection->send_budget_initialized) tf_io_budget_close(&connection->send_budget);
   if (connection->cluster_await_active)
-    (void)salts_coro_executor_await_complete(connection->endpoint->execution.executor,
+    (void)salts_coro_executor_await_complete(flowie_connection_execution(connection)->executor,
                                              connection->cluster_await, status);
   if (connection->network.slot != 0u)
-    (void)flowie_server_close(&connection->endpoint->server, connection->network, status);
+    (void)flowie_server_close(flowie_connection_server(connection), connection->network, status);
   flowie_connection_fail_reply_queue(connection);
 }
 
@@ -3535,7 +3556,7 @@ static int flowie_connection_reply_send_batch(flowie_endpoint_connection_t *conn
 
   if (!flowie_transport_retained_sg(connection->endpoint->transport)) {
     for (request_index = 0u; request_index < request_count; ++request_index) {
-      rc = flowie_server_send(&connection->endpoint->server, connection->network,
+      rc = flowie_server_send(flowie_connection_server(connection), connection->network,
                               flowie_reply_packet_data(requests[request_index]),
                               flowie_reply_packet_size(requests[request_index]));
       if (rc != SALTS_OK) return rc;
@@ -3552,7 +3573,7 @@ static int flowie_connection_reply_send_batch(flowie_endpoint_connection_t *conn
   for (request_index = 0u; request_index < request_count; ++request_index) {
     if (flowie_reply_request_make_retainable(requests[request_index]) != SALTS_OK) {
       for (request_index = 0u; request_index < request_count; ++request_index) {
-        rc = flowie_server_send(&connection->endpoint->server, connection->network,
+        rc = flowie_server_send(flowie_connection_server(connection), connection->network,
                                 flowie_reply_packet_data(requests[request_index]),
                                 flowie_reply_packet_size(requests[request_index]));
         if (rc != SALTS_OK) return rc;
@@ -3586,7 +3607,7 @@ static int flowie_connection_reply_send_batch(flowie_endpoint_connection_t *conn
     }
 
     if (slice_count == 0u) return SALTS_EPROTO;
-    rc = flowie_server_send_slicev(&connection->endpoint->server, connection->network, slices,
+    rc = flowie_server_send_slicev(flowie_connection_server(connection), connection->network, slices,
                                    slice_count);
     for (size_t i = 0u; i < slice_count; ++i) mem_slice_release(&slices[i]);
     if (rc != SALTS_OK) return rc;
@@ -3867,7 +3888,7 @@ static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_reques
     return rc;
   }
   if (!schedule) return SALTS_OK;
-  rc = tf_execution_post(&endpoint->execution, flowie_reply_drain_task, endpoint);
+  rc = tf_execution_post(flowie_endpoint_execution(endpoint), flowie_reply_drain_task, endpoint);
   if (rc == SALTS_OK) return SALTS_OK;
   flowie_fail_reply_queue(endpoint);
   salts_mutex_lock(&endpoint->send_queue_mutex);
@@ -4159,7 +4180,7 @@ static int flowie_connection_bind_session(flowie_endpoint_connection_t *connecti
   session->will_at_epoch_seconds = 0u;
   session->will_session_generation = 0u;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)salts_coro_executor_await_complete(flowie_endpoint_execution(endpoint)->executor,
                                              endpoint->expiry_await, SALTS_EINTR);
   return SALTS_OK;
 }
@@ -4928,7 +4949,7 @@ static int flowie_endpoint_prepare_disconnect(flowie_endpoint_connection_t *conn
   if (rc != SALTS_OK) return rc;
   connection->closing = 1;
   *stop_pump = 1;
-  return flowie_server_close(&connection->endpoint->server, connection->network,
+  return flowie_server_close(flowie_connection_server(connection), connection->network,
                              SALTS_ENOTCONN);
 }
 
@@ -5587,7 +5608,7 @@ static void flowie_connection_cluster_complete(void *ctx, int status,
   connection->cluster_status = status;
   connection->cluster_pending = 0;
   if (connection->cluster_await_active)
-    (void)salts_coro_executor_await_complete(connection->endpoint->execution.executor,
+    (void)salts_coro_executor_await_complete(flowie_connection_execution(connection)->executor,
                                              connection->cluster_await, SALTS_EINTR);
 }
 
@@ -6767,7 +6788,7 @@ static int flowie_listener_start_call(void *arg) {
   int network_started = 0;
   int rc;
   if (!endpoint) return SALTS_EINVAL;
-  if (endpoint->server.impl) return SALTS_EALREADY;
+  if (flowie_endpoint_server(endpoint)->impl) return SALTS_EALREADY;
   if (endpoint->max_connections > (SIZE_MAX - FLOWIE_PRIVATE_COROUTINE_AUXILIARY_HEADROOM) / 2u)
     return SALTS_ERANGE;
   io_capacity = endpoint->max_connections * 2u + FLOWIE_PRIVATE_COROUTINE_AUXILIARY_HEADROOM;
@@ -6873,14 +6894,14 @@ static int flowie_listener_start_call(void *arg) {
   } else {
     rc = SALTS_OK;
   }
-  if (rc == SALTS_OK) rc = flowie_server_init(&endpoint->server, &config);
+  if (rc == SALTS_OK) rc = flowie_server_init(flowie_endpoint_server(endpoint), &config);
   if (rc == SALTS_OK) {
-    rc = flowie_server_start(&endpoint->server);
+    rc = flowie_server_start(flowie_endpoint_server(endpoint));
     network_started = rc == SALTS_OK;
   }
   if (rc == SALTS_OK && endpoint->manage_sessions) rc = flowie_expiry_schedule(endpoint);
-  if (rc != SALTS_OK && endpoint->server.impl && !network_started)
-    (void)flowie_server_destroy(&endpoint->server);
+  if (rc != SALTS_OK && flowie_endpoint_server(endpoint)->impl && !network_started)
+    (void)flowie_server_destroy(flowie_endpoint_server(endpoint));
   return rc;
 }
 
@@ -6888,13 +6909,13 @@ static int flowie_listener_interrupt_call(void *arg) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)arg;
   if (!endpoint) return SALTS_EINVAL;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)salts_coro_executor_await_complete(flowie_endpoint_execution(endpoint)->executor,
                                              endpoint->expiry_await, SALTS_ESHUTDOWN);
   for (size_t i = 0u; i < vec_size(&endpoint->clients); ++i) {
     flowie_endpoint_connection_t *const *connection =
         (flowie_endpoint_connection_t *const *)vec_at_const(&endpoint->clients, i);
     if (connection && *connection && (*connection)->cluster_await_active)
-      (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+      (void)salts_coro_executor_await_complete(flowie_endpoint_execution(endpoint)->executor,
                                                (*connection)->cluster_await, SALTS_ESHUTDOWN);
   }
   return SALTS_OK;
@@ -6903,12 +6924,12 @@ static int flowie_listener_interrupt_call(void *arg) {
 static int flowie_network_stop(flowie_endpoint_t *endpoint) {
   int rc;
   int destroy_rc;
-  if (!endpoint || !endpoint->server.impl) return endpoint ? SALTS_OK : SALTS_EINVAL;
-  rc = flowie_server_stop(&endpoint->server, (uint32_t)(endpoint->timeout_ms
+  if (!endpoint || !flowie_endpoint_server(endpoint)->impl) return endpoint ? SALTS_OK : SALTS_EINVAL;
+  rc = flowie_server_stop(flowie_endpoint_server(endpoint), (uint32_t)(endpoint->timeout_ms
                                                             ? endpoint->timeout_ms
                                                             : FLOWIE_ENDPOINT_DEFAULT_TIMEOUT_MS));
   if (rc == SALTS_ETIMEDOUT) return rc;
-  destroy_rc = flowie_server_destroy(&endpoint->server);
+  destroy_rc = flowie_server_destroy(flowie_endpoint_server(endpoint));
   return rc == SALTS_OK ? destroy_rc : rc;
 }
 
@@ -6956,7 +6977,7 @@ static int flowie_management_apply(flowie_endpoint_t *endpoint, int kind, uint64
     return SALTS_EBUSY;
   call.endpoint = endpoint;
   call.kind = kind;
-  rc = tf_execution_call(&endpoint->execution, flowie_management_call, &call, timeout_ns);
+  rc = tf_execution_call(flowie_endpoint_execution(endpoint), flowie_management_call, &call, timeout_ns);
   atomic_store_explicit(&endpoint->last_management_status, rc, memory_order_release);
   atomic_store_explicit(&endpoint->management_command_active, 0, memory_order_release);
   return rc;
@@ -6982,9 +7003,9 @@ static int flowie_start_resources(flowie_endpoint_t *endpoint) {
   atomic_store_explicit(&endpoint->last_management_status, SALTS_OK, memory_order_release);
   atomic_store_explicit(&endpoint->started, 1, memory_order_release);
   tf_connection_transition(&endpoint->connection, FLOWIE_CONNECTION_CONNECTING, SALTS_ENOTCONN);
-  rc = tf_execution_start(&endpoint->execution);
+  rc = tf_execution_start(flowie_endpoint_execution(endpoint));
   if (rc == SALTS_OK) {
-    rc = tf_execution_call(&endpoint->execution, flowie_listener_start_call, endpoint,
+    rc = tf_execution_call(flowie_endpoint_execution(endpoint), flowie_listener_start_call, endpoint,
                            flowie_timeout_ns(endpoint));
   }
   if (rc == SALTS_OK) {
@@ -6996,11 +7017,11 @@ static int flowie_start_resources(flowie_endpoint_t *endpoint) {
   if (endpoint->send_budget_initialized) tf_io_budget_close(&endpoint->send_budget);
   flowie_fail_reply_queue(endpoint);
   tf_connection_transition(&endpoint->connection, FLOWIE_CONNECTION_FAILED, rc);
-  (void)tf_execution_call(&endpoint->execution, flowie_listener_interrupt_call, endpoint,
+  (void)tf_execution_call(flowie_endpoint_execution(endpoint), flowie_listener_interrupt_call, endpoint,
                           flowie_timeout_ns(endpoint));
   (void)flowie_network_stop(endpoint);
   flowie_wait_tasks(endpoint);
-  tf_execution_stop(&endpoint->execution);
+  tf_execution_stop(flowie_endpoint_execution(endpoint));
   atomic_store_explicit(&endpoint->quiesced, 0, memory_order_release);
   return rc;
 }
@@ -7010,12 +7031,12 @@ static void flowie_stop_resources(flowie_endpoint_t *endpoint) {
   tf_connection_transition(&endpoint->connection, FLOWIE_CONNECTION_CLOSING, SALTS_ESHUTDOWN);
   flowie_task_admission_close(endpoint);
   if (endpoint->send_budget_initialized) tf_io_budget_close(&endpoint->send_budget);
-  (void)tf_execution_call(&endpoint->execution, flowie_listener_interrupt_call, endpoint,
+  (void)tf_execution_call(flowie_endpoint_execution(endpoint), flowie_listener_interrupt_call, endpoint,
                           flowie_timeout_ns(endpoint));
   (void)flowie_network_stop(endpoint);
   flowie_fail_reply_queue(endpoint);
   flowie_wait_tasks(endpoint);
-  tf_execution_stop(&endpoint->execution);
+  tf_execution_stop(flowie_endpoint_execution(endpoint));
   atomic_store_explicit(&endpoint->quiesced, 0, memory_order_release);
   flowie_connection_usage(endpoint);
   tf_connection_transition(&endpoint->connection, FLOWIE_CONNECTION_STOPPED, SALTS_ESHUTDOWN);
@@ -7027,7 +7048,7 @@ static void flowie_endpoint_shutdown(void *ctx) {
   if (!endpoint) return;
   flowie_stop_resources(endpoint);
   (void)flowie_network_stop(endpoint);
-  tf_execution_destroy(&endpoint->execution);
+  tf_execution_destroy(flowie_endpoint_execution(endpoint));
   if (endpoint->task_sync_initialized) {
     flowie_task_group_destroy(&endpoint->tasks);
   }
@@ -7405,8 +7426,8 @@ static int flowie_register_endpoint_internal(
   endpoint->owner_lane_count = 1u;
   endpoint->owner_lanes[0] = (flowie_endpoint_owner_lane_t){
       .endpoint = endpoint,
-      .execution = &endpoint->execution,
-      .server = &endpoint->server,
+      .execution = &endpoint->owner_lanes[0].execution_storage,
+      .server = &endpoint->owner_lanes[0].server_storage,
       .index = 0u};
   if (proxy) {
     rc = flowie_proxy_protocol_policy_create(proxy, &endpoint->proxy_policy);
@@ -7605,7 +7626,7 @@ static int flowie_register_endpoint_internal(
     size_t coroutine_capacity = 0u;
     rc = flowie_private_coroutine_capacity(endpoint->max_connections, &coroutine_capacity);
     if (rc == SALTS_OK)
-      rc = tf_execution_init(&endpoint->execution, execution, coroutine_capacity,
+      rc = tf_execution_init(flowie_endpoint_execution(endpoint), execution, coroutine_capacity,
                              config->coroutine_stack_size);
   }
   if (rc != SALTS_OK) {
