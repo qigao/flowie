@@ -66,6 +66,14 @@ static atomic_uint_fast64_t flowie_next_endpoint_instance_id = 0u;
 typedef struct flowie_endpoint_s flowie_endpoint_t;
 typedef struct flowie_endpoint_session_s flowie_endpoint_session_t;
 typedef struct flowie_endpoint_connection_s flowie_endpoint_connection_t;
+typedef struct flowie_endpoint_owner_lane_s flowie_endpoint_owner_lane_t;
+
+struct flowie_endpoint_owner_lane_s {
+  flowie_endpoint_t *endpoint;
+  tf_execution_t *execution;
+  flowie_server *server;
+  size_t index;
+};
 
 typedef struct flowie_topic_alias_entry_s {
   uint16_t alias;
@@ -104,6 +112,7 @@ typedef struct flowie_reply_request_s {
 
 struct flowie_endpoint_connection_s {
   flowie_endpoint_t *endpoint;
+  flowie_endpoint_owner_lane_t *runtime_owner;
   flowie_connection network;
   flowie_ingress_t *ingress;
   char remote_address[TF_NET_PEER_TEXT_CAPACITY];
@@ -216,6 +225,7 @@ typedef struct flowie_retained_message_s {
 
 struct flowie_endpoint_session_s {
   flowie_session_owner_t *owner;
+  flowie_endpoint_owner_lane_t *runtime_owner;
   flowie_cluster_owner_token_t cluster_owner;
   flowie_endpoint_connection_t *connection;
   tstr client_id_owned;
@@ -239,6 +249,8 @@ struct flowie_endpoint_s {
   void *application_dispatch_ctx;
   tf_execution_t execution;
   flowie_server server;
+  flowie_endpoint_owner_lane_t owner_lane;
+  size_t owner_lane_count;
   vec_t clients;
   hash_map_t routes;
   vec_t sessions;
@@ -321,6 +333,26 @@ struct flowie_endpoint_s {
   int expiry_await_active;
   int expiry_task_active;
 };
+
+static flowie_endpoint_owner_lane_t *
+flowie_endpoint_primary_owner(flowie_endpoint_t *endpoint) {
+  if (endpoint == NULL || endpoint->owner_lane_count != 1u ||
+      endpoint->owner_lane.endpoint != endpoint ||
+      endpoint->owner_lane.execution != &endpoint->execution ||
+      endpoint->owner_lane.server != &endpoint->server ||
+      endpoint->owner_lane.index != 0u)
+    return NULL;
+  return &endpoint->owner_lane;
+}
+
+static int flowie_owner_lane_valid(const flowie_endpoint_owner_lane_t *owner) {
+  return owner != NULL && owner->endpoint != NULL &&
+         owner == &owner->endpoint->owner_lane &&
+         owner->endpoint->owner_lane_count == 1u &&
+         owner->execution == &owner->endpoint->execution &&
+         owner->server == &owner->endpoint->server &&
+         owner->index == 0u;
+}
 
 static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_request_t *request);
 static flowie_endpoint_connection_t *
@@ -1408,6 +1440,11 @@ static int flowie_session_create(flowie_endpoint_t *endpoint,
   if (endpoint->next_route_id == UINT64_MAX) return SALTS_ERANGE;
   session = (flowie_endpoint_session_t *)calloc(1u, sizeof(*session));
   if (!session) return SALTS_ENOMEM;
+  session->runtime_owner = flowie_endpoint_primary_owner(endpoint);
+  if (session->runtime_owner == NULL) {
+    free(session);
+    return SALTS_EPROTO;
+  }
   session->principal = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   session->security_resource = tstr_new_len("", 0u);
   if (!session->security_resource) {
@@ -2119,14 +2156,18 @@ static int flowie_connection_topic_aliases_init(flowie_endpoint_connection_t *co
   return SALTS_OK;
 }
 
-static int flowie_client_add(flowie_endpoint_t *endpoint, flowie_connection network,
+static int flowie_client_add(flowie_endpoint_t *endpoint,
+                             flowie_endpoint_owner_lane_t *runtime_owner,
+                             flowie_connection network,
                              const flowie_peer_info *peer,
                              flowie_endpoint_connection_t **out) {
   flowie_endpoint_connection_t *connection;
   tf_io_budget_config_t budget_config;
   uint64_t generation;
   int rc;
-  if (!endpoint || !peer || network.slot == 0u || network.generation == 0u || !out)
+  if (!endpoint || !flowie_owner_lane_valid(runtime_owner) ||
+      runtime_owner->endpoint != endpoint || !peer || network.slot == 0u ||
+      network.generation == 0u || !out)
     return SALTS_EINVAL;
   *out = NULL;
   if (vec_size(&endpoint->clients) >= endpoint->max_connections) return SALTS_ENOBUFS;
@@ -2134,6 +2175,7 @@ static int flowie_client_add(flowie_endpoint_t *endpoint, flowie_connection netw
   connection = (flowie_endpoint_connection_t *)calloc(1, sizeof(*connection));
   if (!connection) return SALTS_ENOMEM;
   connection->endpoint = endpoint;
+  connection->runtime_owner = runtime_owner;
   connection->network = network;
   rc = flowie_peer_format(peer, connection->remote_address,
                           sizeof(connection->remote_address));
@@ -4068,6 +4110,10 @@ static int flowie_connection_bind_session(flowie_endpoint_connection_t *connecti
   int rc;
   if (!connection || !ingress || !session || !route) return SALTS_EINVAL;
   endpoint = connection->endpoint;
+  if (!flowie_owner_lane_valid(connection->runtime_owner) ||
+      connection->runtime_owner->endpoint != endpoint ||
+      session->runtime_owner != connection->runtime_owner)
+    return SALTS_EBUSY;
   if (endpoint->security_enabled) {
     rc = flowie_principal_deadline_compute(&session->principal, &principal_deadline_ns);
     if (rc != SALTS_OK) return rc;
@@ -6353,12 +6399,14 @@ static int flowie_endpoint_session_prepare(void *ctx, flowie_ingress_t *ingress,
 
 typedef struct flowie_net_open_call_s {
   flowie_endpoint_t *endpoint;
+  flowie_endpoint_owner_lane_t *runtime_owner;
   flowie_connection network;
   flowie_peer_info peer;
 } flowie_net_open_call_t;
 
 typedef struct flowie_net_receive_call_s {
   flowie_endpoint_t *endpoint;
+  flowie_endpoint_owner_lane_t *runtime_owner;
   flowie_connection network;
   const void *data;
   size_t size;
@@ -6366,6 +6414,7 @@ typedef struct flowie_net_receive_call_s {
 
 typedef struct flowie_net_close_call_s {
   flowie_endpoint_t *endpoint;
+  flowie_endpoint_owner_lane_t *runtime_owner;
   flowie_connection network;
   int status;
 } flowie_net_close_call_t;
@@ -6416,13 +6465,17 @@ static int flowie_net_open_apply(void *arg) {
   flowie_endpoint_connection_t *connection = NULL;
   flowie_ingress_config_t config = FLOWIE_INGRESS_CONFIG_INIT;
   int status;
-  if (call == NULL || call->endpoint == NULL) return SALTS_EINVAL;
+  if (call == NULL || call->endpoint == NULL ||
+      !flowie_owner_lane_valid(call->runtime_owner) ||
+      call->runtime_owner->endpoint != call->endpoint)
+    return SALTS_EINVAL;
   if (!atomic_load_explicit(&call->endpoint->started, memory_order_acquire) ||
       atomic_load_explicit(&call->endpoint->quiesced, memory_order_acquire))
     return SALTS_ESHUTDOWN;
   status = flowie_task_try_begin(call->endpoint);
   if (status != SALTS_OK) return status;
-  status = flowie_client_add(call->endpoint, call->network, &call->peer, &connection);
+  status = flowie_client_add(call->endpoint, call->runtime_owner,
+                             call->network, &call->peer, &connection);
   if (status != SALTS_OK) {
     flowie_task_end(call->endpoint);
     return status;
@@ -6453,8 +6506,13 @@ static int flowie_net_receive_apply(void *arg) {
   if (call == NULL || (endpoint = call->endpoint) == NULL || call->data == NULL ||
       call->size == 0u)
     return SALTS_EINVAL;
+  if (!flowie_owner_lane_valid(call->runtime_owner) ||
+      call->runtime_owner->endpoint != endpoint)
+    return SALTS_EINVAL;
   connection = flowie_connection_find_network(endpoint, call->network);
-  if (connection == NULL || connection->ingress == NULL) return SALTS_ENOTCONN;
+  if (connection == NULL || connection->ingress == NULL ||
+      connection->runtime_owner != call->runtime_owner)
+    return SALTS_ENOTCONN;
   if (connection->send_drain_active) {
     status = flowie_connection_reply_drain(connection);
     if (status != SALTS_OK) return status;
@@ -6508,37 +6566,53 @@ static int flowie_net_receive_apply(void *arg) {
 static int flowie_net_close_apply(void *arg) {
   flowie_net_close_call_t *call = (flowie_net_close_call_t *)arg;
   flowie_endpoint_connection_t *connection;
-  if (call == NULL || call->endpoint == NULL) return SALTS_EINVAL;
+  if (call == NULL || call->endpoint == NULL ||
+      !flowie_owner_lane_valid(call->runtime_owner) ||
+      call->runtime_owner->endpoint != call->endpoint)
+    return SALTS_EINVAL;
   connection = flowie_connection_find_network(call->endpoint, call->network);
-  if (connection != NULL) flowie_net_connection_release(connection, call->status);
+  if (connection != NULL) {
+    if (connection->runtime_owner != call->runtime_owner) return SALTS_EBUSY;
+    flowie_net_connection_release(connection, call->status);
+  }
   return SALTS_OK;
 }
 
 static int flowie_net_open(void *user, flowie_connection network,
                            const flowie_peer_info *peer) {
-  flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
+  flowie_endpoint_owner_lane_t *runtime_owner =
+      (flowie_endpoint_owner_lane_t *)user;
+  flowie_endpoint_t *endpoint =
+      flowie_owner_lane_valid(runtime_owner) ? runtime_owner->endpoint : NULL;
   flowie_net_open_call_t call;
   if (endpoint == NULL || peer == NULL) return SALTS_EINVAL;
-  call = (flowie_net_open_call_t){endpoint, network, *peer};
-  return tf_execution_call(&endpoint->execution, flowie_net_open_apply, &call,
-                           flowie_timeout_ns(endpoint));
+  call = (flowie_net_open_call_t){endpoint, runtime_owner, network, *peer};
+  return tf_execution_call(runtime_owner->execution, flowie_net_open_apply,
+                           &call, flowie_timeout_ns(endpoint));
 }
 
 static int flowie_net_receive(void *user, flowie_connection network, const void *data,
                               size_t size) {
-  flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
-  flowie_net_receive_call_t call = {endpoint, network, data, size};
+  flowie_endpoint_owner_lane_t *runtime_owner =
+      (flowie_endpoint_owner_lane_t *)user;
+  flowie_endpoint_t *endpoint =
+      flowie_owner_lane_valid(runtime_owner) ? runtime_owner->endpoint : NULL;
+  flowie_net_receive_call_t call = {endpoint, runtime_owner, network, data, size};
   if (endpoint == NULL) return SALTS_EINVAL;
-  return tf_execution_call_coro(&endpoint->execution, flowie_net_receive_apply, &call,
+  return tf_execution_call_coro(runtime_owner->execution,
+                                flowie_net_receive_apply, &call,
                                 flowie_timeout_ns(endpoint));
 }
 
 static void flowie_net_close(void *user, flowie_connection network, int status) {
-  flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;
-  flowie_net_close_call_t call = {endpoint, network, status};
+  flowie_endpoint_owner_lane_t *runtime_owner =
+      (flowie_endpoint_owner_lane_t *)user;
+  flowie_endpoint_t *endpoint =
+      flowie_owner_lane_valid(runtime_owner) ? runtime_owner->endpoint : NULL;
+  flowie_net_close_call_t call = {endpoint, runtime_owner, network, status};
   if (endpoint != NULL)
-    (void)tf_execution_call(&endpoint->execution, flowie_net_close_apply, &call,
-                            flowie_timeout_ns(endpoint));
+    (void)tf_execution_call(runtime_owner->execution, flowie_net_close_apply,
+                            &call, flowie_timeout_ns(endpoint));
 }
 
 static int flowie_endpoint_consume(flowie_endpoint_t *endpoint, flowie_message_t *msg) {
@@ -6751,8 +6825,14 @@ static int flowie_listener_start_call(void *arg) {
   config.command_bytes_capacity = endpoint->network_command_bytes;
   config.max_message_bytes = endpoint->max_packet_size;
   config.poll_slice_ms = FLOWIE_NET_POLL_SLICE_MS;
-  config.observer = (flowie_observer){flowie_net_open, flowie_net_receive, flowie_net_close, NULL,
-                                      endpoint};
+  {
+    flowie_endpoint_owner_lane_t *runtime_owner =
+        flowie_endpoint_primary_owner(endpoint);
+    if (runtime_owner == NULL) return SALTS_EPROTO;
+    config.observer =
+        (flowie_observer){flowie_net_open, flowie_net_receive,
+                          flowie_net_close, NULL, runtime_owner};
+  }
 
   if (endpoint->transport == FLOWIE_TRANSPORT_TLS || endpoint->transport == FLOWIE_TRANSPORT_WSS) {
     tls_cert_file = getenv("SALTS_TLS_CERT_FILE");
@@ -7079,6 +7159,8 @@ static int flowie_endpoint_restore_session_row(void *ctx,
   }
   session = (flowie_endpoint_session_t *)calloc(1u, sizeof(*session));
   if (!session) { rc = SALTS_ENOMEM; goto fail; }
+  session->runtime_owner = flowie_endpoint_primary_owner(endpoint);
+  if (session->runtime_owner == NULL) { rc = SALTS_EPROTO; goto fail; }
   session->security_resource = tstr_new_len("", 0u);
   session->client_id_owned = tstr_new_len(row->client_id.data, row->client_id.size);
   if (!session->security_resource || !session->client_id_owned) { rc = SALTS_ENOMEM; goto fail; }
@@ -7298,6 +7380,12 @@ static int flowie_register_endpoint_internal(
     return SALTS_ENOTSUP;
   endpoint = (flowie_endpoint_t *)calloc(1, sizeof(*endpoint));
   if (!endpoint) return SALTS_ENOMEM;
+  endpoint->owner_lane = (flowie_endpoint_owner_lane_t){
+      .endpoint = endpoint,
+      .execution = &endpoint->execution,
+      .server = &endpoint->server,
+      .index = 0u};
+  endpoint->owner_lane_count = 1u;
   if (proxy) {
     rc = flowie_proxy_protocol_policy_create(proxy, &endpoint->proxy_policy);
     if (rc != SALTS_OK) {
