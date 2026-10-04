@@ -258,6 +258,12 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
         .key_file = key_path,
         .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
     server_config.tls = &tls_config;
+    server_config.stream.tls_io_buffer_bytes =
+        server_config.stream.receive_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES
+            ? CNET_TLS_MIN_IO_BUFFER_BYTES
+            : server_config.stream.receive_buffer_bytes;
+    server_config.stream.tls_handshake_timeout_ms =
+        FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   }
   server_config.backlog = 4u;
   server_config.path = "/mqtt";
