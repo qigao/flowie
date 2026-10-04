@@ -87,6 +87,12 @@ jobs:
           set -euo pipefail
           python3 tools/verify_connection_handle_boundary.py
 
+      - name: Verify owner-local stream runtime boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/verify_stream_owner_runtime.py
+
       - name: Restore released producer SDKs
         shell: bash
         env:
