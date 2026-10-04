@@ -22,6 +22,8 @@ typedef enum flowie_transport {
 } flowie_transport;
 
 typedef struct flowie_connection {
+  /** Internal fixed transport owner lane, one-based; zero is invalid. */
+  uint32_t owner;
   uint32_t slot;
   uint32_t generation;
 } flowie_connection;
