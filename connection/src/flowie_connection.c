@@ -310,8 +310,10 @@ static void flowie_stream_state(void *user, cnet_connection connection,
                                 cnet_connection_state state, const cnet_error *error) {
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
+  cnet_client *stream;
   int status = error == NULL ? SALTS_OK : error->status;
-  if (peer == NULL || (server = peer->owner) == NULL || !peer->used ||
+  if (peer == NULL || (server = peer->owner) == NULL ||
+      (stream = flowie_stream_peer_client(peer)) == NULL || !peer->used ||
       peer->connection.slot != connection.slot ||
       peer->connection.generation != connection.generation)
     return;
@@ -319,20 +321,20 @@ static void flowie_stream_state(void *user, cnet_connection connection,
     flowie_peer_info info = {.peer = peer->peer};
     if (server->config.transport == TF_NET_TRANSPORT_TLS) {
       const int certificate_status = cnet_tls_peer_certificate_sha256(
-          &server->stream, connection, info.peer_certificate_sha256);
+          stream, connection, info.peer_certificate_sha256);
       if (certificate_status != SALTS_OK && certificate_status != SALTS_ENOENT) {
-        (void)cnet_close(&server->stream, connection);
+        (void)cnet_close(stream, connection);
         return;
       }
     }
     peer->opened = true;
     status = server->config.observer.on_open(
         server->config.observer.user, flowie_stream_handle(peer), &info);
-    if (status == SALTS_OK) status = cnet_receive(&server->stream, connection, 1u);
+    if (status == SALTS_OK) status = cnet_receive(stream, connection, 1u);
     if (status != SALTS_OK) {
       peer->close_status = status;
       peer->close_status_set = true;
-      (void)cnet_close(&server->stream, connection);
+      (void)cnet_close(stream, connection);
     }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     const flowie_connection handle = flowie_stream_handle(peer);
@@ -351,6 +353,7 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
                                   const cnet_receive_view *view) {
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
+  cnet_client *stream;
   int status;
   if (peer == NULL || view == NULL || (server = peer->owner) == NULL ||
       !peer->used || peer->connection.slot != connection.slot ||
@@ -359,11 +362,11 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
   status = server->config.observer.on_receive(server->config.observer.user,
                                                flowie_stream_handle(peer), view->data,
                                                view->size);
-  if (status == SALTS_OK) status = cnet_receive(&server->stream, connection, 1u);
+  if (status == SALTS_OK) status = cnet_receive(stream, connection, 1u);
   if (status != SALTS_OK) {
     peer->close_status = status;
     peer->close_status_set = true;
-    (void)cnet_close(&server->stream, connection);
+    (void)cnet_close(stream, connection);
   }
 }
 
