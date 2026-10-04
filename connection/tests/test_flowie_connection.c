@@ -285,6 +285,111 @@ spec("Flowie CNet and CHTTP transport connection") {
   }
 
 
+  it("keeps a reused TCP peer slot generation-safe") {
+    static const unsigned char first_inbound[] = "first-inbound";
+    static const unsigned char second_inbound[] = "second-inbound";
+    static const unsigned char stale_outbound[] = "stale-outbound";
+    static const unsigned char live_outbound[] = "live-outbound";
+    flowie_connection_test_probe probe = {0};
+    flowie_server server = {0};
+    flowie_server_config config =
+        flowie_connection_test_config(&probe, TF_NET_TRANSPORT_TCP);
+    flowie_connection first = {0};
+    flowie_connection second = {0};
+    flowie_test_cnet_client_t *first_client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+    flowie_test_cnet_client_t *second_client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+    unsigned char received[sizeof(live_outbound)] = {0};
+    uint16_t port = 0u;
+
+    /* One public peer slot makes reuse deterministic. */
+    config.stream.connection_capacity = 1u;
+
+    check_equal(flowie_server_init(&server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&server), SALTS_OK);
+    check_equal(flowie_server_port(&server, &port), SALTS_OK);
+
+    first_client = flowie_test_cnet_connect(port);
+    check_true(first_client != FLOWIE_TEST_INVALID_CNET_CLIENT);
+    check_equal(flowie_test_cnet_send(first_client, first_inbound,
+                                      sizeof(first_inbound)),
+                SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.opened), SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.received), SALTS_OK);
+    first.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
+    first.generation =
+        atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    check_equal(first.slot, 1u);
+    check_true(first.generation != 0u);
+
+    check_equal(flowie_server_close(
+                    &server, first, FLOWIE_CONNECTION_TEST_CLOSE_STATUS),
+                SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.closed), SALTS_OK);
+    flowie_test_cnet_close(first_client);
+    first_client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+
+    atomic_store_explicit(&probe.opened, 0, memory_order_release);
+    atomic_store_explicit(&probe.received, 0, memory_order_release);
+    atomic_store_explicit(&probe.closed, 0, memory_order_release);
+    probe.payload_size = 0u;
+
+    second_client = flowie_test_cnet_connect(port);
+    check_true(second_client != FLOWIE_TEST_INVALID_CNET_CLIENT);
+    check_equal(flowie_test_cnet_send(second_client, second_inbound,
+                                      sizeof(second_inbound)),
+                SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.opened), SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.received), SALTS_OK);
+    second.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
+    second.generation =
+        atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    check_equal(second.slot, first.slot);
+    check_true(second.generation != first.generation);
+
+    /*
+     * Public send is bounded mailbox admission. A stale command may be
+     * admitted, but owner-side generation lookup must discard it rather than
+     * targeting the reused live peer.
+     */
+    check_equal(flowie_server_send(&server, first, stale_outbound,
+                                   sizeof(stale_outbound)),
+                SALTS_OK);
+    salts_sleep_ms(20u);
+
+    check_equal(flowie_server_send(&server, second, live_outbound,
+                                   sizeof(live_outbound)),
+                SALTS_OK);
+    check_equal(flowie_test_cnet_recv_exact(second_client, received,
+                                            sizeof(received)),
+                SALTS_OK);
+    check_equal(memcmp(received, live_outbound, sizeof(received)), 0);
+
+    /* A stale close is likewise consumed without closing the new generation. */
+    check_equal(flowie_server_close(
+                    &server, first, FLOWIE_CONNECTION_TEST_CLOSE_STATUS),
+                SALTS_OK);
+    salts_sleep_ms(20u);
+    memset(received, 0, sizeof(received));
+    check_equal(flowie_server_send(&server, second, live_outbound,
+                                   sizeof(live_outbound)),
+                SALTS_OK);
+    check_equal(flowie_test_cnet_recv_exact(second_client, received,
+                                            sizeof(received)),
+                SALTS_OK);
+    check_equal(memcmp(received, live_outbound, sizeof(received)), 0);
+
+    check_equal(flowie_server_close(
+                    &server, second, FLOWIE_CONNECTION_TEST_CLOSE_STATUS),
+                SALTS_OK);
+    check_equal(flowie_connection_test_wait(&probe.closed), SALTS_OK);
+
+    flowie_test_cnet_close(second_client);
+    check_equal(flowie_server_stop(&server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS),
+                SALTS_OK);
+    check_equal(flowie_server_destroy(&server), SALTS_OK);
+  }
+
+
   it("retains TCP scatter gather slices across the non-owner mailbox") {
     static const unsigned char inbound[] = "sg-inbound";
     static const unsigned char first[] = "sg-first";
