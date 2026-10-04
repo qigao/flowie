@@ -443,16 +443,25 @@ static void flowie_stream_state(void *user, cnet_connection connection,
       (void)cnet_close(stream, connection);
     }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    flowie_stream_owner_lane *runtime_owner = peer->runtime_owner;
     const flowie_connection handle = flowie_stream_handle(peer);
     const bool opened = peer->opened;
     if (peer->close_status_set) status = peer->close_status;
+    atomic_store_explicit(&peer->route_connection, 0u, memory_order_release);
+    if (runtime_owner != NULL)
+      atomic_fetch_sub_explicit(&runtime_owner->active_connections, 1u,
+                                memory_order_acq_rel);
+    salts_mutex_lock(&server->mutex);
     peer->used = false;
     peer->opened = false;
     peer->close_status_set = false;
     peer->connection = (cnet_connection){0};
     peer->peer = (cnet_stream_peer){0};
     peer->runtime_owner = NULL;
-    if (opened) server->config.observer.on_close(server->config.observer.user, handle, status);
+    salts_mutex_unlock(&server->mutex);
+    if (opened)
+      server->config.observer.on_close(server->config.observer.user, handle,
+                                       status);
   }
 }
 
