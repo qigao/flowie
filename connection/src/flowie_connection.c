@@ -27,6 +27,7 @@ typedef struct flowie_command {
   size_t data_offset;
   size_t reserved_bytes;
   size_t size;
+  mem_buffer_t *buffer;
   mem_slice_t *slices;
   size_t slice_count;
   int status;
@@ -102,14 +103,20 @@ static bool flowie_power_of_two(size_t value) {
   return value != 0u && (value & (value - 1u)) == 0u;
 }
 
-static void flowie_command_slices_release(flowie_command *command) {
+static void flowie_command_release(flowie_command *command) {
   size_t index;
-  if (command == NULL || command->slices == NULL) return;
-  for (index = 0u; index < command->slice_count; ++index)
-    mem_slice_release(&command->slices[index]);
-  free(command->slices);
-  command->slices = NULL;
-  command->slice_count = 0u;
+  if (command == NULL) return;
+  if (command->buffer != NULL) {
+    mem_buffer_release(command->buffer);
+    command->buffer = NULL;
+  }
+  if (command->slices != NULL) {
+    for (index = 0u; index < command->slice_count; ++index)
+      mem_slice_release(&command->slices[index]);
+    free(command->slices);
+    command->slices = NULL;
+    command->slice_count = 0u;
+  }
 }
 
 static int flowie_command_slice_clone(const mem_slice_t *source, mem_slice_t *out) {
@@ -531,14 +538,19 @@ static int flowie_command_progress(flowie_server_impl *server) {
       return SALTS_OK;
     }
     command = server->commands[server->command_head];
-    data = server->command_storage + command.data_offset;
+    data = command.reserved_bytes != 0u
+               ? server->command_storage + command.data_offset
+               : NULL;
     salts_mutex_unlock(&server->mutex);
     if (flowie_transport_stream(server->config.transport)) {
       flowie_stream_peer *peer = flowie_stream_peer_find(server, command.connection);
       if (peer == NULL)
         status = SALTS_ENOENT;
       else if (command.kind == TF_NET_COMMAND_SEND)
-        status = cnet_send(&server->stream, peer->connection, data, command.size);
+        status = command.buffer != NULL
+                     ? cnet_send_buffer(&server->stream, peer->connection,
+                                        command.buffer)
+                     : SALTS_EINVAL;
       else if (command.kind == TF_NET_COMMAND_SEND_SLICES)
         status = cnet_send_slicev(&server->stream, peer->connection, command.slices,
                                   command.slice_count);
@@ -577,7 +589,7 @@ static int flowie_command_progress(flowie_server_impl *server) {
       server->command_byte_tail = 0u;
     }
     salts_mutex_unlock(&server->mutex);
-    flowie_command_slices_release(&command);
+    flowie_command_release(&command);
   }
 }
 
@@ -678,7 +690,7 @@ static void flowie_impl_free(flowie_server_impl *server) {
   }
   if (server->commands != NULL) {
     for (index = 0u; index < server->config.command_capacity; ++index)
-      flowie_command_slices_release(&server->commands[index]);
+      flowie_command_release(&server->commands[index]);
   }
   free(server->command_storage);
   free(server->commands);
@@ -880,64 +892,96 @@ static int flowie_command_submit(flowie_server_impl *server, flowie_connection c
                                  flowie_command_kind kind, const void *data, size_t size,
                                  int close_status) {
   flowie_command *command;
-  unsigned char *storage;
-  size_t data_offset;
-  size_t reserved_bytes;
+  mem_buffer_t *buffer = NULL;
+  unsigned char *storage = NULL;
+  size_t data_offset = 0u;
+  size_t reserved_bytes = 0u;
   size_t tail;
-  if (!flowie_handle_valid(connection) || (data == NULL && size != 0u) ||
-      size > server->config.max_message_bytes)
+  bool retained_stream_send;
+  int status = SALTS_OK;
+  if (server == NULL || !flowie_handle_valid(connection) ||
+      (data == NULL && size != 0u) || size > server->config.max_message_bytes)
     return SALTS_EINVAL;
+
+  retained_stream_send =
+      kind == TF_NET_COMMAND_SEND &&
+      flowie_transport_stream(server->config.transport);
+  if (retained_stream_send) {
+    if (size == 0u || size > server->config.stream.max_send_bytes)
+      return SALTS_EMSGSIZE;
+    buffer = mem_get_buffer(mem_global(), size);
+    if (buffer == NULL) return SALTS_ENOMEM;
+    memcpy(mem_buffer_data(buffer), data, size);
+    mem_set_used(buffer, size);
+  }
+
   salts_mutex_lock(&server->mutex);
   if (!server->started || server->stop_requested || server->worker_done) {
-    salts_mutex_unlock(&server->mutex);
-    return SALTS_ESHUTDOWN;
+    status = SALTS_ESHUTDOWN;
+    goto unlock;
   }
-  if (server->command_count == server->config.command_capacity) {
-    salts_mutex_unlock(&server->mutex);
-    return SALTS_ENOBUFS;
+  if (server->command_count == server->config.command_capacity ||
+      size > server->config.command_bytes_capacity -
+                 server->command_payload_bytes_used) {
+    status = SALTS_ENOBUFS;
+    goto unlock;
   }
-  if (size > server->config.command_bytes_capacity - server->command_payload_bytes_used) {
-    salts_mutex_unlock(&server->mutex);
-    return SALTS_ENOBUFS;
-  }
-  if (size > server->config.command_bytes_capacity - server->command_bytes_used) {
-    salts_mutex_unlock(&server->mutex);
-    return SALTS_ENOBUFS;
-  }
-  data_offset = server->command_byte_tail;
-  reserved_bytes = size;
-  if (size != 0u && server->command_byte_tail >= server->command_byte_head &&
-      size > server->config.command_bytes_capacity - server->command_byte_tail) {
-    const size_t padding = server->config.command_bytes_capacity - server->command_byte_tail;
-    if (size > server->command_byte_head || padding >
-                                                server->config.command_bytes_capacity -
-                                                    server->command_bytes_used - size) {
-      salts_mutex_unlock(&server->mutex);
-      return SALTS_ENOBUFS;
+
+  if (size != 0u && !retained_stream_send) {
+    if (size > server->config.command_bytes_capacity -
+                   server->command_bytes_used) {
+      status = SALTS_ENOBUFS;
+      goto unlock;
     }
-    data_offset = 0u;
-    reserved_bytes += padding;
-  } else if (size != 0u && server->command_byte_tail < server->command_byte_head &&
-             size > server->command_byte_head - server->command_byte_tail) {
-    salts_mutex_unlock(&server->mutex);
-    return SALTS_ENOBUFS;
+    data_offset = server->command_byte_tail;
+    reserved_bytes = size;
+    if (server->command_byte_tail >= server->command_byte_head &&
+        size > server->config.command_bytes_capacity -
+                   server->command_byte_tail) {
+      const size_t padding =
+          server->config.command_bytes_capacity - server->command_byte_tail;
+      if (size > server->command_byte_head ||
+          padding > server->config.command_bytes_capacity -
+                        server->command_bytes_used - size) {
+        status = SALTS_ENOBUFS;
+        goto unlock;
+      }
+      data_offset = 0u;
+      reserved_bytes += padding;
+    } else if (server->command_byte_tail < server->command_byte_head &&
+               size > server->command_byte_head -
+                          server->command_byte_tail) {
+      status = SALTS_ENOBUFS;
+      goto unlock;
+    }
+    storage = server->command_storage + data_offset;
+    memcpy(storage, data, size);
   }
-  tail = (server->command_head + server->command_count) % server->config.command_capacity;
+
+  tail = (server->command_head + server->command_count) %
+         server->config.command_capacity;
   command = &server->commands[tail];
-  storage = server->command_storage + data_offset;
-  if (size != 0u) memcpy(storage, data, size);
   *command = (flowie_command){.connection = connection,
                               .data_offset = data_offset,
                               .reserved_bytes = reserved_bytes,
                               .size = size,
+                              .buffer = buffer,
                               .status = close_status,
                               .kind = kind};
+  buffer = NULL;
   ++server->command_count;
-  server->command_byte_tail =
-      (server->command_byte_tail + reserved_bytes) % server->config.command_bytes_capacity;
-  server->command_bytes_used += reserved_bytes;
+  if (reserved_bytes != 0u) {
+    server->command_byte_tail =
+        (server->command_byte_tail + reserved_bytes) %
+        server->config.command_bytes_capacity;
+    server->command_bytes_used += reserved_bytes;
+  }
   server->command_payload_bytes_used += size;
+
+unlock:
   salts_mutex_unlock(&server->mutex);
+  if (buffer != NULL) mem_buffer_release(buffer);
+  if (status != SALTS_OK) return status;
   if (flowie_transport_stream(server->config.transport))
     (void)cnet_client_wake(&server->stream);
   else
@@ -997,7 +1041,7 @@ static int flowie_command_submit_slicev(flowie_server_impl *server,
 fail:
   if (owned != NULL) {
     flowie_command cleanup = {.slices = owned, .slice_count = segment_count};
-    flowie_command_slices_release(&cleanup);
+    flowie_command_release(&cleanup);
   }
   return status;
 }

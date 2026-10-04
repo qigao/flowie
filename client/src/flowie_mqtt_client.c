@@ -873,7 +873,13 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
   client->network_send_ready = 0;
   client->network_status = SALTS_OK;
   {
-    int rc = cnet_send(&client->network, client->network_connection, client->send_buffer, written);
+    mem_buffer_t *buffer = mem_get_buffer(mem_global(), written);
+    int rc;
+    if (buffer == NULL) return SALTS_ENOMEM;
+    memcpy(mem_buffer_data(buffer), client->send_buffer, written);
+    mem_set_used(buffer, written);
+    rc = cnet_send_buffer(&client->network, client->network_connection, buffer);
+    mem_buffer_release(buffer);
     if (rc != SALTS_OK) return rc;
   }
   deadline_ms = salts_monotonic_ms() + client->timeout_ms;
