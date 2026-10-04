@@ -82,7 +82,7 @@ static int flowie_client_transport_open(void *user, flowie_connection connection
   flowie_client_transport_broker *broker = (flowie_client_transport_broker *)user;
   (void)connection;
   if (broker == NULL || peer == NULL) return SALTS_EINVAL;
-  atomic_fetch_add_explicit(&broker->opens, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&broker->opens, 1, memory_order_release);
   return SALTS_OK;
 }
 
@@ -105,7 +105,7 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
     if (status != SALTS_OK) return status;
     switch (broker->input[0] >> 4u) {
     case FLOWIE_MQTT_PACKET_CONNECT:
-      atomic_fetch_add_explicit(&broker->connects, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->connects, 1, memory_order_release);
       if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT)
         status = SALTS_OK;
       else if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET)
@@ -116,11 +116,11 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
         status = flowie_server_send(broker->server, connection, connack, sizeof(connack));
       break;
     case FLOWIE_MQTT_PACKET_PINGREQ:
-      atomic_fetch_add_explicit(&broker->pings, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->pings, 1, memory_order_release);
       status = flowie_server_send(broker->server, connection, pingresp, sizeof(pingresp));
       break;
     case FLOWIE_MQTT_PACKET_DISCONNECT:
-      atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_release);
       status = SALTS_OK;
       break;
     default: status = SALTS_EPROTO; break;
@@ -139,7 +139,7 @@ static void flowie_client_transport_close(void *user, flowie_connection connecti
   if (status != broker->expected_close_status &&
       status != SALTS_EOF && status != SALTS_ECONNRESET)
     atomic_store_explicit(&broker->error, status, memory_order_release);
-  atomic_fetch_add_explicit(&broker->closes, 1, memory_order_relaxed);
+  atomic_fetch_add_explicit(&broker->closes, 1, memory_order_release);
 }
 
 static void flowie_client_transport_connect_complete(
@@ -313,7 +313,8 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   if (connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE) {
     const uint64_t server_deadline =
         salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
-    while ((atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
+    while ((atomic_load_explicit(&broker.opens, memory_order_acquire) == 0 ||
+            atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
             atomic_load_explicit(&broker.closes, memory_order_acquire) == 0) &&
            salts_monotonic_ms() < server_deadline)
       salts_sleep_ms(1u);
@@ -324,11 +325,11 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
     check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
   }
   check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
-  check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed),
+  check_equal(atomic_load_explicit(&broker.opens, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire),
               expected_connect_status == SALTS_OK ? 1 : 0);
-  check_equal(atomic_load_explicit(&broker.disconnects, memory_order_relaxed),
+  check_equal(atomic_load_explicit(&broker.disconnects, memory_order_acquire),
               expected_connect_status == SALTS_OK ? 1 : 0);
   check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), SALTS_OK);
 
