@@ -395,7 +395,7 @@ static int flowie_stream_owner_connection(
       atomic_load_explicit(&peer->route_connection, memory_order_acquire);
   if (packed == 0u) return SALTS_ENOENT;
   *out_connection = flowie_stream_connection_unpack(packed);
-  if (!cnet_connection_valid(*out_connection)) {
+  if (out_connection->slot == 0u || out_connection->generation == 0u) {
     *out_connection = (cnet_connection){0};
     return SALTS_EPROTO;
   }
