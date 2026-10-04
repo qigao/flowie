@@ -1068,11 +1068,28 @@ int flowie_server_start(flowie_server *server) {
   if (impl->started) return SALTS_EALREADY;
   if (flowie_transport_websocket(impl->config.transport)) {
     status = chttp_server_start(&impl->websocket);
-    if (status == SALTS_OK) status = chttp_server_port(&impl->websocket, &impl->port);
+    if (status == SALTS_OK)
+      status = chttp_server_port(&impl->websocket, &impl->port);
+  } else if (flowie_transport_stream(impl->config.transport)) {
+    flowie_stream_owner_lane *owner = flowie_stream_primary_owner(impl);
+    if (owner == NULL || !owner->stream_initialized ||
+        owner->thread_started)
+      return SALTS_EPROTO;
+    owner->worker_done = false;
+    owner->terminal_status = SALTS_OK;
+    status = salts_thread_create(&owner->thread, flowie_stream_worker, owner);
+    if (status == SALTS_OK)
+      owner->thread_started = true;
+    else
+      status = SALTS_EIO;
   } else {
-    status = salts_thread_create(&impl->thread, flowie_worker, impl);
-    if (status == SALTS_OK) impl->thread_started = true;
-    else status = SALTS_EIO;
+    impl->worker_done = false;
+    impl->terminal_status = SALTS_OK;
+    status = salts_thread_create(&impl->thread, flowie_packet_worker, impl);
+    if (status == SALTS_OK)
+      impl->thread_started = true;
+    else
+      status = SALTS_EIO;
   }
   if (status == SALTS_OK) impl->started = true;
   return status;
@@ -1390,50 +1407,91 @@ int flowie_server_stop(flowie_server *server, uint32_t timeout_ms) {
   if (!impl->started) return SALTS_OK;
   if (flowie_transport_websocket(impl->config.transport)) {
     status = chttp_server_stop(&impl->websocket, timeout_ms);
-    if (status != SALTS_ETIMEDOUT && status != SALTS_EBUSY) impl->started = false;
+    if (status != SALTS_ETIMEDOUT && status != SALTS_EBUSY)
+      impl->started = false;
     return status;
   }
+
   started_ms = salts_monotonic_ms();
   salts_mutex_lock(&impl->mutex);
   impl->stop_requested = true;
   salts_mutex_unlock(&impl->mutex);
-  if (flowie_transport_stream(impl->config.transport))
-    (void)cnet_client_wake(&impl->stream);
-  else
+
+  if (flowie_transport_stream(impl->config.transport)) {
+    flowie_stream_owner_lane *owner = flowie_stream_primary_owner(impl);
+    if (owner == NULL || !owner->stream_initialized)
+      return SALTS_EPROTO;
+    (void)cnet_client_wake(&owner->stream);
+
+    salts_mutex_lock(&impl->mutex);
+    while (!owner->worker_done) {
+      const uint64_t elapsed = salts_monotonic_ms() - started_ms;
+      if (timeout_ms != 0u && elapsed >= timeout_ms) {
+        salts_mutex_unlock(&impl->mutex);
+        return SALTS_ETIMEDOUT;
+      }
+      if (timeout_ms == 0u)
+        salts_cond_wait(&impl->changed, &impl->mutex);
+      else if (salts_cond_timedwait(
+                   &impl->changed, &impl->mutex,
+                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != SALTS_OK &&
+               !owner->worker_done) {
+        salts_mutex_unlock(&impl->mutex);
+        return SALTS_ETIMEDOUT;
+      }
+    }
+    status = owner->terminal_status;
+    salts_mutex_unlock(&impl->mutex);
+
+    if (owner->thread_started) {
+      if (salts_thread_join(&owner->thread) != SALTS_OK) return SALTS_EIO;
+      salts_thread_destroy(&owner->thread);
+      owner->thread_started = false;
+    }
+  } else {
     (void)cnet_packet_wake(&impl->packet);
-  salts_mutex_lock(&impl->mutex);
-  while (!impl->worker_done) {
-    const uint64_t elapsed = salts_monotonic_ms() - started_ms;
-    if (timeout_ms != 0u && elapsed >= timeout_ms) {
-      salts_mutex_unlock(&impl->mutex);
-      return SALTS_ETIMEDOUT;
+    salts_mutex_lock(&impl->mutex);
+    while (!impl->worker_done) {
+      const uint64_t elapsed = salts_monotonic_ms() - started_ms;
+      if (timeout_ms != 0u && elapsed >= timeout_ms) {
+        salts_mutex_unlock(&impl->mutex);
+        return SALTS_ETIMEDOUT;
+      }
+      if (timeout_ms == 0u)
+        salts_cond_wait(&impl->changed, &impl->mutex);
+      else if (salts_cond_timedwait(
+                   &impl->changed, &impl->mutex,
+                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != SALTS_OK &&
+               !impl->worker_done) {
+        salts_mutex_unlock(&impl->mutex);
+        return SALTS_ETIMEDOUT;
+      }
     }
-    if (timeout_ms == 0u)
-      salts_cond_wait(&impl->changed, &impl->mutex);
-    else if (salts_cond_timedwait(&impl->changed, &impl->mutex,
-                                  ((uint64_t)timeout_ms - elapsed) * 1000000u) != SALTS_OK &&
-             !impl->worker_done) {
-      salts_mutex_unlock(&impl->mutex);
-      return SALTS_ETIMEDOUT;
+    status = impl->terminal_status;
+    salts_mutex_unlock(&impl->mutex);
+
+    if (impl->thread_started) {
+      if (salts_thread_join(&impl->thread) != SALTS_OK) return SALTS_EIO;
+      salts_thread_destroy(&impl->thread);
+      impl->thread_started = false;
     }
   }
-  status = impl->terminal_status;
-  salts_mutex_unlock(&impl->mutex);
-  if (impl->thread_started) {
-    if (salts_thread_join(&impl->thread) != SALTS_OK) return SALTS_EIO;
-    salts_thread_destroy(&impl->thread);
-    impl->thread_started = false;
-  }
+
   impl->started = false;
   return status;
 }
 
 int flowie_server_destroy(flowie_server *server) {
   flowie_server_impl *impl;
+  flowie_stream_owner_lane *owner;
   if (server == NULL) return SALTS_EINVAL;
   if (server->impl == NULL) return SALTS_OK;
   impl = (flowie_server_impl *)server->impl;
   if (impl->started || impl->thread_started) return SALTS_EBUSY;
+  owner = flowie_transport_stream(impl->config.transport)
+              ? flowie_stream_primary_owner(impl)
+              : NULL;
+  if (owner != NULL && owner->thread_started) return SALTS_EBUSY;
   flowie_impl_free(impl);
   server->impl = NULL;
   return SALTS_OK;
