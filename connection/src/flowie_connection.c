@@ -822,15 +822,40 @@ static void flowie_packet_worker(void *user) {
   flowie_packet_worker_finish(server, status);
 }
 
+static void flowie_stream_owner_destroy(
+    flowie_stream_owner_lane *owner,
+    size_t command_capacity) {
+  size_t index;
+  if (owner == NULL) return;
+  if (owner->stream_initialized) {
+    (void)cnet_client_stop(&owner->stream, 0u);
+    (void)cnet_client_destroy(&owner->stream);
+    owner->stream_initialized = false;
+  }
+  if (owner->commands != NULL) {
+    for (index = 0u; index < command_capacity; ++index)
+      flowie_command_release(&owner->commands[index]);
+  }
+  free(owner->commands);
+  owner->commands = NULL;
+  if (owner->sync_initialized) {
+    salts_mutex_destroy(&owner->mutex);
+    owner->sync_initialized = false;
+  }
+}
+
 static void flowie_impl_free(flowie_server_impl *server) {
   size_t index;
   if (server == NULL) return;
   if (server->listener_initialized) (void)cnet_listener_close(&server->listener);
   if (server->packet_initialized) (void)cnet_packet_endpoint_stop(&server->packet, 0u);
-  if (server->stream_initialized) (void)cnet_client_stop(&server->stream, 0u);
   if (server->websocket_initialized) (void)chttp_server_destroy(&server->websocket);
   if (server->packet_initialized) (void)cnet_packet_endpoint_destroy(&server->packet);
-  if (server->stream_initialized) (void)cnet_client_destroy(&server->stream);
+  if (server->stream_owners != NULL) {
+    for (index = 0u; index < server->stream_owner_count; ++index)
+      flowie_stream_owner_destroy(&server->stream_owners[index],
+                                  server->config.command_capacity);
+  }
   if (server->listener_initialized) (void)cnet_listener_destroy(&server->listener);
   if (server->tls_initialized) (void)cnet_tls_server_destroy(&server->tls);
   if (server->sync_initialized) {
@@ -843,6 +868,7 @@ static void flowie_impl_free(flowie_server_impl *server) {
   }
   free(server->command_storage);
   free(server->commands);
+  free(server->stream_owners);
   free(server->ws_peers);
   free(server->packet_peers);
   free(server->stream_peers);
@@ -857,12 +883,30 @@ static int flowie_init_stream(flowie_server_impl *server) {
                                    .host = server->host,
                                    .port = server->config.port,
                                    .backlog = server->config.backlog};
-  int status = cnet_client_init(&server->stream, &server->config.stream);
+  flowie_stream_owner_lane *owner;
+  int status;
+
+  server->stream_owners =
+      (flowie_stream_owner_lane *)calloc(1u, sizeof(*server->stream_owners));
+  if (server->stream_owners == NULL) return SALTS_ENOMEM;
+  server->stream_owner_count = 1u;
+  owner = &server->stream_owners[0];
+  owner->server = server;
+  owner->index = 0u;
+  owner->commands =
+      (flowie_command *)calloc(server->config.command_capacity,
+                               sizeof(*owner->commands));
+  if (owner->commands == NULL) return SALTS_ENOMEM;
+  salts_mutex_init(&owner->mutex);
+  owner->sync_initialized = true;
+
+  status = cnet_client_init(&owner->stream, &server->config.stream);
   if (status != SALTS_OK) return status;
-  server->stream_initialized = true;
-  status = cnet_client_set_stream_socket_options(&server->stream,
-                                                 &server->config.stream_socket_options);
+  owner->stream_initialized = true;
+  status = cnet_client_set_stream_socket_options(
+      &owner->stream, &server->config.stream_socket_options);
   if (status != SALTS_OK) return status;
+
   if (server->config.transport == TF_NET_TRANSPORT_TLS) {
     status = cnet_tls_server_init(&server->tls, server->config.tls);
     if (status != SALTS_OK) return status;
@@ -975,8 +1019,12 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
   impl->host = flowie_string_copy(config->host);
   impl->path = flowie_string_copy(config->path == NULL ? "/" : config->path);
   impl->websocket_subprotocol = flowie_string_copy(config->websocket_subprotocol);
-  impl->commands = (flowie_command *)calloc(config->command_capacity, sizeof(*impl->commands));
-  impl->command_storage = (unsigned char *)malloc(config->command_bytes_capacity);
+  if (flowie_transport_packet(config->transport)) {
+    impl->commands =
+        (flowie_command *)calloc(config->command_capacity, sizeof(*impl->commands));
+    impl->command_storage =
+        (unsigned char *)malloc(config->command_bytes_capacity);
+  }
   impl->stream_peers = (flowie_stream_peer *)calloc(config->stream.connection_capacity,
                                                      sizeof(*impl->stream_peers));
   impl->packet_peers = (flowie_packet_peer *)calloc(config->stream.connection_capacity,
@@ -985,8 +1033,9 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
       (flowie_ws_peer *)calloc(config->stream.connection_capacity, sizeof(*impl->ws_peers));
   if (impl->host == NULL || impl->path == NULL ||
       (config->websocket_subprotocol != NULL && impl->websocket_subprotocol == NULL) ||
-      impl->commands == NULL ||
-      impl->command_storage == NULL || impl->stream_peers == NULL || impl->packet_peers == NULL ||
+      (flowie_transport_packet(config->transport) &&
+       (impl->commands == NULL || impl->command_storage == NULL)) ||
+      impl->stream_peers == NULL || impl->packet_peers == NULL ||
       impl->ws_peers == NULL) {
     flowie_impl_free(impl);
     return SALTS_ENOMEM;
