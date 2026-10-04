@@ -36,8 +36,23 @@ for forbidden in (
             f"public stream handle regressed to owner-local CNet identity: {forbidden}"
         )
 
-if source.count("++peer->generation;") != 1:
-    raise SystemExit("stream peer generation must advance exactly at successful accept publication")
+accept_begin = source.index("static int flowie_stream_accept(")
+accept_end = source.index("static bool flowie_should_stop(", accept_begin)
+accept_block = source[accept_begin:accept_end]
+if accept_block.count("++peer->generation;") != 1:
+    raise SystemExit(
+        "stream peer generation must advance exactly once in successful accept publication"
+    )
+increment = accept_block.index("++peer->generation;")
+connection_publish = accept_block.index("peer->connection = connection;")
+if increment > connection_publish:
+    raise SystemExit(
+        "stream peer generation must publish before the accepted CNet handle becomes live"
+    )
+if accept_block.index("if (status != SALTS_OK)") > increment:
+    raise SystemExit(
+        "stream peer generation advanced before accept status was proven successful"
+    )
 
 print(
     "Flowie stream handle boundary verified: public {slot,generation} is Flowie-global, "
