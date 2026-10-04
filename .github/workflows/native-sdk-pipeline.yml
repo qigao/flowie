@@ -12,7 +12,7 @@ permissions:
   packages: read
 
 env:
-  SALTS_VERSION: "1.8.18"
+  SALTS_VERSION: "1.8.21"
   SALTS_UTILS_VERSION: "4.1.18"
   CHTTP_VERSION: "1.1.10"
   TURBODB_VERSION: "2.1.0"
@@ -578,7 +578,7 @@ jobs:
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie_client.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           unzip -p "$nupkg" "Flowie.Native.nuspec" > "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="Salts.Native" version="[1.8.18]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="Salts.Native" version="[1.8.21]"' "$RUNNER_TEMP/flowie.nuspec"
           grep -F 'id="SaltsUtils.Native" version="[4.1.18]"' "$RUNNER_TEMP/flowie.nuspec"
           grep -F 'id="CHttp.Native" version="[1.1.10]"' "$RUNNER_TEMP/flowie.nuspec"
           grep -F 'id="TurboDB.Native" version="[2.1.0]"' "$RUNNER_TEMP/flowie.nuspec"

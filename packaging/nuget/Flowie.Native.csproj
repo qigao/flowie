@@ -17,7 +17,7 @@
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Salts.Native" Version="[1.8.18]" />
+    <PackageReference Include="Salts.Native" Version="[1.8.21]" />
     <PackageReference Include="SaltsUtils.Native" Version="[4.1.18]" />
     <PackageReference Include="CHttp.Native" Version="[1.1.10]" />
     <PackageReference Include="TurboDB.Native" Version="[2.1.0]" />
