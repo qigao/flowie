@@ -2,6 +2,9 @@
 from pathlib import Path
 
 source = Path("flowie/src/flowie_endpoint.c").read_text(encoding="utf-8")
+connection_header = Path("connection/include/flowie_connection.h").read_text(
+    encoding="utf-8"
+)
 
 required = {
     "owner lane type": "struct flowie_endpoint_owner_lane_s {",
@@ -15,6 +18,12 @@ required = {
     "connection lane admission": "connection->runtime_owner = runtime_owner;",
     "session bind lane guard": "session->runtime_owner != connection->runtime_owner",
     "callback owner validation": "flowie_owner_lane_valid(call->runtime_owner)",
+    "lane owned execution storage": "tf_execution_t execution_storage;",
+    "lane owned server storage": "flowie_server server_storage;",
+    "lane execution self pointer": ".execution = &endpoint->owner_lanes[0].execution_storage,",
+    "lane server self pointer": ".server = &endpoint->owner_lanes[0].server_storage,",
+    "connection execution helper": "flowie_connection_execution(connection)",
+    "connection server helper": "flowie_connection_server(connection)",
     "lane storage release": "free(endpoint->owner_lanes);",
 }
 for label, marker in required.items():
@@ -36,10 +45,28 @@ if "flowie_endpoint_t *endpoint = (flowie_endpoint_t *)user;" in source:
     raise SystemExit("transport callback still recovers endpoint directly from observer user")
 
 if source.count("endpoint->owner_lane_count = 1u;") != 1:
-    raise SystemExit("Task 2 must still initialize exactly one runtime owner lane")
+    raise SystemExit("storage prerequisite must still initialize exactly one runtime owner lane")
+
+for forbidden in (
+    "tf_execution_t execution;\n  flowie_server server;",
+    "endpoint->execution",
+    "endpoint->server",
+    "connection->endpoint->execution",
+    "connection->endpoint->server",
+):
+    if forbidden in source:
+        raise SystemExit(f"runtime storage escaped owner lane: {forbidden}")
+
+if "uint32_t owner;" in connection_header:
+    raise SystemExit(
+        "public flowie_connection must not expose a runtime-owner/shard token"
+    )
+
+if "typedef struct flowie_connection {\n  uint32_t slot;\n  uint32_t generation;\n}" not in connection_header:
+    raise SystemExit("public flowie_connection ABI unexpectedly changed")
 
 print(
-    "Flowie endpoint owner-lane boundary verified: runtime-owner identity is array-backed, "
-    "lane 0 preserves current execution/server behavior, and transport/connection/session "
-    "ownership remains lane-scoped."
+    "Flowie endpoint owner-lane boundary verified: runtime owner storage is lane-owned, "
+    "lane 0 preserves current behavior, connection-scoped runtime calls stay on the bound "
+    "lane, and the public flowie_connection ABI exposes no owner/shard token."
 )
