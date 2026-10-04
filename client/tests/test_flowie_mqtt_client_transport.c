@@ -247,6 +247,7 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   server_config.transport = server_transport;
   server_config.host = "127.0.0.1";
   server_config.port = 0u;
+  server_config.stream = flowie_client_transport_network();
   if (server_transport == TF_NET_TRANSPORT_TLS ||
       server_transport == TF_NET_TRANSPORT_WSS) {
     check_equal(tls_test_write_server_files(cert_path, sizeof(cert_path),
@@ -269,7 +270,6 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   server_config.path = "/mqtt";
   server_config.websocket_subprotocol =
       server_transport == TF_NET_TRANSPORT_WS ? "mqtt" : NULL;
-  server_config.stream = flowie_client_transport_network();
   server_config.command_capacity = 8u;
   server_config.command_bytes_capacity = 8192u;
   server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
