@@ -75,6 +75,12 @@ jobs:
           test -n "$QIGAO_VCPKG_TOOLCHAIN_FILE"
           test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
 
+      - name: Verify endpoint owner-lane boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/verify_endpoint_owner_lane.py
+
       - name: Restore released producer SDKs
         shell: bash
         env:
