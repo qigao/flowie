@@ -345,6 +345,7 @@ static void flowie_stream_state(void *user, cnet_connection connection,
     peer->close_status_set = false;
     peer->connection = (cnet_connection){0};
     peer->peer = (cnet_stream_peer){0};
+    peer->runtime_owner = NULL;
     if (opened) server->config.observer.on_close(server->config.observer.user, handle, status);
   }
 }
@@ -356,7 +357,8 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
   cnet_client *stream;
   int status;
   if (peer == NULL || view == NULL || (server = peer->owner) == NULL ||
-      !peer->used || peer->connection.slot != connection.slot ||
+      (stream = flowie_stream_peer_client(peer)) == NULL || !peer->used ||
+      peer->connection.slot != connection.slot ||
       peer->connection.generation != connection.generation)
     return;
   status = server->config.observer.on_receive(server->config.observer.user,
