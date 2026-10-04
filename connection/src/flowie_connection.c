@@ -34,8 +34,11 @@ typedef struct flowie_command {
   flowie_command_kind kind;
 } flowie_command;
 
+typedef struct flowie_stream_owner_lane flowie_stream_owner_lane;
+
 typedef struct flowie_stream_peer {
   struct flowie_server_impl *owner;
+  flowie_stream_owner_lane *runtime_owner;
   cnet_connection connection;
   cnet_stream_peer peer;
   uint32_t generation;
@@ -62,12 +65,29 @@ typedef struct flowie_ws_peer {
   bool close_status_set;
 } flowie_ws_peer;
 
+struct flowie_stream_owner_lane {
+  struct flowie_server_impl *server;
+  cnet_client stream;
+  flowie_command *commands;
+  size_t command_head;
+  size_t command_count;
+  size_t command_payload_bytes_used;
+  salts_mutex_t mutex;
+  salts_thread_t thread;
+  size_t index;
+  int terminal_status;
+  bool sync_initialized;
+  bool thread_started;
+  bool worker_done;
+};
+
 typedef struct flowie_server_impl {
   flowie_server_config config;
   char *host;
   char *path;
   char *websocket_subprotocol;
-  cnet_client stream;
+  flowie_stream_owner_lane *stream_owners;
+  size_t stream_owner_count;
   cnet_listener listener;
   cnet_tls_server tls;
   cnet_packet_endpoint packet;
@@ -99,6 +119,22 @@ typedef struct flowie_server_impl {
   bool stop_requested;
   bool worker_done;
 } flowie_server_impl;
+
+static flowie_stream_owner_lane *flowie_stream_primary_owner(
+    flowie_server_impl *server) {
+  flowie_stream_owner_lane *owner;
+  if (server == NULL || server->stream_owners == NULL ||
+      server->stream_owner_count != 1u)
+    return NULL;
+  owner = &server->stream_owners[0];
+  return owner->server == server && owner->index == 0u ? owner : NULL;
+}
+
+static cnet_client *flowie_stream_peer_client(flowie_stream_peer *peer) {
+  return peer != NULL && peer->runtime_owner != NULL
+             ? &peer->runtime_owner->stream
+             : NULL;
+}
 
 static bool flowie_power_of_two(size_t value) {
   return value != 0u && (value & (value - 1u)) == 0u;
