@@ -35,6 +35,7 @@ typedef struct flowie_client_transport_broker {
   atomic_int closes;
   atomic_int error;
   flowie_client_transport_connack_mode connack_mode;
+  int expected_close_status;
 } flowie_client_transport_broker;
 
 typedef struct flowie_client_transport_probe {
@@ -135,7 +136,8 @@ static void flowie_client_transport_close(void *user, flowie_connection connecti
   flowie_client_transport_broker *broker = (flowie_client_transport_broker *)user;
   (void)connection;
   if (broker == NULL) return;
-  if (status != SALTS_OK && status != SALTS_EOF && status != SALTS_ECONNRESET)
+  if (status != broker->expected_close_status &&
+      status != SALTS_EOF && status != SALTS_ECONNRESET)
     atomic_store_explicit(&broker->error, status, memory_order_release);
   atomic_fetch_add_explicit(&broker->closes, 1, memory_order_relaxed);
 }
@@ -237,6 +239,10 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   atomic_init(&probe.errors, 0);
   broker.server = &server;
   broker.connack_mode = connack_mode;
+  broker.expected_close_status =
+      connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE
+          ? SALTS_ECONNABORTED
+          : SALTS_OK;
 
   server_config.transport = server_transport;
   server_config.host = "127.0.0.1";
