@@ -317,7 +317,10 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
   int status;
-  if (peer == NULL || view == NULL || (server = peer->owner) == NULL || !peer->used) return;
+  if (peer == NULL || view == NULL || (server = peer->owner) == NULL ||
+      !peer->used || peer->connection.slot != connection.slot ||
+      peer->connection.generation != connection.generation)
+    return;
   status = server->config.observer.on_receive(server->config.observer.user,
                                                flowie_stream_handle(peer), view->data,
                                                view->size);
@@ -331,7 +334,10 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
 
 static void flowie_stream_send(void *user, cnet_connection connection, size_t size) {
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
-  if (peer == NULL || peer->owner == NULL || !peer->used) return;
+  if (peer == NULL || peer->owner == NULL || !peer->used ||
+      peer->connection.slot != connection.slot ||
+      peer->connection.generation != connection.generation)
+    return;
   if (peer->owner->config.observer.on_send != NULL)
     peer->owner->config.observer.on_send(peer->owner->config.observer.user,
                                          flowie_stream_handle(peer), size);
