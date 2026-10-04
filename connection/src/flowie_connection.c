@@ -210,19 +210,21 @@ static bool flowie_token_valid(const char *value) {
 }
 
 static flowie_connection flowie_stream_handle(cnet_connection connection) {
-  return (flowie_connection){connection.slot, connection.generation};
+  return (flowie_connection){1u, connection.slot, connection.generation};
 }
 
 static flowie_connection flowie_packet_handle(cnet_packet_session session) {
-  return (flowie_connection){session.slot, session.generation};
+  return (flowie_connection){1u, session.slot, session.generation};
 }
 
 static bool flowie_handle_valid(flowie_connection connection) {
-  return connection.slot != 0u && connection.generation != 0u;
+  return connection.owner != 0u && connection.slot != 0u &&
+         connection.generation != 0u;
 }
 
 static bool flowie_handle_equal(flowie_connection left, flowie_connection right) {
-  return left.slot == right.slot && left.generation == right.generation;
+  return left.owner == right.owner && left.slot == right.slot &&
+         left.generation == right.generation;
 }
 
 static flowie_stream_peer *flowie_stream_peer_find(flowie_server_impl *server,
