@@ -77,6 +77,7 @@ struct flowie_stream_owner_lane {
   size_t index;
   int terminal_status;
   bool sync_initialized;
+  bool stream_initialized;
   bool thread_started;
   bool worker_done;
 };
@@ -109,7 +110,6 @@ typedef struct flowie_server_impl {
   uint16_t port;
   int terminal_status;
   bool sync_initialized;
-  bool stream_initialized;
   bool listener_initialized;
   bool tls_initialized;
   bool packet_initialized;
