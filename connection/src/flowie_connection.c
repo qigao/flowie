@@ -34,7 +34,7 @@ typedef struct flowie_command {
   flowie_command_kind kind;
 } flowie_command;
 
-typedef typedef struct flowie_stream_owner_lane flowie_stream_owner_lane;
+typedef struct flowie_stream_owner_lane flowie_stream_owner_lane;
 
 typedef struct flowie_stream_peer {
   struct flowie_server_impl *owner;
