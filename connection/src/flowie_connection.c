@@ -737,7 +737,21 @@ static bool flowie_should_stop(flowie_server_impl *server) {
   return stop;
 }
 
-static void flowie_worker_finish(flowie_server_impl *server, int status) {
+static void flowie_stream_owner_finish(flowie_stream_owner_lane *owner,
+                                       int status) {
+  flowie_server_impl *server;
+  if (owner == NULL || (server = owner->server) == NULL) return;
+  salts_mutex_lock(&server->mutex);
+  owner->terminal_status = status;
+  owner->worker_done = true;
+  if (server->terminal_status == SALTS_OK && status != SALTS_OK)
+    server->terminal_status = status;
+  salts_cond_broadcast(&server->changed);
+  salts_mutex_unlock(&server->mutex);
+}
+
+static void flowie_packet_worker_finish(flowie_server_impl *server,
+                                        int status) {
   salts_mutex_lock(&server->mutex);
   server->terminal_status = status;
   server->worker_done = true;
@@ -745,41 +759,67 @@ static void flowie_worker_finish(flowie_server_impl *server, int status) {
   salts_mutex_unlock(&server->mutex);
 }
 
-static void flowie_worker(void *user) {
+static void flowie_stream_worker(void *user) {
+  flowie_stream_owner_lane *owner = (flowie_stream_owner_lane *)user;
+  flowie_server_impl *server =
+      owner != NULL ? owner->server : NULL;
+  int status = SALTS_OK;
+  if (server == NULL || owner->index != 0u || !owner->stream_initialized) {
+    flowie_stream_owner_finish(owner, SALTS_EINVAL);
+    return;
+  }
+
+  while (!flowie_should_stop(server)) {
+    size_t events = 0u;
+    int ready = 0;
+    status = flowie_stream_command_progress(owner);
+    if (status != SALTS_OK) break;
+    status = cnet_listener_wait(&server->listener, 0u, &ready);
+    if (status == SALTS_OK && ready)
+      status = flowie_stream_accept(server, owner);
+    if (status == SALTS_OK)
+      status = cnet_client_poll(&owner->stream,
+                                server->config.poll_slice_ms, &events);
+    if (status != SALTS_OK) break;
+  }
+
+  if (server->listener_initialized)
+    (void)cnet_listener_close(&server->listener);
+  {
+    int stop_status;
+    do {
+      stop_status = cnet_client_stop(
+          &owner->stream, server->config.poll_slice_ms);
+    } while (stop_status == SALTS_ETIMEDOUT);
+    if (status == SALTS_OK && stop_status != SALTS_OK &&
+        stop_status != SALTS_EALREADY)
+      status = stop_status;
+  }
+  flowie_stream_owner_finish(owner, status);
+}
+
+static void flowie_packet_worker(void *user) {
   flowie_server_impl *server = (flowie_server_impl *)user;
   int status = SALTS_OK;
   while (!flowie_should_stop(server)) {
     size_t events = 0u;
-    status = flowie_command_progress(server);
+    status = flowie_packet_command_progress(server);
     if (status != SALTS_OK) break;
-    if (flowie_transport_stream(server->config.transport)) {
-      int ready = 0;
-      status = cnet_listener_wait(&server->listener, 0u, &ready);
-      if (status == SALTS_OK && ready) status = flowie_stream_accept(server);
-      if (status == SALTS_OK)
-        status = cnet_client_poll(&server->stream, server->config.poll_slice_ms, &events);
-    } else {
-      status = cnet_packet_poll(&server->packet, server->config.poll_slice_ms, &events);
-    }
+    status = cnet_packet_poll(&server->packet,
+                              server->config.poll_slice_ms, &events);
     if (status != SALTS_OK) break;
   }
-  if (flowie_transport_stream(server->config.transport)) {
-    int stop_status;
-    if (server->listener_initialized) (void)cnet_listener_close(&server->listener);
-    do {
-      stop_status = cnet_client_stop(&server->stream, server->config.poll_slice_ms);
-    } while (stop_status == SALTS_ETIMEDOUT);
-    if (status == SALTS_OK && stop_status != SALTS_OK && stop_status != SALTS_EALREADY)
-      status = stop_status;
-  } else {
+  {
     int stop_status;
     do {
-      stop_status = cnet_packet_endpoint_stop(&server->packet, server->config.poll_slice_ms);
+      stop_status = cnet_packet_endpoint_stop(
+          &server->packet, server->config.poll_slice_ms);
     } while (stop_status == SALTS_ETIMEDOUT);
-    if (status == SALTS_OK && stop_status != SALTS_OK && stop_status != SALTS_EALREADY)
+    if (status == SALTS_OK && stop_status != SALTS_OK &&
+        stop_status != SALTS_EALREADY)
       status = stop_status;
   }
-  flowie_worker_finish(server, status);
+  flowie_packet_worker_finish(server, status);
 }
 
 static void flowie_impl_free(flowie_server_impl *server) {
