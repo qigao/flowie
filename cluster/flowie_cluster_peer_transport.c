@@ -445,12 +445,18 @@ static void flowie_cluster_peer_link_control_frame(flowie_cluster_peer_link_t *l
 
 static int flowie_cluster_peer_link_send_bytes(flowie_cluster_peer_link_t *link, const void *data,
                                                size_t size) {
+  mem_buffer_t *buffer;
   int rc;
   if (link == NULL || link->network == NULL || data == NULL || size == 0u)
     return SALTS_EINVAL;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
   link->send_pending = 1;
   link->expected_send_size = size;
-  rc = cnet_send(link->network, link->connection, data, size);
+  rc = cnet_send_buffer(link->network, link->connection, buffer);
+  mem_buffer_release(buffer);
   if (rc != SALTS_OK) {
     link->send_pending = 0;
     link->expected_send_size = 0u;
