@@ -17,6 +17,7 @@
 #define FLOWIE_CONNECTION_TEST_CLOSE_STATUS SALTS_ECANCELED
 
 typedef struct flowie_connection_test_probe {
+  atomic_uint owner;
   atomic_uint slot;
   atomic_uint generation;
   atomic_int opened;
@@ -72,6 +73,7 @@ static int flowie_connection_test_open(void *user, flowie_connection connection,
                                  const flowie_peer_info *peer) {
   flowie_connection_test_probe *probe = (flowie_connection_test_probe *)user;
   if (probe == NULL || peer == NULL) return SALTS_EINVAL;
+  atomic_store_explicit(&probe->owner, connection.owner, memory_order_relaxed);
   atomic_store_explicit(&probe->slot, connection.slot, memory_order_relaxed);
   atomic_store_explicit(&probe->generation, connection.generation, memory_order_relaxed);
   atomic_store_explicit(&probe->opened, 1, memory_order_release);
@@ -202,8 +204,10 @@ static void flowie_connection_test_packet_round_trip(flowie_transport transport,
   check_equal(server_probe.payload_size, sizeof(inbound));
   check_equal(memcmp(server_probe.payload, inbound, sizeof(inbound)), 0);
 
+  connection.owner = atomic_load_explicit(&server_probe.owner, memory_order_relaxed);
   connection.slot = atomic_load_explicit(&server_probe.slot, memory_order_relaxed);
   connection.generation = atomic_load_explicit(&server_probe.generation, memory_order_relaxed);
+  check_equal(connection.owner, 1u);
   check_equal(flowie_server_send(&server, connection, outbound, sizeof(outbound)), SALTS_OK);
   for (attempts = 0u; attempts < FLOWIE_CONNECTION_TEST_TIMEOUT_MS &&
                       atomic_load_explicit(&client_probe.received, memory_order_acquire) == 0;
@@ -266,8 +270,10 @@ spec("Flowie CNet and CHTTP transport connection") {
     check_equal(probe.payload_size, sizeof(inbound));
     check_equal(memcmp(probe.payload, inbound, sizeof(inbound)), 0);
 
+    connection.owner = atomic_load_explicit(&probe.owner, memory_order_relaxed);
     connection.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
     connection.generation = atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    check_equal(connection.owner, 1u);
     check_equal(flowie_server_send(&server, connection, outbound, sizeof(outbound)), SALTS_OK);
     check_equal(flowie_test_cnet_recv_exact(client, received, sizeof(received)), SALTS_OK);
     check_equal(memcmp(received, outbound, sizeof(outbound)), 0);
@@ -310,8 +316,10 @@ spec("Flowie CNet and CHTTP transport connection") {
     check_equal(flowie_connection_test_wait(&probe.opened), SALTS_OK);
     check_equal(flowie_connection_test_wait(&probe.received), SALTS_OK);
 
+    connection.owner = atomic_load_explicit(&probe.owner, memory_order_relaxed);
     connection.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
     connection.generation = atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    check_equal(connection.owner, 1u);
     first_buffer = mem_get_buffer(mem_global(), sizeof(first));
     second_buffer = mem_get_buffer(mem_global(), sizeof(second));
     check_not_null(first_buffer);
@@ -395,8 +403,10 @@ spec("Flowie CNet and CHTTP transport connection") {
     check_equal(probe.payload_size, sizeof(inbound));
     check_equal(memcmp(probe.payload, inbound, sizeof(inbound)), 0);
 
+    connection.owner = atomic_load_explicit(&probe.owner, memory_order_relaxed);
     connection.slot = atomic_load_explicit(&probe.slot, memory_order_relaxed);
     connection.generation = atomic_load_explicit(&probe.generation, memory_order_relaxed);
+    check_equal(connection.owner, 1u);
     check_equal(flowie_server_send(&server, connection, outbound, sizeof(outbound)), SALTS_OK);
     check_equal(chttp_websocket_client_receive(&client, FLOWIE_CONNECTION_TEST_TIMEOUT_MS, &event),
                 SALTS_OK);
