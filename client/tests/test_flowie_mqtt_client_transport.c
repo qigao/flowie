@@ -304,6 +304,14 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
               expected_connect_status);
+  if (connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE) {
+    const uint64_t server_deadline =
+        salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+    while ((atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
+            atomic_load_explicit(&broker.closes, memory_order_acquire) == 0) &&
+           salts_monotonic_ms() < server_deadline)
+      salts_sleep_ms(1u);
+  }
   if (expected_connect_status == SALTS_OK) {
     check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
