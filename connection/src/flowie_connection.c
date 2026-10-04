@@ -252,9 +252,8 @@ static flowie_stream_peer *flowie_stream_peer_acquire(flowie_server_impl *server
   size_t index;
   for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
     flowie_stream_peer *peer = &server->stream_peers[index];
-    uint32_t generation;
-    if (peer->used || peer->generation == UINT32_MAX) continue;
-    generation = peer->generation + 1u;
+    const uint32_t generation = peer->generation;
+    if (peer->used || generation == UINT32_MAX) continue;
     *peer = (flowie_stream_peer){
         .owner = server, .generation = generation, .used = true};
     return peer;
@@ -639,6 +638,7 @@ static int flowie_stream_accept(flowie_server_impl *server) {
       peer->used = false;
       return status;
     }
+    ++peer->generation;
     peer->connection = connection;
     peer->peer = address;
   }
