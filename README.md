@@ -10,7 +10,7 @@ Flowie owns MQTT protocol behavior, broker core state, sessions, subscriptions, 
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-**Current package baseline:** Salts **1.8.3** + SaltsUtils **4.1.3** + CHttp **1.1.5** + TurboDB **1.0.1**. **Cluster baseline:** FlowMQ **1.1.1** + TurboRaft **0.2.0**.
+**Package policy:** Flowie consumes the latest released first-party SDKs selected by the package-acquisition step. CMake does not pin exact Salts, SaltsUtils, CHTTP, TurboDB, FlowMQ, or TurboRaft versions; the configured install roots define the resolved package set and missing/incompatible packages fail fast.
 
 - **Salts::CNet** provides TCP/TLS transport and explicit connection/session progress.
 - **Salts Core / Coroutine / runtime primitives** provide common systems facilities.
@@ -59,6 +59,27 @@ Flowie does **not** own:
 - hidden alternate network runtimes.
 
 A downstream workflow or product adapter performs the mapping from MQTT messages into its own business/event model.
+
+
+### CMeta / RAII authority split
+
+Flowie follows the ecosystem ownership contract tracked by [Salts #878](https://github.com/qigao/salts/issues/878) and [Flowie #57](https://github.com/qigao/flowie/issues/57):
+
+```text
+CMeta / generated producers
+  = native managed-value lifecycle
+
+CNet / CHTTP
+  = transport + asynchronous connection/request lifetime
+
+Flowie
+  = MQTT broker/session/subscription/retained-message lifetime
+
+Plugin (when used)
+  = explicit outer module/provider lifetime
+```
+
+MQTT sessions, subscriptions, retained publications, connection shutdown, and in-flight CNet operations are domain/runtime lifetime and are not mechanically converted to lexical CMeta RAII. Conversely, reflected/generated native values must not introduce a Flowie-private `OWNED/SHARED/BORROWED` semantic vocabulary or cleanup registry.
 
 ## Dependency direction
 
