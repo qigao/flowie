@@ -85,6 +85,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          # NuGet stores this host tool as 0644; restore execution permission after extraction.
+          chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Configure, build and test Linux
         if: runner.os == 'Linux'
         shell: bash
