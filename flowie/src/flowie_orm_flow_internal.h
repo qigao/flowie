@@ -11,6 +11,10 @@ extern "C" {
 #endif
 
 enum { FLOWIE_ORM_MAX_COLUMNS = 24u };
+enum { FLOWIE_ORM_MAX_OPTIONS = 16u };
+
+/* Operator-supplied absolute path; consumed here, never forwarded to a driver. */
+#define FLOWIE_ORM_DRIVER_MODULE_OPTION "flowie.driver_module"
 
 typedef enum flowie_orm_column_kind_e {
   FLOWIE_ORM_COLUMN_UINT64,
@@ -34,6 +38,10 @@ typedef struct flowie_orm_row_s {
 typedef int (*flowie_orm_row_visit_fn)(void *ctx, const flowie_orm_row_t *row,
                                       size_t row_index);
 
+/* The returned connection owns its runtime through TurboDB's retained reference.
+ * Options (at most FLOWIE_ORM_MAX_OPTIONS) are borrowed only during this call.
+ * Destroy dependent queries/results/transactions before releasing the connection.
+ * Failure clears out_connection and preserves the driver/runtime error. */
 orm_status_t flowie_orm_connect(const orm_config_t *config,
                                 orm_connection_t **out_connection,
                                 orm_error_t *error);

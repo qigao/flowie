@@ -1,11 +1,10 @@
 #include "flowie_orm_flow_internal.h"
 
-#if defined(FLOWIE_ORM_WITH_POSTGRESQL)
-#include "orm_postgresql.h"
-#endif
+#include "orm_runtime.h"
 
 #include "cmeta_cmeta_data.h"
 #include "cmeta_error.h"
+#include "cmeta_fs.h"
 #include <salts/thread.h>
 
 #include <cmeta/data.h>
@@ -52,22 +51,105 @@ static void flowie_orm_data_init(void) {
   flowie_orm_blob_data.kind = CMETA_DATA_BYTES;
 }
 
-static int flowie_orm_driver_is(orm_string_view_t driver, const char *name) {
+static int flowie_orm_view_is(orm_string_view_t driver, const char *name) {
   const size_t name_size = name ? strlen(name) : 0u;
   return name_size != 0u && driver.len == name_size && driver.data != NULL &&
          memcmp(driver.data, name, name_size) == 0;
 }
 
+static orm_status_t flowie_orm_error(orm_error_t *error, orm_status_t status) {
+  if (error) {
+    const char *message = orm_status_message(status);
+    const size_t length = strlen(message);
+    orm_error_init(error);
+    error->status = status;
+    /* Copy the public status text into the fixed-size TurboDB ABI carrier. */
+    memcpy(error->message, message,
+           length < sizeof(error->message) ? length : sizeof(error->message) - 1u);
+  }
+  return status;
+}
+
+static const char *flowie_orm_default_module(orm_string_view_t driver) {
+  if (flowie_orm_view_is(driver, "sqlite"))
+    return FLOWIE_ORM_DRIVER_DIR "/turbodb_driver_sqlite" FLOWIE_ORM_MODULE_SUFFIX;
+  if (flowie_orm_view_is(driver, "postgresql"))
+    return FLOWIE_ORM_DRIVER_DIR "/turbodb_driver_postgresql" FLOWIE_ORM_MODULE_SUFFIX;
+  if (flowie_orm_view_is(driver, "mysql"))
+    return FLOWIE_ORM_DRIVER_DIR "/turbodb_driver_mysql" FLOWIE_ORM_MODULE_SUFFIX;
+  if (flowie_orm_view_is(driver, "tidesdb"))
+    return FLOWIE_ORM_DRIVER_DIR "/turbodb_driver_tidesdb" FLOWIE_ORM_MODULE_SUFFIX;
+  return NULL;
+}
+
 orm_status_t flowie_orm_connect(const orm_config_t *config,
                                 orm_connection_t **out_connection,
                                 orm_error_t *error) {
-#if defined(FLOWIE_ORM_WITH_POSTGRESQL)
-  if (config != NULL &&
-      (flowie_orm_driver_is(config->driver, "postgres") ||
-       flowie_orm_driver_is(config->driver, "postgresql")))
-    return orm_postgresql_connect(config, out_connection, error);
-#endif
-  return orm_connect(config, out_connection, error);
+  orm_runtime_config_t runtime_config;
+  orm_runtime_t *runtime = NULL;
+  orm_driver_load_config_t load = {0};
+  orm_config_t database;
+  orm_option_t options[FLOWIE_ORM_MAX_OPTIONS];
+  orm_status_t status;
+  int explicit_module = 0;
+  if (out_connection) *out_connection = NULL;
+  if (!config || !out_connection)
+    return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+  if (config->struct_size != sizeof(*config) || config->abi_version != ORM_C_ABI_VERSION)
+    return flowie_orm_error(error, ORM_STATUS_ABI_MISMATCH);
+  if (!config->driver.data || !config->driver.len ||
+      (config->option_count && !config->options))
+    return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+  if (config->option_count > FLOWIE_ORM_MAX_OPTIONS)
+    return flowie_orm_error(error, ORM_STATUS_LIMIT_EXCEEDED);
+  database = *config;
+  database.options = options;
+  database.option_count = 0u;
+  if (flowie_orm_view_is(database.driver, "postgres")) database.driver = orm_view("postgresql");
+  for (uint32_t index = 0u; index < config->option_count; ++index) {
+    const orm_option_t *option = &config->options[index];
+    if (!option->keyword.data || !option->keyword.len ||
+        (option->value.len && !option->value.data))
+      return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+    if (flowie_orm_view_is(option->keyword, FLOWIE_ORM_DRIVER_MODULE_OPTION)) {
+      if (explicit_module || !option->value.len)
+        return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+      explicit_module = 1;
+      load.module_path = option->value;
+    } else {
+      options[database.option_count++] = *option;
+    }
+  }
+  if (!explicit_module) {
+    const char *path = flowie_orm_default_module(database.driver);
+    if (!path) return flowie_orm_error(error, ORM_STATUS_DRIVER_NOT_REGISTERED);
+    load.module_path = orm_view(path);
+  } else {
+    tstr path;
+    int absolute;
+    if (load.module_path.len > ORM_RUNTIME_DEFAULT_MAX_MODULE_PATH_BYTES ||
+        memchr(load.module_path.data, '\0', load.module_path.len))
+      return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+    path = tstr_from_v(load.module_path);
+    if (!path) return flowie_orm_error(error, ORM_STATUS_OUT_OF_MEMORY);
+    absolute = cmeta_fs_path_is_absolute(path);
+    tstr_freep(&path);
+    if (!absolute) return flowie_orm_error(error, ORM_STATUS_INVALID_ARGUMENT);
+  }
+  load.struct_size = sizeof(load);
+  load.abi_version = ORM_RUNTIME_ABI_VERSION;
+  load.expected_driver_id = database.driver;
+  orm_runtime_config_init(&runtime_config);
+  runtime_config.max_drivers = 1u;
+  runtime_config.max_connections = 1u;
+  runtime_config.max_pending_operations = 1u;
+  status = orm_runtime_create(&runtime_config, &runtime, error);
+  if (status == ORM_STATUS_OK) status = orm_runtime_load_driver(runtime, &load, error);
+  if (status == ORM_STATUS_OK) status = orm_runtime_connect(runtime, &database, out_connection, error);
+  /* A successful connection holds the runtime/Plugin lease until final release.
+   * On failure this closes the runtime; release does not overwrite the error. */
+  orm_runtime_release(runtime);
+  return status;
 }
 
 int flowie_orm_status_to_salts(orm_status_t status) {
@@ -78,11 +160,14 @@ int flowie_orm_status_to_salts(orm_status_t status) {
     case ORM_STATUS_TYPE_ERROR:
     case ORM_STATUS_OUT_OF_RANGE:
     case ORM_STATUS_NULL_VALUE:
+    case ORM_STATUS_DRIVER_ID_MISMATCH:
     case ORM_STATUS_INVALID_STATE: return SALTS_EINVAL;
     case ORM_STATUS_OUT_OF_MEMORY: return SALTS_ENOMEM;
     case ORM_STATUS_LIMIT_EXCEEDED: return SALTS_ENOSPC;
     case ORM_STATUS_BUSY: return SALTS_EBUSY;
     case ORM_STATUS_UNSUPPORTED: return SALTS_ENOTSUP;
+    case ORM_STATUS_DRIVER_NOT_REGISTERED:
+    case ORM_STATUS_DRIVER_MODULE_NOT_FOUND: return SALTS_ENOENT;
     case ORM_STATUS_CONNECTION_ERROR:
     case ORM_STATUS_SQL_ERROR:
     case ORM_STATUS_DATASTORE_ERROR:

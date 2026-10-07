@@ -153,6 +153,17 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
           -exec cp -a '{}' /opt/flowie-runtime/lib/ ';'; \
       fi; \
     done; \
+    driver_source="/opt/turbodb/$FLOWIE_PROFILE/lib/turbodb/drivers"; \
+    driver_stage="/opt/flowie-runtime/turbodb/$FLOWIE_PROFILE/lib/turbodb/drivers"; \
+    test -f "$driver_source/turbodb_driver_sqlite.so"; \
+    install -d "$driver_stage"; \
+    for module in "$driver_source"/*.so; do \
+      install -m 0755 "$module" "$driver_stage/"; \
+      LD_LIBRARY_PATH=/opt/flowie-runtime/lib ldd "$module" \
+        > /opt/flowie-runtime/driver.ldd; \
+      cat /opt/flowie-runtime/driver.ldd; \
+      ! grep -F 'not found' /opt/flowie-runtime/driver.ldd; \
+    done; \
     for executable in flowie_server flowie-control flowie-control-data; do \
       case "$executable" in \
         flowie_server) manifest=flowie-server ;; \
@@ -182,6 +193,8 @@ COPY --from=builder /opt/flowie-runtime/bin/flowie_server /usr/local/bin/flowie_
 COPY --from=builder /opt/flowie-runtime/bin/flowie-control /usr/local/bin/flowie-control
 COPY --from=builder /opt/flowie-runtime/bin/flowie-control-data /usr/local/bin/flowie-control-data
 COPY --from=builder /opt/flowie-runtime/lib/ /usr/local/lib/
+# Preserve the absolute SDK driver paths embedded by Flowie's configure step.
+COPY --from=builder /opt/flowie-runtime/turbodb/ /opt/turbodb/
 COPY --from=builder /opt/flowie/share/ /opt/flowie/share/
 COPY --from=builder /opt/flowie-runtime/flowie-server.ldd /usr/share/doc/flowie/flowie-server.ldd
 COPY --from=builder /opt/flowie-runtime/flowie-control.ldd /usr/share/doc/flowie/flowie-control.ldd

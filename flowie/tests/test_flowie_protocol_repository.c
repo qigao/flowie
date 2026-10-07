@@ -1,4 +1,5 @@
 #include "flowie_protocol_repository.h"
+#include "flowie_orm_flow_internal.h"
 
 #include "orm.h"
 #include "tinytest.h"
@@ -89,7 +90,7 @@ static int repository_execute_sqlite(const char *path, const char *sql) {
   config.driver = orm_view("sqlite");
   config.options = &filename;
   config.option_count = 1u;
-  status = orm_connect(&config, &connection, &error);
+  status = flowie_orm_connect(&config, &connection, &error);
   if (status == ORM_STATUS_OK) status = orm_raw(connection, orm_view(sql), &query, &error);
   if (status == ORM_STATUS_OK) status = orm_query_execute(query, &result, &error);
   orm_result_destroy(result);

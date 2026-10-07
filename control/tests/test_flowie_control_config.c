@@ -112,6 +112,7 @@ static const char valid_turbodb_config[] = "version: 1\n"
                                            "    driver: sqlite\n"
                                            "    options:\n"
                                            "      filename: control.db\n"
+                                           "      flowie.driver_module: /opt/turbodb/turbodb_driver_sqlite.so\n"
                                            "management:\n"
                                            "  session:\n"
                                            "    capacity: 1024\n"
@@ -324,6 +325,13 @@ spec("Flowie controller configuration") {
     check_equal(config.bootstrap.principal_id, "admin");
     check_equal(config.bootstrap.principal_type, "human");
     check_equal(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD, "Flowie@ChangeMe!");
+  }
+
+  it("preserves the explicit TurboDB driver module option") {
+    check_equal(parse_config(valid_turbodb_config, &config, &error), SALTS_OK);
+    check_equal(config.turbodb.option_count, 2u);
+    check_equal(config.turbodb.options[1].keyword, "flowie.driver_module");
+    check_equal(config.turbodb.options[1].value, "/opt/turbodb/turbodb_driver_sqlite.so");
   }
 
   it("defaults each principal to five concurrent management sessions") {

@@ -5,10 +5,12 @@ set_target_properties(flowie_orm_flow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 cmake_config_target(flowie_orm_flow NO_INSTALL FOLDER "flowie/internal")
 target_include_directories(flowie_orm_flow PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
 target_link_libraries(flowie_orm_flow PUBLIC Orm::C PRIVATE Salts::CFlow Salts::Core)
-if(TARGET Orm::PostgreSQL)
-  target_compile_definitions(flowie_orm_flow PRIVATE FLOWIE_ORM_WITH_POSTGRESQL)
-  target_link_libraries(flowie_orm_flow PUBLIC Orm::PostgreSQL)
+if(NOT IS_ABSOLUTE "${TurboDB_DRIVER_DIR}")
+  message(FATAL_ERROR "TurboDB_DRIVER_DIR must name the installed driver's absolute directory")
 endif()
+target_compile_definitions(flowie_orm_flow PRIVATE
+  FLOWIE_ORM_DRIVER_DIR="${TurboDB_DRIVER_DIR}"
+  FLOWIE_ORM_MODULE_SUFFIX="${CMAKE_SHARED_MODULE_SUFFIX}")
 set(FLOWIE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/flowie.h)

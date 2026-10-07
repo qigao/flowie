@@ -50,6 +50,14 @@ cmake_add_test(
 
 set_tests_properties(test_flowie_protocol_repository PROPERTIES LABELS "flowie;flowie-release;storage")
 
+cmake_add_test(
+  test_flowie_orm_runtime
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_orm_runtime.c
+  LIBS flowie_orm_flow Salts::TinyTest
+  DEFS FLOWIE_TEST_SQLITE_MODULE="${TurboDB_DRIVER_DIR}/turbodb_driver_sqlite${CMAKE_SHARED_MODULE_SUFFIX}"
+  FOLDER "flowie/tests")
+set_tests_properties(test_flowie_orm_runtime PROPERTIES LABELS "flowie;flowie-release;storage")
+
 if(FLOWIE_TURBODB_LIVE_TESTS)
   cmake_add_test(
     test_flowie_protocol_repository_turbodb_live

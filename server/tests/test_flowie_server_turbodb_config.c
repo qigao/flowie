@@ -37,11 +37,14 @@ spec("Flowie server TurboDB configuration") {
     const orm_config_t *database;
 
     check_equal(
-        flowie_server_turbodb_config_create("sqlite", "{\"filename\":\":memory:\"}", &config),
+        flowie_server_turbodb_config_create("sqlite", "{\"filename\":\":memory:\","
+            "\"flowie.driver_module\":\"/opt/turbodb/turbodb_driver_sqlite.so\"}", &config),
         SALTS_OK);
     database = flowie_server_turbodb_config_database(config);
-    check_equal(database->option_count, 1u);
+    check_equal(database->option_count, 2u);
     check_true(option_equal(&database->options[0], "filename", ":memory:"));
+    check_true(option_equal(&database->options[1], "flowie.driver_module",
+                            "/opt/turbodb/turbodb_driver_sqlite.so"));
     flowie_server_turbodb_config_destroy(config);
   }
 
