@@ -3,7 +3,7 @@
 #include "flowie_cluster_peer_wire_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 spec("flowie cluster durable PUBLISH event codec") {
   it("round trips exact publisher edge and MQTT identity") {

@@ -55,7 +55,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Flowie::Protocol Orm::C Salts::Core Salts::Coroutine
+  PUBLIC Flowie::Protocol Orm::C Salts::Core Salts::Coroutine Salts::CFlow
   PRIVATE Flowie::Connection Salts::CSTL Salts::LtvParser roaring::roaring xxHash::xxhash)
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)

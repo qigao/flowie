@@ -3,8 +3,8 @@
 
 #include "platform.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -207,9 +207,9 @@ static void flowie_mqtt_live_finish(atomic_int *result, atomic_int *done, int st
 }
 
 static int flowie_mqtt_live_wait(atomic_int *result, atomic_int *done) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
-  while (!atomic_load_explicit(done, memory_order_acquire) && salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
+  while (!atomic_load_explicit(done, memory_order_acquire) && cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   return atomic_load_explicit(done, memory_order_acquire)
              ? atomic_load_explicit(result, memory_order_relaxed)
              : SALTS_ETIMEDOUT;
@@ -372,7 +372,7 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t topic_handler = {0};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   memset(state, 0, sizeof(*state));
   state->test_case = test_case;
@@ -674,7 +674,7 @@ static int flowie_mqtt_live_reqrep_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t topic_handlers[2] = {{0}};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (!test_case || test_case->version != FLOWIE_MQTT_VERSION_5) return SALTS_EINVAL;
   memset(state, 0, sizeof(*state));
@@ -879,7 +879,7 @@ static int flowie_mqtt_live_alias_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t handler = {0};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (!test_case || !state || test_case->version != FLOWIE_MQTT_VERSION_5) return SALTS_EINVAL;
   memset(state, 0, sizeof(*state));
@@ -992,10 +992,10 @@ static void flowie_mqtt_fixed_apply_config(const flowie_mqtt_live_case_t *test_c
 }
 
 static int flowie_mqtt_fixed_wait_ready(atomic_int *result, atomic_int *done, atomic_int *ready) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(ready, memory_order_acquire) &&
-         !atomic_load_explicit(done, memory_order_acquire) && salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         !atomic_load_explicit(done, memory_order_acquire) && cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   if (atomic_load_explicit(done, memory_order_acquire))
     return atomic_load_explicit(result, memory_order_relaxed);
   return atomic_load_explicit(ready, memory_order_acquire) ? SALTS_OK : SALTS_ETIMEDOUT;
@@ -1230,7 +1230,7 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char clear_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(publisher_id, sizeof(publisher_id), "flowie-fixed-retained-pub-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1315,7 +1315,7 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char publisher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(subscriber_id, sizeof(subscriber_id), "flowie-fixed-session-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1353,7 +1353,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char publisher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(subscriber_id, sizeof(subscriber_id), "flowie-fixed-expiry-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1368,7 +1368,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
       (flowie_mqtt_span_t){FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_PROPERTY,
                            sizeof(FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_PROPERTY)});
   if (rc != SALTS_OK) return rc;
-  salts_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
+  cmeta_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
 
   subscriber.test_case = test_case;
   subscriber.client_id = subscriber_id;
@@ -1382,7 +1382,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   rc = flowie_mqtt_fixed_subscriber_start(&subscriber);
   if (rc == SALTS_OK)
     rc = flowie_mqtt_fixed_wait_ready(&subscriber.result, &subscriber.done, &subscriber.ready);
-  if (rc == SALTS_OK) salts_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
+  if (rc == SALTS_OK) cmeta_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
   if (rc == SALTS_OK && atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 0u)
     rc = SALTS_EPROTO;
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
@@ -1396,7 +1396,7 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
   char watcher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char will_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(watcher_id, sizeof(watcher_id), "flowie-fixed-will-watch-%llu",
                (unsigned long long)unique) < 0 ||

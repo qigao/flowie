@@ -3,7 +3,7 @@
 #include "base64_utils.h"
 #include "platform.h"
 #include "monocypher.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -86,7 +86,7 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
   memset(token, 0, FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY);
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = salts_secure_random(entropy, sizeof(entropy));
+  rc = cmeta_secure_random(entropy, sizeof(entropy));
   if (rc == SALTS_OK &&
       (tn_base64_encode_buf(entropy, sizeof(entropy), encoded, sizeof(encoded)) != 0 ||
        strlen(encoded) != FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE + 1u ||
@@ -102,7 +102,7 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
     }
     token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE] = '\0';
   }
-  if (rc == SALTS_OK) rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  if (rc == SALTS_OK) rc = cmeta_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   if (rc == SALTS_OK)
     rc = flowie_control_credential_derive(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, salt, params,
                                           verifier);
@@ -126,7 +126,7 @@ int flowie_control_credential_hash(const void *secret, size_t secret_size,
     return SALTS_EINVAL;
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  rc = cmeta_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   if (rc == SALTS_OK)
     rc = flowie_control_credential_derive(secret, secret_size, salt, params, verifier);
   if (rc != SALTS_OK) {

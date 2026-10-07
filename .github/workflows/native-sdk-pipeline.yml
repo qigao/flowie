@@ -11,14 +11,6 @@ permissions:
   contents: read
   packages: read
 
-env:
-  SALTS_VERSION: "1.8.3"
-  SALTS_UTILS_VERSION: "4.1.3"
-  CHTTP_VERSION: "1.1.5"
-  TURBODB_VERSION: "1.0.1"
-  FLOWMQ_VERSION: "1.1.1"
-  TURBORAFT_VERSION: "0.2.0"
-
 jobs:
   metadata:
     name: Release metadata
@@ -26,6 +18,12 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
+      salts_version: ${{ steps.producers.outputs.salts_version }}
+      salts_utils_version: ${{ steps.producers.outputs.salts_utils_version }}
+      chttp_version: ${{ steps.producers.outputs.chttp_version }}
+      turbodb_version: ${{ steps.producers.outputs.turbodb_version }}
+      flowmq_version: ${{ steps.producers.outputs.flowmq_version }}
+      turboraft_version: ${{ steps.producers.outputs.turboraft_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,11 +40,75 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - id: producers
+        name: Resolve latest stable producer packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/flowie-producers.config"
+          project="$RUNNER_TEMP/flowie-producers.csproj"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          cat > "$project" <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Salts.Native" Version="*" />
+              <PackageReference Include="SaltsUtils.Native" Version="*" />
+              <PackageReference Include="CHttp.Native" Version="*" />
+              <PackageReference Include="TurboDB.Native" Version="*" />
+              <PackageReference Include="FlowMQ.Native" Version="*" />
+              <PackageReference Include="TurboRaft.Native" Version="*" />
+            </ItemGroup>
+          </Project>
+          EOF
+          dotnet restore "$project" --packages "$RUNNER_TEMP/flowie-producers-packages" \
+            --configfile "$config" --no-cache
+          python3 - "$RUNNER_TEMP/obj/project.assets.json" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              libraries = json.load(stream)["libraries"]
+          packages = {
+              "Salts.Native": "salts_version",
+              "SaltsUtils.Native": "salts_utils_version",
+              "CHttp.Native": "chttp_version",
+              "TurboDB.Native": "turbodb_version",
+              "FlowMQ.Native": "flowmq_version",
+              "TurboRaft.Native": "turboraft_version",
+          }
+          with open(sys.argv[2], "a", encoding="utf-8") as output:
+              for package, name in packages.items():
+                  versions = [key.split("/", 1)[1] for key, entry in libraries.items()
+                              if key.split("/", 1)[0].lower() == package.lower()
+                              and entry["type"] == "package"]
+                  if len(versions) != 1:
+                      raise SystemExit(f"Expected one resolved version of {package}: {versions}")
+                  output.write(f"{name}={versions[0]}\n")
+                  print(f"{package}={versions[0]}")
+          PY
+
   linux:
     name: Linux x64 SDK
     needs: metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
+      FLOWMQ_VERSION: ${{ needs.metadata.outputs.flowmq_version }}
+      TURBORAFT_VERSION: ${{ needs.metadata.outputs.turboraft_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,6 +174,8 @@ jobs:
           test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
           test -f "$turbodb_root/lib/cmake/Orm/OrmConfig.cmake"
+          orm_version="$(sed -nE 's/^set\(PACKAGE_VERSION "([^"]+)"\).*$/\1/p' "$turbodb_root/lib/cmake/Orm/OrmConfigVersion.cmake")"
+          test -n "$orm_version"
           test -f "$flowmq_root/lib/cmake/FlowMQ/FlowMQConfig.cmake"
           test -f "$turboraft_root/lib/cmake/TurboRaft/TurboRaftConfig.cmake"
 
@@ -123,6 +187,7 @@ jobs:
             echo "FLOWMQ_ROOT=$flowmq_root"
             echo "TURBORAFT_ROOT=$turboraft_root"
             echo "RELEASE_PACKAGES=$packages"
+            echo "ORM_VERSION=$orm_version"
           } >> "$GITHUB_ENV"
 
       - name: Restore Flowie third-party graph from shared cache only
@@ -182,7 +247,7 @@ jobs:
           saltsutils=$SALTS_UTILS_VERSION
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
-          orm=2.1.0
+          orm=$ORM_VERSION
           flowmq_qualification=$FLOWMQ_VERSION
           turboraft_qualification=$TURBORAFT_VERSION
           profile=Release
@@ -209,6 +274,11 @@ jobs:
     needs: metadata
     runs-on: windows-2022
     timeout-minutes: 60
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -278,6 +348,16 @@ jobs:
           )) {
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "missing producer SDK file: $file" }
           }
+          $ormVersionFile = Join-Path $turbodb "lib/cmake/Orm/OrmConfigVersion.cmake"
+          if (-not (Test-Path -LiteralPath $ormVersionFile -PathType Leaf)) {
+            throw "missing Orm package version: $ormVersionFile"
+          }
+          $ormVersionContent = Get-Content -LiteralPath $ormVersionFile -Raw
+          if ($ormVersionContent -notmatch 'set\(PACKAGE_VERSION "([^"]+)"\)') {
+            throw "invalid Orm package version: $ormVersionFile"
+          }
+          $ormVersion = $Matches[1]
+          "ORM_VERSION=$ormVersion" >> $env:GITHUB_ENV
           "SALTS_ROOT=$salts" >> $env:GITHUB_ENV
           "SALTS_UTILS_ROOT=$utils" >> $env:GITHUB_ENV
           "HTTP_SERVICES_ROOT=$chttp" >> $env:GITHUB_ENV
@@ -345,7 +425,7 @@ jobs:
             "saltsutils=$env:SALTS_UTILS_VERSION",
             "chttp=$env:CHTTP_VERSION",
             "turbodb=$env:TURBODB_VERSION",
-            "orm=2.1.0",
+            "orm=$env:ORM_VERSION",
             "profile=Release",
             "qualification=runtime"
           ) | Set-Content -LiteralPath (Join-Path $prefix "flowie-sdk-manifest.txt") -Encoding ascii
@@ -362,6 +442,11 @@ jobs:
     needs: metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -428,11 +513,14 @@ jobs:
           test -f "$utils/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp/lib/cmake/Chttp/ChttpConfig.cmake"
           test -f "$turbodb/lib/cmake/Orm/OrmConfig.cmake"
+          orm_version="$(sed -nE 's/^set\(PACKAGE_VERSION "([^"]+)"\).*$/\1/p' "$turbodb/lib/cmake/Orm/OrmConfigVersion.cmake")"
+          test -n "$orm_version"
           {
             echo "SALTS_ROOT=$salts"
             echo "SALTS_UTILS_ROOT=$utils"
             echo "HTTP_SERVICES_ROOT=$chttp"
             echo "TURBODB_ROOT=$turbodb"
+            echo "ORM_VERSION=$orm_version"
           } >> "$GITHUB_ENV"
 
       - name: Restore Android third-party graph from shared cache only
@@ -487,7 +575,7 @@ jobs:
           saltsutils=$SALTS_UTILS_VERSION
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
-          orm=2.1.0
+          orm=$ORM_VERSION
           profile=Release
           qualification=compile-link
           EOF
@@ -503,6 +591,11 @@ jobs:
     name: Pack Flowie.Native
     needs: [metadata, linux, windows, android]
     runs-on: ubuntu-24.04
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -547,6 +640,13 @@ jobs:
           test -f package/sdk/android-arm64-v8a/lib/libflowie_client.so
           test -f package/sdk/android-arm64-v8a/lib/libflowie_protocol.a
           grep -Fq "version=${{ needs.metadata.outputs.version }}" package/sdk/android-arm64-v8a/flowie-sdk-manifest.txt
+          for rid in linux-x64 windows-x64 android-arm64-v8a; do
+            manifest="package/sdk/$rid/flowie-sdk-manifest.txt"
+            grep -Fxq "salts=$SALTS_VERSION" "$manifest"
+            grep -Fxq "saltsutils=$SALTS_UTILS_VERSION" "$manifest"
+            grep -Fxq "chttp=$CHTTP_VERSION" "$manifest"
+            grep -Fxq "turbodb=$TURBODB_VERSION" "$manifest"
+          done
 
       - name: Pack NuGet
         shell: bash
@@ -557,8 +657,22 @@ jobs:
           config="$RUNNER_TEMP/flowie-pack.config"
           printf '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
           dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json             --name github --username qigao --password "$GITHUB_TOKEN"             --store-password-in-clear-text --configfile "$config"
-          dotnet restore packaging/nuget/Flowie.Native.csproj             --configfile "$config" --packages "$RUNNER_TEMP/flowie-pack-dependencies"
-          dotnet pack packaging/nuget/Flowie.Native.csproj             --no-restore --configuration Release --output dist             -p:PackageVersion="${{ needs.metadata.outputs.version }}"             -p:PackageRoot="$GITHUB_WORKSPACE/package"             -p:RestorePackagesPath="$RUNNER_TEMP/flowie-pack-dependencies"             -p:RepositoryCommit="${{ inputs.source_sha }}"
+          dotnet restore packaging/nuget/Flowie.Native.csproj \
+            --configfile "$config" --packages "$RUNNER_TEMP/flowie-pack-dependencies" \
+            -p:SaltsNativeVersion="$SALTS_VERSION" \
+            -p:SaltsUtilsNativeVersion="$SALTS_UTILS_VERSION" \
+            -p:CHttpNativeVersion="$CHTTP_VERSION" \
+            -p:TurboDBNativeVersion="$TURBODB_VERSION"
+          dotnet pack packaging/nuget/Flowie.Native.csproj \
+            --no-restore --configuration Release --output dist \
+            -p:PackageVersion="${{ needs.metadata.outputs.version }}" \
+            -p:PackageRoot="$GITHUB_WORKSPACE/package" \
+            -p:RestorePackagesPath="$RUNNER_TEMP/flowie-pack-dependencies" \
+            -p:RepositoryCommit="${{ inputs.source_sha }}" \
+            -p:SaltsNativeVersion="$SALTS_VERSION" \
+            -p:SaltsUtilsNativeVersion="$SALTS_UTILS_VERSION" \
+            -p:CHttpNativeVersion="$CHTTP_VERSION" \
+            -p:TurboDBNativeVersion="$TURBODB_VERSION"
           nupkg="dist/Flowie.Native.${{ needs.metadata.outputs.version }}.nupkg"
           test -f "$nupkg"
           unzip -Z1 "$nupkg" | sort | tee "$RUNNER_TEMP/flowie-nupkg.txt"
@@ -572,10 +686,21 @@ jobs:
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie_client.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           unzip -p "$nupkg" "Flowie.Native.nuspec" > "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="Salts.Native" version="[1.8.3]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="SaltsUtils.Native" version="[4.1.3]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="CHttp.Native" version="[1.1.5]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="TurboDB.Native" version="[1.0.1]"' "$RUNNER_TEMP/flowie.nuspec"
+          python3 - "$RUNNER_TEMP/flowie.nuspec" \
+            "$SALTS_VERSION" "$SALTS_UTILS_VERSION" "$CHTTP_VERSION" "$TURBODB_VERSION" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          dependencies = {item.get("id"): item.get("version")
+                          for item in ET.parse(sys.argv[1]).iter()
+                          if item.tag.endswith("dependency")}
+          for package, selected in zip(
+              ("Salts.Native", "SaltsUtils.Native", "CHttp.Native", "TurboDB.Native"),
+              sys.argv[2:]):
+              declared = dependencies.get(package, "")
+              if selected not in declared or declared == f"[{selected}]":
+                  raise SystemExit(f"Unexpected {package} dependency: {declared!r}")
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
@@ -587,6 +712,11 @@ jobs:
     name: Qualify packed Flowie.Native (Linux x64)
     needs: [metadata, pack]
     runs-on: ubuntu-24.04
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -659,7 +789,7 @@ jobs:
           cat > "$consumer/CMakeLists.txt" <<'EOF'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
           add_executable(flowie_release_consumer main.c)
           target_link_libraries(flowie_release_consumer PRIVATE
@@ -684,6 +814,11 @@ jobs:
     needs: [metadata, pack]
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -759,7 +894,7 @@ jobs:
           @'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
           add_executable(flowie_release_consumer main.c)
           target_link_libraries(flowie_release_consumer PRIVATE
@@ -792,6 +927,11 @@ jobs:
     needs: [metadata, pack]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
+      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
+      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
+      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -871,7 +1011,7 @@ jobs:
           cat > "$consumer/CMakeLists.txt" <<'EOF'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH
                        NO_CMAKE_FIND_ROOT_PATH)
           add_executable(flowie_release_consumer main.c)

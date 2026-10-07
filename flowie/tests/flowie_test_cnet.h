@@ -115,11 +115,11 @@ static int flowie_test_cnet_poll(flowie_test_cnet_client_t *client, uint32_t tim
 
 static int flowie_test_cnet_wait(flowie_test_cnet_client_t *client, int *condition,
                                  uint32_t timeout_ms) {
-  const uint64_t deadline = salts_monotonic_ms() + timeout_ms;
+  const uint64_t deadline = cmeta_monotonic_ms() + timeout_ms;
   int status;
   if (!client || !condition) return SALTS_EINVAL;
   while (!*condition) {
-    const uint64_t now = salts_monotonic_ms();
+    const uint64_t now = cmeta_monotonic_ms();
     uint32_t slice;
     if (now >= deadline) return SALTS_ETIMEDOUT;
     slice = (uint32_t)(deadline - now);
@@ -196,11 +196,18 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect(unsigned short port) 
 
 static int flowie_test_cnet_send(flowie_test_cnet_client_t *client, const uint8_t *data,
                                  size_t size) {
+  mem_buffer_t *buffer;
   int status;
   if (!client || !data || size == 0u || !client->connected || client->closed)
     return SALTS_EINVAL;
+  if (size > FLOWIE_TEST_CNET_MAX_SEND_BYTES) return SALTS_EMSGSIZE;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
   client->sent = 0;
-  status = cnet_send(&client->network, client->connection, data, size);
+  status = cnet_send_buffer(&client->network, client->connection, buffer);
+  mem_buffer_release(buffer);
   if (status != SALTS_OK) return status;
   (void)flowie_test_cnet_poll(client, 0u);
   return SALTS_OK;
@@ -208,10 +215,10 @@ static int flowie_test_cnet_send(flowie_test_cnet_client_t *client, const uint8_
 
 static int flowie_test_cnet_recv_exact(flowie_test_cnet_client_t *client, uint8_t *data,
                                        size_t size) {
-  const uint64_t deadline = salts_monotonic_ms() + FLOWIE_TEST_CNET_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_TEST_CNET_TIMEOUT_MS;
   if (!client || (!data && size != 0u)) return SALTS_EINVAL;
   while (client->received_size < size && !client->closed && !client->failed &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     int status = flowie_test_cnet_poll(client, 50u);
     if (status != SALTS_OK) return status;
   }
@@ -224,11 +231,11 @@ static int flowie_test_cnet_recv_exact(flowie_test_cnet_client_t *client, uint8_
 }
 
 static int flowie_test_cnet_readable(flowie_test_cnet_client_t *client, uint32_t timeout_ms) {
-  const uint64_t deadline = salts_monotonic_ms() + timeout_ms;
+  const uint64_t deadline = cmeta_monotonic_ms() + timeout_ms;
   if (!client) return 0;
   if (client->received_size != 0u || client->closed || client->failed) return 1;
   while (client->received_size == 0u) {
-    const uint64_t now = salts_monotonic_ms();
+    const uint64_t now = cmeta_monotonic_ms();
     uint32_t slice;
     if (now >= deadline) break;
     slice = (uint32_t)(deadline - now);

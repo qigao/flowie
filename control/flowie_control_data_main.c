@@ -4,7 +4,7 @@
 #include "flowie_control_database_config_internal.h"
 #include "flowie_control_store_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -13,7 +13,7 @@
 
 static int data_report(const char *operation, int status) {
   (void)fprintf(stderr, "flowie-control-data: %s failed: status=%d (%s)\n", operation, status,
-                salts_strerror(status));
+                cmeta_strerror(status));
   return EXIT_FAILURE;
 }
 

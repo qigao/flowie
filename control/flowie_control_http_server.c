@@ -2,8 +2,8 @@
 
 #include <http_server/http.h>
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -74,7 +74,7 @@ typedef struct flowie_control_http_job_s {
 
 struct flowie_control_http_app_s {
   chttp_server server;
-  salts_threadpool_t *workers;
+  cmeta_threadpool_t *workers;
   flowie_control_http_route_t routes[FLOWIE_CONTROL_HTTP_ROUTE_CAPACITY];
   flowie_control_http_context_binding_t contexts[FLOWIE_CONTROL_HTTP_CONTEXT_CAPACITY];
   size_t route_count;
@@ -588,7 +588,7 @@ static int flowie_control_http_chttp_handler(void *user, const chttp_server_requ
     flowie_control_http_job_destroy(job);
     return rc;
   }
-  rc = salts_threadpool_try_submit(app->workers, flowie_control_http_job_run, job);
+  rc = cmeta_threadpool_try_submit(app->workers, flowie_control_http_job_run, job);
   if (rc == SALTS_OK) return SALTS_OK;
   deferred = (chttp_server_deferred_response){
       sizeof(deferred), SERVICE_UNAVAILABLE,     "text/plain; charset=utf-8", NULL, 0u,
@@ -744,7 +744,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
                                       uint16_t port, const flowie_control_http_tls_config_t *tls) {
   chttp_server_config config = {0};
   cnet_tls_server_config tls_config = {0};
-  salts_threadpool_config_t worker_config;
+  cmeta_threadpool_config_t worker_config;
   int rc;
   if (!app || !host || !host[0] || !tls || tls->size < sizeof(*tls) || !tls->cert_file ||
       !tls->cert_file[0] || !tls->key_file || !tls->key_file[0] || app->started ||
@@ -755,7 +755,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   }
   worker_config.num_threads = (int)app->worker_count;
   worker_config.queue_capacity = app->worker_queue_capacity;
-  app->workers = salts_threadpool_create_with_config(&worker_config);
+  app->workers = cmeta_threadpool_create_with_config(&worker_config);
   if (!app->workers) return SALTS_ENOMEM;
   tls_config.size = sizeof(tls_config);
   tls_config.cert_file = tls->cert_file;
@@ -825,7 +825,7 @@ fail:
     (void)chttp_server_destroy(&app->server);
     app->initialized = 0;
   }
-  salts_threadpool_destroy(app->workers);
+  cmeta_threadpool_destroy(app->workers);
   app->workers = NULL;
   return rc;
 }
@@ -843,8 +843,8 @@ int flowie_control_http_app_stop(flowie_control_http_app_t *app, uint32_t timeou
                          timeout_ms ? timeout_ms : FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
   if (rc != SALTS_OK) return rc;
   app->started = 0;
-  salts_threadpool_shutdown(app->workers);
-  rc = salts_threadpool_wait_status(app->workers);
+  cmeta_threadpool_shutdown(app->workers);
+  rc = cmeta_threadpool_wait_status(app->workers);
   return rc;
 }
 
@@ -852,7 +852,7 @@ void flowie_control_http_app_destroy(flowie_control_http_app_t *app) {
   if (!app) return;
   if (app->started) (void)flowie_control_http_app_stop(app, FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
   if (app->initialized) (void)chttp_server_destroy(&app->server);
-  salts_threadpool_destroy(app->workers);
+  cmeta_threadpool_destroy(app->workers);
   for (size_t index = 0u; index < app->route_count; ++index)
     free(app->routes[index].path);
   for (size_t index = 0u; index < app->context_count; ++index)

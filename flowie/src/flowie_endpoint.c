@@ -22,13 +22,13 @@
 #include "flowie_topic_index_internal.h"
 #include "fmt.h"
 #include <cstl.h>
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "flowie_bitmap_index_internal.h"
 #include "flowie_execution.h"
 #include <cstl.h>
 #include "tstr.h"
-#include "salts_thread.h"
-#include "salts_uuid.h"
+#include "cmeta_thread.h"
+#include "cmeta_uuid.h"
 #include "tlog.h"
 #include <cstl.h>
 
@@ -113,7 +113,7 @@ struct flowie_endpoint_connection_s {
   flowie_protocol_route_t route;
   flowie_mqtt_version_t version;
   flowie_endpoint_session_t *session;
-  salts_coro_executor_await_t cluster_await;
+  coro_executor_await_t cluster_await;
   tstr cluster_client_id;
   tstr mqtt_username;
   flowie_security_principal_t cluster_principal;
@@ -272,6 +272,10 @@ struct flowie_endpoint_s {
   uint64_t recv_timeout_ms;
   size_t stream_recv_buffer_bytes;
   size_t network_command_bytes;
+  uint32_t network_workers;
+  flowie_network_policy_t network_policy;
+  uint32_t network_cpu_count;
+  uint32_t network_cpus[FLOWIE_MAX_NETWORK_WORKERS];
   size_t socket_recv_buffer_bytes;
   size_t socket_send_buffer_bytes;
   int tcp_keepalive;
@@ -307,7 +311,7 @@ struct flowie_endpoint_s {
   flowie_task_group_t tasks;
   int task_sync_initialized;
   deque_t send_queue;
-  salts_mutex_t send_queue_mutex;
+  cmeta_mutex_t send_queue_mutex;
   tf_io_budget_t send_budget;
   int send_queue_initialized;
   int send_budget_initialized;
@@ -317,7 +321,7 @@ struct flowie_endpoint_s {
   int subscription_index_initialized;
   int subscription_index_valid;
   int retained_initialized;
-  salts_coro_executor_await_t expiry_await;
+  coro_executor_await_t expiry_await;
   int expiry_await_active;
   int expiry_task_active;
 };
@@ -1563,6 +1567,28 @@ static int flowie_endpoint_config_validate(const flowie_endpoint_config_t *confi
       config->max_packet_size > CNET_DATAGRAM_MAX_PAYLOAD_BYTES)
     return SALTS_ERANGE;
   if (config->max_connections > FLOWIE_MAX_CONNECTIONS_LIMIT) return SALTS_ERANGE;
+  if (config->network_workers > FLOWIE_MAX_NETWORK_WORKERS ||
+      config->network_workers > (config->max_connections ? config->max_connections
+                                                         : FLOWIE_DEFAULT_MAX_CONNECTIONS))
+    return SALTS_ERANGE;
+  if (config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN &&
+      config->network_policy != FLOWIE_NETWORK_LEAST_CONNECTIONS) return SALTS_EINVAL;
+  if (config->network_cpu_count > FLOWIE_MAX_NETWORK_WORKERS ||
+      (config->network_cpu_count != 0u &&
+       config->network_cpu_count != (config->network_workers ? config->network_workers : 1u)))
+    return SALTS_EINVAL;
+  if ((config->network_workers > 1u || config->network_cpu_count != 0u ||
+       config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+      !flowie_transport_retained_sg(config->transport))
+    return SALTS_ENOTSUP;
+  if (config->network_workers > 1u) {
+    const size_t packet_bytes = config->max_packet_size ? config->max_packet_size
+                                                       : FLOWIE_DEFAULT_MAX_PACKET_SIZE;
+    size_t command_bytes = config->network_command_bytes ? config->network_command_bytes
+                                                        : FLOWIE_DEFAULT_NETWORK_COMMAND_BYTES;
+    if (command_bytes < packet_bytes) command_bytes = packet_bytes;
+    if (command_bytes / config->network_workers < packet_bytes) return SALTS_ERANGE;
+  }
   if ((config->coroutine_stack_size != 0u &&
        config->coroutine_stack_size < FLOWIE_MIN_COROUTINE_STACK_SIZE) ||
       config->coroutine_stack_size > FLOWIE_MAX_COROUTINE_STACK_SIZE)
@@ -1673,10 +1699,10 @@ static int flowie_task_admission_open(flowie_endpoint_t *endpoint) {
 }
 
 static void flowie_task_admission_close(flowie_endpoint_t *endpoint) {
-  salts_mutex_lock(&endpoint->tasks.mutex);
+  cmeta_mutex_lock(&endpoint->tasks.mutex);
   endpoint->tasks.admission_open = 0;
   atomic_store_explicit(&endpoint->started, 0, memory_order_release);
-  salts_mutex_unlock(&endpoint->tasks.mutex);
+  cmeta_mutex_unlock(&endpoint->tasks.mutex);
 }
 
 static int flowie_task_try_begin(flowie_endpoint_t *endpoint) {
@@ -1703,7 +1729,7 @@ static int flowie_principal_deadline_compute(const flowie_security_principal_t *
     *deadline_out = 0u;
     return SALTS_OK;
   }
-  realtime_ms = salts_realtime_ms();
+  realtime_ms = cmeta_realtime_ms();
   if (realtime_ms == 0u) return SALTS_EIO;
   expiry_ms = principal->expires_at > UINT64_MAX / UINT64_C(1000)
                   ? UINT64_MAX
@@ -1711,7 +1737,7 @@ static int flowie_principal_deadline_compute(const flowie_security_principal_t *
   remaining_ms = expiry_ms > realtime_ms ? expiry_ms - realtime_ms : 0u;
   duration_ns =
       remaining_ms > UINT64_MAX / UINT64_C(1000000) ? UINT64_MAX : remaining_ms * UINT64_C(1000000);
-  now = salts_hrtime();
+  now = cmeta_hrtime();
   *deadline_out = now > UINT64_MAX - duration_ns ? UINT64_MAX : now + duration_ns;
   if (*deadline_out == 0u) *deadline_out = 1u;
   return SALTS_OK;
@@ -1723,7 +1749,7 @@ static void flowie_principal_deadline_apply(flowie_endpoint_t *endpoint,
   session->principal_deadline_ns = deadline_ns;
   session->principal_expires_at = session->principal.expires_at;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)coro_executor_await_complete(endpoint->execution.executor,
                                              endpoint->expiry_await, SALTS_EINTR);
 }
 
@@ -1758,7 +1784,7 @@ static void flowie_expiry_task(coro_t *co, void *arg) {
   (void)co;
   while (atomic_load_explicit(&endpoint->started, memory_order_acquire)) {
     uint64_t earliest = UINT64_MAX;
-    uint64_t now = salts_hrtime();
+    uint64_t now = cmeta_hrtime();
     uint64_t wait_ms;
     size_t index = 0u;
     int wait_rc;
@@ -1883,12 +1909,12 @@ static void flowie_expiry_task(coro_t *co, void *arg) {
       if (wait_ms == 0u) wait_ms = 1u;
       if (wait_ms > FLOWIE_EXPIRY_WAIT_MAX_MS) wait_ms = FLOWIE_EXPIRY_WAIT_MAX_MS;
     }
-    wait_rc = salts_coro_executor_await_begin(&endpoint->expiry_await);
+    wait_rc = coro_executor_await_begin(&endpoint->expiry_await);
     if (wait_rc != SALTS_OK) break;
     endpoint->expiry_await_active = 1;
     {
       int completion_status = SALTS_OK;
-      const int await_status = salts_coro_executor_await_for(
+      const int await_status = coro_executor_await_for(
           endpoint->expiry_await, (uint32_t)wait_ms, &completion_status);
       wait_rc = await_status == SALTS_OK ? completion_status : await_status;
     }
@@ -1905,7 +1931,7 @@ static int flowie_expiry_schedule(flowie_endpoint_t *endpoint) {
   if (!endpoint || !endpoint->execution.executor) return SALTS_EINVAL;
   if (endpoint->expiry_task_active) {
     if (endpoint->expiry_await_active)
-      (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+      (void)coro_executor_await_complete(endpoint->execution.executor,
                                                endpoint->expiry_await, SALTS_EINTR);
     return SALTS_OK;
   }
@@ -1946,7 +1972,7 @@ static int flowie_session_expiry_arm(flowie_endpoint_t *endpoint,
   if (snapshot->session_expiry_interval == 0u || snapshot->session_expiry_interval == UINT32_MAX)
     return SALTS_EINVAL;
   duration_ns = (uint64_t)snapshot->session_expiry_interval * UINT64_C(1000000000);
-  now = salts_hrtime();
+  now = cmeta_hrtime();
   epoch_now = flowie_security_now_epoch_seconds();
   if (epoch_now == 0u) return SALTS_EIO;
   session->expiry_deadline_ns = now > UINT64_MAX - duration_ns ? UINT64_MAX : now + duration_ns;
@@ -1993,7 +2019,7 @@ static int flowie_session_will_arm(flowie_endpoint_t *endpoint, flowie_endpoint_
       session->will_at_epoch_seconds > epoch_now ? session->will_at_epoch_seconds - epoch_now : 0u;
   duration_ns =
       remaining > UINT64_MAX / UINT64_C(1000000000) ? UINT64_MAX : remaining * UINT64_C(1000000000);
-  now = salts_hrtime();
+  now = cmeta_hrtime();
   session->will_deadline_ns = now > UINT64_MAX - duration_ns ? UINT64_MAX : now + duration_ns;
   if (session->will_deadline_ns == 0u) session->will_deadline_ns = 1u;
   session->will_session_generation = snapshot->session_generation;
@@ -2050,7 +2076,7 @@ static int flowie_session_close_schedule(flowie_endpoint_t *endpoint,
   }
 
   if (snapshot.session_expiry_interval == 0u) {
-    now_ns = salts_hrtime();
+    now_ns = cmeta_hrtime();
     session->expiry_deadline_ns = now_ns == 0u ? 1u : now_ns;
     session->expiry_session_generation = snapshot.session_generation;
   } else if (snapshot.session_expiry_interval != UINT32_MAX) {
@@ -2343,7 +2369,7 @@ static void flowie_connection_close(flowie_endpoint_connection_t *connection, in
   connection->closing = 1;
   if (connection->send_budget_initialized) tf_io_budget_close(&connection->send_budget);
   if (connection->cluster_await_active)
-    (void)salts_coro_executor_await_complete(connection->endpoint->execution.executor,
+    (void)coro_executor_await_complete(connection->endpoint->execution.executor,
                                              connection->cluster_await, status);
   if (connection->network.slot != 0u)
     (void)flowie_server_close(&connection->endpoint->server, connection->network, status);
@@ -2384,7 +2410,7 @@ static void flowie_slow_subscriber_disconnect(flowie_endpoint_connection_t *conn
         "slow-subscriber-isolation status={} reason={} total_disconnects={} "
         "outbound_qos_inflight={} client_receive_maximum={} queued_replies={} "
         "max_inflight_per_session={} send_hwm_bytes={} action=connection-closed",
-        status, salts_strerror(status), (unsigned long long)total,
+        status, cmeta_strerror(status), (unsigned long long)total,
         (unsigned int)connection->outbound_qos_inflight,
         (unsigned int)connection->client_receive_maximum,
         (unsigned long long)(connection->send_queue_initialized
@@ -3341,14 +3367,14 @@ static void flowie_fail_reply_queue(flowie_endpoint_t *endpoint) {
   flowie_reply_request_t *head = NULL;
   flowie_reply_request_t *tail = NULL;
   flowie_reply_request_t *request = NULL;
-  salts_mutex_lock(&endpoint->send_queue_mutex);
+  cmeta_mutex_lock(&endpoint->send_queue_mutex);
   while (deque_pop_front(&endpoint->send_queue, &request) == STL_OK) {
     request->next = NULL;
     if (tail) tail->next = request;
     else head = request;
     tail = request;
   }
-  salts_mutex_unlock(&endpoint->send_queue_mutex);
+  cmeta_mutex_unlock(&endpoint->send_queue_mutex);
   flowie_reply_request_list_release(endpoint, head);
 }
 
@@ -3732,16 +3758,16 @@ static void flowie_reply_drain_task(coro_t *co, void *arg) {
     flowie_reply_request_t *request = NULL;
     flowie_endpoint_connection_t *connection;
     int rc;
-    salts_mutex_lock(&endpoint->send_queue_mutex);
+    cmeta_mutex_lock(&endpoint->send_queue_mutex);
     if (deque_pop_front(&endpoint->send_queue, &request) != STL_OK) {
       endpoint->send_drain_active = 0;
-      salts_mutex_unlock(&endpoint->send_queue_mutex);
+      cmeta_mutex_unlock(&endpoint->send_queue_mutex);
       (void)flowie_connection_reply_batch_flush(&deferred_connection);
       flowie_connection_usage(endpoint);
       flowie_task_end(endpoint);
       return;
     }
-    salts_mutex_unlock(&endpoint->send_queue_mutex);
+    cmeta_mutex_unlock(&endpoint->send_queue_mutex);
     connection = flowie_connection_find(endpoint, &request->route);
     if (request->kind == FLOWIE_REPLY_PUBLISH_FANOUT) {
       (void)flowie_connection_reply_batch_flush(&deferred_connection);
@@ -3785,16 +3811,16 @@ static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_reques
   int schedule = 0;
   int task_admitted = 0;
   int rc;
-  salts_mutex_lock(&endpoint->send_queue_mutex);
+  cmeta_mutex_lock(&endpoint->send_queue_mutex);
   if (!atomic_load_explicit(&endpoint->started, memory_order_acquire)) {
-    salts_mutex_unlock(&endpoint->send_queue_mutex);
+    cmeta_mutex_unlock(&endpoint->send_queue_mutex);
     flowie_reply_request_release(endpoint, request);
     return SALTS_ESHUTDOWN;
   }
   if (!endpoint->send_drain_active) {
     rc = flowie_task_try_begin(endpoint);
     if (rc != SALTS_OK) {
-      salts_mutex_unlock(&endpoint->send_queue_mutex);
+      cmeta_mutex_unlock(&endpoint->send_queue_mutex);
       flowie_reply_request_release(endpoint, request);
       return rc;
     }
@@ -3806,7 +3832,7 @@ static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_reques
     schedule = 1;
   }
   if (rc != SALTS_OK && task_admitted) flowie_task_end(endpoint);
-  salts_mutex_unlock(&endpoint->send_queue_mutex);
+  cmeta_mutex_unlock(&endpoint->send_queue_mutex);
   if (rc != SALTS_OK) {
     flowie_reply_request_release(endpoint, request);
     return rc;
@@ -3815,9 +3841,9 @@ static int flowie_reply_enqueue(flowie_endpoint_t *endpoint, flowie_reply_reques
   rc = tf_execution_post(&endpoint->execution, flowie_reply_drain_task, endpoint);
   if (rc == SALTS_OK) return SALTS_OK;
   flowie_fail_reply_queue(endpoint);
-  salts_mutex_lock(&endpoint->send_queue_mutex);
+  cmeta_mutex_lock(&endpoint->send_queue_mutex);
   endpoint->send_drain_active = 0;
-  salts_mutex_unlock(&endpoint->send_queue_mutex);
+  cmeta_mutex_unlock(&endpoint->send_queue_mutex);
   flowie_task_end(endpoint);
   return rc;
 }
@@ -4100,7 +4126,7 @@ static int flowie_connection_bind_session(flowie_endpoint_connection_t *connecti
   session->will_at_epoch_seconds = 0u;
   session->will_session_generation = 0u;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)coro_executor_await_complete(endpoint->execution.executor,
                                              endpoint->expiry_await, SALTS_EINTR);
   return SALTS_OK;
 }
@@ -5528,7 +5554,7 @@ static void flowie_connection_cluster_complete(void *ctx, int status,
   connection->cluster_status = status;
   connection->cluster_pending = 0;
   if (connection->cluster_await_active)
-    (void)salts_coro_executor_await_complete(connection->endpoint->execution.executor,
+    (void)coro_executor_await_complete(connection->endpoint->execution.executor,
                                              connection->cluster_await, SALTS_EINTR);
 }
 
@@ -5536,7 +5562,7 @@ static int flowie_connection_cluster_await_prepare(
     flowie_endpoint_connection_t *connection) {
   int status;
   if (connection == NULL || connection->cluster_await_active) return SALTS_EBUSY;
-  status = salts_coro_executor_await_begin(&connection->cluster_await);
+  status = coro_executor_await_begin(&connection->cluster_await);
   if (status == SALTS_OK) connection->cluster_await_active = 1;
   return status;
 }
@@ -5544,9 +5570,9 @@ static int flowie_connection_cluster_await_prepare(
 static void flowie_connection_cluster_await_abort(
     flowie_endpoint_connection_t *connection) {
   if (connection == NULL || !connection->cluster_await_active) return;
-  (void)salts_coro_executor_await_abort(connection->cluster_await);
+  (void)coro_executor_await_abort(connection->cluster_await);
   connection->cluster_await_active = 0;
-  connection->cluster_await = (salts_coro_executor_await_t){0};
+  connection->cluster_await = (coro_executor_await_t){0};
 }
 
 static int flowie_connection_cluster_submit_connect(
@@ -5873,12 +5899,12 @@ static int flowie_connection_cluster_wait(flowie_endpoint_connection_t *connecti
   if (!connection || !connection->cluster_await_active ||
       connection->endpoint->cluster_binding.request_timeout_ms > UINT32_MAX)
     return SALTS_EINVAL;
-  rc = salts_coro_executor_await_for(
+  rc = coro_executor_await_for(
       connection->cluster_await,
       (uint32_t)connection->endpoint->cluster_binding.request_timeout_ms,
       &completion_status);
   connection->cluster_await_active = 0;
-  connection->cluster_await = (salts_coro_executor_await_t){0};
+  connection->cluster_await = (coro_executor_await_t){0};
   if (rc == SALTS_OK) rc = completion_status;
   if (connection->cluster_pending && rc != SALTS_EINTR) {
     flowie_connection_cluster_detach(connection);
@@ -5918,7 +5944,7 @@ static int flowie_endpoint_session_prepare(void *ctx, flowie_ingress_t *ingress,
     rc = flowie_connection_mqtt_username_set(connection, connect.username);
     if (rc != SALTS_OK) return rc;
     if (connect.client_id.size == 0u && connect.version == FLOWIE_MQTT_VERSION_5) {
-      salts_uuid_t uuid;
+      cmeta_uuid_t uuid;
       if (!connect.clean_start) {
         decision.reply.type = FLOWIE_MQTT_PACKET_CONNACK;
         decision.reply.version = connect.version;
@@ -5928,9 +5954,9 @@ static int flowie_endpoint_session_prepare(void *ctx, flowie_ingress_t *ingress,
         return flowie_reply_control_enqueue(endpoint, &connection->route, &decision.reply, 1);
       }
       memcpy(assigned_client_id, "flowie-", sizeof("flowie-") - 1u);
-      rc = salts_uuid_v7_generate(&uuid);
+      rc = cmeta_uuid_v7_generate(&uuid);
       if (rc == SALTS_OK)
-        rc = salts_uuid_format(&uuid, assigned_client_id + sizeof("flowie-") - 1u,
+        rc = cmeta_uuid_format(&uuid, assigned_client_id + sizeof("flowie-") - 1u,
                                SALTS_UUID_STRING_SIZE);
       if (rc != SALTS_OK) return rc;
       assigned_client_id_span.data = (const uint8_t *)assigned_client_id;
@@ -6749,6 +6775,12 @@ static int flowie_listener_start_call(void *arg) {
   config.packet.kcp.max_message_bytes = endpoint->max_packet_size;
   config.command_capacity = command_target;
   config.command_bytes_capacity = endpoint->network_command_bytes;
+  config.network_workers = endpoint->network_workers;
+  config.network_policy = endpoint->network_policy == FLOWIE_NETWORK_LEAST_CONNECTIONS
+                              ? TF_NET_OWNER_LEAST_CONNECTIONS : TF_NET_OWNER_ROUND_ROBIN;
+  config.network_cpu_count = endpoint->network_cpu_count;
+  memcpy(config.network_cpus, endpoint->network_cpus,
+         endpoint->network_cpu_count * sizeof(config.network_cpus[0]));
   config.max_message_bytes = endpoint->max_packet_size;
   config.poll_slice_ms = FLOWIE_NET_POLL_SLICE_MS;
   config.observer = (flowie_observer){flowie_net_open, flowie_net_receive, flowie_net_close, NULL,
@@ -6795,13 +6827,13 @@ static int flowie_listener_interrupt_call(void *arg) {
   flowie_endpoint_t *endpoint = (flowie_endpoint_t *)arg;
   if (!endpoint) return SALTS_EINVAL;
   if (endpoint->expiry_await_active)
-    (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+    (void)coro_executor_await_complete(endpoint->execution.executor,
                                              endpoint->expiry_await, SALTS_ESHUTDOWN);
   for (size_t i = 0u; i < vec_size(&endpoint->clients); ++i) {
     flowie_endpoint_connection_t *const *connection =
         (flowie_endpoint_connection_t *const *)vec_at_const(&endpoint->clients, i);
     if (connection && *connection && (*connection)->cluster_await_active)
-      (void)salts_coro_executor_await_complete(endpoint->execution.executor,
+      (void)coro_executor_await_complete(endpoint->execution.executor,
                                                (*connection)->cluster_await, SALTS_ESHUTDOWN);
   }
   return SALTS_OK;
@@ -6941,7 +6973,7 @@ static void flowie_endpoint_shutdown(void *ctx) {
   if (endpoint->send_queue_initialized) {
     flowie_fail_reply_queue(endpoint);
     deque_destroy(&endpoint->send_queue);
-    salts_mutex_destroy(&endpoint->send_queue_mutex);
+    cmeta_mutex_destroy(&endpoint->send_queue_mutex);
     endpoint->send_queue_initialized = 0;
   }
   if (endpoint->send_budget_initialized) {
@@ -7090,7 +7122,7 @@ static int flowie_endpoint_restore_session_row(void *ctx,
   session->owner = owner;
   owner = NULL;
   if (row->has_principal) session->principal = row->principal;
-  now_ns = salts_hrtime();
+  now_ns = cmeta_hrtime();
   if (session_ended) {
     if (context->now_epoch_seconds == 0u) { rc = SALTS_EIO; goto fail; }
     session->expiry_at_epoch_seconds = row->expiry_at_epoch_seconds
@@ -7353,6 +7385,11 @@ static int flowie_register_endpoint_internal(
           ? FLOWIE_SLOW_SUBSCRIBER_DISCONNECT
           : config->slow_subscriber_policy;
   endpoint->reuse_port = config->reuse_port;
+  endpoint->network_workers = config->network_workers ? config->network_workers : 1u;
+  endpoint->network_policy = config->network_policy;
+  endpoint->network_cpu_count = config->network_cpu_count;
+  memcpy(endpoint->network_cpus, config->network_cpus,
+         config->network_cpu_count * sizeof(endpoint->network_cpus[0]));
   endpoint->host = config->host ? tstr_dup(config->host) : tstr_new();
   endpoint->path = config->path ? tstr_dup(config->path) : tstr_new();
   endpoint->tls_client_ca_file =
@@ -7473,7 +7510,7 @@ static int flowie_register_endpoint_internal(
     flowie_endpoint_shutdown(endpoint);
     return SALTS_ENOMEM;
   }
-  salts_mutex_init(&endpoint->send_queue_mutex);
+  cmeta_mutex_init(&endpoint->send_queue_mutex);
   endpoint->send_queue_initialized = 1;
   {
     const size_t aggregate_hwm =

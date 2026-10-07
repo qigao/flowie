@@ -2,7 +2,7 @@
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_startup_options_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>

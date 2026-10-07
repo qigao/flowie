@@ -1,7 +1,7 @@
 #include "flowie_rule_internal.h"
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdlib.h>

@@ -4,8 +4,8 @@
 
 #include "flowie_cluster_peer_internal.h"
 
-#include "salts_buffer.h"
-#include "salts_thread.h"
+#include "cmeta_buffer.h"
+#include "cmeta_thread.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@ struct flowie_cluster_peer_link_s {
   size_t queue_bytes_limit;
   size_t pending_entries;
   size_t pending_bytes;
-  salts_mutex_t mutex;
+  cmeta_mutex_t mutex;
   deque_t queue;
   flowie_cluster_peer_link_state_t state;
   cnet_client *network;
@@ -110,18 +110,18 @@ static void flowie_cluster_peer_send_complete(flowie_cluster_peer_send_t *send, 
 static int flowie_cluster_peer_link_pop(flowie_cluster_peer_link_t *link,
                                         flowie_cluster_peer_send_t *out) {
   int rc;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   rc = flowie_stl_error(deque_pop_front(&link->queue, out));
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   return rc;
 }
 
 static void flowie_cluster_peer_link_complete_account(flowie_cluster_peer_link_t *link,
                                                       size_t bytes) {
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->pending_entries != 0u) --link->pending_entries;
   if (bytes <= link->pending_bytes) link->pending_bytes -= bytes;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
 }
 
 static void flowie_cluster_peer_link_fail_pending(flowie_cluster_peer_link_t *link, int status) {
@@ -222,7 +222,7 @@ int flowie_cluster_peer_link_create(const flowie_cluster_peer_link_config_t *con
     rc = SALTS_ENOMEM;
     goto fail;
   }
-  salts_mutex_init(&link->mutex);
+  cmeta_mutex_init(&link->mutex);
   rc = flowie_stl_error(deque_init_bytes(&link->queue, sizeof(flowie_cluster_peer_send_t), _Alignof(flowie_cluster_peer_send_t), SIZE_MAX));
   if (rc != SALTS_OK) goto fail_mutex;
   rc = flowie_stl_error(deque_reserve(&link->queue, link->queue_entries_limit));
@@ -238,7 +238,7 @@ int flowie_cluster_peer_link_create(const flowie_cluster_peer_link_config_t *con
 fail_queue:
   deque_destroy(&link->queue);
 fail_mutex:
-  salts_mutex_destroy(&link->mutex);
+  cmeta_mutex_destroy(&link->mutex);
 fail:
   tstr_free(link->cluster_id);
   tstr_free(link->local_node_id);
@@ -251,14 +251,14 @@ int flowie_cluster_peer_link_observer(flowie_cluster_peer_link_t *link, cnet_cli
                                       cnet_observer *out_observer) {
   if (link == NULL || network == NULL || network->impl == NULL || out_observer == NULL)
     return SALTS_EINVAL;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->state != FLOWIE_CLUSTER_PEER_LINK_CREATED || link->network != NULL) {
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     return SALTS_EBUSY;
   }
   link->network = network;
   link->transport_status = SALTS_OK;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   *out_observer = (cnet_observer){.on_state = flowie_cluster_peer_network_state,
                                   .on_receive = flowie_cluster_peer_network_receive,
                                   .on_send = flowie_cluster_peer_network_send,
@@ -268,18 +268,18 @@ int flowie_cluster_peer_link_observer(flowie_cluster_peer_link_t *link, cnet_cli
 
 int flowie_cluster_peer_link_destroy(flowie_cluster_peer_link_t *link) {
   if (!link) return SALTS_OK;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->state == FLOWIE_CLUSTER_PEER_LINK_HANDSHAKING ||
       link->state == FLOWIE_CLUSTER_PEER_LINK_ACTIVE ||
       link->state == FLOWIE_CLUSTER_PEER_LINK_CLOSING) {
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     return SALTS_EBUSY;
   }
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   flowie_cluster_peer_link_fail_pending(link, SALTS_ECANCELED);
   mem_buffer_release(link->receive_buffer);
   deque_destroy(&link->queue);
-  salts_mutex_destroy(&link->mutex);
+  cmeta_mutex_destroy(&link->mutex);
   tstr_free(link->cluster_id);
   tstr_free(link->local_node_id);
   tstr_free(link->remote_node_id);
@@ -316,7 +316,7 @@ int flowie_cluster_peer_link_send(flowie_cluster_peer_link_t *link,
   bytes = tstr_len(send.bytes);
   send.complete = complete;
   send.complete_user_data = complete_user_data;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->state != FLOWIE_CLUSTER_PEER_LINK_ACTIVE) {
     rc = link->state == FLOWIE_CLUSTER_PEER_LINK_CLOSING ||
                  link->state == FLOWIE_CLUSTER_PEER_LINK_CLOSED
@@ -341,7 +341,7 @@ int flowie_cluster_peer_link_send(flowie_cluster_peer_link_t *link,
       }
     }
   }
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   if (rc != SALTS_OK) tstr_free(send.bytes);
   return rc;
 }
@@ -351,7 +351,7 @@ int flowie_cluster_peer_link_close(flowie_cluster_peer_link_t *link) {
   cnet_connection connection = {0};
   int rc = SALTS_OK;
   if (!link) return SALTS_EINVAL;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->state == FLOWIE_CLUSTER_PEER_LINK_CLOSED) {
     rc = SALTS_EALREADY;
   } else if (link->state == FLOWIE_CLUSTER_PEER_LINK_CREATED) {
@@ -361,7 +361,7 @@ int flowie_cluster_peer_link_close(flowie_cluster_peer_link_t *link) {
     network = link->network;
     connection = link->connection;
   }
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   if (network != NULL && connection.slot != 0u) {
     rc = cnet_close(network, connection);
     if (rc == SALTS_EALREADY) rc = SALTS_OK;
@@ -373,19 +373,19 @@ int flowie_cluster_peer_link_close(flowie_cluster_peer_link_t *link) {
 flowie_cluster_peer_link_state_t flowie_cluster_peer_link_state(flowie_cluster_peer_link_t *link) {
   flowie_cluster_peer_link_state_t state;
   if (!link) return FLOWIE_CLUSTER_PEER_LINK_CLOSED;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   state = link->state;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   return state;
 }
 
 int flowie_cluster_peer_link_pending(flowie_cluster_peer_link_t *link, size_t *entries,
                                      size_t *bytes) {
   if (!link || !entries || !bytes) return SALTS_EINVAL;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   *entries = link->pending_entries;
   *bytes = link->pending_bytes;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   return SALTS_OK;
 }
 
@@ -420,10 +420,10 @@ static int flowie_cluster_peer_link_receive_next(flowie_cluster_peer_link_t *lin
     }
     rc = cnet_client_poll(link->network, FLOWIE_CLUSTER_PEER_POLL_SLICE_MS, &events);
     if (rc != SALTS_OK) return rc;
-    salts_mutex_lock(&link->mutex);
+    cmeta_mutex_lock(&link->mutex);
     if (link->state == FLOWIE_CLUSTER_PEER_LINK_CLOSING || link->pending_entries != 0u)
       rc = SALTS_EINTR;
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     if (rc != SALTS_OK) return rc;
   }
 }
@@ -445,12 +445,19 @@ static void flowie_cluster_peer_link_control_frame(flowie_cluster_peer_link_t *l
 
 static int flowie_cluster_peer_link_send_bytes(flowie_cluster_peer_link_t *link, const void *data,
                                                size_t size) {
+  mem_buffer_t *buffer;
   int rc;
   if (link == NULL || link->network == NULL || data == NULL || size == 0u)
     return SALTS_EINVAL;
+  if (size > link->max_frame_size) return SALTS_EMSGSIZE;
+  buffer = mem_get_buffer(mem_global(), size);
+  if (buffer == NULL) return SALTS_ENOMEM;
+  memcpy(mem_buffer_data(buffer), data, size);
+  mem_set_used(buffer, size);
   link->send_pending = 1;
   link->expected_send_size = size;
-  rc = cnet_send(link->network, link->connection, data, size);
+  rc = cnet_send_buffer(link->network, link->connection, buffer);
+  mem_buffer_release(buffer);
   if (rc != SALTS_OK) {
     link->send_pending = 0;
     link->expected_send_size = 0u;
@@ -583,16 +590,16 @@ int flowie_cluster_peer_link_run(flowie_cluster_peer_link_t *link,
   if (!link || connected_tls_connection.slot == 0u ||
       connected_tls_connection.generation == 0u)
     return SALTS_EINVAL;
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (link->state != FLOWIE_CLUSTER_PEER_LINK_CREATED || link->network == NULL ||
       (link->connection.slot != 0u &&
        !flowie_cluster_peer_connection_matches(link, connected_tls_connection))) {
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     return SALTS_EBUSY;
   }
   link->state = FLOWIE_CLUSTER_PEER_LINK_HANDSHAKING;
   link->connection = connected_tls_connection;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   while (!link->transport_connected && !link->transport_terminal &&
          link->transport_status == SALTS_OK) {
     size_t events = 0u;
@@ -611,10 +618,10 @@ int flowie_cluster_peer_link_run(flowie_cluster_peer_link_t *link,
              ? flowie_cluster_peer_link_handshake_initiator(link, binding, certificate_sha256)
              : flowie_cluster_peer_link_handshake_responder(link, binding, certificate_sha256);
   }
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   if (rc == SALTS_OK && link->state == FLOWIE_CLUSTER_PEER_LINK_HANDSHAKING)
     link->state = FLOWIE_CLUSTER_PEER_LINK_ACTIVE;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
 
   if (rc == SALTS_OK && link->active)
     rc = link->active(link->user_data, link, tstr_to_v(link->remote_node_id), link->remote_boot_id);
@@ -623,10 +630,10 @@ int flowie_cluster_peer_link_run(flowie_cluster_peer_link_t *link,
     flowie_cluster_peer_frame_t frame = FLOWIE_CLUSTER_PEER_FRAME_INIT;
     flowie_cluster_peer_link_state_t state;
     size_t pending;
-    salts_mutex_lock(&link->mutex);
+    cmeta_mutex_lock(&link->mutex);
     state = link->state;
     pending = link->pending_entries;
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     if (pending != 0u) {
       rc = flowie_cluster_peer_link_drain_one(link);
       continue;
@@ -655,14 +662,14 @@ int flowie_cluster_peer_link_run(flowie_cluster_peer_link_t *link,
     if (rc == SALTS_OK && shutdown_status != SALTS_OK) rc = shutdown_status;
   }
   if (rc != SALTS_OK) {
-    salts_mutex_lock(&link->mutex);
+    cmeta_mutex_lock(&link->mutex);
     link->state = FLOWIE_CLUSTER_PEER_LINK_CLOSING;
-    salts_mutex_unlock(&link->mutex);
+    cmeta_mutex_unlock(&link->mutex);
     flowie_cluster_peer_link_fail_pending(link, rc);
   }
-  salts_mutex_lock(&link->mutex);
+  cmeta_mutex_lock(&link->mutex);
   link->state = FLOWIE_CLUSTER_PEER_LINK_CLOSED;
-  salts_mutex_unlock(&link->mutex);
+  cmeta_mutex_unlock(&link->mutex);
   return rc;
 }
 

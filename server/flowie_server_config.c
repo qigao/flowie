@@ -2,8 +2,8 @@
 
 #include "flowie.h"
 
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 #include <cyaml.h>
 
 #include <errno.h>
@@ -13,6 +13,49 @@
 #include <string.h>
 
 enum { FLOWIE_SERVER_CONFIG_MAX_BYTES = 1024u * 1024u };
+
+int flowie_server_network_policy_parse(const char *text, flowie_endpoint_config_t *config) {
+  if (text == NULL || config == NULL) return SALTS_EINVAL;
+  if (strcmp(text, "round-robin") == 0) config->network_policy = FLOWIE_NETWORK_ROUND_ROBIN;
+  else if (strcmp(text, "least-connections") == 0)
+    config->network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
+  else return SALTS_EINVAL;
+  return SALTS_OK;
+}
+
+/* Decimal CPU IDs only; no signs, implicit bases, or overflow. */
+static int flowie_server_cpu_number(const char **cursor, uint32_t *out) {
+  const char *text = *cursor;
+  uint32_t value = 0u;
+  if (*text < '0' || *text > '9') return SALTS_EINVAL;
+  do {
+    const uint32_t digit = (uint32_t)(*text - '0');
+    if (value > (UINT32_MAX - digit) / 10u) return SALTS_ERANGE;
+    value = value * 10u + digit;
+    ++text;
+  } while (*text >= '0' && *text <= '9');
+  *cursor = text;
+  *out = value;
+  return SALTS_OK;
+}
+
+int flowie_server_network_cpus_parse(const char *text, flowie_endpoint_config_t *config) {
+  uint32_t cpus[FLOWIE_MAX_NETWORK_WORKERS];
+  uint32_t count = 0u;
+  if (text == NULL || config == NULL) return SALTS_EINVAL;
+  for (;;) {
+    int status;
+    if (count == FLOWIE_MAX_NETWORK_WORKERS) return SALTS_ERANGE;
+    status = flowie_server_cpu_number(&text, &cpus[count]);
+    if (status != SALTS_OK) return status;
+    ++count;
+    if (*text == '\0') break;
+    if (*text++ != ',') return SALTS_EINVAL;
+  }
+  memcpy(config->network_cpus, cpus, count * sizeof(cpus[0]));
+  config->network_cpu_count = count;
+  return SALTS_OK;
+}
 
 struct flowie_server_config_s {
   flowie_endpoint_config_t endpoint;
@@ -112,6 +155,46 @@ static int flowie_server_endpoint_number(const cyaml_doc_t *doc,
   return SALTS_OK;
 }
 
+static int flowie_server_parse_network_placement(const cyaml_doc_t *doc,
+                                                 cyaml_node_t *mapping,
+                                                 flowie_endpoint_config_t *config) {
+  cyaml_node_t *node = cyaml_get(doc, mapping, "network_policy");
+  uint32_t index;
+  if (node != NULL) {
+    char *text;
+    int status;
+    if (!cyaml_is_scalar(node)) return SALTS_EPROTO;
+    text = cyaml_scalar_str(doc, node);
+    if (text == NULL) return SALTS_ENOMEM;
+    status = flowie_server_network_policy_parse(text, config);
+    free(text);
+    if (status != SALTS_OK) return status;
+  }
+  node = cyaml_get(doc, mapping, "network_cpus");
+  if (node == NULL) return SALTS_OK;
+  if (!cyaml_is_seq(node)) return SALTS_EPROTO;
+  config->network_cpu_count = cyaml_seq_len(node);
+  if (config->network_cpu_count > FLOWIE_MAX_NETWORK_WORKERS) return SALTS_ERANGE;
+  if (config->network_cpu_count != 0u &&
+      config->network_cpu_count != (config->network_workers ? config->network_workers : 1u))
+    return SALTS_EINVAL;
+  for (index = 0u; index < config->network_cpu_count; ++index) {
+    cyaml_node_t *item = cyaml_seq_get(node, index);
+    char *text;
+    const char *cursor;
+    int status;
+    if (!cyaml_is_scalar(item)) return SALTS_EPROTO;
+    text = cyaml_scalar_str(doc, item);
+    if (text == NULL) return SALTS_ENOMEM;
+    cursor = text;
+    status = flowie_server_cpu_number(&cursor, &config->network_cpus[index]);
+    if (status == SALTS_OK && *cursor != '\0') status = SALTS_EINVAL;
+    free(text);
+    if (status != SALTS_OK) return status;
+  }
+  return SALTS_OK;
+}
+
 static int flowie_server_parse_endpoint(const cyaml_doc_t *doc, cyaml_node_t *mapping,
                                         flowie_server_config_t *config) {
   char transport[16] = {0};
@@ -151,6 +234,8 @@ static int flowie_server_parse_endpoint(const cyaml_doc_t *doc, cyaml_node_t *ma
   FLOWIE_ENDPOINT_U64("port", UINT16_MAX, port);
   FLOWIE_ENDPOINT_U64("max_packet_size", FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE, max_packet_size);
   FLOWIE_ENDPOINT_U64("max_connections", FLOWIE_MAX_CONNECTIONS_LIMIT, max_connections);
+  FLOWIE_ENDPOINT_U64("network_workers", FLOWIE_MAX_NETWORK_WORKERS, network_workers);
+  FLOWIE_ENDPOINT_U64("network_command_bytes", SIZE_MAX, network_command_bytes);
   FLOWIE_ENDPOINT_U64("max_sessions", SIZE_MAX, max_sessions);
   FLOWIE_ENDPOINT_U64("max_retained_messages", SIZE_MAX, max_retained_messages);
   FLOWIE_ENDPOINT_U64("max_subscriptions_per_session", UINT16_MAX,
@@ -163,8 +248,16 @@ static int flowie_server_parse_endpoint(const cyaml_doc_t *doc, cyaml_node_t *ma
                       stream_recv_buffer_bytes);
   FLOWIE_ENDPOINT_U64("topic_alias_maximum", UINT16_MAX, topic_alias_maximum);
 #undef FLOWIE_ENDPOINT_U64
+  rc = flowie_server_parse_network_placement(doc, mapping, &config->endpoint);
+  if (rc != SALTS_OK) return rc;
   rc = flowie_yaml_bool(doc, mapping, "manage_sessions", &config->endpoint.manage_sessions);
   if (rc != SALTS_OK) return rc;
+  if (config->endpoint.network_workers > config->endpoint.max_connections)
+    return SALTS_ERANGE;
+  if ((config->endpoint.network_workers > 1u || config->endpoint.network_cpu_count != 0u ||
+       config->endpoint.network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_TCP &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_TLS) return SALTS_ENOTSUP;
   if (config->endpoint.port <= 0 || config->endpoint.max_packet_size < 2u ||
       config->endpoint.max_connections == 0u || config->endpoint.max_sessions == 0u ||
       config->endpoint.max_subscriptions_per_session == 0u ||
@@ -271,7 +364,7 @@ static int flowie_server_parse_security(const cyaml_doc_t *doc, cyaml_node_t *pr
 int flowie_server_config_load(const char *path, const char *profile_name, int require_security,
                               flowie_server_config_t **out,
                               flowie_server_config_error_t *error) {
-  salts_fs_buf_t bytes = {0};
+  cmeta_fs_buf_t bytes = {0};
   cyaml_doc_t *doc = NULL;
   cyaml_node_t *root;
   cyaml_node_t *profiles;
@@ -287,16 +380,16 @@ int flowie_server_config_load(const char *path, const char *profile_name, int re
     *error = (flowie_server_config_error_t)FLOWIE_SERVER_CONFIG_ERROR_INIT;
   if (!path || !path[0] || !profile_name || !profile_name[0] || !out)
     return flowie_server_config_fail(error, SALTS_EINVAL, "$", "path and profile are required");
-  rc = salts_fs_read_file(path, &bytes);
+  rc = cmeta_fs_read_file(path, &bytes);
   if (rc != SALTS_OK)
     return flowie_server_config_fail(error, rc, "$", "cannot read Flowie configuration");
   if (bytes.len == 0u || bytes.len > FLOWIE_SERVER_CONFIG_MAX_BYTES) {
-    salts_fs_buf_free(&bytes);
+    cmeta_fs_buf_free(&bytes);
     return flowie_server_config_fail(error, SALTS_ERANGE, "$", "configuration size is invalid");
   }
   doc = cyaml_parse(bytes.base, bytes.len, NULL, NULL);
   if (!doc) {
-    salts_fs_buf_free(&bytes);
+    cmeta_fs_buf_free(&bytes);
     return flowie_server_config_fail(error, SALTS_EPROTO, "$", "configuration is not valid YAML");
   }
   root = cyaml_root(doc);
@@ -342,7 +435,7 @@ int flowie_server_config_load(const char *path, const char *profile_name, int re
 done:
   free(config);
   cyaml_free(doc);
-  salts_fs_buf_free(&bytes);
+  cmeta_fs_buf_free(&bytes);
   return rc;
 }
 

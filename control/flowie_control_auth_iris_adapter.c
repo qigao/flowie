@@ -1,7 +1,7 @@
 #include "flowie_control_auth_iris_adapter_internal.h"
 
 #include "monocypher.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>

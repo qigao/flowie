@@ -1,8 +1,8 @@
 #include "flowie_cluster_owner_directory_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -45,7 +45,7 @@ spec("Flowie cluster owner directory") {
     flowie_cluster_owner_token_t owner = FLOWIE_CLUSTER_OWNER_TOKEN_INIT;
     flowie_mqtt_span_t client_id = {(const uint8_t *)"client-a", strlen("client-a")};
     uint32_t expected_shard = 0u;
-    owner_directory_entries(entries, 4u, salts_hrtime() + UINT64_C(1000000000));
+    owner_directory_entries(entries, 4u, cmeta_hrtime() + UINT64_C(1000000000));
     check_equal(flowie_cluster_owner_directory_replace(directory, entries, 4u, 7u), SALTS_OK);
     check_equal(flowie_cluster_shard_for_key(
                      FLOWIE_CLUSTER_HASH_VERSION_1, FLOWIE_CLUSTER_KEY_SESSION,
@@ -79,7 +79,7 @@ spec("Flowie cluster owner directory") {
     flowie_cluster_owner_directory_entry_t entries[2];
     flowie_cluster_owner_directory_t *directory = owner_directory_create(2u);
     uint64_t revision = 0u;
-    owner_directory_entries(entries, 2u, salts_hrtime() + UINT64_C(1000000000));
+    owner_directory_entries(entries, 2u, cmeta_hrtime() + UINT64_C(1000000000));
     check_equal(flowie_cluster_owner_directory_replace(directory, entries, 2u, 5u), SALTS_OK);
     check_equal(flowie_cluster_owner_directory_replace(directory, entries, 2u, 5u), SALTS_OK);
     entries[0].owner.owner_epoch++;
@@ -95,7 +95,7 @@ spec("Flowie cluster owner directory") {
   it("requires a complete index-aligned bounded shard view") {
     flowie_cluster_owner_directory_entry_t entries[2];
     flowie_cluster_owner_directory_t *directory = owner_directory_create(2u);
-    owner_directory_entries(entries, 2u, salts_hrtime() + UINT64_C(1000000000));
+    owner_directory_entries(entries, 2u, cmeta_hrtime() + UINT64_C(1000000000));
     check_equal(flowie_cluster_owner_directory_replace(directory, entries, 1u, 1u),
                  SALTS_EINVAL);
     entries[1].shard_id = 0u;

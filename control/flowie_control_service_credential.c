@@ -1,7 +1,7 @@
 #include "flowie_control_service_credential_internal.h"
 
 #include "monocypher.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>

@@ -1,0 +1,124 @@
+name: Flowie native tests
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-native-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.rid }} Release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            rid: windows-x64
+            preset: ci-win-release-user
+          - os: ubuntu-24.04
+            rid: linux-x64
+            preset: ci-linux-release-user
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+        with:
+          version: '4.6.3'
+      - name: Restore published SDKs
+        shell: pwsh
+        env:
+          SDK_RID: ${{ matrix.rid }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $downloads = Join-Path $env:RUNNER_TEMP 'flowie-downloads'
+          $packages = Join-Path $env:RUNNER_TEMP 'flowie-sdk'
+          New-Item -ItemType Directory -Path $downloads -Force | Out-Null
+          $sdks = @(
+            @{ Repo='salts'; Package='Salts.Native'; Directory='salts'; Tag='' },
+            @{ Repo='salts-utils'; Package='SaltsUtils.Native'; Directory='salts-utils'; Tag='' },
+            @{ Repo='chttp'; Package='CHttp.Native'; Directory='http-services'; Tag='' },
+            @{ Repo='turbodb'; Package='TurboDB.Native'; Directory='turbodb'; Tag='v2.3.1' }
+          )
+          foreach ($sdk in $sdks) {
+            $arguments = @('release', 'view', '--repo', ('qigao/' + $sdk.Repo), '--json', 'tagName,assets')
+            if ($sdk.Tag) { $arguments += $sdk.Tag }
+            $releaseJson = & gh @arguments
+            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $($sdk.Package)" }
+            $release = $releaseJson | ConvertFrom-Json
+            $assets = @($release.assets | Where-Object { $_.name -like ($sdk.Package + '.*.nupkg') })
+            if ($assets.Count -ne 1) { throw "Expected one SDK asset for $($sdk.Package)" }
+            $asset = $assets[0]
+            & gh release download $release.tagName --repo ('qigao/' + $sdk.Repo) --pattern $asset.name --dir $downloads
+            if ($LASTEXITCODE -ne 0) { throw "Cannot download $($sdk.Package)" }
+            $archive = Join-Path $downloads $asset.name
+            $digest = 'sha256:' + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($digest -ne $asset.digest) { throw "Digest mismatch for $($sdk.Package)" }
+            $unpacked = Join-Path $downloads $sdk.Directory
+            [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
+            $source = Join-Path $unpacked ('sdk/' + $env:SDK_RID)
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Missing SDK: $source" }
+            $parent = Join-Path $packages $sdk.Directory
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination (Join-Path $parent 'release') -Recurse
+            Write-Output "$($sdk.Package)=$($release.tagName) $($asset.digest)"
+          }
+      - name: Prepare Linux host
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+      - name: Configure, build and test Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset ci-linux-release-user
+          cmake --build --preset ci-linux-release-user --parallel 2
+          ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
+      - name: Locate Windows compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+      - name: Configure, build and test Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --preset ci-win-release-user
+          if errorlevel 1 exit /b 1
+          cmake --build --preset ci-win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
+          if errorlevel 1 exit /b 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-tests-${{ matrix.rid }}
+          path: |
+            build/native-ci/results.xml
+            build/native-ci/Testing/Temporary/LastTest.log
+            build/native-ci/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore

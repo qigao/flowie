@@ -3,8 +3,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,7 +92,7 @@ spec("flowie TurboDB live protocol repository") {
     database.options = &option;
     database.option_count = 1u;
     (void)snprintf(prefix, sizeof(prefix), "flowie_protocol_turbodb_%llu",
-                   (unsigned long long)salts_hrtime());
+                   (unsigned long long)cmeta_hrtime());
     config.database = &database;
     config.namespace_name = prefix;
     config.create_schema = 1;

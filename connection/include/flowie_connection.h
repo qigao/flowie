@@ -50,6 +50,13 @@ typedef struct flowie_observer {
   void *user;
 } flowie_observer;
 
+#define FLOWIE_NETWORK_WORKERS_MAX 64u
+
+typedef enum flowie_owner_policy {
+  TF_NET_OWNER_ROUND_ROBIN = 0,
+  TF_NET_OWNER_LEAST_CONNECTIONS = 1
+} flowie_owner_policy;
+
 typedef struct flowie_server_config {
   size_t size;
   flowie_transport transport;
@@ -70,6 +77,21 @@ typedef struct flowie_server_config {
   size_t max_message_bytes;
   uint32_t poll_slice_ms;
   flowie_observer observer;
+  /**
+   * TCP/TLS progress owners. 0/1 preserves the single-owner path; maximum 64.
+   * Connection and mailbox-byte capacities are aggregate and partitioned across
+   * owners; each partition must hold max_message_bytes. Other CNet capacities
+   * and command_capacity apply per owner. Callbacks for different connections
+   * may overlap; one connection keeps its owner and ordered callbacks until close.
+   * UDP/KCP/WS/WSS reject values greater than one with SALTS_ENOTSUP.
+   */
+  uint32_t network_workers;
+  /** TCP/TLS accept placement; includes pending handoffs in least-connections. */
+  flowie_owner_policy network_policy;
+  /** 0 preserves OS scheduling; otherwise exactly one CPU per effective owner. */
+  uint32_t network_cpu_count;
+  /** Copied CPU IDs. Windows: group * 64 + processor; Linux/Android: logical ID. */
+  uint32_t network_cpus[FLOWIE_NETWORK_WORKERS_MAX];
 } flowie_server_config;
 
 #define TF_NET_SERVER_CONFIG_INIT                                                                 \
@@ -82,6 +104,7 @@ typedef struct flowie_server {
 } flowie_server;
 
 int flowie_server_init(flowie_server *server, const flowie_server_config *config);
+/** Explicit CPU binding errors fail start and join started workers; recreate to retry. */
 int flowie_server_start(flowie_server *server);
 int flowie_server_port(const flowie_server *server, uint16_t *out_port);
 

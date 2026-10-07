@@ -9,9 +9,9 @@
 #include "base64_utils.h"
 #include <http_client/http.h>
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_process.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_process.h"
+#include "cmeta_thread.h"
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -1383,8 +1383,8 @@ static void control_test_http_task(void *arg) {
   uint64_t deadline;
   http_response_t *response = NULL;
   if (!state) return;
-  deadline = salts_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
-  while (salts_monotonic_ms() < deadline) {
+  deadline = cmeta_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
+  while (cmeta_monotonic_ms() < deadline) {
     response = control_test_auth_request(state, state->secret_base64);
     if (response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
         response->body && strstr(response->body, "\"authenticated\":true") != NULL) {
@@ -1397,7 +1397,7 @@ static void control_test_http_task(void *arg) {
     }
     http_response_free(response);
     response = NULL;
-    salts_sleep_ms(25u);
+    cmeta_sleep_ms(25u);
   }
   if (!state->ready) return;
 
@@ -1459,9 +1459,9 @@ static void control_test_http_task(void *arg) {
 static int control_test_run_network_gate(void) {
   control_tls_material_t material;
   control_http_state_t http_state;
-  salts_process_options_t process_options;
-  salts_process_result_t process_result;
-  salts_process_t *process = NULL;
+  cmeta_process_options_t process_options;
+  cmeta_process_result_t process_result;
+  cmeta_process_t *process = NULL;
   char *database_path = NULL;
   char *config_path = NULL;
   char base_url[128];
@@ -1491,12 +1491,12 @@ static int control_test_run_network_gate(void) {
   failure_stage = "spawn controller";
 
   process_args[1] = config_path;
-  salts_process_options_init(&process_options);
+  cmeta_process_options_init(&process_options);
   process_options.program = FLOWIE_CONTROL_EXECUTABLE;
   process_options.args = process_args;
   process_options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   process_options.max_output_bytes = 65536u;
-  if (salts_process_spawn(&process_options, &process) != SALTS_OK) goto cleanup;
+  if (cmeta_process_spawn(&process_options, &process) != SALTS_OK) goto cleanup;
 
   (void)snprintf(base_url, sizeof(base_url), "https://localhost:%u", (unsigned int)port);
   http_state.base_url = base_url;
@@ -1544,9 +1544,9 @@ cleanup:
                   http_state.client_certificate_does_not_authenticate_rpc);
   }
   if (process) {
-    if (salts_process_poll(process, &process_result) == SALTS_EBUSY) {
-      (void)salts_process_terminate(process);
-      (void)salts_process_wait(process, &process_result);
+    if (cmeta_process_poll(process, &process_result) == SALTS_EBUSY) {
+      (void)cmeta_process_terminate(process);
+      (void)cmeta_process_wait(process, &process_result);
     }
     if (rc != SALTS_OK) {
       char child_output[4096];
@@ -1556,23 +1556,23 @@ cleanup:
       (void)fprintf(stderr,
                     "flowie-control integration child result: state=%s pid=%d exit=%d "
                     "signal=%d error=%d\n",
-                    salts_process_state_name(process_result.state), process_result.pid,
+                    cmeta_process_state_name(process_result.state), process_result.pid,
                     process_result.exit_code, process_result.term_signal,
                     process_result.error_code);
-      if (salts_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
+      if (cmeta_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
                                     &child_output_size) == SALTS_OK &&
           child_output_size > 0u) {
         child_output[child_output_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stdout: %s\n", child_output);
       }
-      if (salts_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
+      if (cmeta_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
                                     &child_error_size) == SALTS_OK &&
           child_error_size > 0u) {
         child_error[child_error_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stderr: %s\n", child_error);
       }
     }
-    salts_process_destroy(process);
+    cmeta_process_destroy(process);
   }
   memset(secret_base64, 0, sizeof(secret_base64));
   control_test_tls_material_close(&material);

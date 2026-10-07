@@ -1,8 +1,8 @@
 #include "flowie_cluster_raft_store_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,11 +21,11 @@ static void flowie_raft_store_cleanup(const char *path) {
   if (!path) return;
   for (segment = 1u; segment <= 4u; ++segment) {
     (void)snprintf(generated, sizeof(generated), "%s.%08zu.wal", path, segment);
-    if (salts_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
+    if (cmeta_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
       check_equal(tt_remove_file(generated), 0);
   }
   (void)snprintf(generated, sizeof(generated), "%s.lock", path);
-  if (salts_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
+  if (cmeta_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
     check_equal(tt_remove_file(generated), 0);
   check_equal(tt_remove_file(path), 0);
 }

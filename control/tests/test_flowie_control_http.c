@@ -3,7 +3,7 @@
 #include "tls_test_support.h"
 
 #include <http_client/http.h>
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tinytest.h"
 
 #include <stdio.h>

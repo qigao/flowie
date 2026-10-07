@@ -3,11 +3,11 @@
 #include <http_client/http.h>
 #include "cjwt/cjwt.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 #include <uri_parser.h>
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <openssl/ssl.h>
 
@@ -33,8 +33,8 @@ enum {
 
 typedef struct flowie_control_jwt_jwks_verify_job_s {
   flowie_control_jwt_jwks_authenticator_t *authenticator;
-  salts_mutex_t mutex;
-  salts_cond_t completed_changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t completed_changed;
   atomic_uint references;
   int completed;
   flowie_control_external_auth_request_t request;
@@ -49,8 +49,8 @@ typedef struct flowie_control_jwt_jwks_verify_job_s {
 
 typedef struct flowie_control_jwt_jwks_parse_job_s {
   flowie_control_jwt_jwks_authenticator_t *authenticator;
-  salts_mutex_t mutex;
-  salts_cond_t completed_changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t completed_changed;
   atomic_uint references;
   int completed;
   flowie_control_jwt_jwks_snapshot_t *snapshot;
@@ -83,9 +83,9 @@ struct flowie_control_jwt_jwks_authenticator_s {
   uint32_t executor_deadline_ms;
   flowie_control_jwt_jwks_clock_fn clock_seconds;
   void *clock_ctx;
-  salts_threadpool_t *executor;
+  cmeta_threadpool_t *executor;
   atomic_int refresh_in_flight;
-  salts_rwlock_t snapshot_lock;
+  cmeta_rwlock_t snapshot_lock;
   int snapshot_lock_initialized;
   flowie_control_jwt_jwks_snapshot_t *snapshot;
 };
@@ -99,8 +99,8 @@ static void jwt_jwks_verify_job_release(flowie_control_jwt_jwks_verify_job_t *jo
   size_t allocation_size;
   if (!job || atomic_fetch_sub_explicit(&job->references, 1u, memory_order_acq_rel) != 1u) return;
   allocation_size = sizeof(*job) + job->request.secret_size;
-  salts_cond_destroy(&job->completed_changed);
-  salts_mutex_destroy(&job->mutex);
+  cmeta_cond_destroy(&job->completed_changed);
+  cmeta_mutex_destroy(&job->mutex);
   memset(job, 0, allocation_size);
   free(job);
 }
@@ -110,10 +110,10 @@ static void jwt_jwks_verify_job_run(void *arg) {
   if (!job) return;
   job->result = flowie_control_jwt_jwks_authenticator_verify_token(
       job->authenticator, &job->request, job->now, &job->assertion);
-  salts_mutex_lock(&job->mutex);
+  cmeta_mutex_lock(&job->mutex);
   job->completed = 1;
-  salts_cond_signal(&job->completed_changed);
-  salts_mutex_unlock(&job->mutex);
+  cmeta_cond_signal(&job->completed_changed);
+  cmeta_mutex_unlock(&job->mutex);
   jwt_jwks_verify_job_release(job);
 }
 
@@ -122,8 +122,8 @@ static void jwt_jwks_parse_job_release(flowie_control_jwt_jwks_parse_job_t *job)
   if (!job || atomic_fetch_sub_explicit(&job->references, 1u, memory_order_acq_rel) != 1u) return;
   allocation_size = sizeof(*job) + job->json_size + 1u;
   jwt_jwks_snapshot_destroy(job->snapshot);
-  salts_cond_destroy(&job->completed_changed);
-  salts_mutex_destroy(&job->mutex);
+  cmeta_cond_destroy(&job->completed_changed);
+  cmeta_mutex_destroy(&job->mutex);
   memset(job, 0, allocation_size);
   free(job);
 }
@@ -133,30 +133,30 @@ static void jwt_jwks_parse_job_run(void *arg) {
   if (!job) return;
   job->result = jwt_jwks_snapshot_parse(job->authenticator, job->json, job->json_size,
                                         job->valid_until, &job->snapshot);
-  salts_mutex_lock(&job->mutex);
+  cmeta_mutex_lock(&job->mutex);
   job->completed = 1;
-  salts_cond_signal(&job->completed_changed);
-  salts_mutex_unlock(&job->mutex);
+  cmeta_cond_signal(&job->completed_changed);
+  cmeta_mutex_unlock(&job->mutex);
   jwt_jwks_parse_job_release(job);
 }
 
 static uint64_t jwt_jwks_wait_deadline(uint32_t timeout_ms) {
-  uint64_t now = salts_hrtime();
+  uint64_t now = cmeta_hrtime();
   if ((uint64_t)timeout_ms >
       (UINT64_MAX - now) / JWT_JWKS_NANOSECONDS_PER_MILLISECOND)
     return UINT64_MAX;
   return now + (uint64_t)timeout_ms * JWT_JWKS_NANOSECONDS_PER_MILLISECOND;
 }
 
-static int jwt_jwks_wait(salts_cond_t *changed, salts_mutex_t *mutex, int *completed,
+static int jwt_jwks_wait(cmeta_cond_t *changed, cmeta_mutex_t *mutex, int *completed,
                          uint32_t timeout_ms) {
   uint64_t deadline;
   if (!changed || !mutex || !completed || timeout_ms == 0u) return SALTS_EINVAL;
   deadline = jwt_jwks_wait_deadline(timeout_ms);
   while (!*completed) {
-    uint64_t now = salts_hrtime();
+    uint64_t now = cmeta_hrtime();
     if (now >= deadline ||
-        salts_cond_timedwait(changed, mutex, deadline - now) != SALTS_OK)
+        cmeta_cond_timedwait(changed, mutex, deadline - now) != SALTS_OK)
       return SALTS_ETIMEDOUT;
   }
   return SALTS_OK;
@@ -495,10 +495,10 @@ done:
 static void jwt_jwks_snapshot_replace(flowie_control_jwt_jwks_authenticator_t *authenticator,
                                       flowie_control_jwt_jwks_snapshot_t *next) {
   flowie_control_jwt_jwks_snapshot_t *previous;
-  salts_rwlock_wrlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_wrlock(&authenticator->snapshot_lock);
   previous = authenticator->snapshot;
   authenticator->snapshot = next;
-  salts_rwlock_wrunlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_wrunlock(&authenticator->snapshot_lock);
   jwt_jwks_snapshot_destroy(previous);
 }
 
@@ -528,9 +528,9 @@ int flowie_control_jwt_jwks_authenticator_verify_token(
       request->secret_size == 0u || request->secret_size > authenticator->max_token_size ||
       memchr(request->secret, '\0', request->secret_size))
     return SALTS_EINVAL;
-  salts_rwlock_rdlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdlock(&authenticator->snapshot_lock);
   if (!authenticator->snapshot || authenticator->snapshot->valid_until <= now) {
-    salts_rwlock_rdunlock(&authenticator->snapshot_lock);
+    cmeta_rwlock_rdunlock(&authenticator->snapshot_lock);
     return SALTS_EBUSY;
   }
   for (int index = 0; index < authenticator->snapshot->keys->count; ++index) {
@@ -554,7 +554,7 @@ int flowie_control_jwt_jwks_authenticator_verify_token(
     cjwt_destroy(token);
     break;
   }
-  salts_rwlock_rdunlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdunlock(&authenticator->snapshot_lock);
   if (rc != SALTS_OK) *assertion_out = empty;
   return rc;
 }
@@ -642,8 +642,8 @@ static int jwt_jwks_parse_offloaded(flowie_control_jwt_jwks_authenticator_t *aut
     return SALTS_EINVAL;
   job = (flowie_control_jwt_jwks_parse_job_t *)calloc(1u, sizeof(*job) + json_size + 1u);
   if (!job) return SALTS_ENOMEM;
-  salts_mutex_init(&job->mutex);
-  salts_cond_init(&job->completed_changed);
+  cmeta_mutex_init(&job->mutex);
+  cmeta_cond_init(&job->completed_changed);
   job->authenticator = authenticator;
   job->valid_until = valid_until;
   job->json_size = json_size;
@@ -651,13 +651,13 @@ static int jwt_jwks_parse_offloaded(flowie_control_jwt_jwks_authenticator_t *aut
   memcpy(job->json, json, json_size);
   job->json[json_size] = '\0';
   atomic_init(&job->references, 2u);
-  if (salts_threadpool_try_submit(authenticator->executor, jwt_jwks_parse_job_run, job) !=
+  if (cmeta_threadpool_try_submit(authenticator->executor, jwt_jwks_parse_job_run, job) !=
       SALTS_OK) {
     jwt_jwks_parse_job_release(job);
     jwt_jwks_parse_job_release(job);
     return SALTS_EBUSY;
   }
-  salts_mutex_lock(&job->mutex);
+  cmeta_mutex_lock(&job->mutex);
   rc = jwt_jwks_wait(&job->completed_changed, &job->mutex, &job->completed,
                      authenticator->executor_deadline_ms);
   if (rc == SALTS_OK) {
@@ -667,7 +667,7 @@ static int jwt_jwks_parse_offloaded(flowie_control_jwt_jwks_authenticator_t *aut
       job->snapshot = NULL;
     }
   }
-  salts_mutex_unlock(&job->mutex);
+  cmeta_mutex_unlock(&job->mutex);
   jwt_jwks_parse_job_release(job);
   return rc;
 }
@@ -751,16 +751,16 @@ static int jwt_jwks_refresh_if_needed(flowie_control_jwt_jwks_authenticator_t *a
   int current = 0;
   int rc;
   if (!authenticator || now == 0u) return SALTS_EINVAL;
-  salts_rwlock_rdlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdlock(&authenticator->snapshot_lock);
   if (authenticator->snapshot && authenticator->snapshot->valid_until > now) current = 1;
-  salts_rwlock_rdunlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdunlock(&authenticator->snapshot_lock);
   if (current) return SALTS_OK;
   if (!atomic_compare_exchange_strong_explicit(&authenticator->refresh_in_flight, &expected, 1,
                                                memory_order_acq_rel, memory_order_acquire))
     return SALTS_EBUSY;
-  salts_rwlock_rdlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdlock(&authenticator->snapshot_lock);
   if (authenticator->snapshot && authenticator->snapshot->valid_until > now) current = 1;
-  salts_rwlock_rdunlock(&authenticator->snapshot_lock);
+  cmeta_rwlock_rdunlock(&authenticator->snapshot_lock);
   rc = current ? SALTS_OK : jwt_jwks_fetch_snapshot(authenticator, now);
   atomic_store_explicit(&authenticator->refresh_in_flight, 0, memory_order_release);
   return rc;
@@ -791,8 +791,8 @@ static int jwt_jwks_verify(void *ctx, const flowie_control_external_auth_request
   if (request->secret_size > SIZE_MAX - sizeof(*job)) return SALTS_ERANGE;
   job = (flowie_control_jwt_jwks_verify_job_t *)calloc(1u, sizeof(*job) + request->secret_size);
   if (!job) return SALTS_ENOMEM;
-  salts_mutex_init(&job->mutex);
-  salts_cond_init(&job->completed_changed);
+  cmeta_mutex_init(&job->mutex);
+  cmeta_cond_init(&job->completed_changed);
   job->authenticator = authenticator;
   job->request = (flowie_control_external_auth_request_t)FLOWIE_CONTROL_EXTERNAL_AUTH_REQUEST_INIT;
   memcpy(job->domain_id, request->domain_id, strlen(request->domain_id) + 1u);
@@ -810,20 +810,20 @@ static int jwt_jwks_verify(void *ctx, const flowie_control_external_auth_request
       (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   job->result = SALTS_EIO;
   atomic_init(&job->references, 2u);
-  if (salts_threadpool_try_submit(authenticator->executor, jwt_jwks_verify_job_run, job) !=
+  if (cmeta_threadpool_try_submit(authenticator->executor, jwt_jwks_verify_job_run, job) !=
       SALTS_OK) {
     jwt_jwks_verify_job_release(job);
     jwt_jwks_verify_job_release(job);
     return SALTS_EBUSY;
   }
-  salts_mutex_lock(&job->mutex);
+  cmeta_mutex_lock(&job->mutex);
   rc = jwt_jwks_wait(&job->completed_changed, &job->mutex, &job->completed,
                      authenticator->executor_deadline_ms);
   if (rc == SALTS_OK) {
     rc = job->result;
     if (rc == SALTS_OK) *assertion_out = job->assertion;
   }
-  salts_mutex_unlock(&job->mutex);
+  cmeta_mutex_unlock(&job->mutex);
   jwt_jwks_verify_job_release(job);
   return rc;
 }
@@ -893,12 +893,12 @@ int flowie_control_jwt_jwks_authenticator_create(
       config->clock_seconds ? config->clock_seconds : jwt_jwks_default_clock;
   authenticator->clock_ctx = config->clock_ctx;
   atomic_init(&authenticator->refresh_in_flight, 0);
-  if (salts_rwlock_init(&authenticator->snapshot_lock) != SALTS_OK) goto fail;
+  if (cmeta_rwlock_init(&authenticator->snapshot_lock) != SALTS_OK) goto fail;
   authenticator->snapshot_lock_initialized = 1;
   {
-    salts_threadpool_config_t executor_config = {(int)config->executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->executor_workers,
                                                  config->executor_queue_capacity};
-    authenticator->executor = salts_threadpool_create_with_config(&executor_config);
+    authenticator->executor = cmeta_threadpool_create_with_config(&executor_config);
   }
   if (!authenticator->executor) goto fail;
   authenticator->interface =
@@ -919,11 +919,11 @@ fail:
 void flowie_control_jwt_jwks_authenticator_destroy(
     flowie_control_jwt_jwks_authenticator_t *authenticator) {
   if (!authenticator) return;
-  salts_threadpool_destroy(authenticator->executor);
+  cmeta_threadpool_destroy(authenticator->executor);
   authenticator->executor = NULL;
   jwt_jwks_snapshot_destroy(authenticator->snapshot);
   authenticator->snapshot = NULL;
-  if (authenticator->snapshot_lock_initialized) salts_rwlock_destroy(&authenticator->snapshot_lock);
+  if (authenticator->snapshot_lock_initialized) cmeta_rwlock_destroy(&authenticator->snapshot_lock);
   tstr_freep(&authenticator->url);
   tstr_freep(&authenticator->host);
   tstr_freep(&authenticator->method);

@@ -1,0 +1,67 @@
+version: 1
+profiles:
+  multicore:
+    endpoint: multicore
+  too_many:
+    endpoint: too_many
+  websocket:
+    endpoint: websocket
+  bad_policy:
+    endpoint: bad_policy
+  bad_cpu_count:
+    endpoint: bad_cpu_count
+  bad_cpu_value:
+    endpoint: bad_cpu_value
+  bad_cpu_type:
+    endpoint: bad_cpu_type
+  default_placement:
+    endpoint: default_placement
+  udp_placement:
+    endpoint: udp_placement
+channels: {}
+adapters:
+  multicore:
+    kind: flowie_endpoint
+    config:
+      transport: tcp
+      host: 127.0.0.1
+      port: 1883
+      max_connections: 3
+      max_packet_size: 4096
+      network_workers: 2
+      network_command_bytes: 8192
+      network_policy: least-connections
+      network_cpus: [2, 4]
+  too_many:
+    kind: flowie_endpoint
+    config:
+      transport: tcp
+      host: 127.0.0.1
+      port: 1883
+      max_connections: 1
+      network_workers: 2
+  websocket:
+    kind: flowie_endpoint
+    config:
+      transport: ws
+      host: 127.0.0.1
+      port: 1883
+      network_workers: 2
+  bad_policy:
+    kind: flowie_endpoint
+    config: {transport: tcp, host: 127.0.0.1, port: 1883, network_policy: random}
+  bad_cpu_count:
+    kind: flowie_endpoint
+    config: {transport: tcp, host: 127.0.0.1, port: 1883, network_workers: 2, network_cpus: [2]}
+  bad_cpu_value:
+    kind: flowie_endpoint
+    config: {transport: tcp, host: 127.0.0.1, port: 1883, network_cpus: [-1]}
+  bad_cpu_type:
+    kind: flowie_endpoint
+    config: {transport: tcp, host: 127.0.0.1, port: 1883, network_cpus: "2"}
+  default_placement:
+    kind: flowie_endpoint
+    config: {transport: tcp, host: 127.0.0.1, port: 1883, network_policy: round-robin, network_cpus: []}
+  udp_placement:
+    kind: flowie_endpoint
+    config: {transport: udp, host: 127.0.0.1, port: 1883, network_policy: least-connections}

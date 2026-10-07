@@ -33,6 +33,7 @@ typedef struct flowie_endpoint_s flowie_endpoint_core_t;
 #define FLOWIE_MAX_COROUTINE_STACK_SIZE (8u * 1024u * 1024u)
 #define FLOWIE_MIN_RECV_BUFFER_SIZE 1024u
 #define FLOWIE_MAX_RECV_BUFFER_SIZE (1024u * 1024u)
+#define FLOWIE_MAX_NETWORK_WORKERS 64u
 
 typedef enum flowie_transport_e {
   FLOWIE_TRANSPORT_TCP = 1,
@@ -42,6 +43,11 @@ typedef enum flowie_transport_e {
   FLOWIE_TRANSPORT_WS,
   FLOWIE_TRANSPORT_WSS
 } flowie_transport_t;
+
+typedef enum flowie_network_policy_e {
+  FLOWIE_NETWORK_ROUND_ROBIN = 0,
+  FLOWIE_NETWORK_LEAST_CONNECTIONS = 1
+} flowie_network_policy_t;
 
 /** Per-subscriber overflow behavior for MQTT fan-out. */
 typedef enum flowie_slow_subscriber_policy_e {
@@ -90,7 +96,7 @@ typedef struct flowie_endpoint_config_s {
    * 0 selects the 4 KiB component default.
    */
   size_t stream_recv_buffer_bytes;
-  /** Aggregate copied CNet/CHTTP send-command bytes; 0 selects 16 MiB. */
+  /** Aggregate queued send-command payload bytes; 0 selects 16 MiB. */
   size_t network_command_bytes;
   /** Requested OS SO_RCVBUF bytes for TCP/TLS/WS/WSS; 0 preserves the OS default. */
   size_t socket_recv_buffer_bytes;
@@ -101,6 +107,24 @@ typedef struct flowie_endpoint_config_s {
    * certificate authentication; absent preserves server-auth-only TLS.
    */
   const char *tls_client_ca_file;
+  /**
+   * TCP/TLS network owners (0/1 selects one; maximum 64 and max_connections).
+   * Connection and network_command_bytes budgets are divided across owners.
+   * Each byte partition must hold max_packet_size. MQTT state remains on the
+   * endpoint execution shard. Other transports reject values greater than one.
+   */
+  uint32_t network_workers;
+  /** TCP/TLS accept placement; least-connections counts pending and live connections. */
+  flowie_network_policy_t network_policy;
+  /** 0 leaves scheduling to the OS; otherwise must equal the effective worker count. */
+  uint32_t network_cpu_count;
+  /**
+   * Copied IDs, one per owner. Windows: group * 64 + processor; Linux/Android:
+   * logical CPU below CPU_SETSIZE. Duplicates are allowed. Explicit binding on
+   * other platforms returns ENOTSUP; unavailable CPUs fail endpoint start.
+   * Non-default policy and binding are supported only for TCP/TLS.
+   */
+  uint32_t network_cpus[FLOWIE_MAX_NETWORK_WORKERS];
 } flowie_endpoint_config_t;
 
 #define FLOWIE_ENDPOINT_CONFIG_INIT                                                                \

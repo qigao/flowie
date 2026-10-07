@@ -4,7 +4,7 @@
 
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@ struct flowie_control_management_session_store_s {
 
 static uint64_t flowie_control_management_session_default_clock(void *ctx) {
   (void)ctx;
-  return salts_realtime_ms() / 1000u;
+  return cmeta_realtime_ms() / 1000u;
 }
 
 static int flowie_control_management_session_text_valid(const char *value, size_t maximum) {
@@ -188,8 +188,8 @@ static int flowie_control_management_session_issue(
     rc = SALTS_EPERM;
     goto done;
   }
-  rc = salts_secure_random(token_random, sizeof(token_random));
-  if (rc == SALTS_OK) rc = salts_secure_random(csrf_random, sizeof(csrf_random));
+  rc = cmeta_secure_random(token_random, sizeof(token_random));
+  if (rc == SALTS_OK) rc = cmeta_secure_random(csrf_random, sizeof(csrf_random));
   if (rc != SALTS_OK) goto done;
   flowie_control_management_session_hex(token_random, token_out);
   flowie_control_management_session_hex(csrf_random, record.csrf);

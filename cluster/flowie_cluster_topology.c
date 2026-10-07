@@ -7,7 +7,7 @@
 
 #include "flowie_cluster_topology_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdlib.h>

@@ -1,7 +1,7 @@
 #include "flowie.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
                                 flowie_publish_result_t *result, void *ctx) {
@@ -11,6 +11,54 @@ static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message
   result->status = SALTS_OK;
   result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
   return SALTS_OK;
+}
+
+suite("Flowie public network placement") {
+  static flowie_endpoint_core_t *endpoint;
+
+  before_each() { endpoint = NULL; }
+  after_each() { flowie_endpoint_core_destroy(endpoint); }
+
+  it("rejects invalid policy, mismatched CPU lists and UDP placement") {
+    flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+    flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+    config.host = "127.0.0.1";
+    options.on_message = flowie_test_dispatch;
+    config.network_policy = (flowie_network_policy_t)2;
+    check_equal(flowie_endpoint_core_create("policy", &config, &options, &endpoint), SALTS_EINVAL);
+    check_null(endpoint);
+    config.network_policy = FLOWIE_NETWORK_ROUND_ROBIN;
+    config.network_workers = 2u;
+    config.network_cpu_count = 1u;
+    check_equal(flowie_endpoint_core_create("cpus", &config, &options, &endpoint), SALTS_EINVAL);
+    check_null(endpoint);
+    config.network_cpu_count = FLOWIE_MAX_NETWORK_WORKERS + 1u;
+    check_equal(flowie_endpoint_core_create("cpus", &config, &options, &endpoint), SALTS_EINVAL);
+    config.network_cpu_count = 0u;
+    config.network_workers = 1u;
+    config.transport = FLOWIE_TRANSPORT_UDP;
+    config.network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
+    check_equal(flowie_endpoint_core_create("udp", &config, &options, &endpoint), SALTS_ENOTSUP);
+    check_null(endpoint);
+  }
+
+  it("retains its CPU settings and propagates binding failure from start") {
+    flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+    flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+    config.host = "127.0.0.1";
+    config.network_cpu_count = 1u;
+    config.network_cpus[0] = UINT32_MAX;
+    options.on_message = flowie_test_dispatch;
+    check_equal(flowie_endpoint_core_create("cpu-failure", &config, &options, &endpoint), SALTS_OK);
+    /* The source configuration is no longer authoritative after create. */
+    config.network_cpu_count = 0u;
+#if defined(_WIN32) || defined(__linux__)
+    check_equal(flowie_endpoint_core_start(endpoint), SALTS_ERANGE);
+#else
+    check_equal(flowie_endpoint_core_start(endpoint), SALTS_ENOTSUP);
+#endif
+    check_equal(flowie_endpoint_core_stop(endpoint), SALTS_OK);
+  }
 }
 
 suite("Flowie standalone core") {

@@ -11,9 +11,9 @@
 
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ typedef struct flowie_control_auth_rate_entry_s {
 struct flowie_control_auth_rate_limiter_s {
   hash_map_t callers;
   hash_map_t identities;
-  salts_mutex_t lock;
+  cmeta_mutex_t lock;
   uint8_t digest_key[FLOWIE_CONTROL_AUTH_RATE_KEY_SIZE];
   size_t caller_capacity;
   size_t identity_capacity;
@@ -50,7 +50,7 @@ struct flowie_control_auth_rate_limiter_s {
 
 static uint64_t flowie_control_auth_rate_default_clock(void *ctx) {
   (void)ctx;
-  return salts_monotonic_ms();
+  return cmeta_monotonic_ms();
 }
 
 static int flowie_control_auth_rate_text_valid(const char *value, size_t maximum) {
@@ -189,7 +189,7 @@ int flowie_control_auth_rate_limiter_create(
   limiter->identity_burst = config->identity_burst;
   limiter->clock_ms = config->clock_ms ? config->clock_ms : flowie_control_auth_rate_default_clock;
   limiter->clock_ctx = config->clock_ctx;
-  rc = salts_secure_random(limiter->digest_key, sizeof(limiter->digest_key));
+  rc = cmeta_secure_random(limiter->digest_key, sizeof(limiter->digest_key));
   if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_init_bytes(
       &limiter->callers, FLOWIE_CONTROL_AUTH_RATE_DIGEST_SIZE, _Alignof(unsigned char),
@@ -205,7 +205,7 @@ int flowie_control_auth_rate_limiter_create(
   if (rc != SALTS_OK) goto fail;
   rc = flowie_stl_error(hash_map_reserve(&limiter->identities, limiter->identity_capacity));
   if (rc != SALTS_OK) goto fail;
-  salts_mutex_init(&limiter->lock);
+  cmeta_mutex_init(&limiter->lock);
   *out = limiter;
   return SALTS_OK;
 
@@ -219,11 +219,11 @@ fail:
 
 void flowie_control_auth_rate_limiter_destroy(flowie_control_auth_rate_limiter_t *limiter) {
   if (!limiter) return;
-  salts_mutex_lock(&limiter->lock);
+  cmeta_mutex_lock(&limiter->lock);
   hash_map_clear(&limiter->identities);
   hash_map_clear(&limiter->callers);
-  salts_mutex_unlock(&limiter->lock);
-  salts_mutex_destroy(&limiter->lock);
+  cmeta_mutex_unlock(&limiter->lock);
+  cmeta_mutex_destroy(&limiter->lock);
   hash_map_destroy(&limiter->identities);
   hash_map_destroy(&limiter->callers);
   flowie_control_credential_wipe(limiter, sizeof(*limiter));
@@ -253,7 +253,7 @@ int flowie_control_auth_rate_limiter_acquire(flowie_control_auth_rate_limiter_t 
                                   peer_certificate_sha256, domain_id, principal_id,
                                   identity_digest);
   now_ms = limiter->clock_ms(limiter->clock_ctx);
-  salts_mutex_lock(&limiter->lock);
+  cmeta_mutex_lock(&limiter->lock);
   rc = flowie_control_auth_rate_entry_get_locked(
       limiter, &limiter->callers, limiter->caller_capacity, caller_digest,
       limiter->caller_burst, now_ms, &caller);
@@ -278,7 +278,7 @@ int flowie_control_auth_rate_limiter_acquire(flowie_control_auth_rate_limiter_t 
       identity->available_units -= FLOWIE_CONTROL_AUTH_RATE_TOKEN_UNITS;
     }
   }
-  salts_mutex_unlock(&limiter->lock);
+  cmeta_mutex_unlock(&limiter->lock);
   flowie_control_credential_wipe(identity_digest, sizeof(identity_digest));
   flowie_control_credential_wipe(caller_digest, sizeof(caller_digest));
   return rc;
@@ -296,18 +296,18 @@ void flowie_control_auth_rate_limiter_record_success(
     return;
   flowie_control_auth_rate_digest(limiter, FLOWIE_CONTROL_AUTH_RATE_IDENTITY_SCOPE,
                                   peer_certificate_sha256, domain_id, principal_id, digest);
-  salts_mutex_lock(&limiter->lock);
+  cmeta_mutex_lock(&limiter->lock);
   flowie_control_auth_rate_remove_locked(&limiter->identities, digest);
-  salts_mutex_unlock(&limiter->lock);
+  cmeta_mutex_unlock(&limiter->lock);
   flowie_control_credential_wipe(digest, sizeof(digest));
 }
 
 size_t flowie_control_auth_rate_limiter_caller_size(flowie_control_auth_rate_limiter_t *limiter) {
   size_t size;
   if (!limiter) return 0u;
-  salts_mutex_lock(&limiter->lock);
+  cmeta_mutex_lock(&limiter->lock);
   size = hash_map_size(&limiter->callers);
-  salts_mutex_unlock(&limiter->lock);
+  cmeta_mutex_unlock(&limiter->lock);
   return size;
 }
 
@@ -315,8 +315,8 @@ size_t flowie_control_auth_rate_limiter_identity_size(
     flowie_control_auth_rate_limiter_t *limiter) {
   size_t size;
   if (!limiter) return 0u;
-  salts_mutex_lock(&limiter->lock);
+  cmeta_mutex_lock(&limiter->lock);
   size = hash_map_size(&limiter->identities);
-  salts_mutex_unlock(&limiter->lock);
+  cmeta_mutex_unlock(&limiter->lock);
   return size;
 }

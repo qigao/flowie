@@ -2,8 +2,8 @@
 
 #include "flowie_control_async_internal.h"
 #include "flowie_control_credential_internal.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <json_parser.h>
 
 #include <limits.h>
@@ -71,7 +71,7 @@ struct flowie_control_management_rpc_server_s {
   void *clock_ctx;
   flowie_control_management_rpc_external_https_stats_fn external_https_stats;
   void *external_https_stats_ctx;
-  salts_threadpool_t *policy_executor;
+  cmeta_threadpool_t *policy_executor;
   uint32_t policy_executor_deadline_ms;
   flowie_control_http_app_t *bound_app;
   size_t registered_method_count;
@@ -287,7 +287,7 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
   }
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(server->policy_executor, flowie_control_rpc_policy_job_run,
+  if (cmeta_threadpool_try_submit(server->policy_executor, flowie_control_rpc_policy_job_run,
                                   job) != SALTS_OK) {
     flowie_control_rpc_policy_job_release(job);
     flowie_control_rpc_policy_job_release(job);
@@ -371,7 +371,7 @@ static int flowie_control_rpc_domain_admin_execute(
   job->command.request_id = job->request_id;
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(server->policy_executor, flowie_control_rpc_domain_admin_job_run,
+  if (cmeta_threadpool_try_submit(server->policy_executor, flowie_control_rpc_domain_admin_job_run,
                                   job) != SALTS_OK) {
     flowie_control_rpc_domain_admin_job_release(job);
     flowie_control_rpc_domain_admin_job_release(job);
@@ -2383,9 +2383,9 @@ int flowie_control_management_rpc_server_create(
   server->external_https_stats_ctx = config->external_https_stats_ctx;
   server->policy_executor_deadline_ms = config->policy_executor_deadline_ms;
   {
-    salts_threadpool_config_t executor_config = {(int)config->policy_executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->policy_executor_workers,
                                                  config->policy_executor_queue_capacity};
-    server->policy_executor = salts_threadpool_create_with_config(&executor_config);
+    server->policy_executor = cmeta_threadpool_create_with_config(&executor_config);
     if (!server->policy_executor) {
       free(server);
       return SALTS_ENOMEM;
@@ -2443,7 +2443,7 @@ void flowie_control_management_rpc_server_destroy(flowie_control_management_rpc_
     (void)rpc_unregister_method(server->rpc_context,
                                 FLOWIE_CONTROL_RPC_METHODS[server->registered_method_count]);
   }
-  salts_threadpool_destroy(server->policy_executor);
+  cmeta_threadpool_destroy(server->policy_executor);
   server->policy_executor = NULL;
   memset(server, 0, sizeof(*server));
   free(server);

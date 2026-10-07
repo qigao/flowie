@@ -4,8 +4,8 @@
 #include "fmt.h"
 #include "monocypher.h"
 #include <mustache/mustache_json.h>
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 #include <json_parser.h>
 #include "tstr.h"
 
@@ -119,9 +119,9 @@ struct flowie_control_dashboard_view_s {
   MUSTACHE_TEMPLATE *error_template;
   MUSTACHE_TEMPLATE *login_template;
   MUSTACHE_TEMPLATE *password_template;
-  salts_fs_buf_t css;
-  salts_fs_buf_t javascript;
-  salts_fs_buf_t htmx;
+  cmeta_fs_buf_t css;
+  cmeta_fs_buf_t javascript;
+  cmeta_fs_buf_t htmx;
 };
 
 static void flowie_control_dashboard_json_free(json_value_t *value) {
@@ -170,17 +170,17 @@ static int flowie_control_dashboard_json_bool(json_value_t *object, const char *
 }
 
 static int flowie_control_dashboard_read(const char *resource_directory, const char *relative_path,
-                                         size_t maximum, salts_fs_buf_t *out) {
+                                         size_t maximum, cmeta_fs_buf_t *out) {
   char path[FLOWIE_CONTROL_DASHBOARD_RESOURCE_PATH_MAX];
   int rc;
   if (!resource_directory || !relative_path || !out) return SALTS_EINVAL;
   memset(out, 0, sizeof(*out));
-  rc = salts_fs_path_join(path, sizeof(path), resource_directory, relative_path);
+  rc = cmeta_fs_path_join(path, sizeof(path), resource_directory, relative_path);
   if (rc != SALTS_OK) return rc;
-  rc = salts_fs_read_file(path, out);
+  rc = cmeta_fs_read_file(path, out);
   if (rc != SALTS_OK) return rc;
   if (!out->base || out->len == 0u || out->len > maximum) {
-    salts_fs_buf_free(out);
+    cmeta_fs_buf_free(out);
     return SALTS_EPROTO;
   }
   return SALTS_OK;
@@ -189,7 +189,7 @@ static int flowie_control_dashboard_read(const char *resource_directory, const c
 static int flowie_control_dashboard_compile(const char *resource_directory,
                                             const char *relative_path,
                                             MUSTACHE_TEMPLATE **template_out) {
-  salts_fs_buf_t source = {0};
+  cmeta_fs_buf_t source = {0};
   MUSTACHE_TEMPLATE *compiled;
   int rc;
   if (template_out) *template_out = NULL;
@@ -198,7 +198,7 @@ static int flowie_control_dashboard_compile(const char *resource_directory,
                                      FLOWIE_CONTROL_DASHBOARD_TEMPLATE_MAX, &source);
   if (rc != SALTS_OK) return rc;
   compiled = mustache_compile(source.base, source.len, NULL, NULL, 0u);
-  salts_fs_buf_free(&source);
+  cmeta_fs_buf_free(&source);
   if (!compiled) return SALTS_EPROTO;
   *template_out = compiled;
   return SALTS_OK;
@@ -908,9 +908,9 @@ void flowie_control_dashboard_view_destroy(flowie_control_dashboard_view_t *view
   mustache_release(view->login_template);
   mustache_release(view->content_template);
   mustache_release(view->shell_template);
-  salts_fs_buf_free(&view->htmx);
-  salts_fs_buf_free(&view->javascript);
-  salts_fs_buf_free(&view->css);
+  cmeta_fs_buf_free(&view->htmx);
+  cmeta_fs_buf_free(&view->javascript);
+  cmeta_fs_buf_free(&view->css);
   memset(view, 0, sizeof(*view));
   free(view);
 }
@@ -1211,7 +1211,7 @@ int flowie_control_dashboard_view_render_error(flowie_control_dashboard_view_t *
 int flowie_control_dashboard_view_asset(const flowie_control_dashboard_view_t *view,
                                         flowie_control_dashboard_asset_t asset,
                                         const void **data_out, size_t *size_out) {
-  const salts_fs_buf_t *resource;
+  const cmeta_fs_buf_t *resource;
   if (data_out) *data_out = NULL;
   if (size_out) *size_out = 0u;
   if (!view || !data_out || !size_out) return SALTS_EINVAL;

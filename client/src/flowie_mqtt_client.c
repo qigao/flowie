@@ -12,10 +12,10 @@
 #include <cnet/websocket.h>
 #include "flowie_mqtt_protocol.h"
 #include "monocypher.h"
-#include "salts_bytes.h"
-#include "salts_error.h"
+#include "cmeta_bytes.h"
+#include "cmeta_error.h"
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -122,7 +122,7 @@ struct flowie_mqtt_client_s {
   uint8_t disconnect_reason;
   int disconnect_reason_valid;
   tstr send_buffer;
-  salts_bytes_t framing;
+  cmeta_bytes_t framing;
   char *recv_data;
   size_t recv_size;
   size_t recv_offset;
@@ -142,9 +142,9 @@ struct flowie_mqtt_client_s {
   size_t command_queue_max_bytes;
   size_t command_queue_bytes;
   deque_t commands;
-  salts_mutex_t command_mutex;
-  salts_cond_t command_changed;
-  salts_thread_t worker;
+  cmeta_mutex_t command_mutex;
+  cmeta_cond_t command_changed;
+  cmeta_thread_t worker;
   int network_initialized;
   int websocket_initialized;
   int websocket_tls_initialized;
@@ -254,7 +254,7 @@ static int flowie_mqtt_client_is_websocket(const flowie_mqtt_client_t *client) {
 }
 
 static uint32_t flowie_mqtt_client_poll_slice(uint64_t deadline_ms) {
-  const uint64_t now = salts_monotonic_ms();
+  const uint64_t now = cmeta_monotonic_ms();
   const uint64_t remaining = deadline_ms > now ? deadline_ms - now : 0u;
   return (uint32_t)(remaining < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
                         ? remaining
@@ -264,10 +264,10 @@ static uint32_t flowie_mqtt_client_poll_slice(uint64_t deadline_ms) {
 static int flowie_mqtt_client_should_interrupt(flowie_mqtt_client_t *client) {
   int stopping;
   int queued;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
   queued = !deque_empty(&client->commands);
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   if (stopping) return SALTS_ESHUTDOWN;
   return !client->busy && queued ? SALTS_EINTR : SALTS_OK;
 }
@@ -485,9 +485,9 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
     client->websocket_initialized = 0;
   }
   if (client->network_connection.slot != 0u && client->network_initialized) {
-    uint64_t deadline = salts_monotonic_ms() + client->timeout_ms;
+    uint64_t deadline = cmeta_monotonic_ms() + client->timeout_ms;
     if (!client->network_terminal) (void)cnet_close(&client->network, client->network_connection);
-    while (!client->network_terminal && salts_monotonic_ms() < deadline) {
+    while (!client->network_terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       const uint32_t slice = flowie_mqtt_client_poll_slice(deadline);
       if (cnet_client_poll(&client->network, slice, &events) != SALTS_OK) break;
@@ -510,7 +510,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   client->pending_packet_size = 0u;
-  if (reset_framing && client->framing_initialized) salts_bytes_reset(&client->framing);
+  if (reset_framing && client->framing_initialized) cmeta_bytes_reset(&client->framing);
   if (client->qos2_initialized) hash_set_clear(&client->inbound_qos2);
 }
 
@@ -726,7 +726,7 @@ static void flowie_mqtt_client_reconnect_schedule(flowie_mqtt_client_t *client) 
   }
   if (client->reconnect_delay_ms == 0u)
     client->reconnect_delay_ms = client->reconnect_initial_delay_ms;
-  now = salts_monotonic_ms();
+  now = cmeta_monotonic_ms();
   client->reconnect_deadline_ms =
       client->reconnect_delay_ms > UINT64_MAX - now ? UINT64_MAX
                                                     : now + client->reconnect_delay_ms;
@@ -873,15 +873,22 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
   client->network_send_ready = 0;
   client->network_status = SALTS_OK;
   {
-    int rc = cnet_send(&client->network, client->network_connection, client->send_buffer, written);
+    mem_buffer_t *buffer = mem_get_buffer(mem_global(), written);
+    int rc;
+    if (buffer == NULL) return SALTS_ENOMEM;
+    /* A timeout may return while CNet still owns the in-flight payload. */
+    memcpy(mem_buffer_data(buffer), client->send_buffer, written);
+    mem_set_used(buffer, written);
+    rc = cnet_send_buffer(&client->network, client->network_connection, buffer);
+    mem_buffer_release(buffer);
     if (rc != SALTS_OK) return rc;
   }
-  deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+  deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
   while (!client->network_send_ready && !client->network_terminal) {
     size_t events = 0u;
     int rc = flowie_mqtt_client_should_interrupt(client);
     if (rc == SALTS_ESHUTDOWN) return rc;
-    if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
     rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
@@ -892,7 +899,7 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
 }
 
 static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
-  const uint64_t deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+  const uint64_t deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
   int rc;
   if (!client) return SALTS_EINVAL;
   rc = flowie_mqtt_client_should_interrupt(client);
@@ -904,7 +911,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
       uint32_t slice;
       rc = flowie_mqtt_client_should_interrupt(client);
       if (rc != SALTS_OK) return rc;
-      if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+      if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
       slice = flowie_mqtt_client_poll_slice(deadline_ms);
       rc = chttp_websocket_client_receive(&client->websocket, slice, &event);
       if (rc == SALTS_ETIMEDOUT) continue;
@@ -930,7 +937,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
     size_t events = 0u;
     rc = flowie_mqtt_client_should_interrupt(client);
     if (rc != SALTS_OK) return rc;
-    if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
     rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
@@ -1049,17 +1056,17 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
   flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
   if (!client || !out) return SALTS_EINVAL;
   if (client->pending_packet_size != 0u) {
-    int rc = salts_bytes_consume(&client->framing, client->pending_packet_size);
+    int rc = cmeta_bytes_consume(&client->framing, client->pending_packet_size);
     if (rc != SALTS_OK) return rc;
     client->pending_packet_size = 0u;
   }
   options.version = client->version;
   options.max_packet_size = client->max_packet_size;
   for (;;) {
-    salts_bytes_view_t bytes;
+    cmeta_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     size_t consumed = 0u;
-    int rc = salts_bytes_view(&client->framing, &bytes);
+    int rc = cmeta_bytes_view(&client->framing, &bytes);
     if (rc != SALTS_OK) return rc;
     if (bytes.size != 0u) {
       rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &options, &packet, &consumed, NULL);
@@ -1074,10 +1081,10 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
     }
     if (client->recv_data) {
       size_t remaining = client->recv_size - client->recv_offset;
-      size_t available = salts_bytes_available(&client->framing);
+      size_t available = cmeta_bytes_available(&client->framing);
       size_t chunk = remaining < available ? remaining : available;
       if (chunk == 0u) return SALTS_EMSGSIZE;
-      rc = salts_bytes_append(&client->framing, client->recv_data + client->recv_offset,
+      rc = cmeta_bytes_append(&client->framing, client->recv_data + client->recv_offset,
                                     chunk);
       if (rc != SALTS_OK) return rc;
       client->recv_offset += chunk;
@@ -1309,7 +1316,7 @@ static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *cli
 static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
                                           flowie_mqtt_client_command_t **out) {
   int stopping;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
   if (!stopping) {
     if (deque_pop_front(&client->commands, out) != STL_OK) {
@@ -1318,17 +1325,17 @@ static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
       client->command_queue_bytes -= sizeof(**out) + (*out)->owned_size;
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return stopping;
 }
 
 static void flowie_mqtt_client_cancel_commands(flowie_mqtt_client_t *client, int status) {
   for (;;) {
     flowie_mqtt_client_command_t *command = NULL;
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     (void)deque_pop_front(&client->commands, &command);
     if (command) client->command_queue_bytes -= sizeof(*command) + command->owned_size;
-    salts_mutex_unlock(&client->command_mutex);
+    cmeta_mutex_unlock(&client->command_mutex);
     if (!command) return;
     flowie_mqtt_client_complete(client, command, status, NULL);
     flowie_mqtt_client_command_destroy(command);
@@ -1337,9 +1344,9 @@ static void flowie_mqtt_client_cancel_commands(flowie_mqtt_client_t *client, int
 
 static int flowie_mqtt_client_is_stopping(flowie_mqtt_client_t *client) {
   int stopping;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return stopping;
 }
 
@@ -1479,19 +1486,19 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
       continue;
     }
     if (client->reconnect_pending) {
-      uint64_t now = salts_monotonic_ms();
+      uint64_t now = cmeta_monotonic_ms();
       uint64_t remaining_ms =
           client->reconnect_deadline_ms > now ? client->reconnect_deadline_ms - now : 0u;
       if (remaining_ms != 0u) {
-        salts_mutex_lock(&client->command_mutex);
+        cmeta_mutex_lock(&client->command_mutex);
         if (!client->stopping && deque_empty(&client->commands))
-          (void)salts_cond_timedwait(&client->command_changed, &client->command_mutex,
+          (void)cmeta_cond_timedwait(&client->command_changed, &client->command_mutex,
                                      remaining_ms > UINT64_MAX / UINT64_C(1000000)
                                          ? UINT64_MAX
                                          : remaining_ms * UINT64_C(1000000));
-        salts_mutex_unlock(&client->command_mutex);
+        cmeta_mutex_unlock(&client->command_mutex);
         if (flowie_mqtt_client_is_stopping(client) ||
-            salts_monotonic_ms() < client->reconnect_deadline_ms)
+            cmeta_monotonic_ms() < client->reconnect_deadline_ms)
           continue;
       }
       flowie_mqtt_client_run_reconnect(client);
@@ -1516,11 +1523,11 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
       }
       continue;
     }
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     while (!client->stopping && deque_empty(&client->commands) &&
            !client->reconnect_pending)
-      salts_cond_wait(&client->command_changed, &client->command_mutex);
-    salts_mutex_unlock(&client->command_mutex);
+      cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+    cmeta_mutex_unlock(&client->command_mutex);
   }
 }
 
@@ -1569,7 +1576,7 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
   if (!client || !command) return SALTS_EINVAL;
   if (command->owned_size > SIZE_MAX - sizeof(*command)) return SALTS_EMSGSIZE;
   charge = sizeof(*command) + command->owned_size;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = SALTS_ESHUTDOWN;
@@ -1585,11 +1592,11 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
     if (rc == SALTS_OK) {
       client->command_queue_bytes += charge;
       if (versioned) client->version_locked = 1;
-      salts_cond_signal(&client->command_changed);
+      cmeta_cond_signal(&client->command_changed);
       if (client->network_initialized) (void)cnet_client_wake(&client->network);
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 
@@ -1611,7 +1618,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
     charge += command_charge;
   }
 
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = SALTS_ESHUTDOWN;
@@ -1638,9 +1645,9 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
     if (rc == SALTS_OK) {
       client->command_queue_bytes += charge;
       if (any_versioned) client->version_locked = 1;
-      salts_cond_signal(&client->command_changed);
+      cmeta_cond_signal(&client->command_changed);
       if (client->network_initialized) (void)cnet_client_wake(&client->network);
-      salts_mutex_unlock(&client->command_mutex);
+      cmeta_mutex_unlock(&client->command_mutex);
       return SALTS_OK;
     }
     while (inserted != 0u) {
@@ -1649,7 +1656,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
       (void)deque_pop_back(&client->commands, &rolled_back);
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 
@@ -1735,7 +1742,7 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
     rc = SALTS_ENOMEM;
     goto fail;
   }
-  rc = salts_bytes_init(&client->framing, max_packet_size);
+  rc = cmeta_bytes_init(&client->framing, max_packet_size);
   if (rc != SALTS_OK) goto fail;
   client->framing_initialized = 1;
   rc = flowie_stl_error(hash_set_init_bytes(
@@ -1745,8 +1752,8 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   client->qos2_initialized = 1;
   rc = flowie_stl_error(hash_set_reserve(&client->inbound_qos2, client->max_inbound_qos2));
   if (rc != SALTS_OK) goto fail;
-  salts_mutex_init(&client->command_mutex);
-  salts_cond_init(&client->command_changed);
+  cmeta_mutex_init(&client->command_mutex);
+  cmeta_cond_init(&client->command_changed);
   client->sync_initialized = 1;
   if (!client->command_mutex || !client->command_changed) {
     rc = SALTS_ENOMEM;
@@ -1781,7 +1788,7 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
     if (rc != SALTS_OK) goto fail;
     client->websocket_tls_initialized = 1;
   }
-  rc = salts_thread_create(&client->worker, flowie_mqtt_client_worker, client);
+  rc = cmeta_thread_create(&client->worker, flowie_mqtt_client_worker, client);
   if (rc != SALTS_OK) goto fail;
   client->worker_started = 1;
   *out = client;
@@ -1802,19 +1809,19 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   if (!client) return;
   if (client->worker_started) {
     if (flowie_mqtt_client_current == client) {
-      salts_mutex_lock(&client->command_mutex);
+      cmeta_mutex_lock(&client->command_mutex);
       client->stopping = 1;
-      salts_cond_signal(&client->command_changed);
-      salts_mutex_unlock(&client->command_mutex);
+      cmeta_cond_signal(&client->command_changed);
+      cmeta_mutex_unlock(&client->command_mutex);
       return;
     }
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     client->stopping = 1;
-    salts_cond_signal(&client->command_changed);
-    salts_mutex_unlock(&client->command_mutex);
+    cmeta_cond_signal(&client->command_changed);
+    cmeta_mutex_unlock(&client->command_mutex);
     if (client->network_initialized) (void)cnet_client_wake(&client->network);
-    if (salts_thread_join(&client->worker) != SALTS_OK) return;
-    salts_thread_destroy(&client->worker);
+    if (cmeta_thread_join(&client->worker) != SALTS_OK) return;
+    cmeta_thread_destroy(&client->worker);
     client->worker_started = 0;
   }
   flowie_mqtt_client_transport_close(client, 1);
@@ -1835,11 +1842,11 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     client->websocket_tls_initialized = 0;
   }
   if (client->sync_initialized) {
-    salts_cond_destroy(&client->command_changed);
-    salts_mutex_destroy(&client->command_mutex);
+    cmeta_cond_destroy(&client->command_changed);
+    cmeta_mutex_destroy(&client->command_mutex);
   }
   if (client->qos2_initialized) hash_set_destroy(&client->inbound_qos2);
-  if (client->framing_initialized) salts_bytes_destroy(&client->framing);
+  if (client->framing_initialized) cmeta_bytes_destroy(&client->framing);
   tstr_freep(&client->send_buffer);
   tstr_freep(&client->path);
   tstr_freep(&client->host);
@@ -1929,7 +1936,7 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
                                   .key_password = client->tls_key_password,
                                   .server_name = client->host};
     cnet_connect_options options = {0};
-    const uint64_t deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+    const uint64_t deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
     rc = flowie_mqtt_client_uri(
         client, client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ? "tls" : "tcp", NULL,
         &uri);
@@ -1949,7 +1956,7 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     while (!client->network_connected && !client->network_terminal) {
       size_t events = 0u;
       if (flowie_mqtt_client_is_stopping(client)) return SALTS_ESHUTDOWN;
-      if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+      if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
       rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
       if (rc != SALTS_OK) return rc;
     }
@@ -1984,7 +1991,7 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
                                                          ? packet->properties
                                                          : (flowie_mqtt_span_t){0});
   if (rc != SALTS_OK) goto done;
-  salts_bytes_reset(&client->framing);
+  cmeta_bytes_reset(&client->framing);
   hash_set_clear(&client->inbound_qos2);
   client->version = packet->version;
   rc = flowie_mqtt_client_transport_connect(client);
@@ -2273,14 +2280,14 @@ int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
                                    flowie_mqtt_version_t version) {
   int rc;
   if (!client || !flowie_mqtt_version_is_supported(version)) return SALTS_EINVAL;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   if (client->stopping) rc = SALTS_ESHUTDOWN;
   else if (client->version_locked) rc = SALTS_EALREADY;
   else {
     client->selected_version = version;
     rc = SALTS_OK;
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 

@@ -2,8 +2,8 @@
 #include "flowie_test_cnet.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -476,7 +476,7 @@ static int flowie_endurance_recv_shared_publish(flowie_endurance_client_t *first
       if (rc != SALTS_OK) return rc;
       return flowie_test_cnet_readable(other->client, 50u) ? SALTS_EPROTO : SALTS_OK;
     }
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   }
   return SALTS_ETIMEDOUT;
 }
@@ -705,7 +705,7 @@ static int flowie_endurance_wait_connections(turbo_flow_t *flow, size_t expected
     int rc = turbo_flow_adapter_connection_snapshot_at(flow, 0u, &snapshot);
     if (rc != SALTS_OK) return rc;
     if (snapshot.connections_current == expected) return SALTS_OK;
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   }
   return SALTS_ETIMEDOUT;
 }
@@ -755,9 +755,9 @@ static int flowie_endurance_stop_drained(turbo_flow_t *flow, size_t expected_ses
   memset(result, 0, sizeof(*result));
   result->queue = (turbo_flow_resource_snapshot_t)TURBO_FLOW_RESOURCE_SNAPSHOT_INIT;
   result->sessions = (turbo_flow_resource_snapshot_t)TURBO_FLOW_RESOURCE_SNAPSHOT_INIT;
-  stopped_at = salts_monotonic_ms();
+  stopped_at = cmeta_monotonic_ms();
   rc = turbo_flow_stop(flow);
-  result->stop_elapsed_ms = salts_monotonic_ms() - stopped_at;
+  result->stop_elapsed_ms = cmeta_monotonic_ms() - stopped_at;
   if (rc != SALTS_OK) return rc;
   if (result->stop_elapsed_ms > FLOWIE_ENDURANCE_STOP_MAX_MS) return SALTS_ETIMEDOUT;
   rc = turbo_flow_adapter_connection_snapshot_at(flow, 0u, &result->connection);
@@ -861,7 +861,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t operation_id = 1u;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_equal(flowie_endurance_message_count(&message_count), SALTS_OK);
@@ -954,7 +954,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " stop_ms=%" PRIu64 "\n",
            root_seed, (size_t)FLOWIE_ENDURANCE_PROFILE_COUNT,
            message_count + FLOWIE_ENDURANCE_OFFLINE_MESSAGES,
-           message_count * 2u + FLOWIE_ENDURANCE_OFFLINE_MESSAGES * 2u, salts_hrtime() - started_at,
+           message_count * 2u + FLOWIE_ENDURANCE_OFFLINE_MESSAGES * 2u, cmeta_hrtime() - started_at,
            FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count, final.connection.connections_current,
            final.connection.in_flight_messages, final.queue.load, final.sessions.load,
            final.stop_elapsed_ms);
@@ -979,7 +979,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     size_t takeover_count = 0u;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_equal(flowie_endurance_takeover_count(&takeover_count), SALTS_OK);
@@ -1046,7 +1046,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " inflight_final=%" PRIu64 " queue_final=%" PRIu64 " sessions_final=%" PRIu64
            " stop_ms=%" PRIu64 "\n",
            root_seed, takeover_count, takeover_count * 2u, takeover_count * 2u,
-           salts_hrtime() - started_at, FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count,
+           cmeta_hrtime() - started_at, FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count,
            final.connection.connections_current, final.connection.in_flight_messages,
            final.queue.load, final.sessions.load, final.stop_elapsed_ms);
     turbo_flow_destroy(flow);
@@ -1077,7 +1077,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow =
         flowie_endurance_flow_with_limits(port, FLOWIE_ENDURANCE_SEND_HWM_BYTES, 1u);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
     flowie_endurance_message_key_t unsettled;
     flowie_endurance_message_key_t isolation_trigger;
 
@@ -1122,7 +1122,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " connections_final=%" PRIu64 " inflight_final=%" PRIu64 " queue_final=%" PRIu64
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
            root_seed, FLOWIE_ENDURANCE_HEALTHY_AFTER_ISOLATION + 2u,
-           FLOWIE_ENDURANCE_HEALTHY_AFTER_ISOLATION + 2u, salts_hrtime() - started_at,
+           FLOWIE_ENDURANCE_HEALTHY_AFTER_ISOLATION + 2u, cmeta_hrtime() - started_at,
            final.connection.connections_current, final.connection.in_flight_messages,
            final.queue.load, final.sessions.load, final.stop_elapsed_ms);
     turbo_flow_destroy(flow);
@@ -1153,7 +1153,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_greater(port, 0);
@@ -1223,7 +1223,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " clients=2 qos=2 reconnects=2 publications=1 deliveries=2 duration_ns=%" PRIu64
            " connections_final=%" PRIu64 " inflight_final=%" PRIu64 " queue_final=%" PRIu64
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, salts_hrtime() - started_at, final.connection.connections_current,
+           root_seed, cmeta_hrtime() - started_at, final.connection.connections_current,
            final.connection.in_flight_messages, final.queue.load, final.sessions.load,
            final.stop_elapsed_ms);
     turbo_flow_destroy(flow);
@@ -1269,7 +1269,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     canceled_key = flowie_endurance_next_key(&delayed, root_seed, 1u);
@@ -1306,7 +1306,7 @@ spec("Flowie MQTT persistent-instance endurance") {
                  SALTS_OK);
     check_equal(flowie_endurance_wait_connections(flow, 1u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&delayed, port, 1u), SALTS_OK);
-    salts_sleep_ms(FLOWIE_ENDURANCE_WILL_OBSERVATION_MS);
+    cmeta_sleep_ms(FLOWIE_ENDURANCE_WILL_OBSERVATION_MS);
     check_false(flowie_test_cnet_readable(subscriber.client, 50u));
     check_equal(flowie_endurance_disconnect(&delayed), SALTS_OK);
 
@@ -1325,7 +1325,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " clients=3 canceled_wills=1 expiry_forced_wills=1 duration_ns=%" PRIu64
            " connections_final=%" PRIu64 " inflight_final=%" PRIu64 " queue_final=%" PRIu64
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, salts_hrtime() - started_at, final.connection.connections_current,
+           root_seed, cmeta_hrtime() - started_at, final.connection.connections_current,
            final.connection.in_flight_messages, final.queue.load, final.sessions.load,
            final.stop_elapsed_ms);
     turbo_flow_destroy(flow);
@@ -1408,7 +1408,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     int exact_active = 1;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_greater(port, 0);
@@ -1474,7 +1474,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " duration_ns=%" PRIu64 " connections_final=%" PRIu64 " inflight_final=%" PRIu64
            " queue_final=%" PRIu64 " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
            root_seed, FLOWIE_ENDURANCE_ROUTING_ROUNDS, exact_deliveries, plus_deliveries,
-           hash_deliveries, shared_deliveries[0], shared_deliveries[1], salts_hrtime() - started_at,
+           hash_deliveries, shared_deliveries[0], shared_deliveries[1], cmeta_hrtime() - started_at,
            final.connection.connections_current, final.connection.in_flight_messages,
            final.queue.load, final.sessions.load, final.stop_elapsed_ms);
     turbo_flow_destroy(flow);
@@ -1548,7 +1548,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
     turbo_flow_t *flow = flowie_endurance_flow(port);
-    uint64_t started_at = salts_hrtime();
+    uint64_t started_at = cmeta_hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     qos2_key = flowie_endurance_next_key(&publisher, root_seed, 1u);
@@ -1613,7 +1613,7 @@ spec("Flowie MQTT persistent-instance endurance") {
            " pending_qos2=1 pending_offline=1 pending_inflight=1 pending_will=1"
            " duration_ns=%" PRIu64 " connections_final=%" PRIu64 " inflight_final=%" PRIu64
            " queue_final=%" PRIu64 " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, salts_hrtime() - started_at, final.connection.connections_current,
+           root_seed, cmeta_hrtime() - started_at, final.connection.connections_current,
            final.connection.in_flight_messages, final.queue.load, final.sessions.load,
            final.stop_elapsed_ms);
     turbo_flow_destroy(flow);

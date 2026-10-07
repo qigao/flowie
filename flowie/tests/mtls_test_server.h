@@ -3,7 +3,7 @@
 
 #include "platform.h"
 #include "tls_test_support.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
@@ -30,7 +30,7 @@ typedef int flow_mtls_test_socket_t;
 
 typedef struct flow_mtls_test_server_s {
   flow_mtls_test_socket_t listener;
-  salts_thread_t thread;
+  cmeta_thread_t thread;
   const uint8_t *response;
   size_t response_size;
   uint32_t response_delay_ms;
@@ -48,32 +48,40 @@ static SSL_CTX *flow_mtls_test_server_context(int require_peer_certificate) {
   SSL_CTX *ctx = NULL;
   BIO *cert_bio = NULL;
   BIO *key_bio = NULL;
+  BIO *ca_bio = NULL;
   X509 *cert = NULL;
+  X509 *ca = NULL;
   EVP_PKEY *key = NULL;
   ctx = SSL_CTX_new(TLS_server_method());
   cert_bio = BIO_new_mem_buf(s_tls_test_cert_pem, -1);
   key_bio = BIO_new_mem_buf(s_tls_test_key_pem, -1);
-  if (!ctx || !cert_bio || !key_bio) goto fail;
+  ca_bio = BIO_new_mem_buf(s_tls_test_ca_pem, -1);
+  if (!ctx || !cert_bio || !key_bio || !ca_bio) goto fail;
   cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
+  ca = PEM_read_bio_X509(ca_bio, NULL, NULL, NULL);
   key = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
-  if (!cert || !key || SSL_CTX_use_certificate(ctx, cert) != 1 ||
+  if (!cert || !key || !ca || SSL_CTX_use_certificate(ctx, cert) != 1 ||
       SSL_CTX_use_PrivateKey(ctx, key) != 1 || SSL_CTX_check_private_key(ctx) != 1 ||
-      (require_peer_certificate && X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), cert) != 1))
+      (require_peer_certificate && X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), ca) != 1))
     goto fail;
   SSL_CTX_set_verify(ctx,
                      require_peer_certificate ? SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
                                               : SSL_VERIFY_NONE,
                      NULL);
   X509_free(cert);
+  X509_free(ca);
   EVP_PKEY_free(key);
   BIO_free(cert_bio);
   BIO_free(key_bio);
+  BIO_free(ca_bio);
   return ctx;
 fail:
   X509_free(cert);
+  X509_free(ca);
   EVP_PKEY_free(key);
   BIO_free(cert_bio);
   BIO_free(key_bio);
+  BIO_free(ca_bio);
   SSL_CTX_free(ctx);
   return NULL;
 }
@@ -145,7 +153,7 @@ static void flow_mtls_test_server_main(void *arg) {
   if (!flow_mtls_test_request_complete(request, request_size)) goto done;
   memcpy(server->request, request, request_size + 1u);
   server->request_size = request_size;
-  if (server->response_delay_ms != 0u) salts_sleep_ms(server->response_delay_ms);
+  if (server->response_delay_ms != 0u) cmeta_sleep_ms(server->response_delay_ms);
   if (server->response_size != 0u &&
       SSL_write(ssl, server->response, (int)server->response_size) != (int)server->response_size)
     goto done;
@@ -216,7 +224,7 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   server->response = response;
   server->response_size = response_size;
   server->response_delay_ms = response_delay_ms;
-  if (salts_thread_create(&server->thread, flow_mtls_test_server_main, server) != 0) {
+  if (cmeta_thread_create(&server->thread, flow_mtls_test_server_main, server) != 0) {
     flow_mtls_test_close_socket(server->listener);
     server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;
     return -1;
@@ -247,7 +255,7 @@ static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const ui
 
 static void flow_mtls_test_server_join(flow_mtls_test_server_t *server) {
   if (!server) return;
-  if (server->started) (void)salts_thread_join(&server->thread);
+  if (server->started) (void)cmeta_thread_join(&server->thread);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET)
     flow_mtls_test_close_socket(server->listener);
   server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;

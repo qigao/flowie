@@ -1,7 +1,7 @@
 #include "flowie_ingress_internal.h"
 
-#include "salts_bytes.h"
-#include "salts_error.h"
+#include "cmeta_bytes.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdlib.h>
@@ -11,7 +11,7 @@ struct flowie_ingress_s {
   flowie_ingress_dispatch_fn dispatch;
   void *dispatch_ctx;
   flowie_mqtt_parse_options_t parse_options;
-  salts_bytes_t framing;
+  cmeta_bytes_t framing;
   flowie_protocol_route_t route;
   flowie_ingress_prepare_fn prepare;
   flowie_ingress_publish_complete_fn publish_complete;
@@ -87,13 +87,13 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
 static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
   int rc;
   for (;;) {
-    salts_bytes_view_t bytes;
+    cmeta_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     flowie_message_t msg;
     size_t consumed = 0u;
     int stop_after_publish = 0;
-    rc = salts_bytes_view(&ingress->framing, &bytes);
+    rc = cmeta_bytes_view(&ingress->framing, &bytes);
     if (rc != SALTS_OK) return rc;
     if (bytes.size == 0u) break;
     rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &ingress->parse_options, &packet,
@@ -135,7 +135,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       }
       if (!publish_packet) {
         tstr_freep(&ingress->publish_packet_override);
-        rc = salts_bytes_consume(&ingress->framing, consumed);
+        rc = cmeta_bytes_consume(&ingress->framing, consumed);
         if (rc != SALTS_OK) return rc;
         if (stop_pump) break;
         continue;
@@ -153,7 +153,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
     tstr_freep(&ingress->publish_packet_override);
     ingress->has_protocol_settlement = 0;
     if (rc != SALTS_OK) return rc;
-    rc = salts_bytes_consume(&ingress->framing, consumed);
+    rc = cmeta_bytes_consume(&ingress->framing, consumed);
     {
       flowie_publish_result_t result = FLOWIE_PUBLISH_RESULT_INIT;
       if (rc == SALTS_OK)
@@ -208,7 +208,7 @@ flowie_ingress_t *flowie_ingress_create(const flowie_ingress_config_t *config) {
     ingress->route.size = sizeof(ingress->route);
     ingress->has_route = 1;
   }
-  rc = salts_bytes_init(&ingress->framing, max_packet_size);
+  rc = cmeta_bytes_init(&ingress->framing, max_packet_size);
   if (rc != SALTS_OK) goto fail;
   return ingress;
 
@@ -219,7 +219,7 @@ fail:
 
 void flowie_ingress_destroy(flowie_ingress_t *ingress) {
   if (!ingress) return;
-  salts_bytes_destroy(&ingress->framing);
+  cmeta_bytes_destroy(&ingress->framing);
   tstr_freep(&ingress->publish_packet_override);
   free(ingress);
 }
@@ -233,16 +233,16 @@ int flowie_ingress_feed(flowie_ingress_t *ingress, const void *data, size_t size
   *published = 0u;
   if (ingress->terminal_error != SALTS_OK) return ingress->terminal_error;
   while (remaining != 0u) {
-    size_t writable = salts_bytes_available(&ingress->framing);
+    size_t writable = cmeta_bytes_available(&ingress->framing);
     size_t chunk;
     if (writable == 0u) {
       rc = flowie_ingress_pump(ingress, published);
       if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
-      writable = salts_bytes_available(&ingress->framing);
+      writable = cmeta_bytes_available(&ingress->framing);
       if (writable == 0u) return flowie_ingress_terminal(ingress, SALTS_EMSGSIZE);
     }
     chunk = remaining < writable ? remaining : writable;
-    rc = salts_bytes_append(&ingress->framing, cursor, chunk);
+    rc = cmeta_bytes_append(&ingress->framing, cursor, chunk);
     if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
     cursor += chunk;
     remaining -= chunk;
@@ -262,7 +262,7 @@ int flowie_ingress_resume(flowie_ingress_t *ingress, size_t *published) {
 }
 
 size_t flowie_ingress_buffered_bytes(const flowie_ingress_t *ingress) {
-  return ingress ? salts_bytes_size(&ingress->framing) : 0u;
+  return ingress ? cmeta_bytes_size(&ingress->framing) : 0u;
 }
 
 flowie_mqtt_version_t flowie_ingress_version(const flowie_ingress_t *ingress) {

@@ -39,6 +39,91 @@ authority.
 
 ## Layers and ownership
 
+### TCP/TLS network owners
+
+`network_workers` selects 1–64 fixed CNet progress owners for one endpoint; zero
+keeps the existing single-owner behavior. The CLI accepts `--network-workers` and
+YAML accepts `network_workers` in the endpoint adapter's `config`, alongside
+`network_command_bytes` (CLI: `--network-command-bytes`). For example, four owners with the default 16 MiB
+mailbox budget reserve 4 MiB per owner. The worker count cannot exceed the
+connection limit, and every byte partition must hold one maximum-sized packet.
+UDP/KCP and CHTTP WS/WSS reject multiple owners with `SALTS_ENOTSUP`.
+
+`network_policy` (`--network-policy`) selects `round-robin` (the default) or
+`least-connections`. The latter samples each owner's mutex-protected reservation
+count, including pending handoffs and live connections, with rotating ties. Only
+the listener increments reservations; concurrent closes may lower a sampled
+count. This is a load hint, not a globally atomic minimum or a byte/CPU load metric.
+Both policies skip full owners and preserve each connection's fixed owner.
+
+`network_cpus` (`--network-cpus 2,4`, YAML `[2,4]`) optionally supplies exactly one
+logical CPU per effective owner, in owner order. An empty YAML list or an omitted
+option preserves OS scheduling; duplicate CPUs deliberately allow sharing. The
+bounded list is copied into the endpoint and each connection configuration, with
+no caller-owned storage retained. Windows IDs are `group * 64 + processor` and
+Linux/Android IDs are OS logical CPU IDs below `CPU_SETSIZE`. Other platforms
+reject explicit binding with `SALTS_ENOTSUP`. Non-default policy or explicit CPU
+binding is supported only for TCP/TLS. The listener thread is not pinned.
+
+Each worker binds itself before polling or callbacks, then signals startup status
+under its mutex. Start waits for readiness before creating the multi-owner listener
+thread. A binding error fences and joins all started workers and returns the error;
+the failed instance can be destroyed, but must be recreated before retrying.
+The platform adapter uses [Windows thread group affinity](https://learn.microsoft.com/en-us/windows/win32/api/processtopologyapi/nf-processtopologyapi-setthreadgroupaffinity)
+and [Linux thread affinity](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html).
+This keeps platform calls below the endpoint and adds no dependency. Dynamic
+migration and implicit automatic pinning were rejected because they complicate
+connection ownership and can conflict with deployment CPU restrictions. Rollback
+is to omit both options; the default remains round-robin with no binding. Consumers
+must rebuild for the expanded configuration structs, as with `network_workers`.
+
+With multiple owners, one dedicated listener thread reserves an owner slot using
+the selected policy and performs detached accept. It moves
+the accepted descriptor through that owner's bounded mutex-protected queue.
+Pending handoffs and live connections share the same connection reservation;
+the total never exceeds `max_connections`. If all owners are full, new arrivals
+remain in the listener backlog. Admission failure releases the reservation and
+closes the descriptor. After successful adoption, only the selected owner polls,
+advances TLS, receives, sends, and closes that connection. It never migrates.
+
+Handles keep the existing slot/generation layout. The global slot interleaves
+owner-local slots, so simultaneous local slot 1 connections on different owners
+remain distinct. Send, retained SG send, and close decode the owner before
+entering its bounded MPSC mailbox; generations remain CNet's stale-handle fence.
+Connection capacity and mailbox byte capacity are partitioned without increasing
+their aggregate bounds. Command-entry capacity and the remaining CNet request,
+event, and completion capacities apply per owner, so their total memory cost
+grows with the selected count. Saturated mailboxes still return `SALTS_ENOBUFS`.
+Scalar admission copies bytes; SG admission retains immutable slices. References
+survive until CNet completion or cancellation, and queued references are released
+at destruction after all workers have joined.
+
+Callbacks for different network owners may overlap. The endpoint marshals them
+to its existing serialized protocol executor, keeping session, subscription,
+retained-message, and repository state under one authority. Receive bytes remain
+borrowed until the synchronous executor call returns. This change parallelizes
+network/TLS progress, not MQTT state execution; it does not establish a throughput
+gain without measurement. Applications consuming `Flowie::Connection` directly
+must make their observers safe for concurrent connections before opting in.
+
+Shutdown fences command and connection admission on every owner first. The
+listener closes on its thread; each network owner closes pending handoffs and
+stops CNet through terminal callbacks. The caller joins all threads before
+destroying queues, TLS contexts, or clients. A timeout leaves resources owned and
+requires another stop call; destroy returns `SALTS_EBUSY` while workers remain.
+An owner failure stops the group and is returned by stop. Lifecycle operations
+remain exclusive and must run outside network callbacks.
+
+Alternatives were one shared client polled concurrently (violates CNet ownership),
+per-owner reuse-port listeners (platform-dependent distribution), and protocol
+state sharding (requires a separate repository/session ownership design). Detached
+handoff preserves one portable listening socket and the current MQTT authority.
+The appended endpoint config fields require SDK consumers to rebuild; existing
+source initializers keep single-owner defaults. Roll back configuration to zero
+or one to restore the existing direct-accept path. Regression coverage belongs to
+the connection and MQTT transport suites, including owner affinity, retained SG,
+global capacity, stale handles, and shutdown with active connections.
+
 Flowie endpoint Core owns its `Flowie::Connection` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph
 dispatch sink into that Core and exposes graph operations without duplicating state. Reusable code below this boundary is limited to the

@@ -7,8 +7,8 @@
 
 #include "flowie_cluster_peer_authority_internal.h"
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -35,7 +35,7 @@ struct flowie_cluster_peer_authority_s {
   vec_t scratch;
   size_t max_peers;
   uint64_t revision;
-  salts_mutex_t mutex;
+  cmeta_mutex_t mutex;
   int mutex_initialized;
   int pins_initialized;
   int active_initialized;
@@ -124,7 +124,7 @@ static void flowie_cluster_peer_authority_free(flowie_cluster_peer_authority_t *
   if (authority->scratch_initialized) vec_destroy(&authority->scratch);
   if (authority->active_initialized) vec_destroy(&authority->active);
   if (authority->pins_initialized) vec_destroy(&authority->pins);
-  if (authority->mutex_initialized) salts_mutex_destroy(&authority->mutex);
+  if (authority->mutex_initialized) cmeta_mutex_destroy(&authority->mutex);
   free(authority);
 }
 
@@ -142,7 +142,7 @@ int flowie_cluster_peer_authority_create(const flowie_cluster_peer_authority_con
   authority = (flowie_cluster_peer_authority_t *)calloc(1u, sizeof(*authority));
   if (!authority) return SALTS_ENOMEM;
   authority->max_peers = config->max_peers;
-  salts_mutex_init(&authority->mutex);
+  cmeta_mutex_init(&authority->mutex);
   authority->mutex_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&authority->pins, sizeof(flowie_cluster_peer_authority_pin_t), _Alignof(flowie_cluster_peer_authority_pin_t), SIZE_MAX));
   if (rc != SALTS_OK) goto fail;
@@ -235,14 +235,14 @@ int flowie_cluster_peer_authority_replace(flowie_cluster_peer_authority_t *autho
     if (rc != SALTS_OK) return rc;
     previous_id = peer->node_id;
   }
-  salts_mutex_lock(&authority->mutex);
+  cmeta_mutex_lock(&authority->mutex);
   {
     vec_t old = authority->active;
     authority->active = authority->scratch;
     authority->scratch = old;
     authority->revision = revision;
   }
-  salts_mutex_unlock(&authority->mutex);
+  cmeta_mutex_unlock(&authority->mutex);
   vec_clear(&authority->scratch);
   return SALTS_OK;
 }
@@ -256,10 +256,10 @@ int flowie_cluster_peer_authority_snapshot(flowie_cluster_peer_authority_t *auth
   if (out_count) *out_count = 0u;
   if (out_revision) *out_revision = 0u;
   if (!authority || !out_count || !out_revision) return SALTS_EINVAL;
-  salts_mutex_lock(&authority->mutex);
+  cmeta_mutex_lock(&authority->mutex);
   count = vec_size(&authority->active);
   if (capacity < count || (count != 0u && !storage)) {
-    salts_mutex_unlock(&authority->mutex);
+    cmeta_mutex_unlock(&authority->mutex);
     return capacity < count ? SALTS_ENOSPC : SALTS_EINVAL;
   }
   for (index = 0u; index < count; ++index) {
@@ -276,7 +276,7 @@ int flowie_cluster_peer_authority_snapshot(flowie_cluster_peer_authority_t *auth
   }
   *out_count = count;
   *out_revision = authority->revision;
-  salts_mutex_unlock(&authority->mutex);
+  cmeta_mutex_unlock(&authority->mutex);
   return SALTS_OK;
 }
 
@@ -291,7 +291,7 @@ int flowie_cluster_peer_authority_authorize(
   if (!authority || !peer_node_id.data || peer_node_id.len == 0u ||
       !peer_boot_id || !peer_certificate_sha256)
     return SALTS_EINVAL;
-  salts_mutex_lock(&authority->mutex);
+  cmeta_mutex_lock(&authority->mutex);
   count = vec_size(&authority->active);
   while (count != 0u) {
     size_t step = count / 2u;
@@ -319,7 +319,7 @@ int flowie_cluster_peer_authority_authorize(
         strcmp(member->certificate_sha256, peer_certificate_sha256) == 0)
       rc = SALTS_OK;
   }
-  salts_mutex_unlock(&authority->mutex);
+  cmeta_mutex_unlock(&authority->mutex);
   return rc;
 }
 

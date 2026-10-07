@@ -2,8 +2,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,7 +76,7 @@ spec("Flowie Control TurboDB live contract") {
     check_equal(flowie_control_store_current_revision(store, &revision), SALTS_OK);
 
     (void)snprintf(domain_id, sizeof(domain_id), "live-%llu",
-                   (unsigned long long)salts_hrtime());
+                   (unsigned long long)cmeta_hrtime());
     live_request(request_id, sizeof(request_id), domain_id, "domain");
     domain.domain_id = domain_id;
     domain.actor = "live-test";
@@ -188,7 +188,7 @@ spec("Flowie Control TurboDB live contract") {
     check_equal(bundle.rule_count, 2u);
     flowie_control_store_policy_bundle_release(&bundle);
 
-    session_nonce = salts_hrtime();
+    session_nonce = cmeta_hrtime();
     for (size_t index = 0u; index < sizeof(session.token_digest); ++index)
       session.token_digest[index] =
           (uint8_t)((session_nonce >> ((index % sizeof(session_nonce)) * 8u)) ^ index);

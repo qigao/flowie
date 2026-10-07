@@ -4,8 +4,8 @@
 #include "tls_test_support.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -186,7 +186,7 @@ done:
   return rc;
 }
 
-static int flowie_transport_tcp_sg_burst_case(void) {
+static int flowie_transport_tcp_sg_burst_case(uint32_t network_workers) {
   static const uint8_t expected_pingresp[] = {0xd0u, 0x00u};
   flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
   flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
@@ -206,7 +206,9 @@ static int flowie_transport_tcp_sg_burst_case(void) {
   config.transport = FLOWIE_TRANSPORT_TCP;
   config.host = "127.0.0.1";
   config.port = (int)port;
-  config.max_connections = 1u;
+  config.max_connections = network_workers;
+  config.network_workers = network_workers;
+  if (network_workers > 1u) config.network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
   config.max_packet_size = 4096u;
   config.recv_timeout_ms = FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
   config.manage_sessions = 1;
@@ -394,7 +396,7 @@ flowie_transport_baseline_client_transport(flowie_transport_t transport) {
 
 static int flowie_transport_baseline_case(flowie_transport_t transport,
                                           flowie_mqtt_version_t version, uint8_t qos,
-                                          unsigned int client_number) {
+                                          unsigned int client_number, uint32_t network_workers) {
   static const uint8_t filter[] = "transport/baseline";
   static const uint8_t payload[] = "flowie-transport-baseline";
   char client_id[64];
@@ -415,6 +417,8 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
   endpoint_config.port = (int)port;
   endpoint_config.path = "/mqtt";
   endpoint_config.max_connections = 2u;
+  endpoint_config.network_workers = network_workers;
+  if (network_workers > 1u) endpoint_config.network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
   endpoint_config.recv_timeout_ms = FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
   endpoint_config.manage_sessions = 1;
   endpoint_config.max_sessions = 2u;
@@ -476,26 +480,34 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
       goto done;
     }
   }
-  rc = flowie_mqtt_client_create(&client_config, &client);
-  if (rc != SALTS_OK) goto done;
-  rc = flowie_mqtt_client_set_version(client, version);
-  if (rc != SALTS_OK) goto done;
+  /* Sequential sessions on the same listener exercise adoption on every owner. */
+  for (uint32_t owner = 0u; owner < network_workers; ++owner) {
+    atomic_store(&state.done, 0);
+    atomic_store(&state.status, SALTS_OK);
+    rc = flowie_mqtt_client_create(&client_config, &client);
+    if (rc != SALTS_OK) goto done;
+    rc = flowie_mqtt_client_set_version(client, version);
+    if (rc != SALTS_OK) goto done;
 
-  (void)snprintf(client_id, sizeof(client_id), "flowie-baseline-%u", client_number);
-  connect.version = version;
-  connect.clean_start = 1u;
-  connect.keep_alive = 30u;
-  connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)client_id, strlen(client_id)};
-  rc = flowie_mqtt_client_connect(client, &connect);
-  if (rc != SALTS_OK) goto done;
+    (void)snprintf(client_id, sizeof(client_id), "flowie-baseline-%u-%u", client_number, owner);
+    connect.version = version;
+    connect.clean_start = 1u;
+    connect.keep_alive = 30u;
+    connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)client_id, strlen(client_id)};
+    rc = flowie_mqtt_client_connect(client, &connect);
+    if (rc != SALTS_OK) goto done;
 
-  deadline = salts_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
-  while (!atomic_load_explicit(&state.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
-  rc = atomic_load_explicit(&state.done, memory_order_acquire)
-           ? atomic_load_explicit(&state.status, memory_order_relaxed)
-           : SALTS_ETIMEDOUT;
+    deadline = cmeta_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+    while (!atomic_load_explicit(&state.done, memory_order_acquire) &&
+           cmeta_monotonic_ms() < deadline)
+      cmeta_sleep_ms(1u);
+    rc = atomic_load_explicit(&state.done, memory_order_acquire)
+             ? atomic_load_explicit(&state.status, memory_order_relaxed)
+             : SALTS_ETIMEDOUT;
+    if (rc != SALTS_OK) goto done;
+    flowie_mqtt_client_destroy(client);
+    client = NULL;
+  }
 
 done:
   flowie_mqtt_client_destroy(client);
@@ -508,14 +520,15 @@ done:
 }
 
 static int flowie_transport_baseline_versions(flowie_transport_t transport,
-                                              unsigned int client_number_base) {
+                                              unsigned int client_number_base,
+                                              uint32_t network_workers) {
   static const flowie_mqtt_version_t versions[] = {
       FLOWIE_MQTT_VERSION_3_1, FLOWIE_MQTT_VERSION_3_1_1, FLOWIE_MQTT_VERSION_5};
   for (size_t i = 0u; i < sizeof(versions) / sizeof(versions[0]); ++i) {
     for (uint8_t qos = 0u; qos <= 2u; ++qos) {
       int rc = flowie_transport_baseline_case(transport, versions[i], qos,
                                               client_number_base + (unsigned int)(i * 3u) +
-                                                  (unsigned int)qos);
+                                                  (unsigned int)qos, network_workers);
       if (rc != SALTS_OK) return rc;
     }
   }
@@ -523,7 +536,8 @@ static int flowie_transport_baseline_versions(flowie_transport_t transport,
 }
 
 static int flowie_transport_baseline_secure_versions(flowie_transport_t transport,
-                                                     unsigned int client_number_base) {
+                                                     unsigned int client_number_base,
+                                                     uint32_t network_workers) {
   char ca_path[512] = {0};
   char cert_path[512] = {0};
   char key_path[512] = {0};
@@ -532,7 +546,7 @@ static int flowie_transport_baseline_secure_versions(flowie_transport_t transpor
       tls_test_write_server_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)) != 0 ||
       tls_test_set_ca_file_env(ca_path) != 0 || tls_test_set_server_env(cert_path, key_path) != 0)
     goto done;
-  rc = flowie_transport_baseline_versions(transport, client_number_base);
+  rc = flowie_transport_baseline_versions(transport, client_number_base, network_workers);
 done:
   tls_test_clear_server_env();
   tls_test_clear_ca_env();
@@ -548,22 +562,30 @@ spec("Flowie TCP/TLS/WS/WSS release baseline") {
   }
 
   it("chunks one 64-reply TCP batch across the retained CNet SG vector limit") {
-    check_equal(flowie_transport_tcp_sg_burst_case(), SALTS_OK);
+    check_equal(flowie_transport_tcp_sg_burst_case(1u), SALTS_OK);
+  }
+
+  it("preserves MQTT reply batching with multiple TCP network owners") {
+    check_equal(flowie_transport_tcp_sg_burst_case(2u), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TCP") {
-    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_TCP, 100u), SALTS_OK);
+    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_TCP, 100u, 1u), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TLS") {
-    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_TLS, 200u), SALTS_OK);
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_TLS, 200u, 1u), SALTS_OK);
+  }
+
+  it("serves all MQTT versions and QoS levels with multiple TLS network owners") {
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_TLS, 500u, 2u), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over WS") {
-    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_WS, 300u), SALTS_OK);
+    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_WS, 300u, 1u), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over WSS") {
-    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 400u), SALTS_OK);
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 400u, 1u), SALTS_OK);
   }
 }

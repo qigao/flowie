@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 spec("flowie cluster peer edge action codec") {
   it("round trips one sequenced PUBLISH socket action and its acknowledgement") {

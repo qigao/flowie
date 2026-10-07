@@ -2,7 +2,7 @@
 #include "flowie_security_internal.h"
 #include "flowie_topic_index_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>

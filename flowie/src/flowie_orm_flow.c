@@ -4,8 +4,8 @@
 #include "orm_postgresql.h"
 #endif
 
-#include "salts_cmeta_data.h"
-#include "salts_error.h"
+#include "cmeta_cmeta_data.h"
+#include "cmeta_error.h"
 #include <salts/thread.h>
 
 #include <cmeta/data.h>
@@ -39,14 +39,14 @@ static const cmeta_type_desc flowie_orm_row_type = {
 };
 static cmeta_data_desc flowie_orm_text_data;
 static cmeta_data_desc flowie_orm_blob_data;
-static salts_once_t flowie_orm_data_once = SALTS_ONCE_INIT;
+static cmeta_once_t flowie_orm_data_once = SALTS_ONCE_INIT;
 
 static void flowie_orm_data_init(void) {
-  flowie_orm_text_data = salts_tstr_cmeta_data;
+  flowie_orm_text_data = cmeta_tstr_cmeta_data;
   flowie_orm_text_data.stable_id = "flowie.orm.Text";
   flowie_orm_text_data.display_name = "Flowie ORM text";
   flowie_orm_text_data.kind = CMETA_DATA_STRING;
-  flowie_orm_blob_data = salts_tstr_cmeta_data;
+  flowie_orm_blob_data = cmeta_tstr_cmeta_data;
   flowie_orm_blob_data.stable_id = "flowie.orm.Blob";
   flowie_orm_blob_data.display_name = "Flowie ORM blob";
   flowie_orm_blob_data.kind = CMETA_DATA_BYTES;
@@ -98,7 +98,7 @@ static int flowie_orm_column_metadata(const flowie_orm_column_t *column, size_t 
   size_t offset = 0u;
   if (!column || !column->name || !column->name[0] || !layout || !field)
     return SALTS_EINVAL;
-  salts_once(&flowie_orm_data_once, flowie_orm_data_init);
+  cmeta_once(&flowie_orm_data_once, flowie_orm_data_init);
   switch (column->kind) {
     case FLOWIE_ORM_COLUMN_UINT64:
       data = &cmeta_data_uint64;

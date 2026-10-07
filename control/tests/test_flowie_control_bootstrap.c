@@ -4,7 +4,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>

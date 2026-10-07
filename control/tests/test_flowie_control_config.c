@@ -1,7 +1,7 @@
 #include "flowie_control_config_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <string.h>

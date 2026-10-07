@@ -9,6 +9,10 @@
 typedef struct flowie_server_config_s flowie_server_config_t;
 typedef struct flowie_endpoint_config_s flowie_endpoint_config_t;
 
+/* Strict option parsing; failure leaves the corresponding fields unchanged. */
+int flowie_server_network_policy_parse(const char *text, flowie_endpoint_config_t *config);
+int flowie_server_network_cpus_parse(const char *text, flowie_endpoint_config_t *config);
+
 typedef struct flowie_server_http_provider_config_s {
   char url[2049];
   char method[FLOWIE_SECURITY_TYPE_MAX + 1u];

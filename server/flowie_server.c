@@ -3,7 +3,7 @@
 #include "flowie_server_http_security_internal.h"
 #include "flowie_server_turbodb_config_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cmd_arger.h>
 #include "tlog.h"
 
@@ -65,7 +65,7 @@ static const char *flowie_server_transport_name(flowie_transport_t transport) {
   }
 }
 
-static int flowie_server_log_level(const char *value, salts_log_level_t *level) {
+static int flowie_server_log_level(const char *value, cmeta_log_level_t *level) {
   if (!level) return SALTS_EINVAL;
   if (!value || strcmp(value, "INFO") == 0 || strcmp(value, "info") == 0) {
     *level = SALTS_LOG_LEVEL_INFO;
@@ -103,6 +103,10 @@ typedef struct flowie_server_tuning_s {
   int64_t tcp_keepalive_count;
   CmdArgerBool tcp_keepalive;
   CmdArgerBool reuse_port;
+  int64_t network_workers;
+  int64_t network_command_bytes;
+  const char *network_policy;
+  const char *network_cpus;
 } flowie_server_tuning_t;
 
 #define FLOWIE_SERVER_TUNING_INIT                                                               \
@@ -117,6 +121,7 @@ static int flowie_server_tuning_apply(const flowie_server_tuning_t *tuning,
                                       flowie_endpoint_config_t *config) {
   uint64_t max_sessions;
   uint64_t max_retained_messages;
+  int status;
   if (!tuning || !config) return SALTS_EINVAL;
   if (tuning->max_packet_size < 2 ||
       (uint64_t)tuning->max_packet_size > FLOWIE_MQTT_MAX_WIRE_PACKET_SIZE ||
@@ -126,6 +131,10 @@ static int flowie_server_tuning_apply(const flowie_server_tuning_t *tuning,
       tuning->max_subscriptions_per_session > UINT16_MAX ||
       tuning->max_inflight_per_session <= 0 || tuning->max_inflight_per_session > UINT16_MAX ||
       tuning->max_retained_messages < 0 || tuning->send_hwm_bytes <= 0)
+    return SALTS_ERANGE;
+  if (tuning->network_workers < 0 || tuning->network_workers > FLOWIE_MAX_NETWORK_WORKERS ||
+      tuning->network_workers > tuning->max_connections || tuning->network_command_bytes < 0 ||
+      (uint64_t)tuning->network_command_bytes > SIZE_MAX)
     return SALTS_ERANGE;
   if ((tuning->coroutine_stack_size != 0 &&
        (tuning->coroutine_stack_size < FLOWIE_MIN_COROUTINE_STACK_SIZE ||
@@ -169,21 +178,33 @@ static int flowie_server_tuning_apply(const flowie_server_tuning_t *tuning,
   config->tcp_keepalive_interval_ms = (uint64_t)tuning->tcp_keepalive_interval_ms;
   config->tcp_keepalive_count = (uint32_t)tuning->tcp_keepalive_count;
   config->reuse_port = tuning->reuse_port ? 1 : 0;
+  config->network_workers = (uint32_t)tuning->network_workers;
+  config->network_command_bytes = (size_t)tuning->network_command_bytes;
+  if (tuning->network_policy != NULL) {
+    status = flowie_server_network_policy_parse(tuning->network_policy, config);
+    if (status != SALTS_OK) return status;
+  }
+  if (tuning->network_cpus != NULL) {
+    status = flowie_server_network_cpus_parse(tuning->network_cpus, config);
+    if (status != SALTS_OK) return status;
+    if (config->network_cpu_count != (config->network_workers ? config->network_workers : 1u))
+      return SALTS_EINVAL;
+  }
   return SALTS_OK;
 }
 
-static tlog_t *flowie_server_logging_create(salts_log_level_t level) {
+static tlog_t *flowie_server_logging_create(cmeta_log_level_t level) {
   tlog_config_t config = {.min_level = level,
                           .buffer_size = FLOWIE_SERVER_LOG_BUFFER_BYTES,
                           .pool_size = FLOWIE_SERVER_LOG_POOL_BYTES};
-  salts_console_sink_opts_t console_options = {
+  cmeta_console_sink_opts_t console_options = {
       .output = stderr, .use_colors = 0, .pattern = SALTS_LOG_FULL_PATTERN};
   tlog_t *logger = tlog_create(&config);
-  salts_log_sink_t *sink;
+  cmeta_log_sink_t *sink;
   if (!logger) return NULL;
-  sink = salts_sink_console_create(&console_options);
+  sink = cmeta_sink_console_create(&console_options);
   if (!sink || tlog_add_sink(logger, sink) != SALTS_OK) {
-    salts_sink_destroy(sink);
+    cmeta_sink_destroy(sink);
     tlog_destroy(logger);
     return NULL;
   }
@@ -296,7 +317,7 @@ int main(int argc, char **argv) {
   flowie_server_tuning_t tuning = FLOWIE_SERVER_TUNING_INIT;
   CmdArgerBool check_only = cmd_arger_false;
   CmdArgerBool require_security = cmd_arger_false;
-  salts_log_level_t log_level = SALTS_LOG_LEVEL_INFO;
+  cmeta_log_level_t log_level = SALTS_LOG_LEVEL_INFO;
   tlog_t *logger = NULL;
   int rc;
 
@@ -356,6 +377,14 @@ int main(int argc, char **argv) {
         cmd_arger_desc_integer(&tuning.tcp_keepalive_count, "tcp-keepalive-count",
                                "TCP keepalive probe count; requires --tcp-keepalive"),
         cmd_arger_desc_flag(&tuning.reuse_port, "reuse-port", "Enable listener port reuse"),
+        cmd_arger_desc_integer(&tuning.network_workers, "network-workers",
+                              "TCP/TLS network owners (0/1 selects one, maximum 64)"),
+        cmd_arger_desc_integer(&tuning.network_command_bytes, "network-command-bytes",
+                              "Aggregate send mailbox byte budget; 0 selects 16 MiB"),
+        cmd_arger_desc_string(&tuning.network_policy, "network-policy",
+                             "TCP/TLS owner placement: round-robin or least-connections"),
+        cmd_arger_desc_string(&tuning.network_cpus, "network-cpus",
+                             "Comma-separated CPU IDs, one per TCP/TLS owner"),
         cmd_arger_desc_string(&log_level_name, "log-level",
                               "Log level: DEBUG, INFO, WARN, ERROR, or FATAL")};
     cmd_arger_parse(arguments, (uint32_t)(sizeof(arguments) / sizeof(arguments[0])), NULL, 0u,
@@ -368,7 +397,7 @@ int main(int argc, char **argv) {
                                    &server_config, &config_error);
     if (rc != SALTS_OK) {
       (void)fprintf(stderr, "flowie_server: invalid configuration at %s: %s (%s)\n",
-                    config_error.path, config_error.message, salts_strerror(rc));
+                    config_error.path, config_error.message, cmeta_strerror(rc));
       return EXIT_FAILURE;
     }
     endpoint_config = *flowie_server_config_endpoint(server_config);
@@ -402,7 +431,7 @@ int main(int argc, char **argv) {
   rc = flowie_server_turbodb_config_create(protocol_store_driver, protocol_store_options, &turbodb);
   if (rc != SALTS_OK) {
     (void)fprintf(stderr, "flowie_server: invalid TurboDB configuration: %s\n",
-                  salts_strerror(rc));
+                  cmeta_strerror(rc));
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
@@ -418,7 +447,7 @@ int main(int argc, char **argv) {
                    "protocol_store_driver={} log_level={}",
                    flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
                    endpoint_config.port, endpoint_config.path, endpoint_config.reuse_port,
-                   flowie_server_turbodb_config_driver(turbodb), salts_log_level_name(log_level));
+                   flowie_server_turbodb_config_driver(turbodb), cmeta_log_level_name(log_level));
   SALTS_LOG_DEBUGF(
       logger, FLOWIE_SERVER_LOG_COMPONENT,
       "effective-config max_packet_size={} max_connections={} max_sessions={} "
@@ -453,7 +482,7 @@ int main(int argc, char **argv) {
     if (rc != SALTS_OK) {
       SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                        "security-runtime-create-failed status={} reason={}", rc,
-                       salts_strerror(rc));
+                       cmeta_strerror(rc));
       flowie_server_logging_destroy(logger);
       flowie_server_turbodb_config_destroy(turbodb);
       flowie_server_config_destroy(server_config);
@@ -472,7 +501,7 @@ int main(int argc, char **argv) {
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "protocol-store-open-failed driver={} status={} reason={}",
-                     flowie_server_turbodb_config_driver(turbodb), rc, salts_strerror(rc));
+                     flowie_server_turbodb_config_driver(turbodb), rc, cmeta_strerror(rc));
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
@@ -485,7 +514,7 @@ int main(int argc, char **argv) {
                                       &endpoint);
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-create-failed status={} reason={}", rc, salts_strerror(rc));
+                     "endpoint-create-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
@@ -516,7 +545,7 @@ int main(int argc, char **argv) {
   rc = flowie_endpoint_core_start(endpoint);
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-start-failed status={} reason={}", rc, salts_strerror(rc));
+                     "endpoint-start-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
@@ -530,13 +559,13 @@ int main(int argc, char **argv) {
                   endpoint_config.port);
   (void)fprintf(stdout, "flowie_server: mqtt://%s:%d running; press Ctrl+C to stop\n",
                 endpoint_config.host, endpoint_config.port);
-  while (!flowie_server_stop_requested) salts_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
+  while (!flowie_server_stop_requested) cmeta_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
   rc = flowie_endpoint_core_stop(endpoint);
   flowie_server_runtime_destroy(endpoint, repository);
   flowie_server_security_runtime_destroy(&security_runtime);
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-stop-failed status={} reason={}", rc, salts_strerror(rc));
+                     "endpoint-stop-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
     flowie_server_config_destroy(server_config);

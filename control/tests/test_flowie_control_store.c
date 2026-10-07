@@ -5,8 +5,8 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -277,7 +277,7 @@ static void control_concurrent_group_create(void *arg) {
   control_concurrent_group_create_t *write = (control_concurrent_group_create_t *)arg;
   atomic_fetch_add_explicit(write->ready, 1, memory_order_release);
   while (!atomic_load_explicit(write->go, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
   write->rc = control_group_create(write->store, "root-a", write->group_id, NULL, write->request_id,
                                    write->expected_revision, &write->result);
 }
@@ -778,7 +778,7 @@ spec("Flowie control TurboDB fact store") {
 
     for (unsigned int round = 0u; round < CONTROL_CONCURRENT_ROUNDS; ++round) {
       control_concurrent_group_create_t writes[CONTROL_CONCURRENT_WRITERS] = {0};
-      salts_thread_t threads[CONTROL_CONCURRENT_WRITERS] = {0};
+      cmeta_thread_t threads[CONTROL_CONCURRENT_WRITERS] = {0};
       int thread_created[CONTROL_CONCURRENT_WRITERS] = {0};
       atomic_int ready;
       atomic_int go;
@@ -800,7 +800,7 @@ spec("Flowie control TurboDB fact store") {
         (void)snprintf(writes[index].request_id, sizeof(writes[index].request_id),
                        "request-concurrent-%u-%zu", round, index);
         writes[index].rc =
-            salts_thread_create(&threads[index], control_concurrent_group_create, &writes[index]);
+            cmeta_thread_create(&threads[index], control_concurrent_group_create, &writes[index]);
         check_equal(writes[index].rc, SALTS_OK);
         thread_created[index] = writes[index].rc == SALTS_OK;
       }
@@ -808,17 +808,17 @@ spec("Flowie control TurboDB fact store") {
         atomic_store_explicit(&go, 1, memory_order_release);
         for (size_t index = 0u; index < CONTROL_CONCURRENT_WRITERS; ++index) {
           if (!thread_created[index]) continue;
-          check_equal(salts_thread_join(&threads[index]), SALTS_OK);
-          salts_thread_destroy(&threads[index]);
+          check_equal(cmeta_thread_join(&threads[index]), SALTS_OK);
+          cmeta_thread_destroy(&threads[index]);
         }
         break;
       }
       while (atomic_load_explicit(&ready, memory_order_acquire) != CONTROL_CONCURRENT_WRITERS)
-        salts_thread_yield();
+        cmeta_thread_yield();
       atomic_store_explicit(&go, 1, memory_order_release);
       for (size_t index = 0u; index < CONTROL_CONCURRENT_WRITERS; ++index) {
-        check_equal(salts_thread_join(&threads[index]), SALTS_OK);
-        salts_thread_destroy(&threads[index]);
+        check_equal(cmeta_thread_join(&threads[index]), SALTS_OK);
+        cmeta_thread_destroy(&threads[index]);
         if (writes[index].rc == SALTS_OK) {
           ++success_count;
           check_equal(writes[index].result.revision, revision + 1u);

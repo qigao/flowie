@@ -2,7 +2,7 @@
 #define FLOWIE_EXECUTION_H
 
 #include <salts/error_codes.h>
-#include <salts_coro_executor.h>
+#include <coro_executor.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,7 +25,7 @@ typedef struct flowie_execution_binding_s {
   /** Must be at least sizeof(flowie_execution_binding_t). */
   size_t size;
   flowie_execution_kind_t kind;
-  salts_coro_executor_t *executor;
+  coro_executor_t *executor;
   /** Stable zero-based owner shard for all endpoint state transitions. */
   size_t shard;
   uint32_t flags;
@@ -36,7 +36,7 @@ typedef struct flowie_execution_binding_s {
 
 static inline int flowie_execution_binding_validate(
     const flowie_execution_binding_t *binding) {
-  salts_coro_executor_stats_t stats = {0};
+  coro_executor_stats_t stats = {0};
   if (binding == NULL || binding->size < sizeof(*binding) || binding->flags != 0u)
     return SALTS_EINVAL;
   if (binding->kind == FLOWIE_EXECUTION_PRIVATE)
@@ -45,7 +45,7 @@ static inline int flowie_execution_binding_validate(
        binding->kind != FLOWIE_EXECUTION_OWNED_EXECUTOR) ||
       binding->executor == NULL)
     return SALTS_EINVAL;
-  salts_coro_executor_get_stats(binding->executor, &stats);
+  coro_executor_get_stats(binding->executor, &stats);
   return binding->shard < stats.worker_count ? SALTS_OK : SALTS_ERANGE;
 }
 

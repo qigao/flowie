@@ -1,6 +1,8 @@
 add_library(
   flowie_connection STATIC
   src/flowie_connection.c
+  src/flowie_affinity.c
+  src/flowie_affinity.h
   include/flowie_connection.h)
 
 cmake_config_target(
