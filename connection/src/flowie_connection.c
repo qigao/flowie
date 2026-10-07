@@ -1,4 +1,5 @@
 #include "flowie_connection.h"
+#include "flowie_send_batch.h"
 #include "flowie_affinity.h"
 
 #include <cnet/websocket.h>
@@ -1276,6 +1277,8 @@ static int flowie_command_submit_slicev(flowie_server_impl *server,
     status = SALTS_EMSGSIZE;
     goto fail;
   }
+  status = flowie_send_batch_coalesce(owned, &segment_count);
+  if (status != SALTS_OK) goto fail;
   cmeta_mutex_lock(&server->mutex);
   if (!server->started || server->stop_requested || server->worker_done) {
     status = SALTS_ESHUTDOWN;

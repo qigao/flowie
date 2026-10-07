@@ -14,3 +14,10 @@ endif()
 set_tests_properties(
   test_flowie_connection
   PROPERTIES LABELS "flowie;connection;cnet;chttp;tcp;udp;kcp;websocket")
+
+cmake_add_test(
+  test_flowie_send_batch
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_send_batch.c
+  LIBS Flowie::Connection Salts::TinyTest
+  FOLDER "connection/tests")
+set_tests_properties(test_flowie_send_batch PROPERTIES LABELS "flowie;connection;ownership")

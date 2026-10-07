@@ -1,6 +1,8 @@
 add_library(
   flowie_connection STATIC
   src/flowie_connection.c
+  src/flowie_send_batch.c
+  src/flowie_send_batch.h
   src/flowie_affinity.c
   src/flowie_affinity.h
   include/flowie_connection.h)
@@ -21,4 +23,14 @@ target_link_libraries(
 
 if(FLOWIE_BUILD_TESTS)
   add_subdirectory(tests)
+endif()
+
+if(FLOWIE_BUILD_BENCHMARKS)
+  cmake_add_benchmark(
+    benchmark_flowie_send_batch
+    SOURCES tests/benchmark_flowie_send_batch.c
+    LIBS Flowie::Connection Salts::TinyTest
+    FOLDER "connection/benchmarks")
+  add_test(NAME benchmark_flowie_send_batch COMMAND benchmark_flowie_send_batch)
+  set_tests_properties(benchmark_flowie_send_batch PROPERTIES LABELS "benchmark;flowie;connection")
 endif()
