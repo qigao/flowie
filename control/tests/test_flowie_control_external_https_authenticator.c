@@ -34,6 +34,7 @@ typedef struct external_https_task_s {
 typedef struct external_https_network_result_s {
   int status;
   int peer_verified;
+  int sent_fatal_alert;
   int acquire_calls;
   int release_calls;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
@@ -230,6 +231,7 @@ done:
   flowie_control_external_https_authenticator_destroy(authenticator);
   flow_mtls_test_server_join(&server);
   result->peer_verified = server.peer_verified;
+  result->sent_fatal_alert = server.sent_fatal_alert;
   result->request_size = server.request_size;
   if (server.request_size != 0u) memcpy(result->request, server.request, server.request_size + 1u);
   result->acquire_calls = atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed);
@@ -534,6 +536,7 @@ spec("Flowie control external HTTPS authenticator") {
     options.configure_client_identity = 0;
     check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
     check_equal(result.status, SALTS_EIO);
+    check_equal(result.sent_fatal_alert, SSL_AD_CERTIFICATE_REQUIRED);
     check_false(result.peer_verified);
     check_equal(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
@@ -548,6 +551,11 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
+    /* Prove this exact peer/identity can handshake before changing only its trust source. */
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_OK);
+    check_true(result.peer_verified);
+    check_greater(result.request_size, 0u);
     options.configure_ca = 0;
     check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
     check_equal(result.status, SALTS_EIO);
