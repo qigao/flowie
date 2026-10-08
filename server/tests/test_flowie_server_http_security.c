@@ -1,7 +1,7 @@
 #include "flowie_server_http_security_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <string.h>
@@ -25,7 +25,7 @@ spec("Flowie standalone HTTPS security protocol") {
     (void)strcpy(config.service_domain, "platform-services");
     check_equal(flowie_server_http_headers(&config, service_id, sizeof(service_id),
                                            service_domain, sizeof(service_domain), headers),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(headers[0], "Content-Type: application/json");
     check_equal(headers[1], "Accept: application/json");
     check_equal(headers[2], "X-Flowie-Service-Id: broker-main");
@@ -52,7 +52,7 @@ spec("Flowie standalone HTTPS security protocol") {
     request.secret_size = sizeof(secret) - 1u;
     request.protocol = "mqtt5";
     request.remote_address = "203.0.113.5:41000";
-    check_equal(flowie_server_http_auth_encode(&request, &body, &body_size), SALTS_OK);
+    check_equal(flowie_server_http_auth_encode(&request, &body, &body_size), CMETA_OK);
     check_not_null(body);
     document = json_parse(body, body_size);
     check_not_null(document);
@@ -64,7 +64,7 @@ spec("Flowie standalone HTTPS security protocol") {
 
     check_equal(flowie_server_http_auth_decode(response, sizeof(response) - 1u, "password",
                                                 &principal),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(principal.principal_id, "device-a");
     check_equal(principal.domain_id, "booth");
     check_equal(principal.scope, FLOWIE_SECURITY_SCOPE_DOMAIN);
@@ -102,7 +102,7 @@ spec("Flowie standalone HTTPS security protocol") {
     request.username_size = sizeof(username) - 1u;
     request.client_id = client_id;
     request.client_id_size = sizeof(client_id) - 1u;
-    check_equal(flowie_server_http_acl_encode(&request, &body, &body_size), SALTS_OK);
+    check_equal(flowie_server_http_acl_encode(&request, &body, &body_size), CMETA_OK);
     document = json_parse(body, body_size);
     check_not_null(document);
     check_equal(json_number(json_object_get(document, "version")), 4.0);
@@ -114,7 +114,7 @@ spec("Flowie standalone HTTPS security protocol") {
     flowie_server_http_body_destroy(body, body_size, 0);
 
     check_equal(flowie_server_http_acl_decode(response, sizeof(response) - 1u, &decision),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     check_equal(decision.reason, FLOWIE_SECURITY_REASON_DENY_RULE);
     check_equal(decision.policy_version, 7u);
@@ -146,7 +146,7 @@ spec("Flowie standalone HTTPS security protocol") {
     check_equal(flowie_server_http_security_create(&auth, &acl, &security), SALTS_ENOENT);
     check_null(security);
     check_equal(test_set_environment("FLOWIE_TEST_NATIVE_HTTP_TOKEN", "test-only-token"), 0);
-    check_equal(flowie_server_http_security_create(&auth, &acl, &security), SALTS_OK);
+    check_equal(flowie_server_http_security_create(&auth, &acl, &security), CMETA_OK);
     check_not_null(security);
     check_not_null(flowie_server_http_security_auth_provider(security));
     check_not_null(flowie_server_http_security_acl_provider(security));

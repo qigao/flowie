@@ -1,6 +1,6 @@
 #include "flowie_cluster_state_machine_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -28,13 +28,13 @@ int flowie_cluster_state_machine_apply_batch(
       tr_raft_data_descriptor_t descriptor;
       rc = tr_raft_data_descriptor_decode(entry->data, entry->data_length,
                                           &descriptor);
-      if (rc == SALTS_OK)
+      if (rc == CMETA_OK)
         rc = state->apply_publish(state->publish_ctx, entry->index, entry->term,
                                   entry->command_id, &descriptor);
     } else {
       rc = SALTS_EPROTO;
     }
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }

@@ -1,6 +1,6 @@
 #include "flowie_server_turbodb_config_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <stdint.h>
@@ -95,7 +95,7 @@ int flowie_server_turbodb_config_create(const char *driver, const char *options_
   }
   *out = config;
   config = NULL;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   json_free(document);

@@ -1,20 +1,20 @@
 #include "flowie_supervisor_runtime_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
 static int read_all_stdout(flowie_supervisor_runtime_t *runtime, char *buffer, size_t capacity) {
   size_t total = 0;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   while (total + 1u < capacity) {
     size_t count = 0;
     rc = flowie_supervisor_runtime_read_stdout(runtime, buffer + total, capacity - total - 1u,
                                                &count);
     total += count;
     if (rc == SALTS_EOF) break;
-    if (rc != SALTS_OK || count == 0) break;
+    if (rc != CMETA_OK || count == 0) break;
   }
   buffer[total] = '\0';
   return rc;
@@ -22,14 +22,14 @@ static int read_all_stdout(flowie_supervisor_runtime_t *runtime, char *buffer, s
 
 static int read_all_stderr(flowie_supervisor_runtime_t *runtime, char *buffer, size_t capacity) {
   size_t total = 0;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   while (total + 1u < capacity) {
     size_t count = 0;
     rc = flowie_supervisor_runtime_read_stderr(runtime, buffer + total, capacity - total - 1u,
                                                &count);
     total += count;
     if (rc == SALTS_EOF) break;
-    if (rc != SALTS_OK || count == 0) break;
+    if (rc != CMETA_OK || count == 0) break;
   }
   buffer[total] = '\0';
   return rc;
@@ -51,7 +51,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[256];
     char profile[sizeof("missing")] = "flowie";
 
@@ -61,11 +61,11 @@ spec("flowie supervisor runtime") {
     config.graph_path = FLOWIE_TEST_GRAPH_PATH;
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), CMETA_OK);
     check_not_null(runtime);
     (void)memcpy(profile, "missing", sizeof("missing"));
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), CMETA_OK);
     check_equal(child.state, SALTS_PROCESS_EXITED);
     check_equal(child.exit_code, 0);
     check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_EALREADY);
@@ -78,7 +78,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -87,9 +87,9 @@ spec("flowie supervisor runtime") {
     config.graph_path = FLOWIE_TEST_GRAPH_PATH;
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), CMETA_OK);
     check_equal(child.state, SALTS_PROCESS_EXITED);
     check_not_equal(child.exit_code, 0);
     check_equal(read_all_stderr(runtime, output, sizeof(output)), SALTS_EOF);
@@ -101,7 +101,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -110,9 +110,9 @@ spec("flowie supervisor runtime") {
     config.control_config_path = "missing-flowie-control.yml";
     config.check_only = 1;
     config.capture_output = 1;
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_wait_for(runtime, 10000u, &child, &error), CMETA_OK);
     check_equal(child.state, SALTS_PROCESS_EXITED);
     check_not_equal(child.exit_code, 0);
     check_equal(read_all_stderr(runtime, output, sizeof(output)), SALTS_EOF);
@@ -124,15 +124,15 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
 
     config.worker_program = FLOWIE_TEST_LONG_RUNNING_WORKER_PROGRAM;
     config.config_path = "unused.yml";
     config.graph_path = "unused.flow";
-    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), SALTS_OK);
-    check_equal(flowie_supervisor_runtime_start(runtime, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_create(&config, &runtime, &error), CMETA_OK);
+    check_equal(flowie_supervisor_runtime_start(runtime, &error), CMETA_OK);
     check_equal(flowie_supervisor_runtime_wait_for(runtime, 50u, &child, &error), SALTS_ETIMEDOUT);
-    check_equal(flowie_supervisor_runtime_stop(runtime, &child, &error), SALTS_OK);
+    check_equal(flowie_supervisor_runtime_stop(runtime, &child, &error), CMETA_OK);
     check_equal(child.state, SALTS_PROCESS_TERMINATED);
     flowie_supervisor_runtime_destroy(runtime);
   }

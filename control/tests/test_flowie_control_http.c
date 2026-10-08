@@ -3,7 +3,7 @@
 #include "tls_test_support.h"
 
 #include <http_client/http.h>
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tinytest.h"
 
 #include <stdio.h>
@@ -84,20 +84,20 @@ spec("Flowie control CHTTP adapter") {
     flowie_control_http_app_t *app = flowie_control_http_app_create();
     int marker = 1;
     check_not_null(app);
-    check_equal(flowie_control_http_app_bind_context(app, "/rpc", &marker), SALTS_OK);
+    check_equal(flowie_control_http_app_bind_context(app, "/rpc", &marker), CMETA_OK);
     check_equal(flowie_control_http_app_bind_context(app, "/rpc", &marker), SALTS_EALREADY);
     check_equal(flowie_control_http_app_lookup_context(app, "/rpc"), &marker);
     check_equal(flowie_control_http_app_post(app, "/rpc", flowie_control_http_test_handler),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_http_app_post(app, "/rpc", flowie_control_http_test_handler),
                 SALTS_EALREADY);
     check_equal(flowie_control_http_app_unpost(app, "/rpc", flowie_control_http_test_handler),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_http_app_unpost(app, "/rpc", flowie_control_http_test_handler),
                 SALTS_ENOENT);
     check_equal(flowie_control_http_app_post(app, "/rpc", flowie_control_http_test_handler),
-                SALTS_OK);
-    check_equal(flowie_control_http_app_unbind_context(app, "/rpc", &marker), SALTS_OK);
+                CMETA_OK);
+    check_equal(flowie_control_http_app_unbind_context(app, "/rpc", &marker), CMETA_OK);
     flowie_control_http_app_destroy(app);
   }
 
@@ -152,31 +152,31 @@ spec("Flowie control CHTTP adapter") {
     server_tls.cert_file = cert_path;
     server_tls.key_file = key_path;
     check_equal(flowie_control_http_app_get(app, "/health", flowie_control_http_test_handler),
-                SALTS_OK);
-    check_equal(flowie_control_http_app_start_tls(app, "127.0.0.1", 0u, &server_tls), SALTS_OK);
-    check_equal(flowie_control_http_app_port(app, &port), SALTS_OK);
+                CMETA_OK);
+    check_equal(flowie_control_http_app_start_tls(app, "127.0.0.1", 0u, &server_tls), CMETA_OK);
+    check_equal(flowie_control_http_app_port(app, &port), CMETA_OK);
     check_true(port != 0u);
     check_true(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port) > 0);
 
     client_tls.size = sizeof(client_tls);
     client_tls.ca_file = cert_path;
     client_tls.server_name = "localhost";
-    check_equal(chttp_tls_profile_init(&profile, &client_tls), SALTS_OK);
-    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
+    check_equal(chttp_tls_profile_init(&profile, &client_tls), CMETA_OK);
+    check_equal(chttp_client_init(&client, &client_config), CMETA_OK);
     options.connection_uri = uri;
     options.authority = "localhost";
     options.target = "/health";
     options.timeout_ms = 5000u;
     options.tls = &profile;
-    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
+    check_equal(chttp_get(&client, &options, &response, &error), CMETA_OK);
     check_equal(response.status_code, 200u);
     check_equal(response.body_size, (size_t)2u);
     check_equal(response.body, "ok", 2u);
 
     chttp_response_destroy(&response);
-    check_equal(chttp_client_destroy(&client, 5000u), SALTS_OK);
-    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
-    check_equal(flowie_control_http_app_stop(app, 5000u), SALTS_OK);
+    check_equal(chttp_client_destroy(&client, 5000u), CMETA_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), CMETA_OK);
+    check_equal(flowie_control_http_app_stop(app, 5000u), CMETA_OK);
     flowie_control_http_app_destroy(app);
     tls_test_remove_file(key_path);
     tls_test_remove_file(cert_path);

@@ -1,7 +1,7 @@
 #include "flowie_cluster_raft_generation_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -31,7 +31,7 @@ static int flowie_raft_generation_owners_create(
   if (!config || !out) return SALTS_EINVAL;
   flowie_raft_generation_record(1);
   *out = (flowie_cluster_owner_directory_t *)flowie_raft_generation_test;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_raft_generation_owners_destroy(
@@ -49,14 +49,14 @@ static int flowie_raft_generation_runtime_create(
     return SALTS_EINVAL;
   flowie_raft_generation_record(2);
   *out = (flowie_cluster_raft_runtime_t *)flowie_raft_generation_test;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_start(
     flowie_cluster_raft_runtime_t *runtime) {
   if (!runtime) return SALTS_EINVAL;
   flowie_raft_generation_record(4);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_drive(
@@ -74,7 +74,7 @@ static int flowie_raft_generation_runtime_stop(
     flowie_cluster_raft_runtime_t *runtime) {
   if (!runtime) return SALTS_EINVAL;
   flowie_raft_generation_record(7);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_status(
@@ -84,7 +84,7 @@ static int flowie_raft_generation_runtime_status(
   memset(out_status, 0, sizeof(*out_status));
   out_status->raft.core.role = TR_RAFT_LEADER;
   out_status->raft.core.term = 3u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_configuration(
@@ -97,7 +97,7 @@ static int flowie_raft_generation_runtime_configuration(
   out_configuration->members[0].node_id = 1u;
   out_configuration->members[0].roles =
       TR_RAFT_CONF_OLD_VOTER | TR_RAFT_CONF_NEW_VOTER;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_propose(
@@ -108,18 +108,18 @@ static int flowie_raft_generation_runtime_propose(
   if (!runtime || !proposal || !out_receipt || !test) return SALTS_EINVAL;
   if (flowie_cluster_owner_command_decode(
           (const uint8_t *)proposal->data, proposal->data_length,
-          &test->proposal_command) != SALTS_OK)
+          &test->proposal_command) != CMETA_OK)
     return SALTS_EPROTO;
   ++test->proposal_count;
   test->proposal_command_id = proposal->command_id;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_runtime_destroy(
     flowie_cluster_raft_runtime_t *runtime) {
   if (!runtime) return SALTS_EINVAL;
   flowie_raft_generation_record(9);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_router_create(
@@ -129,7 +129,7 @@ static int flowie_raft_generation_router_create(
   if (!config || !runtime || !out) return SALTS_EINVAL;
   flowie_raft_generation_record(3);
   *out = (flowie_cluster_publish_router_t *)flowie_raft_generation_test;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_router_retry(
@@ -143,7 +143,7 @@ static int flowie_raft_generation_router_destroy(
     flowie_cluster_publish_router_t *router) {
   if (!router) return SALTS_EINVAL;
   flowie_raft_generation_record(8);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_raft_generation_router_submit(
@@ -157,7 +157,7 @@ static int flowie_raft_generation_router_submit(
   ++test->publish_submit_count;
   test->publish_term = term;
   tstr_freep(event);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static const flowie_cluster_raft_generation_api_t TEST_API = {
@@ -183,7 +183,7 @@ static int flowie_raft_generation_apply_publish(
   (void)index;
   (void)term;
   (void)command_id;
-  return descriptor ? SALTS_OK : SALTS_EINVAL;
+  return descriptor ? CMETA_OK : SALTS_EINVAL;
 }
 
 spec("flowie cluster Raft generation") {
@@ -205,14 +205,14 @@ spec("flowie cluster Raft generation") {
     config.router.max_event_bytes = 4096u;
     check_equal(flowie_cluster_raft_generation_create_with_api(
                      &config, &TEST_API, &generation),
-                 SALTS_OK);
+                 CMETA_OK);
     check_not_null(flowie_cluster_raft_generation_owners(generation));
-    check_equal(flowie_cluster_raft_generation_start(generation), SALTS_OK);
+    check_equal(flowie_cluster_raft_generation_start(generation), CMETA_OK);
     owner_command.kind = FLOWIE_CLUSTER_OWNER_COMMAND_REVOKE;
     owner_command.shard_id = 1u;
     check_equal(flowie_cluster_raft_generation_propose_owner(
                      generation, 71u, &owner_command, &receipt),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(test.proposal_count, 1u);
     check_equal(test.proposal_command_id, 71u);
     check_equal(test.proposal_command.kind,
@@ -222,7 +222,7 @@ spec("flowie cluster Raft generation") {
     check_not_null(event);
     check_equal(flowie_cluster_raft_generation_submit_publish_durable(
                      generation, 72u, 73u, &event),
-                 SALTS_OK);
+                 CMETA_OK);
     check_null(event);
     check_equal(test.publish_submit_count, 1u);
     check_equal(test.publish_term, 3u);
@@ -242,15 +242,15 @@ spec("flowie cluster Raft generation") {
     publish.packet =
         (flowie_mqtt_span_t){publish_packet, sizeof(publish_packet)};
     check_equal(flowie_cluster_raft_generation_publish(generation, &publish),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(test.publish_submit_count, 2u);
     check_equal(flowie_cluster_raft_generation_drive(generation, 1u, 3u,
                                                       &step),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_raft_generation_destroy(generation),
                  SALTS_EBUSY);
-    check_equal(flowie_cluster_raft_generation_stop(generation), SALTS_OK);
-    check_equal(flowie_cluster_raft_generation_destroy(generation), SALTS_OK);
+    check_equal(flowie_cluster_raft_generation_stop(generation), CMETA_OK);
+    check_equal(flowie_cluster_raft_generation_destroy(generation), CMETA_OK);
     check_equal(test.event_count, 10u);
     for (size_t index = 0u; index < test.event_count; ++index)
       check_equal(test.events[index], (int)index + 1);
@@ -268,14 +268,14 @@ spec("flowie cluster Raft generation") {
     config.router.max_event_bytes = 4096u;
     check_equal(flowie_cluster_raft_generation_create_with_api(
                      &config, &TEST_API, &generation),
-                 SALTS_OK);
-    check_equal(flowie_cluster_raft_generation_start(generation), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_cluster_raft_generation_start(generation), CMETA_OK);
     check_equal(flowie_cluster_raft_generation_drive(generation, 1u, 3u,
                                                       &step),
                  SALTS_EIO);
     check_equal(test.event_count, 5u);
-    check_equal(flowie_cluster_raft_generation_stop(generation), SALTS_OK);
-    check_equal(flowie_cluster_raft_generation_destroy(generation), SALTS_OK);
+    check_equal(flowie_cluster_raft_generation_stop(generation), CMETA_OK);
+    check_equal(flowie_cluster_raft_generation_destroy(generation), CMETA_OK);
     flowie_raft_generation_test = NULL;
   }
 }

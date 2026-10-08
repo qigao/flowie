@@ -1,7 +1,7 @@
 #include "flowie_bitmap_index_internal.h"
 
 #include "roaring.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 
@@ -23,7 +23,7 @@ int flowie_bitmap_index_create(size_t max_members, flowie_bitmap_index_t **out) 
   }
   index->max_members = max_members;
   *out = index;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_bitmap_index_destroy(flowie_bitmap_index_t *index) {
@@ -34,24 +34,24 @@ void flowie_bitmap_index_destroy(flowie_bitmap_index_t *index) {
 
 int flowie_bitmap_index_add(flowie_bitmap_index_t *index, uint64_t member) {
   if (!index || !index->bitmap) return SALTS_EINVAL;
-  if (roaring64_bitmap_contains(index->bitmap, member)) return SALTS_OK;
+  if (roaring64_bitmap_contains(index->bitmap, member)) return CMETA_OK;
   if (roaring64_bitmap_get_cardinality(index->bitmap) >= (uint64_t)index->max_members)
     return SALTS_ENOSPC;
   roaring64_bitmap_add(index->bitmap, member);
-  return roaring64_bitmap_contains(index->bitmap, member) ? SALTS_OK : SALTS_ENOMEM;
+  return roaring64_bitmap_contains(index->bitmap, member) ? CMETA_OK : SALTS_ENOMEM;
 }
 
 int flowie_bitmap_index_remove(flowie_bitmap_index_t *index, uint64_t member) {
   if (!index || !index->bitmap) return SALTS_EINVAL;
   roaring64_bitmap_remove(index->bitmap, member);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_bitmap_index_contains(const flowie_bitmap_index_t *index, uint64_t member,
                                      int *out) {
   if (!index || !index->bitmap || !out) return SALTS_EINVAL;
   *out = roaring64_bitmap_contains(index->bitmap, member) ? 1 : 0;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_bitmap_index_count(const flowie_bitmap_index_t *index, size_t *out) {
@@ -60,11 +60,11 @@ int flowie_bitmap_index_count(const flowie_bitmap_index_t *index, size_t *out) {
   count = roaring64_bitmap_get_cardinality(index->bitmap);
   if (count > (uint64_t)SIZE_MAX) return SALTS_ERANGE;
   *out = (size_t)count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_bitmap_index_select(const flowie_bitmap_index_t *index, size_t rank,
                                    uint64_t *out) {
   if (!index || !index->bitmap || !out) return SALTS_EINVAL;
-  return roaring64_bitmap_select(index->bitmap, (uint64_t)rank, out) ? SALTS_OK : SALTS_ERANGE;
+  return roaring64_bitmap_select(index->bitmap, (uint64_t)rank, out) ? CMETA_OK : SALTS_ERANGE;
 }

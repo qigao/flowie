@@ -5,7 +5,7 @@
 #include "flowie_test_cnet.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,20 +88,20 @@ static control_runtime_fixture_t runtime_fixture_open(void) {
   check_not_null(fixture.path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &fixture.store), SALTS_OK);
+  check_equal(flowie_control_store_open(&config, &fixture.store), CMETA_OK);
   {
     flowie_control_config_t runtime_config = FLOWIE_CONTROL_CONFIG_INIT;
     check_equal(flowie_control_bootstrap_apply(
                     flowie_control_store_repository(fixture.store), &runtime_config.bootstrap,
                     FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
                     sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 900u),
-                SALTS_OK);
+                CMETA_OK);
   }
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
-  check_equal(runtime_domain_create(fixture.store, fixture.revision), SALTS_OK);
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
-  check_equal(runtime_user_create(fixture.store, fixture.revision), SALTS_OK);
-  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), SALTS_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), CMETA_OK);
+  check_equal(runtime_domain_create(fixture.store, fixture.revision), CMETA_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), CMETA_OK);
+  check_equal(runtime_user_create(fixture.store, fixture.revision), CMETA_OK);
+  check_equal(flowie_control_store_current_revision(fixture.store, &fixture.revision), CMETA_OK);
   return fixture;
 }
 
@@ -150,9 +150,9 @@ static void runtime_jwt_jwks_composition_test(void) {
   (void)snprintf(config->auth.jwt_jwks.ca_file, sizeof(config->auth.jwt_jwks.ca_file), "%s",
                  cert_file);
 
-  check_equal(flowie_control_runtime_create(config, &runtime), SALTS_OK);
+  check_equal(flowie_control_runtime_create(config, &runtime), CMETA_OK);
   check_not_null(runtime);
-  check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
+  check_equal(flowie_control_runtime_destroy(runtime), CMETA_OK);
 
   free(config);
   tls_test_remove_file(key_file);
@@ -170,19 +170,19 @@ spec("Flowie controller runtime") {
                 SALTS_EPERM);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                     "role-viewer", fixture.revision),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                  "assign-viewer", fixture.revision + 1u),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
                                     "role-user-admin", fixture.revision + 2u),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_USER_ADMIN,
                                  "assign-user-admin", fixture.revision + 3u),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_management_identity_resolve_principal(
                     flowie_control_store_repository(fixture.store), "root-a", "admin-a", &caller),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(caller.domain_id, "root-a");
     check_equal(caller.actor, "admin-a");
     check_equal(caller.permissions,
@@ -240,7 +240,7 @@ spec("Flowie controller runtime") {
                    key_file);
     config.dashboard_enabled = 1;
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
-    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
+    check_equal(flowie_control_runtime_validate(&config), CMETA_OK);
     for (size_t index = 0u; index < sizeof(dashboard_paths) / sizeof(dashboard_paths[0]); ++index) {
       (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                      dashboard_paths[index]);
@@ -341,7 +341,7 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.external_https.tls.client_key_file,
                    sizeof(config.auth.external_https.tls.client_key_file), "%s", key_file);
 
-    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
+    check_equal(flowie_control_runtime_validate(&config), CMETA_OK);
     (void)snprintf(config.auth.external_https.tls.ca_file,
                    sizeof(config.auth.external_https.tls.ca_file), "%s", "missing-external-ca.pem");
     check_equal(flowie_control_runtime_validate(&config), SALTS_EIO);
@@ -381,7 +381,7 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.jwt_jwks.ca_file, sizeof(config.auth.jwt_jwks.ca_file), "%s",
                    cert_file);
 
-    check_equal(flowie_control_runtime_validate(&config), SALTS_OK);
+    check_equal(flowie_control_runtime_validate(&config), CMETA_OK);
     config.auth.jwt_jwks.executor_workers = 0u;
     check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
     config.auth.jwt_jwks.executor_workers =
@@ -407,10 +407,10 @@ spec("Flowie controller runtime") {
 
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                     "runtime-viewer", fixture.revision),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(runtime_role_add(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
                                  "runtime-viewer-add", fixture.revision + 1u),
-                SALTS_OK);
+                CMETA_OK);
     flowie_control_store_destroy(fixture.store);
     fixture.store = NULL;
     check_equal(
@@ -446,9 +446,9 @@ spec("Flowie controller runtime") {
     (void)snprintf(config.auth.external_https.tls.client_key_file,
                    sizeof(config.auth.external_https.tls.client_key_file), "%s", key_file);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_create(&config, &runtime), CMETA_OK);
     check_not_null(runtime);
-    check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_destroy(runtime), CMETA_OK);
     runtime = NULL;
 
     check_equal(runtime_test_set_env("FLOWIE_RUNTIME_EXTERNAL_TOKEN", NULL), 0);
@@ -479,13 +479,13 @@ spec("Flowie controller runtime") {
                    "/v2/control/rpc");
     check_equal(flowie_control_test_runtime_turbodb(&config, fixture.path), 0);
 
-    check_equal(flowie_control_runtime_create(&config, &runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_create(&config, &runtime), CMETA_OK);
     check_not_null(runtime);
-    check_equal(flowie_control_runtime_start(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_start(runtime), CMETA_OK);
     check_equal(flowie_control_runtime_start(runtime), SALTS_EINVAL);
-    check_equal(flowie_control_runtime_stop(runtime), SALTS_OK);
-    check_equal(flowie_control_runtime_stop(runtime), SALTS_OK);
-    check_equal(flowie_control_runtime_destroy(runtime), SALTS_OK);
+    check_equal(flowie_control_runtime_stop(runtime), CMETA_OK);
+    check_equal(flowie_control_runtime_stop(runtime), CMETA_OK);
+    check_equal(flowie_control_runtime_destroy(runtime), CMETA_OK);
 
     tls_test_remove_file(key_file);
     tls_test_remove_file(cert_file);

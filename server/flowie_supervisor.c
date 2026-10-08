@@ -1,7 +1,7 @@
 #include "flowie_supervisor_runtime_internal.h"
 
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -42,7 +42,7 @@ static int flowie_supervisor_parse_size(const char *text, size_t *out) {
   if (errno == ERANGE || !end || *end != '\0' || value == 0 || value > SIZE_MAX)
     return SALTS_EINVAL;
   *out = (size_t)value;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_supervisor_default_worker(const char *program, char *buffer, size_t capacity) {
@@ -51,28 +51,28 @@ static int flowie_supervisor_default_worker(const char *program, char *buffer, s
   if (!strchr(program, '/') && !strchr(program, '\\')) {
     if (strlen(FLOWIE_WORKER_FILENAME) + 1u > capacity) return SALTS_ENOSPC;
     (void)memcpy(buffer, FLOWIE_WORKER_FILENAME, strlen(FLOWIE_WORKER_FILENAME) + 1u);
-    return SALTS_OK;
+    return CMETA_OK;
   }
-  if (salts_fs_path_dirname(program, directory, sizeof(directory)) != SALTS_OK ||
-      salts_fs_path_join(buffer, capacity, directory, FLOWIE_WORKER_FILENAME) != SALTS_OK)
+  if (cmeta_fs_path_dirname(program, directory, sizeof(directory)) != CMETA_OK ||
+      cmeta_fs_path_join(buffer, capacity, directory, FLOWIE_WORKER_FILENAME) != CMETA_OK)
     return SALTS_ENOSPC;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_supervisor_report(const flowie_supervisor_error_t *error) {
   const char *operation = error && error->operation ? error->operation : "supervisor operation";
   int status = error ? error->status : SALTS_EIO;
   (void)fprintf(stderr, "flowie_supervisor: %s failed: status=%d reason=%s\n", operation, status,
-                salts_strerror(status));
+                cmeta_strerror(status));
   return EXIT_FAILURE;
 }
 
-static void flowie_supervisor_report_child(const salts_process_result_t *result) {
+static void flowie_supervisor_report_child(const cmeta_process_result_t *result) {
   if (!result) return;
   (void)fprintf(stderr,
                 "flowie_supervisor: worker stopped: state=%s pid=%d exit_code=%d signal=%d "
                 "error=%d\n",
-                salts_process_state_name(result->state), result->pid, result->exit_code,
+                cmeta_process_state_name(result->state), result->pid, result->exit_code,
                 result->term_signal, result->error_code);
 }
 
@@ -86,9 +86,9 @@ static int flowie_supervisor_forward_stream(flowie_supervisor_runtime_t *runtime
              ? flowie_supervisor_runtime_read_stdout(runtime, buffer, sizeof(buffer), &count)
              : flowie_supervisor_runtime_read_stderr(runtime, buffer, sizeof(buffer), &count);
     if (count > 0 && fwrite(buffer, 1u, count, stream) != count) return SALTS_EIO;
-    if (rc == SALTS_EOF) return SALTS_OK;
-    if (rc != SALTS_OK) return rc;
-    if (count == 0) return SALTS_OK;
+    if (rc == SALTS_EOF) return CMETA_OK;
+    if (rc != CMETA_OK) return rc;
+    if (count == 0) return CMETA_OK;
   }
 }
 
@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
   flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
   flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
   flowie_supervisor_runtime_t *runtime = NULL;
-  salts_process_result_t child = {SALTS_PROCESS_STARTING, -1, -1, 0, 0};
+  cmeta_process_result_t child = {SALTS_PROCESS_STARTING, -1, -1, 0, 0};
   char default_worker[SALTS_FS_MAX_PATH];
   int result = EXIT_FAILURE;
   int rc;
@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
       config.worker_program = argv[index];
     } else if (strcmp(argv[index], "--capture-output") == 0) {
       if (++index >= argc ||
-          flowie_supervisor_parse_size(argv[index], &config.max_output_bytes) != SALTS_OK) {
+          flowie_supervisor_parse_size(argv[index], &config.max_output_bytes) != CMETA_OK) {
         flowie_supervisor_usage(argv[0]);
         goto done;
       }
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
   }
   if (!config.worker_program) {
     rc = flowie_supervisor_default_worker(argv[0], default_worker, sizeof(default_worker));
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       error.operation = "resolve worker path";
       error.status = rc;
       result = flowie_supervisor_report(&error);
@@ -166,19 +166,19 @@ int main(int argc, char **argv) {
     goto done;
   }
   rc = flowie_supervisor_runtime_create(&config, &runtime, &error);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     result = flowie_supervisor_report(&error);
     goto done;
   }
   rc = flowie_supervisor_runtime_start(runtime, &error);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     result = flowie_supervisor_report(&error);
     goto done;
   }
   while (!flowie_supervisor_stop_requested) {
     rc = flowie_supervisor_runtime_wait_for(runtime, FLOWIE_SUPERVISOR_WAIT_INTERVAL_MS, &child,
                                             &error);
-    if (rc == SALTS_OK) break;
+    if (rc == CMETA_OK) break;
     if (rc != SALTS_ETIMEDOUT) {
       result = flowie_supervisor_report(&error);
       goto done;
@@ -186,15 +186,15 @@ int main(int argc, char **argv) {
   }
   if (flowie_supervisor_stop_requested) {
     rc = flowie_supervisor_runtime_stop(runtime, &child, &error);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       result = flowie_supervisor_report(&error);
       goto done;
     }
   }
   if (config.capture_output) {
     rc = flowie_supervisor_forward_stream(runtime, stdout, 1);
-    if (rc == SALTS_OK) rc = flowie_supervisor_forward_stream(runtime, stderr, 0);
-    if (rc != SALTS_OK) {
+    if (rc == CMETA_OK) rc = flowie_supervisor_forward_stream(runtime, stderr, 0);
+    if (rc != CMETA_OK) {
       error.operation = "forward worker output";
       error.status = rc;
       result = flowie_supervisor_report(&error);

@@ -91,7 +91,7 @@ int flowie_server_send(flowie_server *server, flowie_connection connection, cons
 
 /**
  * Thread-safe retained scatter/gather admission for TCP/TLS streams.
- * Each canonical slice is retained before this call returns SALTS_OK, so the
+ * Each canonical slice is retained before this call returns CMETA_OK, so the
  * caller may release its slice references immediately after successful admission.
  */
 int flowie_server_send_slicev(flowie_server *server, flowie_connection connection,

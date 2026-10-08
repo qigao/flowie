@@ -9,7 +9,7 @@
 
 #include "flowie_cluster_raft_runtime_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -53,7 +53,7 @@ flowie_cluster_publish_router_find(flowie_cluster_publish_router_t *router,
 static void flowie_cluster_publish_router_remove(
     flowie_cluster_publish_router_t *router, size_t index) {
   flowie_cluster_publish_router_outbound_t removed;
-  if (flowie_stl_error(vec_swap_remove(&router->outbound, index, &removed)) == SALTS_OK)
+  if (flowie_stl_error(vec_swap_remove(&router->outbound, index, &removed)) == CMETA_OK)
     flowie_cluster_publish_egress_destroy(removed.egress);
 }
 
@@ -64,10 +64,10 @@ static int flowie_cluster_publish_router_try_propose(
   tr_raft_proposal_t proposal;
   int rc = flowie_cluster_publish_egress_make_proposal(
       entry->egress, entry->command_id, descriptor, &proposal);
-  if (rc == SALTS_EBUSY) return SALTS_OK;
-  if (rc != SALTS_OK) return rc;
+  if (rc == SALTS_EBUSY) return CMETA_OK;
+  if (rc != CMETA_OK) return rc;
   rc = router->config.propose(router->config.propose_ctx, &proposal);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     flowie_cluster_publish_router_remove(router, entry_index);
   return rc;
 }
@@ -88,10 +88,10 @@ int flowie_cluster_publish_router_create(
   if (!router) return SALTS_ENOMEM;
   router->config = *config;
   rc = flowie_stl_error(vec_init_bytes(&router->outbound, sizeof(flowie_cluster_publish_router_outbound_t), _Alignof(flowie_cluster_publish_router_outbound_t), SIZE_MAX));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_stl_error(vec_reserve(&router->outbound,
                            config->max_outbound_streams));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   memset(&ingress_config, 0, sizeof(ingress_config));
   ingress_config.self_id = config->self_id;
   ingress_config.max_event_bytes = config->max_event_bytes;
@@ -102,9 +102,9 @@ int flowie_cluster_publish_router_create(
   ingress_config.enqueue_ctx = config->enqueue_ctx;
   rc = flowie_cluster_publish_ingress_create(&ingress_config,
                                               &router->ingress);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   *out = router;
-  return SALTS_OK;
+  return CMETA_OK;
 fail:
   vec_destroy(&router->outbound);
   free(router);
@@ -128,16 +128,16 @@ int flowie_cluster_publish_router_create_bound(
   bound_config.propose = flowie_cluster_raft_runtime_propose_adapter;
   bound_config.propose_ctx = runtime;
   rc = flowie_cluster_publish_router_create(&bound_config, &router);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_cluster_raft_runtime_bind_payload_handler(
       runtime, flowie_cluster_publish_router_payload_adapter, router);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)flowie_cluster_publish_router_destroy(router);
     return rc;
   }
   router->bound_runtime = runtime;
   *out = router;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_publish_router_destroy(
@@ -147,7 +147,7 @@ int flowie_cluster_publish_router_destroy(
   if (router->bound_runtime) {
     rc = flowie_cluster_raft_runtime_unbind_payload_handler(
         router->bound_runtime, router);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   while (!vec_empty(&router->outbound))
     flowie_cluster_publish_router_remove(
@@ -155,7 +155,7 @@ int flowie_cluster_publish_router_destroy(
   flowie_cluster_publish_ingress_destroy(router->ingress);
   vec_destroy(&router->outbound);
   free(router);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_publish_router_submit_durable(
@@ -187,16 +187,16 @@ int flowie_cluster_publish_router_submit_durable(
   entry.command_id = command_id;
   rc = flowie_cluster_publish_egress_create(&egress_config, event,
                                              &entry.egress);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_stl_error(vec_push(&router->outbound, &entry));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_cluster_publish_egress_destroy(entry.egress);
     return rc;
   }
   entry_index = vec_size(&router->outbound) - 1u;
   rc = flowie_cluster_publish_egress_mark_local_durable(entry.egress);
-  if (rc == SALTS_OK) rc = flowie_cluster_publish_egress_pump(entry.egress);
-  if (rc != SALTS_OK && rc != SALTS_ENOSPC && rc != SALTS_EBUSY) {
+  if (rc == CMETA_OK) rc = flowie_cluster_publish_egress_pump(entry.egress);
+  if (rc != CMETA_OK && rc != SALTS_ENOSPC && rc != SALTS_EBUSY) {
     flowie_cluster_publish_router_remove(router, entry_index);
     return rc;
   }
@@ -218,7 +218,7 @@ int flowie_cluster_publish_router_handle(
   if (!entry) return SALTS_ENOENT;
   rc = flowie_cluster_publish_egress_acknowledge(
       entry->egress, &payload->data.data_ack);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_cluster_publish_router_try_propose(router, entry,
                                                          entry_index)
              : rc;
@@ -235,12 +235,12 @@ int flowie_cluster_publish_router_retry(
         (flowie_cluster_publish_router_outbound_t *)vec_at(
             &router->outbound, index);
     rc = flowie_cluster_publish_egress_pump(entry->egress);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     rc = flowie_cluster_publish_router_try_propose(router, entry, index);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (vec_size(&router->outbound) == size_before) ++index;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 size_t flowie_cluster_publish_router_outbound_count(

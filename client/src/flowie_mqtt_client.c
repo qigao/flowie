@@ -12,10 +12,10 @@
 #include <cnet/websocket.h>
 #include "flowie_mqtt_protocol.h"
 #include "monocypher.h"
-#include "salts_bytes.h"
-#include "salts_error.h"
+#include "cmeta_bytes.h"
+#include "cmeta_error.h"
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -122,7 +122,7 @@ struct flowie_mqtt_client_s {
   uint8_t disconnect_reason;
   int disconnect_reason_valid;
   tstr send_buffer;
-  salts_bytes_t framing;
+  cmeta_bytes_t framing;
   char *recv_data;
   size_t recv_size;
   size_t recv_offset;
@@ -142,9 +142,9 @@ struct flowie_mqtt_client_s {
   size_t command_queue_max_bytes;
   size_t command_queue_bytes;
   deque_t commands;
-  salts_mutex_t command_mutex;
-  salts_cond_t command_changed;
-  salts_thread_t worker;
+  cmeta_mutex_t command_mutex;
+  cmeta_cond_t command_changed;
+  cmeta_thread_t worker;
   int network_initialized;
   int websocket_initialized;
   int websocket_tls_initialized;
@@ -181,7 +181,7 @@ static int flowie_mqtt_client_disconnect_operation(flowie_mqtt_client_t *client,
 static int flowie_mqtt_client_parse_status(int rc) {
   switch (rc) {
   case FLOWIE_MQTT_PARSE_OK:
-    return SALTS_OK;
+    return CMETA_OK;
   case FLOWIE_MQTT_PARSE_NO_MEMORY:
     return SALTS_ENOMEM;
   case FLOWIE_MQTT_PARSE_TOO_LARGE:
@@ -254,7 +254,7 @@ static int flowie_mqtt_client_is_websocket(const flowie_mqtt_client_t *client) {
 }
 
 static uint32_t flowie_mqtt_client_poll_slice(uint64_t deadline_ms) {
-  const uint64_t now = salts_monotonic_ms();
+  const uint64_t now = cmeta_monotonic_ms();
   const uint64_t remaining = deadline_ms > now ? deadline_ms - now : 0u;
   return (uint32_t)(remaining < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
                         ? remaining
@@ -264,12 +264,12 @@ static uint32_t flowie_mqtt_client_poll_slice(uint64_t deadline_ms) {
 static int flowie_mqtt_client_should_interrupt(flowie_mqtt_client_t *client) {
   int stopping;
   int queued;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
   queued = !deque_empty(&client->commands);
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   if (stopping) return SALTS_ESHUTDOWN;
-  return !client->busy && queued ? SALTS_EINTR : SALTS_OK;
+  return !client->busy && queued ? SALTS_EINTR : CMETA_OK;
 }
 
 static void flowie_mqtt_client_network_state(void *user, cnet_connection connection,
@@ -281,7 +281,7 @@ static void flowie_mqtt_client_network_state(void *user, cnet_connection connect
     return;
   if (state == CNET_CONNECTION_CONNECTED) {
     client->network_connected = 1;
-    client->network_status = SALTS_OK;
+    client->network_status = CMETA_OK;
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     client->network_connected = 0;
     client->network_terminal = 1;
@@ -313,7 +313,7 @@ static void flowie_mqtt_client_network_receive(void *user, cnet_connection conne
   client->recv_data = copy;
   client->recv_size = view->size;
   client->recv_offset = 0u;
-  client->network_status = SALTS_OK;
+  client->network_status = CMETA_OK;
   client->network_receive_ready = 1;
 }
 
@@ -324,7 +324,7 @@ static void flowie_mqtt_client_network_send(void *user, cnet_connection connecti
   if (!client || connection.slot != client->network_connection.slot ||
       connection.generation != client->network_connection.generation)
     return;
-  client->network_status = SALTS_OK;
+  client->network_status = CMETA_OK;
   client->network_send_ready = 1;
 }
 
@@ -393,14 +393,14 @@ static int flowie_mqtt_client_config_validate(const flowie_mqtt_client_config_t 
         return SALTS_EINVAL;
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_resilience_validate(
     const flowie_mqtt_client_resilience_config_t *resilience) {
   uint64_t initial_delay_ms;
   uint64_t max_delay_ms;
-  if (!resilience) return SALTS_OK;
+  if (!resilience) return CMETA_OK;
   if (resilience->size != sizeof(*resilience)) return SALTS_EINVAL;
   initial_delay_ms = resilience->initial_delay_ms
                          ? resilience->initial_delay_ms
@@ -408,7 +408,7 @@ static int flowie_mqtt_client_resilience_validate(
   max_delay_ms = resilience->max_delay_ms
                      ? resilience->max_delay_ms
                      : FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS;
-  return initial_delay_ms <= max_delay_ms ? SALTS_OK : SALTS_EINVAL;
+  return initial_delay_ms <= max_delay_ms ? CMETA_OK : SALTS_EINVAL;
 }
 
 static int flowie_mqtt_client_auth_method_get(const flowie_mqtt_property_block_view_t *properties,
@@ -419,7 +419,7 @@ static int flowie_mqtt_client_auth_method_get(const flowie_mqtt_property_block_v
   int rc;
   if (!properties || !method) return SALTS_EINVAL;
   *method = (flowie_mqtt_span_t){0};
-  if (properties->values.size == 0u) return SALTS_OK;
+  if (properties->values.size == 0u) return CMETA_OK;
   rc = flowie_mqtt_property_iterator_init(properties, &iterator);
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
   while ((rc = flowie_mqtt_property_iterator_next(&iterator, &property)) == FLOWIE_MQTT_PARSE_OK) {
@@ -428,7 +428,7 @@ static int flowie_mqtt_client_auth_method_get(const flowie_mqtt_property_block_v
     *method = property.value;
     found = 1;
   }
-  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? SALTS_OK : flowie_mqtt_client_parse_status(rc);
+  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? CMETA_OK : flowie_mqtt_client_parse_status(rc);
 }
 
 static int
@@ -439,12 +439,12 @@ flowie_mqtt_client_auth_method_matches(const flowie_mqtt_client_t *client,
   int rc;
   if (!client || !properties) return SALTS_EINVAL;
   rc = flowie_mqtt_client_auth_method_get(properties, &method);
-  if (rc != SALTS_OK) return rc;
-  if (method.size == 0u) return required ? SALTS_EPROTO : SALTS_OK;
+  if (rc != CMETA_OK) return rc;
+  if (method.size == 0u) return required ? SALTS_EPROTO : CMETA_OK;
   if (!client->auth_method || method.size != tstr_len(client->auth_method) ||
       memcmp(method.data, client->auth_method, method.size) != 0)
     return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_auth_method_select(flowie_mqtt_client_t *client,
@@ -456,14 +456,14 @@ static int flowie_mqtt_client_auth_method_select(flowie_mqtt_client_t *client,
   if (!client) return SALTS_EINVAL;
   block.values = properties;
   rc = flowie_mqtt_client_auth_method_get(&block, &method);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (method.size != 0u) {
     selected = tstr_new_len(method.data, method.size);
     if (!selected) return SALTS_ENOMEM;
   }
   tstr_freep(&client->auth_method);
   client->auth_method = selected;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_mqtt_client_recv_release(flowie_mqtt_client_t *client) {
@@ -485,12 +485,12 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
     client->websocket_initialized = 0;
   }
   if (client->network_connection.slot != 0u && client->network_initialized) {
-    uint64_t deadline = salts_monotonic_ms() + client->timeout_ms;
+    uint64_t deadline = cmeta_monotonic_ms() + client->timeout_ms;
     if (!client->network_terminal) (void)cnet_close(&client->network, client->network_connection);
-    while (!client->network_terminal && salts_monotonic_ms() < deadline) {
+    while (!client->network_terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       const uint32_t slice = flowie_mqtt_client_poll_slice(deadline);
-      if (cnet_client_poll(&client->network, slice, &events) != SALTS_OK) break;
+      if (cnet_client_poll(&client->network, slice, &events) != CMETA_OK) break;
     }
     client->network_connection = (cnet_connection){0};
   }
@@ -498,7 +498,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
   client->network_terminal = 0;
   client->network_receive_ready = 0;
   client->network_send_ready = 0;
-  client->network_status = SALTS_OK;
+  client->network_status = CMETA_OK;
   client->state = FLOWIE_MQTT_CLIENT_DISCONNECTED;
   atomic_store_explicit(&client->public_connected, 0, memory_order_release);
   client->version = FLOWIE_MQTT_VERSION_UNSPECIFIED;
@@ -510,7 +510,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   client->pending_packet_size = 0u;
-  if (reset_framing && client->framing_initialized) salts_bytes_reset(&client->framing);
+  if (reset_framing && client->framing_initialized) cmeta_bytes_reset(&client->framing);
   if (client->qos2_initialized) hash_set_clear(&client->inbound_qos2);
 }
 
@@ -520,7 +520,7 @@ static int flowie_mqtt_client_begin(flowie_mqtt_client_t *client, int require_co
   if (flowie_mqtt_client_current != client) return SALTS_EBUSY;
   if (require_connected && client->state != FLOWIE_MQTT_CLIENT_CONNECTED) return SALTS_ENOTCONN;
   client->busy = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_mqtt_client_end(flowie_mqtt_client_t *client) {
@@ -538,7 +538,7 @@ static int flowie_mqtt_client_span_valid(flowie_mqtt_span_t span) {
 static int flowie_mqtt_client_size_add(size_t *total, size_t value) {
   if (!total || value > SIZE_MAX - *total) return SALTS_EMSGSIZE;
   *total += value;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_size_array(size_t *total, size_t count, size_t elem_size) {
@@ -567,14 +567,14 @@ flowie_mqtt_client_clone_topic_handlers(flowie_mqtt_client_t *client,
   uint8_t *cursor;
   int rc;
   if (!client || !map) return SALTS_EINVAL;
-  if (map->count == 0u) return SALTS_OK;
+  if (map->count == 0u) return CMETA_OK;
   rc =
       flowie_mqtt_client_size_array(&total, map->count, sizeof(flowie_mqtt_client_topic_handler_t));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   array_size = total;
   for (size_t i = 0u; i < map->count; ++i) {
     rc = flowie_mqtt_client_size_add(&total, map->data[i].filter.size);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   handlers = (flowie_mqtt_client_topic_handler_t *)malloc(total);
   if (!handlers) return SALTS_ENOMEM;
@@ -584,7 +584,7 @@ flowie_mqtt_client_clone_topic_handlers(flowie_mqtt_client_t *client,
     flowie_mqtt_client_copy_span(map->data[i].filter, &cursor, &handlers[i].filter);
   client->topic_handlers = handlers;
   client->topic_handler_count = map->count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static flowie_mqtt_client_command_t *
@@ -612,12 +612,12 @@ static int flowie_mqtt_client_command_allocate(flowie_mqtt_client_command_t *com
                                                uint8_t **cursor) {
   if (!command || !cursor) return SALTS_EINVAL;
   *cursor = NULL;
-  if (size == 0u) return SALTS_OK;
+  if (size == 0u) return CMETA_OK;
   command->owned_bytes = (uint8_t *)malloc(size);
   if (!command->owned_bytes) return SALTS_ENOMEM;
   command->owned_size = size;
   *cursor = command->owned_bytes;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_clone_connect(flowie_mqtt_client_command_t *command,
@@ -635,15 +635,15 @@ static int flowie_mqtt_client_clone_connect(flowie_mqtt_client_command_t *comman
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i) {
     if (!flowie_mqtt_client_span_valid(source[i])) return SALTS_EINVAL;
     rc = flowie_mqtt_client_size_add(&total, source[i].size);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   rc = flowie_mqtt_client_command_allocate(command, total, &cursor);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   command->packet.connect = *packet;
   spans = &command->packet.connect.properties;
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i)
     flowie_mqtt_client_copy_span(source[i], &cursor, &spans[i]);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_version_resolve(const flowie_mqtt_client_t *client,
@@ -651,10 +651,10 @@ static int flowie_mqtt_client_version_resolve(const flowie_mqtt_client_t *client
   if (!client || !version) return SALTS_EINVAL;
   if (*version == FLOWIE_MQTT_VERSION_UNSPECIFIED) {
     *version = client->selected_version;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (!flowie_mqtt_version_is_supported(*version)) return SALTS_EINVAL;
-  return *version == client->selected_version ? SALTS_OK : SALTS_EPROTO;
+  return *version == client->selected_version ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int flowie_mqtt_client_reconnect_connect_replace(
@@ -665,18 +665,18 @@ static int flowie_mqtt_client_reconnect_connect_replace(
   if (!client || !packet) return SALTS_EINVAL;
   resolved = *packet;
   rc = flowie_mqtt_client_version_resolve(client, &resolved.version);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   replacement = (flowie_mqtt_client_command_t *)calloc(1, sizeof(*replacement));
   if (!replacement) return SALTS_ENOMEM;
   replacement->type = FLOWIE_MQTT_CLIENT_COMMAND_CONNECT;
   rc = flowie_mqtt_client_clone_connect(replacement, &resolved);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_client_command_destroy(replacement);
     return rc;
   }
   flowie_mqtt_client_command_destroy(client->reconnect_connect);
   client->reconnect_connect = replacement;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_mqtt_client_reconnect_cancel(flowie_mqtt_client_t *client,
@@ -726,7 +726,7 @@ static void flowie_mqtt_client_reconnect_schedule(flowie_mqtt_client_t *client) 
   }
   if (client->reconnect_delay_ms == 0u)
     client->reconnect_delay_ms = client->reconnect_initial_delay_ms;
-  now = salts_monotonic_ms();
+  now = cmeta_monotonic_ms();
   client->reconnect_deadline_ms =
       client->reconnect_delay_ms > UINT64_MAX - now ? UINT64_MAX
                                                     : now + client->reconnect_delay_ms;
@@ -756,15 +756,15 @@ static int flowie_mqtt_client_clone_publish(flowie_mqtt_client_command_t *comman
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i) {
     if (!flowie_mqtt_client_span_valid(source[i])) return SALTS_EINVAL;
     rc = flowie_mqtt_client_size_add(&total, source[i].size);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   rc = flowie_mqtt_client_command_allocate(command, total, &cursor);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   command->packet.publish = *packet;
   spans = &command->packet.publish.topic;
   for (size_t i = 0u; i < sizeof(source) / sizeof(source[0]); ++i)
     flowie_mqtt_client_copy_span(source[i], &cursor, &spans[i]);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_clone_publish_topic(flowie_mqtt_client_command_t *command,
@@ -795,17 +795,17 @@ static int flowie_mqtt_client_clone_subscribe(flowie_mqtt_client_command_t *comm
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_size_array(&total, packet->subscription_count,
                                      sizeof(flowie_mqtt_subscription_t));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   array_size = total;
   rc = flowie_mqtt_client_size_add(&total, packet->properties.size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   for (size_t i = 0u; i < packet->subscription_count; ++i) {
     if (!flowie_mqtt_client_span_valid(packet->subscriptions[i].filter)) return SALTS_EINVAL;
     rc = flowie_mqtt_client_size_add(&total, packet->subscriptions[i].filter.size);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   rc = flowie_mqtt_client_command_allocate(command, total, &cursor);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   subscriptions = (flowie_mqtt_subscription_t *)cursor;
   memcpy(subscriptions, packet->subscriptions, array_size);
   cursor += array_size;
@@ -815,7 +815,7 @@ static int flowie_mqtt_client_clone_subscribe(flowie_mqtt_client_command_t *comm
   for (size_t i = 0u; i < packet->subscription_count; ++i)
     flowie_mqtt_client_copy_span(packet->subscriptions[i].filter, &cursor,
                                  &subscriptions[i].filter);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_clone_unsubscribe(flowie_mqtt_client_command_t *command,
@@ -830,17 +830,17 @@ static int flowie_mqtt_client_clone_unsubscribe(flowie_mqtt_client_command_t *co
       !flowie_mqtt_client_span_valid(packet->properties))
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_size_array(&total, packet->filter_count, sizeof(flowie_mqtt_span_t));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   array_size = total;
   rc = flowie_mqtt_client_size_add(&total, packet->properties.size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   for (size_t i = 0u; i < packet->filter_count; ++i) {
     if (!flowie_mqtt_client_span_valid(packet->filters[i])) return SALTS_EINVAL;
     rc = flowie_mqtt_client_size_add(&total, packet->filters[i].size);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   rc = flowie_mqtt_client_command_allocate(command, total, &cursor);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   filters = (flowie_mqtt_span_t *)cursor;
   memcpy(filters, packet->filters, array_size);
   cursor += array_size;
@@ -850,7 +850,7 @@ static int flowie_mqtt_client_clone_unsubscribe(flowie_mqtt_client_command_t *co
                                &command->packet.unsubscribe.properties);
   for (size_t i = 0u; i < packet->filter_count; ++i)
     flowie_mqtt_client_copy_span(packet->filters[i], &cursor, &filters[i]);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static uint16_t flowie_mqtt_client_packet_id(flowie_mqtt_client_t *client) {
@@ -871,7 +871,7 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
   }
   if (!client->network_initialized || !client->network_connected) return SALTS_ENOTCONN;
   client->network_send_ready = 0;
-  client->network_status = SALTS_OK;
+  client->network_status = CMETA_OK;
   {
     mem_buffer_t *buffer = mem_get_buffer(mem_global(), written);
     int rc;
@@ -880,41 +880,41 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
     mem_set_used(buffer, written);
     rc = cnet_send_buffer(&client->network, client->network_connection, buffer);
     mem_buffer_release(buffer);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+  deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
   while (!client->network_send_ready && !client->network_terminal) {
     size_t events = 0u;
     int rc = flowie_mqtt_client_should_interrupt(client);
     if (rc == SALTS_ESHUTDOWN) return rc;
-    if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
     rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   return client->network_send_ready ? client->network_status
-                                    : (client->network_status != SALTS_OK
+                                    : (client->network_status != CMETA_OK
                                            ? client->network_status
                                            : SALTS_ECONNRESET);
 }
 
 static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
-  const uint64_t deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+  const uint64_t deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
   int rc;
   if (!client) return SALTS_EINVAL;
   rc = flowie_mqtt_client_should_interrupt(client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (flowie_mqtt_client_is_websocket(client)) {
     if (!client->websocket_initialized) return SALTS_ENOTCONN;
     for (;;) {
       chttp_websocket_event event = {0};
       uint32_t slice;
       rc = flowie_mqtt_client_should_interrupt(client);
-      if (rc != SALTS_OK) return rc;
-      if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+      if (rc != CMETA_OK) return rc;
+      if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
       slice = flowie_mqtt_client_poll_slice(deadline_ms);
       rc = chttp_websocket_client_receive(&client->websocket, slice, &event);
       if (rc == SALTS_ETIMEDOUT) continue;
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
       if (event.kind == CHTTP_WEBSOCKET_EVENT_CLOSE) return SALTS_ECONNRESET;
       if (event.kind != CHTTP_WEBSOCKET_EVENT_MESSAGE) continue;
       if (event.message_type != CHTTP_WEBSOCKET_MESSAGE_BINARY || !event.data || event.size == 0u)
@@ -924,24 +924,24 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
       memcpy(client->recv_data, event.data, event.size);
       client->recv_size = event.size;
       client->recv_offset = 0u;
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
   if (!client->network_initialized || !client->network_connected) return SALTS_ENOTCONN;
   client->network_receive_ready = 0;
-  client->network_status = SALTS_OK;
+  client->network_status = CMETA_OK;
   rc = cnet_receive(&client->network, client->network_connection, 1u);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   while (!client->network_receive_ready && !client->network_terminal) {
     size_t events = 0u;
     rc = flowie_mqtt_client_should_interrupt(client);
-    if (rc != SALTS_OK) return rc;
-    if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+    if (rc != CMETA_OK) return rc;
+    if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
     rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   return client->network_receive_ready ? client->network_status
-                                       : (client->network_status != SALTS_OK
+                                       : (client->network_status != CMETA_OK
                                               ? client->network_status
                                               : SALTS_ECONNRESET);
 }
@@ -959,9 +959,9 @@ static int flowie_mqtt_client_negotiate_connack(flowie_mqtt_client_t *client,
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   if (client->version != FLOWIE_MQTT_VERSION_5 || connack->properties.values.size == 0u)
-    return SALTS_OK;
+    return CMETA_OK;
   rc = flowie_mqtt_client_auth_method_matches(client, &connack->properties, 0);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_property_iterator_init(&connack->properties, &iterator);
   if (rc != FLOWIE_MQTT_PARSE_OK) return SALTS_EPROTO;
   while ((rc = flowie_mqtt_property_iterator_next(&iterator, &property)) == FLOWIE_MQTT_PARSE_OK) {
@@ -989,7 +989,7 @@ static int flowie_mqtt_client_negotiate_connack(flowie_mqtt_client_t *client,
       break;
     }
   }
-  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? SALTS_OK : SALTS_EPROTO;
+  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int
@@ -1000,11 +1000,11 @@ flowie_mqtt_client_publish_capabilities_validate(const flowie_mqtt_client_t *cli
   flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
   int rc;
   if (!client || !packet) return SALTS_EINVAL;
-  if (client->version != FLOWIE_MQTT_VERSION_5) return SALTS_OK;
+  if (client->version != FLOWIE_MQTT_VERSION_5) return CMETA_OK;
   if (packet->qos > client->server_maximum_qos ||
       (packet->retain && !client->server_retain_available))
     return SALTS_ENOTSUP;
-  if (packet->properties.size == 0u) return SALTS_OK;
+  if (packet->properties.size == 0u) return CMETA_OK;
   block.values = packet->properties;
   rc = flowie_mqtt_property_iterator_init(&block, &iterator);
   if (rc != FLOWIE_MQTT_PARSE_OK) return SALTS_EPROTO;
@@ -1013,7 +1013,7 @@ flowie_mqtt_client_publish_capabilities_validate(const flowie_mqtt_client_t *cli
         (property.integer == 0u || property.integer > client->server_topic_alias_maximum))
       return SALTS_ENOTSUP;
   }
-  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? SALTS_OK : SALTS_EPROTO;
+  return rc == FLOWIE_MQTT_PARSE_NEED_MORE ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int flowie_mqtt_client_send_control(flowie_mqtt_client_t *client,
@@ -1055,43 +1055,43 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
   flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
   if (!client || !out) return SALTS_EINVAL;
   if (client->pending_packet_size != 0u) {
-    int rc = salts_bytes_consume(&client->framing, client->pending_packet_size);
-    if (rc != SALTS_OK) return rc;
+    int rc = cmeta_bytes_consume(&client->framing, client->pending_packet_size);
+    if (rc != CMETA_OK) return rc;
     client->pending_packet_size = 0u;
   }
   options.version = client->version;
   options.max_packet_size = client->max_packet_size;
   for (;;) {
-    salts_bytes_view_t bytes;
+    cmeta_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     size_t consumed = 0u;
-    int rc = salts_bytes_view(&client->framing, &bytes);
-    if (rc != SALTS_OK) return rc;
+    int rc = cmeta_bytes_view(&client->framing, &bytes);
+    if (rc != CMETA_OK) return rc;
     if (bytes.size != 0u) {
       rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &options, &packet, &consumed, NULL);
       if (rc == FLOWIE_MQTT_PARSE_OK) {
         if (consumed == 0u || consumed > bytes.size) return SALTS_EPROTO;
         client->pending_packet_size = consumed;
         *out = packet;
-        return SALTS_OK;
+        return CMETA_OK;
       }
       if (rc != FLOWIE_MQTT_PARSE_NEED_MORE) return flowie_mqtt_client_parse_status(rc);
       if (bytes.size == client->max_packet_size) return SALTS_EMSGSIZE;
     }
     if (client->recv_data) {
       size_t remaining = client->recv_size - client->recv_offset;
-      size_t available = salts_bytes_available(&client->framing);
+      size_t available = cmeta_bytes_available(&client->framing);
       size_t chunk = remaining < available ? remaining : available;
       if (chunk == 0u) return SALTS_EMSGSIZE;
-      rc = salts_bytes_append(&client->framing, client->recv_data + client->recv_offset,
+      rc = cmeta_bytes_append(&client->framing, client->recv_data + client->recv_offset,
                                     chunk);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
       client->recv_offset += chunk;
       if (client->recv_offset == client->recv_size) flowie_mqtt_client_recv_release(client);
       continue;
     }
     rc = flowie_mqtt_client_transport_receive(client);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     client->recv_offset = 0u;
     if (!client->recv_data && client->recv_size == 0u) return SALTS_ECONNRESET;
     if (!client->recv_data || client->recv_size == 0u) {
@@ -1117,7 +1117,7 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
     if (hash_set_size(&client->inbound_qos2) >= client->max_inbound_qos2)
       return SALTS_ENOSPC;
     rc = flowie_stl_error(hash_set_add(&client->inbound_qos2, &publish.packet_id));
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   client->callback_active = 1;
   for (size_t i = 0u; i < client->topic_handler_count; ++i) {
@@ -1130,11 +1130,11 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
     if (!matched) continue;
     ++match_count;
     rc = client->topic_handlers[i].on_message(client, &publish, client->user_data);
-    if (rc != SALTS_OK) break;
+    if (rc != CMETA_OK) break;
   }
   client->callback_active = 0;
-  if (rc == SALTS_OK && match_count == 0u) rc = SALTS_ENOTSUP;
-  if (rc != SALTS_OK) {
+  if (rc == CMETA_OK && match_count == 0u) rc = SALTS_ENOTSUP;
+  if (rc != CMETA_OK) {
     if (publish.qos == 2u)
       (void)hash_set_remove(&client->inbound_qos2, &publish.packet_id);
     return rc;
@@ -1145,7 +1145,7 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
   if (publish.qos == 2u)
     return flowie_mqtt_client_send_control(client, FLOWIE_MQTT_PACKET_PUBREC, publish.packet_id,
                                            0u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_handle_pubrel(flowie_mqtt_client_t *client,
@@ -1175,12 +1175,12 @@ flowie_mqtt_client_handle_auth_challenge(flowie_mqtt_client_t *client,
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
   if (challenge.reason_code != 0x18u) return SALTS_EPROTO;
   rc = flowie_mqtt_client_auth_method_matches(client, &challenge.properties, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (!client->on_auth_challenge) return SALTS_ENOTSUP;
   client->callback_active = 1;
   rc = client->on_auth_challenge(client, &challenge, &response, client->user_data);
   client->callback_active = 0;
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (response.size != sizeof(response) || response.reason_code != 0x18u ||
       !flowie_mqtt_client_span_valid(response.properties))
     return SALTS_EPROTO;
@@ -1188,10 +1188,10 @@ flowie_mqtt_client_handle_auth_challenge(flowie_mqtt_client_t *client,
     flowie_mqtt_property_block_view_t properties = FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     properties.values = response.properties;
     rc = flowie_mqtt_client_auth_method_matches(client, &properties, 1);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   rc = flowie_mqtt_client_send_auth(client, response.reason_code, response.properties);
-  if (rc == SALTS_OK && challenge_out) *challenge_out = challenge;
+  if (rc == CMETA_OK && challenge_out) *challenge_out = challenge;
   return rc;
 }
 
@@ -1217,7 +1217,7 @@ static int flowie_mqtt_client_handle_unsolicited(flowie_mqtt_client_t *client,
     return SALTS_EPROTO;
   default:
     *handled = 0;
-    return SALTS_OK;
+    return CMETA_OK;
   }
 }
 
@@ -1229,21 +1229,21 @@ static int flowie_mqtt_client_wait_control(flowie_mqtt_client_t *client,
     flowie_mqtt_control_packet_view_t control = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
     int handled = 0;
     int rc = flowie_mqtt_client_receive_packet(client, &packet);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (expected == FLOWIE_MQTT_PACKET_CONNACK && packet.type == FLOWIE_MQTT_PACKET_AUTH) {
       rc = flowie_mqtt_client_handle_auth_challenge(client, &packet, NULL);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
       continue;
     }
     rc = flowie_mqtt_client_handle_unsolicited(client, &packet, &handled);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (handled) continue;
     if (packet.type != expected) return SALTS_EPROTO;
     rc = flowie_mqtt_control_packet_parse(&packet, &control);
     if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
     if (control.packet_id != packet_id) return SALTS_EPROTO;
     if (out) *out = control;
-    return SALTS_OK;
+    return CMETA_OK;
   }
 }
 
@@ -1282,7 +1282,7 @@ static int flowie_mqtt_client_refresh_reconnect(flowie_mqtt_client_t *client,
                                &client->reconnect_connect->packet.connect, &refreshed,
                                client->user_data);
   client->callback_active = 0;
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   return flowie_mqtt_client_reconnect_connect_replace(client, &refreshed);
 }
 
@@ -1297,7 +1297,7 @@ static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *cli
   client->disconnect_reason_valid = 0;
   if (has_reason && flowie_mqtt_client_refresh_reason(reason_code)) {
     int refresh_rc = flowie_mqtt_client_refresh_reconnect(client, reason_code);
-    if (refresh_rc != SALTS_OK) {
+    if (refresh_rc != CMETA_OK) {
       flowie_mqtt_client_reconnect_cancel(client, 1);
       flowie_mqtt_client_report_error(client, refresh_rc);
       return;
@@ -1315,7 +1315,7 @@ static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *cli
 static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
                                           flowie_mqtt_client_command_t **out) {
   int stopping;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
   if (!stopping) {
     if (deque_pop_front(&client->commands, out) != STL_OK) {
@@ -1324,17 +1324,17 @@ static int flowie_mqtt_client_command_pop(flowie_mqtt_client_t *client,
       client->command_queue_bytes -= sizeof(**out) + (*out)->owned_size;
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return stopping;
 }
 
 static void flowie_mqtt_client_cancel_commands(flowie_mqtt_client_t *client, int status) {
   for (;;) {
     flowie_mqtt_client_command_t *command = NULL;
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     (void)deque_pop_front(&client->commands, &command);
     if (command) client->command_queue_bytes -= sizeof(*command) + command->owned_size;
-    salts_mutex_unlock(&client->command_mutex);
+    cmeta_mutex_unlock(&client->command_mutex);
     if (!command) return;
     flowie_mqtt_client_complete(client, command, status, NULL);
     flowie_mqtt_client_command_destroy(command);
@@ -1343,9 +1343,9 @@ static void flowie_mqtt_client_cancel_commands(flowie_mqtt_client_t *client, int
 
 static int flowie_mqtt_client_is_stopping(flowie_mqtt_client_t *client) {
   int stopping;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   stopping = client->stopping;
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return stopping;
 }
 
@@ -1359,21 +1359,21 @@ static void flowie_mqtt_client_run_reconnect(flowie_mqtt_client_t *client) {
   attempt = ++client->reconnect_attempt;
   rc = flowie_mqtt_client_connect_operation(client, &client->reconnect_connect->packet.connect,
                                              &response);
-  if (rc == SALTS_OK) response_ptr = &response;
+  if (rc == CMETA_OK) response_ptr = &response;
   flowie_mqtt_client_report_reconnect(client, attempt, rc, response_ptr);
   if (flowie_mqtt_client_is_stopping(client)) return;
-  if (rc == SALTS_OK && response.reason_code == 0u) {
+  if (rc == CMETA_OK && response.reason_code == 0u) {
     flowie_mqtt_client_reconnect_cancel(client, 0);
     return;
   }
-  if (rc == SALTS_OK && flowie_mqtt_client_reconnect_reason(response.reason_code)) {
+  if (rc == CMETA_OK && flowie_mqtt_client_reconnect_reason(response.reason_code)) {
     flowie_mqtt_client_reconnect_backoff(client);
     flowie_mqtt_client_reconnect_schedule(client);
     return;
   }
-  if (rc == SALTS_OK && flowie_mqtt_client_refresh_reason(response.reason_code)) {
+  if (rc == CMETA_OK && flowie_mqtt_client_refresh_reason(response.reason_code)) {
     rc = flowie_mqtt_client_refresh_reconnect(client, response.reason_code);
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       flowie_mqtt_client_reconnect_backoff(client);
       flowie_mqtt_client_reconnect_schedule(client);
     } else {
@@ -1382,7 +1382,7 @@ static void flowie_mqtt_client_run_reconnect(flowie_mqtt_client_t *client) {
     }
     return;
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_client_reconnect_after_failure(client, rc, 1);
     return;
   }
@@ -1399,72 +1399,72 @@ static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
   case FLOWIE_MQTT_CLIENT_COMMAND_CONNECT:
     if (client->resilience_enabled) {
       rc = flowie_mqtt_client_reconnect_connect_replace(client, &command->packet.connect);
-      if (rc == SALTS_OK) flowie_mqtt_client_reconnect_cancel(client, 0);
+      if (rc == CMETA_OK) flowie_mqtt_client_reconnect_cancel(client, 0);
     } else {
-      rc = SALTS_OK;
+      rc = CMETA_OK;
     }
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       rc = flowie_mqtt_client_connect_operation(client, &command->packet.connect, &response);
-      if (rc == SALTS_OK) response_ptr = &response;
+      if (rc == CMETA_OK) response_ptr = &response;
     }
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_PUBLISH:
     rc = flowie_mqtt_client_publish_operation(client, &command->packet.publish, &response);
-    if (rc == SALTS_OK && command->packet.publish.qos != 0u) response_ptr = &response;
+    if (rc == CMETA_OK && command->packet.publish.qos != 0u) response_ptr = &response;
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_SUBSCRIBE:
     rc = flowie_mqtt_client_subscribe_operation(client, &command->packet.subscribe, &response);
-    if (rc == SALTS_OK) response_ptr = &response;
+    if (rc == CMETA_OK) response_ptr = &response;
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_UNSUBSCRIBE:
     rc = flowie_mqtt_client_unsubscribe_operation(client, &command->packet.unsubscribe, &response);
-    if (rc == SALTS_OK) response_ptr = &response;
+    if (rc == CMETA_OK) response_ptr = &response;
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_PING:
     rc = flowie_mqtt_client_ping_operation(client);
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_AUTH:
     rc = flowie_mqtt_client_auth_operation(client, command->packet.control.properties, &response);
-    if (rc == SALTS_OK) response_ptr = &response;
+    if (rc == CMETA_OK) response_ptr = &response;
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_DISCONNECT:
     rc = flowie_mqtt_client_disconnect_operation(client, command->packet.control.reason_code,
                                                  command->packet.control.properties);
-    if (rc == SALTS_EOF || rc == SALTS_ECONNRESET) rc = SALTS_OK;
+    if (rc == SALTS_EOF || rc == SALTS_ECONNRESET) rc = CMETA_OK;
     break;
   default:
     rc = SALTS_EINVAL;
     break;
   }
-  if (rc != SALTS_OK && flowie_mqtt_client_is_stopping(client)) {
+  if (rc != CMETA_OK && flowie_mqtt_client_is_stopping(client)) {
     rc = SALTS_ESHUTDOWN;
     response_ptr = NULL;
   }
   flowie_mqtt_client_complete(client, command, rc, response_ptr);
   if (command->type == FLOWIE_MQTT_CLIENT_COMMAND_CONNECT && client->resilience_enabled &&
       !flowie_mqtt_client_is_stopping(client)) {
-    if (rc == SALTS_OK && response_ptr && response.reason_code == 0u) {
+    if (rc == CMETA_OK && response_ptr && response.reason_code == 0u) {
       flowie_mqtt_client_reconnect_cancel(client, 0);
-    } else if (rc == SALTS_OK && response_ptr &&
+    } else if (rc == CMETA_OK && response_ptr &&
                flowie_mqtt_client_reconnect_reason(response.reason_code)) {
       flowie_mqtt_client_reconnect_schedule(client);
-    } else if (rc == SALTS_OK && response_ptr &&
+    } else if (rc == CMETA_OK && response_ptr &&
                flowie_mqtt_client_refresh_reason(response.reason_code)) {
       int refresh_rc = flowie_mqtt_client_refresh_reconnect(client, response.reason_code);
-      if (refresh_rc == SALTS_OK)
+      if (refresh_rc == CMETA_OK)
         flowie_mqtt_client_reconnect_schedule(client);
       else {
         flowie_mqtt_client_reconnect_cancel(client, 1);
         flowie_mqtt_client_report_error(client, refresh_rc);
       }
-    } else if (rc != SALTS_OK) {
+    } else if (rc != CMETA_OK) {
       flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
     } else {
       flowie_mqtt_client_reconnect_cancel(client, 1);
     }
   } else if (command->type == FLOWIE_MQTT_CLIENT_COMMAND_DISCONNECT) {
     flowie_mqtt_client_reconnect_cancel(client, 1);
-  } else if (rc != SALTS_OK && client->resilience_enabled &&
+  } else if (rc != CMETA_OK && client->resilience_enabled &&
              !flowie_mqtt_client_is_stopping(client)) {
     flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
   }
@@ -1485,19 +1485,19 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
       continue;
     }
     if (client->reconnect_pending) {
-      uint64_t now = salts_monotonic_ms();
+      uint64_t now = cmeta_monotonic_ms();
       uint64_t remaining_ms =
           client->reconnect_deadline_ms > now ? client->reconnect_deadline_ms - now : 0u;
       if (remaining_ms != 0u) {
-        salts_mutex_lock(&client->command_mutex);
+        cmeta_mutex_lock(&client->command_mutex);
         if (!client->stopping && deque_empty(&client->commands))
-          (void)salts_cond_timedwait(&client->command_changed, &client->command_mutex,
+          (void)cmeta_cond_timedwait(&client->command_changed, &client->command_mutex,
                                      remaining_ms > UINT64_MAX / UINT64_C(1000000)
                                          ? UINT64_MAX
                                          : remaining_ms * UINT64_C(1000000));
-        salts_mutex_unlock(&client->command_mutex);
+        cmeta_mutex_unlock(&client->command_mutex);
         if (flowie_mqtt_client_is_stopping(client) ||
-            salts_monotonic_ms() < client->reconnect_deadline_ms)
+            cmeta_monotonic_ms() < client->reconnect_deadline_ms)
           continue;
       }
       flowie_mqtt_client_run_reconnect(client);
@@ -1510,23 +1510,23 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
       client->disconnect_reason_valid = 0;
       rc = flowie_mqtt_client_receive_packet(client, &packet);
       if (rc == SALTS_EINTR) continue;
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) {
         rc = flowie_mqtt_client_handle_unsolicited(client, &packet, &handled);
-        if (rc == SALTS_OK && !handled && packet.type != FLOWIE_MQTT_PACKET_PINGRESP)
+        if (rc == CMETA_OK && !handled && packet.type != FLOWIE_MQTT_PACKET_PINGRESP)
           rc = SALTS_EPROTO;
       }
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         flowie_mqtt_client_transport_close(client, 1);
         flowie_mqtt_client_report_error(client, rc);
         flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
       }
       continue;
     }
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     while (!client->stopping && deque_empty(&client->commands) &&
            !client->reconnect_pending)
-      salts_cond_wait(&client->command_changed, &client->command_mutex);
-    salts_mutex_unlock(&client->command_mutex);
+      cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+    cmeta_mutex_unlock(&client->command_mutex);
   }
 }
 
@@ -1561,7 +1561,7 @@ static int flowie_mqtt_client_command_version_resolve_locked(
   if (!client || !command || !versioned_out) return SALTS_EINVAL;
   *versioned_out = 0;
   version = flowie_mqtt_client_command_version(command);
-  if (!version) return SALTS_OK;
+  if (!version) return CMETA_OK;
   *versioned_out = 1;
   return flowie_mqtt_client_version_resolve(client, version);
 }
@@ -1575,12 +1575,12 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
   if (!client || !command) return SALTS_EINVAL;
   if (command->owned_size > SIZE_MAX - sizeof(*command)) return SALTS_EMSGSIZE;
   charge = sizeof(*command) + command->owned_size;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = SALTS_ESHUTDOWN;
   } else if ((rc = flowie_mqtt_client_command_version_resolve_locked(
-                  client, command, &versioned)) != SALTS_OK) {
+                  client, command, &versioned)) != CMETA_OK) {
     /* The caller retains ownership when validation rejects admission. */
   } else if (queue_size >= client->command_queue_capacity) {
     rc = SALTS_ENOSPC;
@@ -1588,14 +1588,14 @@ static int flowie_mqtt_client_submit(flowie_mqtt_client_t *client,
     rc = SALTS_ENOSPC;
   } else {
     rc = flowie_stl_error(deque_push_back(&client->commands, &command));
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       client->command_queue_bytes += charge;
       if (versioned) client->version_locked = 1;
-      salts_cond_signal(&client->command_changed);
+      cmeta_cond_signal(&client->command_changed);
       if (client->network_initialized) (void)cnet_client_wake(&client->network);
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 
@@ -1606,7 +1606,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   size_t inserted = 0u;
   size_t queue_size;
   int any_versioned = 0;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!client || !commands || command_count == 0u) return SALTS_EINVAL;
   for (size_t i = 0u; i < command_count; ++i) {
     size_t command_charge;
@@ -1617,18 +1617,18 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
     charge += command_charge;
   }
 
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   queue_size = deque_size(&client->commands);
   if (client->stopping) {
     rc = SALTS_ESHUTDOWN;
   } else {
-    for (size_t i = 0u; rc == SALTS_OK && i < command_count; ++i) {
+    for (size_t i = 0u; rc == CMETA_OK && i < command_count; ++i) {
       int versioned = 0;
       rc = flowie_mqtt_client_command_version_resolve_locked(client, commands[i], &versioned);
       if (versioned) any_versioned = 1;
     }
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     /* Reject the complete batch before any queue ownership transfer. */
   } else if (queue_size > client->command_queue_capacity ||
              command_count > client->command_queue_capacity - queue_size) {
@@ -1639,15 +1639,15 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
   } else {
     for (; inserted < command_count; ++inserted) {
       rc = flowie_stl_error(deque_push_back(&client->commands, &commands[inserted]));
-      if (rc != SALTS_OK) break;
+      if (rc != CMETA_OK) break;
     }
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       client->command_queue_bytes += charge;
       if (any_versioned) client->version_locked = 1;
-      salts_cond_signal(&client->command_changed);
+      cmeta_cond_signal(&client->command_changed);
       if (client->network_initialized) (void)cnet_client_wake(&client->network);
-      salts_mutex_unlock(&client->command_mutex);
-      return SALTS_OK;
+      cmeta_mutex_unlock(&client->command_mutex);
+      return CMETA_OK;
     }
     while (inserted != 0u) {
       flowie_mqtt_client_command_t *rolled_back = NULL;
@@ -1655,7 +1655,7 @@ static int flowie_mqtt_client_submit_many(flowie_mqtt_client_t *client,
       (void)deque_pop_back(&client->commands, &rolled_back);
     }
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 
@@ -1669,9 +1669,9 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   if (out) *out = NULL;
   if (!out) return SALTS_EINVAL;
   rc = flowie_mqtt_client_config_validate(config);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_client_resilience_validate(resilience);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   max_packet_size = config->max_packet_size ? config->max_packet_size
                                             : FLOWIE_MQTT_CLIENT_DEFAULT_MAX_PACKET_SIZE;
   client = (flowie_mqtt_client_t *)calloc(1, sizeof(*client));
@@ -1692,7 +1692,7 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   rc = flowie_mqtt_client_clone_topic_handlers(client, &config->topic_handlers);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   client->on_connect = config->on_connect;
   client->on_publish = config->on_publish;
   client->on_subscribe = config->on_subscribe;
@@ -1741,18 +1741,18 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
     rc = SALTS_ENOMEM;
     goto fail;
   }
-  rc = salts_bytes_init(&client->framing, max_packet_size);
-  if (rc != SALTS_OK) goto fail;
+  rc = cmeta_bytes_init(&client->framing, max_packet_size);
+  if (rc != CMETA_OK) goto fail;
   client->framing_initialized = 1;
   rc = flowie_stl_error(hash_set_init_bytes(
       &client->inbound_qos2, sizeof(uint16_t), _Alignof(uint16_t),
       client->max_inbound_qos2, hash_bytes, hash_key_equal, NULL));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   client->qos2_initialized = 1;
   rc = flowie_stl_error(hash_set_reserve(&client->inbound_qos2, client->max_inbound_qos2));
-  if (rc != SALTS_OK) goto fail;
-  salts_mutex_init(&client->command_mutex);
-  salts_cond_init(&client->command_changed);
+  if (rc != CMETA_OK) goto fail;
+  cmeta_mutex_init(&client->command_mutex);
+  cmeta_cond_init(&client->command_changed);
   client->sync_initialized = 1;
   if (!client->command_mutex || !client->command_changed) {
     rc = SALTS_ENOMEM;
@@ -1761,20 +1761,20 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   rc = flowie_stl_error(deque_init_bytes(
       &client->commands, sizeof(flowie_mqtt_client_command_t *),
       _Alignof(flowie_mqtt_client_command_t *), client->command_queue_capacity));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   client->command_queue_initialized = 1;
   rc =
       flowie_stl_error(deque_reserve(&client->commands, client->command_queue_capacity));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (!flowie_mqtt_client_is_websocket(client)) {
     const cnet_client_config network_config = flowie_mqtt_client_network_config(client);
     const cnet_stream_socket_options socket_options =
         flowie_mqtt_client_socket_options(client);
     rc = cnet_client_init(&client->network, &network_config);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
     client->network_initialized = 1;
     rc = cnet_client_set_stream_socket_options(&client->network, &socket_options);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
   }
   if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS && client->tls_configured) {
     const cnet_tls_client_config tls_config = {.size = sizeof(tls_config),
@@ -1784,14 +1784,14 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
                                                .key_password = client->tls_key_password,
                                                .server_name = client->host};
     rc = chttp_tls_profile_init(&client->websocket_tls, &tls_config);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
     client->websocket_tls_initialized = 1;
   }
-  rc = salts_thread_create(&client->worker, flowie_mqtt_client_worker, client);
-  if (rc != SALTS_OK) goto fail;
+  rc = cmeta_thread_create(&client->worker, flowie_mqtt_client_worker, client);
+  if (rc != CMETA_OK) goto fail;
   client->worker_started = 1;
   *out = client;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   flowie_mqtt_client_destroy(client);
@@ -1808,19 +1808,19 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   if (!client) return;
   if (client->worker_started) {
     if (flowie_mqtt_client_current == client) {
-      salts_mutex_lock(&client->command_mutex);
+      cmeta_mutex_lock(&client->command_mutex);
       client->stopping = 1;
-      salts_cond_signal(&client->command_changed);
-      salts_mutex_unlock(&client->command_mutex);
+      cmeta_cond_signal(&client->command_changed);
+      cmeta_mutex_unlock(&client->command_mutex);
       return;
     }
-    salts_mutex_lock(&client->command_mutex);
+    cmeta_mutex_lock(&client->command_mutex);
     client->stopping = 1;
-    salts_cond_signal(&client->command_changed);
-    salts_mutex_unlock(&client->command_mutex);
+    cmeta_cond_signal(&client->command_changed);
+    cmeta_mutex_unlock(&client->command_mutex);
     if (client->network_initialized) (void)cnet_client_wake(&client->network);
-    if (salts_thread_join(&client->worker) != SALTS_OK) return;
-    salts_thread_destroy(&client->worker);
+    if (cmeta_thread_join(&client->worker) != CMETA_OK) return;
+    cmeta_thread_destroy(&client->worker);
     client->worker_started = 0;
   }
   flowie_mqtt_client_transport_close(client, 1);
@@ -1841,11 +1841,11 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     client->websocket_tls_initialized = 0;
   }
   if (client->sync_initialized) {
-    salts_cond_destroy(&client->command_changed);
-    salts_mutex_destroy(&client->command_mutex);
+    cmeta_cond_destroy(&client->command_changed);
+    cmeta_mutex_destroy(&client->command_mutex);
   }
   if (client->qos2_initialized) hash_set_destroy(&client->inbound_qos2);
-  if (client->framing_initialized) salts_bytes_destroy(&client->framing);
+  if (client->framing_initialized) cmeta_bytes_destroy(&client->framing);
   tstr_freep(&client->send_buffer);
   tstr_freep(&client->path);
   tstr_freep(&client->host);
@@ -1888,7 +1888,7 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
     *out = NULL;
     return SALTS_EMSGSIZE;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
@@ -1911,10 +1911,10 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     rc = flowie_mqtt_client_uri(
         client, client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS ? "wss" : "ws",
         client->path, &uri);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     rc = chttp_websocket_client_init(&client->websocket, &config);
-    if (rc == SALTS_OK) client->websocket_initialized = 1;
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) client->websocket_initialized = 1;
+    if (rc == CMETA_OK) {
       options.size = sizeof(options);
       options.uri = uri;
       options.tls = client->websocket_tls_initialized ? &client->websocket_tls : NULL;
@@ -1935,14 +1935,14 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
                                   .key_password = client->tls_key_password,
                                   .server_name = client->host};
     cnet_connect_options options = {0};
-    const uint64_t deadline_ms = salts_monotonic_ms() + client->timeout_ms;
+    const uint64_t deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
     rc = flowie_mqtt_client_uri(
         client, client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ? "tls" : "tcp", NULL,
         &uri);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     client->network_connected = 0;
     client->network_terminal = 0;
-    client->network_status = SALTS_OK;
+    client->network_status = CMETA_OK;
     options.uri = uri;
     options.tls = client->tls_configured ? &tls : NULL;
     options.observer = (cnet_observer){.on_state = flowie_mqtt_client_network_state,
@@ -1951,16 +1951,16 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
                                        .on_send = flowie_mqtt_client_network_send};
     rc = cnet_connect(&client->network, &options, &client->network_connection);
     free(uri);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     while (!client->network_connected && !client->network_terminal) {
       size_t events = 0u;
       if (flowie_mqtt_client_is_stopping(client)) return SALTS_ESHUTDOWN;
-      if (salts_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+      if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
       rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
     }
-    return client->network_connected ? SALTS_OK
-                                     : (client->network_status != SALTS_OK
+    return client->network_connected ? CMETA_OK
+                                     : (client->network_status != CMETA_OK
                                             ? client->network_status
                                             : SALTS_ECONNRESET);
   }
@@ -1975,7 +1975,7 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
       !flowie_mqtt_version_is_supported(packet->version))
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_begin(client, 0);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (client->state != FLOWIE_MQTT_CLIENT_DISCONNECTED) {
     rc = SALTS_EALREADY;
     goto done;
@@ -1989,27 +1989,27 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
   rc = flowie_mqtt_client_auth_method_select(client, packet->version == FLOWIE_MQTT_VERSION_5
                                                          ? packet->properties
                                                          : (flowie_mqtt_span_t){0});
-  if (rc != SALTS_OK) goto done;
-  salts_bytes_reset(&client->framing);
+  if (rc != CMETA_OK) goto done;
+  cmeta_bytes_reset(&client->framing);
   hash_set_clear(&client->inbound_qos2);
   client->version = packet->version;
   rc = flowie_mqtt_client_transport_connect(client);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   client->state = FLOWIE_MQTT_CLIENT_TRANSPORT_CONNECTED;
   rc = flowie_mqtt_client_send(client, written);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_mqtt_client_wait_control(client, FLOWIE_MQTT_PACKET_CONNACK, 0u, connack);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (connack->reason_code != 0u) {
     flowie_mqtt_client_transport_close(client, 0);
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   rc = flowie_mqtt_client_negotiate_connack(client, connack);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   client->state = FLOWIE_MQTT_CLIENT_CONNECTED;
   atomic_store_explicit(&client->public_connected, 1, memory_order_release);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
   goto done;
 
 fail:
@@ -2030,14 +2030,14 @@ static int flowie_mqtt_client_publish_operation(flowie_mqtt_client_t *client,
   if (!client || !packet || !flowie_mqtt_client_ack_output_valid(ack) || packet->packet_id != 0u)
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   encoded = *packet;
   if (encoded.version != client->version) {
     rc = SALTS_EPROTO;
     goto done;
   }
   rc = flowie_mqtt_client_publish_capabilities_validate(client, &encoded);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (encoded.qos != 0u) {
     packet_id = flowie_mqtt_client_packet_id(client);
     encoded.packet_id = packet_id;
@@ -2049,7 +2049,7 @@ static int flowie_mqtt_client_publish_operation(flowie_mqtt_client_t *client,
     goto done;
   }
   rc = flowie_mqtt_client_send(client, written);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (encoded.qos == 0u) {
     if (ack) *ack = received;
     goto done;
@@ -2057,15 +2057,15 @@ static int flowie_mqtt_client_publish_operation(flowie_mqtt_client_t *client,
   rc = flowie_mqtt_client_wait_control(
       client, encoded.qos == 1u ? FLOWIE_MQTT_PACKET_PUBACK : FLOWIE_MQTT_PACKET_PUBREC, packet_id,
       &received);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (encoded.qos == 1u || received.reason_code >= 0x80u) {
     if (ack) *ack = received;
     goto done;
   }
   rc = flowie_mqtt_client_send_control(client, FLOWIE_MQTT_PACKET_PUBREL, packet_id, 0u);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_mqtt_client_wait_control(client, FLOWIE_MQTT_PACKET_PUBCOMP, packet_id, &received);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (ack) *ack = received;
   goto done;
 
@@ -2088,7 +2088,7 @@ static int flowie_mqtt_client_subscribe_operation(flowie_mqtt_client_t *client,
       packet->packet_id != 0u)
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   encoded = *packet;
   if (encoded.version != client->version) {
     rc = SALTS_EPROTO;
@@ -2103,9 +2103,9 @@ static int flowie_mqtt_client_subscribe_operation(flowie_mqtt_client_t *client,
     goto done;
   }
   rc = flowie_mqtt_client_send(client, written);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_mqtt_client_wait_control(client, FLOWIE_MQTT_PACKET_SUBACK, packet_id, &received);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (received.reason_codes.size != encoded.subscription_count) {
     rc = SALTS_EPROTO;
     goto fail;
@@ -2132,7 +2132,7 @@ static int flowie_mqtt_client_unsubscribe_operation(flowie_mqtt_client_t *client
       packet->packet_id != 0u)
     return SALTS_EINVAL;
   rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   encoded = *packet;
   if (encoded.version != client->version) {
     rc = SALTS_EPROTO;
@@ -2147,9 +2147,9 @@ static int flowie_mqtt_client_unsubscribe_operation(flowie_mqtt_client_t *client
     goto done;
   }
   rc = flowie_mqtt_client_send(client, written);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_mqtt_client_wait_control(client, FLOWIE_MQTT_PACKET_UNSUBACK, packet_id, &received);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (client->version == FLOWIE_MQTT_VERSION_5 &&
       received.reason_codes.size != encoded.filter_count) {
     rc = SALTS_EPROTO;
@@ -2168,7 +2168,7 @@ done:
 static int flowie_mqtt_client_ping_operation(flowie_mqtt_client_t *client) {
   size_t written = 0u;
   int rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_pingreq_encode(client->version, (uint8_t *)client->send_buffer,
                                   client->outbound_max_packet_size, &written);
   if (rc != FLOWIE_MQTT_PARSE_OK) {
@@ -2176,9 +2176,9 @@ static int flowie_mqtt_client_ping_operation(flowie_mqtt_client_t *client) {
     goto done;
   }
   rc = flowie_mqtt_client_send(client, written);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_client_wait_control(client, FLOWIE_MQTT_PACKET_PINGRESP, 0u, NULL);
-  if (rc != SALTS_OK) flowie_mqtt_client_transport_close(client, 1);
+  if (rc != CMETA_OK) flowie_mqtt_client_transport_close(client, 1);
 done:
   flowie_mqtt_client_end(client);
   return rc;
@@ -2191,21 +2191,21 @@ static int flowie_mqtt_client_auth_operation(flowie_mqtt_client_t *client,
   int rc;
   if (!client || !auth || !flowie_mqtt_client_ack_output_valid(auth)) return SALTS_EINVAL;
   rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (client->version != FLOWIE_MQTT_VERSION_5) {
     rc = SALTS_ENOTSUP;
     goto done;
   }
   auth_properties.values = properties;
   rc = flowie_mqtt_client_auth_method_matches(client, &auth_properties, 1);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_mqtt_client_send_auth(client, 0x19u, properties);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   for (;;) {
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     int handled = 0;
     rc = flowie_mqtt_client_receive_packet(client, &packet);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
     if (packet.type == FLOWIE_MQTT_PACKET_AUTH) {
       flowie_mqtt_control_packet_view_t response = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
       rc = flowie_mqtt_control_packet_parse(&packet, &response);
@@ -2215,7 +2215,7 @@ static int flowie_mqtt_client_auth_operation(flowie_mqtt_client_t *client,
       }
       if (response.reason_code == 0x18u) {
         rc = flowie_mqtt_client_handle_auth_challenge(client, &packet, NULL);
-        if (rc != SALTS_OK) goto fail;
+        if (rc != CMETA_OK) goto fail;
         continue;
       }
       if (response.reason_code != 0u) {
@@ -2223,14 +2223,14 @@ static int flowie_mqtt_client_auth_operation(flowie_mqtt_client_t *client,
         goto fail;
       }
       rc = flowie_mqtt_client_auth_method_matches(client, &response.properties, 0);
-      if (rc != SALTS_OK) goto fail;
+      if (rc != CMETA_OK) goto fail;
       *auth = response;
-      rc = SALTS_OK;
+      rc = CMETA_OK;
       goto done;
     }
     rc = flowie_mqtt_client_handle_unsolicited(client, &packet, &handled);
-    if (rc != SALTS_OK || !handled) {
-      if (rc == SALTS_OK) rc = SALTS_EPROTO;
+    if (rc != CMETA_OK || !handled) {
+      if (rc == CMETA_OK) rc = SALTS_EPROTO;
       goto fail;
     }
   }
@@ -2248,7 +2248,7 @@ static int flowie_mqtt_client_disconnect_operation(flowie_mqtt_client_t *client,
   flowie_mqtt_control_packet_t packet = FLOWIE_MQTT_CONTROL_PACKET_INIT;
   size_t written = 0u;
   int rc = flowie_mqtt_client_begin(client, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   packet.version = client->version;
   packet.type = FLOWIE_MQTT_PACKET_DISCONNECT;
   packet.reason_code = reason_code;
@@ -2272,29 +2272,29 @@ int flowie_mqtt_client_server_disconnect_reason(const flowie_mqtt_client_t *clie
   if (!client->callback_active) return SALTS_EBUSY;
   if (!client->disconnect_reason_valid) return SALTS_ENOENT;
   *reason = client->disconnect_reason;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_mqtt_client_set_version(flowie_mqtt_client_t *client,
                                    flowie_mqtt_version_t version) {
   int rc;
   if (!client || !flowie_mqtt_version_is_supported(version)) return SALTS_EINVAL;
-  salts_mutex_lock(&client->command_mutex);
+  cmeta_mutex_lock(&client->command_mutex);
   if (client->stopping) rc = SALTS_ESHUTDOWN;
   else if (client->version_locked) rc = SALTS_EALREADY;
   else {
     client->selected_version = version;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   }
-  salts_mutex_unlock(&client->command_mutex);
+  cmeta_mutex_unlock(&client->command_mutex);
   return rc;
 }
 
 static int flowie_mqtt_client_submit_owned(flowie_mqtt_client_t *client,
                                            flowie_mqtt_client_command_t *command, int clone_rc) {
   int rc = clone_rc;
-  if (rc == SALTS_OK) rc = flowie_mqtt_client_submit(client, command);
-  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  if (rc == CMETA_OK) rc = flowie_mqtt_client_submit(client, command);
+  if (rc != CMETA_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
 }
 
@@ -2322,9 +2322,9 @@ int flowie_mqtt_client_publish(flowie_mqtt_client_t *client,
   rc = flowie_stl_error(vec_init_bytes(
       &commands, sizeof(flowie_mqtt_client_command_t *),
       _Alignof(flowie_mqtt_client_command_t *), topics->count));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_stl_error(vec_reserve(&commands, topics->count));
-  for (size_t i = 0u; rc == SALTS_OK && i < topics->count; ++i) {
+  for (size_t i = 0u; rc == CMETA_OK && i < topics->count; ++i) {
     flowie_mqtt_client_command_t *command = flowie_mqtt_client_command_new(
         FLOWIE_MQTT_CLIENT_COMMAND_PUBLISH, client->on_publish, client->user_data);
     if (!command) {
@@ -2332,13 +2332,13 @@ int flowie_mqtt_client_publish(flowie_mqtt_client_t *client,
       break;
     }
     rc = flowie_mqtt_client_clone_publish_topic(command, topics->version, &topics->data[i]);
-    if (rc == SALTS_OK) rc = flowie_stl_error(vec_push(&commands, &command));
-    if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+    if (rc == CMETA_OK) rc = flowie_stl_error(vec_push(&commands, &command));
+    if (rc != CMETA_OK) flowie_mqtt_client_command_destroy(command);
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_client_submit_many(client, vec_data(&commands),
                                         vec_size(&commands));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     for (size_t i = 0u; i < vec_size(&commands); ++i)
       flowie_mqtt_client_command_destroy(
           *(flowie_mqtt_client_command_t **)vec_at(&commands, i));
@@ -2380,7 +2380,7 @@ int flowie_mqtt_client_ping(flowie_mqtt_client_t *client) {
                                            client->user_data);
   if (!command) return SALTS_ENOMEM;
   rc = flowie_mqtt_client_submit(client, command);
-  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  if (rc != CMETA_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
 }
 
@@ -2394,12 +2394,12 @@ int flowie_mqtt_client_authenticate(flowie_mqtt_client_t *client, flowie_mqtt_sp
                                            client->user_data);
   if (!command) return SALTS_ENOMEM;
   rc = flowie_mqtt_client_command_allocate(command, properties.size, &cursor);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command->packet.control.reason_code = 0x19u;
     flowie_mqtt_client_copy_span(properties, &cursor, &command->packet.control.properties);
     rc = flowie_mqtt_client_submit(client, command);
   }
-  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  if (rc != CMETA_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
 }
 
@@ -2414,11 +2414,11 @@ int flowie_mqtt_client_disconnect(flowie_mqtt_client_t *client, uint8_t reason_c
                                            client->on_disconnect, client->user_data);
   if (!command) return SALTS_ENOMEM;
   rc = flowie_mqtt_client_command_allocate(command, properties.size, &cursor);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command->packet.control.reason_code = reason_code;
     flowie_mqtt_client_copy_span(properties, &cursor, &command->packet.control.properties);
     rc = flowie_mqtt_client_submit(client, command);
   }
-  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  if (rc != CMETA_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
 }

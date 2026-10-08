@@ -1,6 +1,6 @@
 #include "flowie_control_http_request_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -30,14 +30,14 @@ int flowie_control_http_header_optional_exact(const Req *request, const char *na
   }
   if (count > 1u) return SALTS_EPROTO;
   *value_out = found;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_http_header_exact(const Req *request, const char *name,
                                      const char **value_out) {
   int rc = flowie_control_http_header_optional_exact(request, name, value_out);
-  if (rc != SALTS_OK) return rc;
-  return *value_out ? SALTS_OK : SALTS_EPROTO;
+  if (rc != CMETA_OK) return rc;
+  return *value_out ? CMETA_OK : SALTS_EPROTO;
 }
 
 int flowie_control_http_cookie_exact(const Req *request, const char *name, char *value_out,
@@ -48,7 +48,7 @@ int flowie_control_http_cookie_exact(const Req *request, const char *name, char 
   size_t matches = 0u;
   if (value_out && value_capacity > 0u) value_out[0] = '\0';
   if (!request || !name || !name[0] || !value_out || value_capacity < 2u) return SALTS_EINVAL;
-  if (flowie_control_http_header_exact(request, "Cookie", &header) != SALTS_OK)
+  if (flowie_control_http_header_exact(request, "Cookie", &header) != CMETA_OK)
     return SALTS_EPROTO;
   name_size = strlen(name);
   cursor = header;
@@ -75,5 +75,5 @@ int flowie_control_http_cookie_exact(const Req *request, const char *name, char 
     }
     cursor = *end == ';' ? end + 1 : end;
   }
-  return matches == 1u ? SALTS_OK : SALTS_EPROTO;
+  return matches == 1u ? CMETA_OK : SALTS_EPROTO;
 }

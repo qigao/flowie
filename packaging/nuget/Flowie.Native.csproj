@@ -16,11 +16,17 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
+  <PropertyGroup>
+    <SaltsNativeVersion Condition="'$(SaltsNativeVersion)' == ''">*</SaltsNativeVersion>
+    <SaltsUtilsNativeVersion Condition="'$(SaltsUtilsNativeVersion)' == ''">*</SaltsUtilsNativeVersion>
+    <CHttpNativeVersion Condition="'$(CHttpNativeVersion)' == ''">*</CHttpNativeVersion>
+    <TurboDBNativeVersion Condition="'$(TurboDBNativeVersion)' == ''">*</TurboDBNativeVersion>
+  </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Salts.Native" Version="[1.8.21]" />
-    <PackageReference Include="SaltsUtils.Native" Version="[4.1.18]" />
-    <PackageReference Include="CHttp.Native" Version="[1.1.10]" />
-    <PackageReference Include="TurboDB.Native" Version="[2.1.0]" />
+    <PackageReference Include="Salts.Native" Version="$(SaltsNativeVersion)" />
+    <PackageReference Include="SaltsUtils.Native" Version="$(SaltsUtilsNativeVersion)" />
+    <PackageReference Include="CHttp.Native" Version="$(CHttpNativeVersion)" />
+    <PackageReference Include="TurboDB.Native" Version="$(TurboDBNativeVersion)" />
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="$(PackageRoot)/sdk/**/*" Pack="true" PackagePath="sdk/" />
   </ItemGroup>

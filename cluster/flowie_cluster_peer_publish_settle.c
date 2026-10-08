@@ -40,13 +40,13 @@ static int flowie_cluster_peer_publish_settlement_validate(
       settlement->size < sizeof(*settlement) || settlement->attempt == 0u ||
       settlement->point < FLOWIE_PROTOCOL_SETTLE_ACCEPTED ||
       settlement->point > FLOWIE_PROTOCOL_SETTLE_DURABLE ||
-      flowie_protocol_message_validate(&settlement->message) != SALTS_OK ||
+      flowie_protocol_message_validate(&settlement->message) != CMETA_OK ||
       settlement->message.protocol != FLOWIE_PROTOCOL_MQTT ||
       settlement->message.kind != FLOWIE_PROTOCOL_MESSAGE_DATA ||
       (settlement->message.qos != 1u && settlement->message.qos != 2u) ||
       settlement->message.packet_id == 0u || settlement->message.packet_id > UINT16_MAX)
     return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_publish_settle_encode(
@@ -60,7 +60,7 @@ int flowie_cluster_peer_publish_settle_encode(
   if (!out) return SALTS_EINVAL;
   *out = NULL;
   rc = flowie_cluster_peer_publish_settlement_validate(client_id, settlement);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (client_id.size > SIZE_MAX - FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE)
     return SALTS_ERANGE;
   total_size = FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE + client_id.size;
@@ -110,7 +110,7 @@ int flowie_cluster_peer_publish_settle_encode(
       encoded + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_RESERVED32, 0u);
   memcpy(encoded + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE, client_id.data,
          client_id.size);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_publish_settle_decode(
@@ -175,7 +175,7 @@ int flowie_cluster_peer_publish_settle_decode(
   decoded.settlement.message_id = flowie_cluster_peer_wire_read_u64(
       bytes + FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_OFFSET_MESSAGE_ID);
   rc = flowie_cluster_peer_publish_settlement_validate(decoded.client_id, &decoded.settlement);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }

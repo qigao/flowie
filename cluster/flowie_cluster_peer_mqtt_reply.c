@@ -60,9 +60,9 @@ static int flowie_cluster_peer_mqtt_reply_packet_parse(flowie_mqtt_version_t mqt
       !flowie_cluster_peer_mqtt_reply_packet_allowed(out->type))
     return SALTS_EPROTO;
   if (out->type == FLOWIE_MQTT_PACKET_PUBLISH)
-    return flowie_mqtt_publish_parse(out, &publish) == FLOWIE_MQTT_PARSE_OK ? SALTS_OK
+    return flowie_mqtt_publish_parse(out, &publish) == FLOWIE_MQTT_PARSE_OK ? CMETA_OK
                                                                             : SALTS_EPROTO;
-  return flowie_mqtt_control_packet_parse(out, &control) == FLOWIE_MQTT_PARSE_OK ? SALTS_OK
+  return flowie_mqtt_control_packet_parse(out, &control) == FLOWIE_MQTT_PARSE_OK ? CMETA_OK
                                                                                  : SALTS_EPROTO;
 }
 
@@ -85,7 +85,7 @@ int flowie_cluster_peer_mqtt_reply_encode(flowie_mqtt_version_t mqtt_version,
   if (packet.size != 0u) {
     rc = flowie_cluster_peer_mqtt_reply_packet_parse(mqtt_version, packet.data, packet.size,
                                                      max_packet_size, &parsed);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     flags |= FLOWIE_CLUSTER_PEER_MQTT_REPLY_HAS_PACKET;
   }
   if (close_after_send) flags |= FLOWIE_CLUSTER_PEER_MQTT_REPLY_CLOSE;
@@ -112,7 +112,7 @@ int flowie_cluster_peer_mqtt_reply_encode(flowie_mqtt_version_t mqtt_version,
   encoded[FLOWIE_CLUSTER_PEER_MQTT_REPLY_OFFSET_RESERVED] = 0u;
   if (packet.size != 0u)
     memcpy(encoded + FLOWIE_CLUSTER_PEER_MQTT_REPLY_HEADER_SIZE, packet.data, packet.size);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_mqtt_reply_decode(const void *data, size_t data_size,
@@ -160,8 +160,8 @@ int flowie_cluster_peer_mqtt_reply_decode(const void *data, size_t data_size,
     rc = flowie_cluster_peer_mqtt_reply_packet_parse(
         decoded.mqtt_version, bytes + FLOWIE_CLUSTER_PEER_MQTT_REPLY_HEADER_SIZE, packet_size,
         max_packet_size, &decoded.packet);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }

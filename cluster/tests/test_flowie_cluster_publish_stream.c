@@ -1,7 +1,7 @@
 #include "flowie_cluster_publish_stream_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +37,7 @@ static int flowie_publish_stream_commit(
   ++capture->commit_count;
   capture->packet_size = event->publish.packet.packet.size;
   capture->connection_id = event->connection_id;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 spec("flowie cluster TurboRaft publish DATA stream") {
@@ -66,9 +66,9 @@ spec("flowie cluster TurboRaft publish DATA stream") {
            sizeof(first_chunk.stream_digest));
     check_equal(flowie_cluster_publish_quorum_create(
                      1u, &configuration, &first_chunk, &quorum),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_quorum_mark_local_durable(quorum),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_quorum_make_proposal(
                      quorum, 99u, descriptor, &proposal),
                  SALTS_EBUSY);
@@ -83,12 +83,12 @@ spec("flowie cluster TurboRaft publish DATA stream") {
     memcpy(ack.stream_digest, first_chunk.stream_digest,
            sizeof(ack.stream_digest));
     check_equal(flowie_cluster_publish_quorum_acknowledge(quorum, &ack),
-                 SALTS_OK);
+                 CMETA_OK);
     /* TurboRaft 0.2 data durability follows the Raft voting contract:
      * local durable + one remote durable is a 2/3 majority. */
     check_equal(flowie_cluster_publish_quorum_make_proposal(
                      quorum, 99u, descriptor, &proposal),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(proposal.command_id, 99u);
     check_equal(proposal.data_length,
                   TR_RAFT_DATA_DESCRIPTOR_ENCODED_SIZE);
@@ -133,7 +133,7 @@ spec("flowie cluster TurboRaft publish DATA stream") {
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){packet, packet_size},
                      FLOWIE_PUBLISH_STREAM_MAX_EVENT_BYTES, &event),
-                 SALTS_OK);
+                 CMETA_OK);
 
     sender_config.self_id = 1u;
     sender_config.peer_id = 2u;
@@ -144,35 +144,35 @@ spec("flowie cluster TurboRaft publish DATA stream") {
     receiver_config.commit_ctx = &capture;
     check_equal(flowie_cluster_publish_stream_sender_create(&sender_config,
                                                               &sender),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_stream_receiver_create(&receiver_config,
                                                                 &receiver),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_stream_sender_begin(
                      sender, 3u, 44u, event, tstr_len(event)),
-                 SALTS_OK);
+                 CMETA_OK);
 
     while (!committed) {
       tr_raft_data_chunk_t chunk;
       tr_raft_data_ack_t ack;
       check_equal(flowie_cluster_publish_stream_sender_next(sender, &chunk),
-                   SALTS_OK);
+                   CMETA_OK);
       check_less_equal(chunk.data_length,
                     TR_RAFT_WIRE_MAX_DATA_CHUNK_BYTES);
       ++chunk_count;
       check_equal(flowie_cluster_publish_stream_receiver_handle(
                        receiver, &chunk, &ack, &committed),
-                   SALTS_OK);
+                   CMETA_OK);
       check_equal(flowie_cluster_publish_stream_sender_acknowledge(sender,
                                                                     &ack),
-                   SALTS_OK);
+                   CMETA_OK);
     }
     check_equal(capture.commit_count, 1u);
     check_equal(capture.packet_size, packet_size);
     check_equal(capture.connection_id, 7u);
     check_equal(chunk_count, 4u);
     check_equal(flowie_cluster_publish_stream_sender_status(sender, &status),
-                 SALTS_OK);
+                 CMETA_OK);
     check_true(status.complete);
     check_equal(status.acknowledged_offset, tstr_len(event));
 

@@ -1,9 +1,9 @@
 #include "flowie_test_cnet.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_process.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_process.h"
+#include "cmeta_thread.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -44,14 +44,14 @@
 #endif
 
 typedef struct flowie_interop_broker_s {
-  salts_process_t *process;
+  cmeta_process_t *process;
   char *config_path;
   const char *host;
   unsigned short port;
 } flowie_interop_broker_t;
 
-static void flowie_interop_report_stderr(salts_process_t *process, const char *phase,
-                                         const salts_process_result_t *result) {
+static void flowie_interop_report_stderr(cmeta_process_t *process, const char *phase,
+                                         const cmeta_process_result_t *result) {
   char diagnostic[FLOWIE_INTEROP_OUTPUT_CAPACITY];
   size_t total = 0u;
   int rc;
@@ -59,40 +59,40 @@ static void flowie_interop_report_stderr(salts_process_t *process, const char *p
   if (!process || !phase) return;
   while (total + 1u < sizeof(diagnostic)) {
     size_t count = 0u;
-    rc = salts_process_read_stderr(process, diagnostic + total,
+    rc = cmeta_process_read_stderr(process, diagnostic + total,
                                    sizeof(diagnostic) - total - 1u, &count);
     total += count;
     if (rc == SALTS_EOF || count == 0u) break;
-    if (rc != SALTS_OK) break;
+    if (rc != CMETA_OK) break;
   }
   diagnostic[total] = '\0';
   fprintf(stderr, "interop phase=%s pid=%d state=%s exit=%d signal=%d error=%d stderr=%s\n",
-          phase, salts_process_pid(process),
-          result ? salts_process_state_name(result->state) : "wait-failed",
+          phase, cmeta_process_pid(process),
+          result ? cmeta_process_state_name(result->state) : "wait-failed",
           result ? result->exit_code : 0, result ? result->term_signal : 0,
           result ? result->error_code : 0, total ? diagnostic : "(empty)");
   total = 0u;
   while (total + 1u < sizeof(diagnostic)) {
     size_t count = 0u;
-    rc = salts_process_read_stdout(process, diagnostic + total,
+    rc = cmeta_process_read_stdout(process, diagnostic + total,
                                    sizeof(diagnostic) - total - 1u, &count);
     total += count;
     if (rc == SALTS_EOF || count == 0u) break;
-    if (rc != SALTS_OK) break;
+    if (rc != CMETA_OK) break;
   }
   diagnostic[total] = '\0';
   if (total != 0u) fprintf(stderr, "interop phase=%s stdout=%s\n", phase, diagnostic);
 }
 
-static int flowie_interop_wait_process(salts_process_t *process, int require_success,
+static int flowie_interop_wait_process(cmeta_process_t *process, int require_success,
                                        char *output, size_t capacity, size_t *output_size) {
-  salts_process_result_t result;
+  cmeta_process_result_t result;
   size_t total = 0u;
   int rc;
   if (output_size) *output_size = 0u;
   if (!process || (capacity != 0u && !output)) return SALTS_EINVAL;
-  rc = salts_process_wait_for(process, FLOWIE_INTEROP_TIMEOUT_MS, &result);
-  if (rc != SALTS_OK) {
+  rc = cmeta_process_wait_for(process, FLOWIE_INTEROP_TIMEOUT_MS, &result);
+  if (rc != CMETA_OK) {
     flowie_interop_report_stderr(process, "wait", NULL);
     return rc;
   }
@@ -103,34 +103,34 @@ static int flowie_interop_wait_process(salts_process_t *process, int require_suc
   }
   while (total < capacity) {
     size_t count = 0u;
-    rc = salts_process_read_stdout(process, output + total, capacity - total, &count);
+    rc = cmeta_process_read_stdout(process, output + total, capacity - total, &count);
     total += count;
     if (rc == SALTS_EOF) break;
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (count == 0u) break;
   }
   if (output_size) *output_size = total;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_interop_spawn(const char *program, const char *const *args, unsigned int flags,
-                                salts_process_t **out) {
-  salts_process_options_t options;
-  salts_process_options_init(&options);
+                                cmeta_process_t **out) {
+  cmeta_process_options_t options;
+  cmeta_process_options_init(&options);
   options.program = program;
   options.args = args;
   options.flags = flags | SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   options.timeout_ms = FLOWIE_INTEROP_TIMEOUT_MS;
   options.max_output_bytes = FLOWIE_INTEROP_OUTPUT_CAPACITY;
-  return salts_process_spawn(&options, out);
+  return cmeta_process_spawn(&options, out);
 }
 
 static int flowie_interop_run(const char *program, const char *const *args) {
-  salts_process_t *process = NULL;
+  cmeta_process_t *process = NULL;
   int rc = flowie_interop_spawn(program, args, 0u, &process);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_interop_wait_process(process, 1, NULL, 0u, NULL);
-  salts_process_destroy(process);
+  cmeta_process_destroy(process);
   return rc;
 }
 
@@ -176,7 +176,7 @@ static int flowie_interop_write_config(unsigned short port, char **path_out) {
     goto cleanup;
   *path_out = path;
   path = NULL;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 cleanup:
   if (path) {
     (void)tt_remove_file(path);
@@ -187,22 +187,22 @@ cleanup:
   return rc;
 }
 
-static int flowie_interop_wait_listener(salts_process_t *process, unsigned short port) {
-  const uint64_t deadline = salts_monotonic_ms() + FLOWIE_INTEROP_TIMEOUT_MS;
+static int flowie_interop_wait_listener(cmeta_process_t *process, unsigned short port) {
+  const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_INTEROP_TIMEOUT_MS;
   char port_text[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   int written = snprintf(port_text, sizeof(port_text), "%u", (unsigned int)port);
   if (written <= 0 || (size_t)written >= sizeof(port_text)) return SALTS_EMSGSIZE;
-  while (salts_monotonic_ms() < deadline) {
-    salts_process_result_t result;
+  while (cmeta_monotonic_ms() < deadline) {
+    cmeta_process_result_t result;
     const char *args[] = {"-h", "127.0.0.1", "-p", port_text, "-V", "mqttv5",
                           "-t", "flowie/interop/readiness", "-m", "ready", "-q", "0",
                           "-i", "flowie-interop-readiness", NULL};
-    int process_status = salts_process_poll(process, &result);
-    if (process_status == SALTS_OK) return SALTS_ECONNREFUSED;
+    int process_status = cmeta_process_poll(process, &result);
+    if (process_status == CMETA_OK) return SALTS_ECONNREFUSED;
     if (process_status != SALTS_EBUSY) return process_status;
     int rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, args);
-    if (rc == SALTS_OK) return SALTS_OK;
-    salts_sleep_ms(10u);
+    if (rc == CMETA_OK) return CMETA_OK;
+    cmeta_sleep_ms(10u);
   }
   return SALTS_ETIMEDOUT;
 }
@@ -214,7 +214,7 @@ static int flowie_interop_broker_start(flowie_interop_broker_t *broker) {
 #if defined(FLOWIE_INTEROP_EXTERNAL_BROKER)
   broker->host = FLOWIE_INTEROP_BROKER_HOST;
   broker->port = (unsigned short)FLOWIE_INTEROP_BROKER_PORT;
-  return broker->port == 0u ? SALTS_EINVAL : SALTS_OK;
+  return broker->port == 0u ? SALTS_EINVAL : CMETA_OK;
 #else
   const char *args[] = {NULL, FLOWIE_DEV_GRAPH_PATH, NULL};
   int rc;
@@ -222,29 +222,29 @@ static int flowie_interop_broker_start(flowie_interop_broker_t *broker) {
   broker->port = flowie_test_cnet_port();
   if (broker->port == 0u) return SALTS_EIO;
   rc = flowie_interop_write_config(broker->port, &broker->config_path);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   args[0] = broker->config_path;
   rc = flowie_interop_spawn(FLOWIE_DEV_SERVER_EXECUTABLE, args, 0u, &broker->process);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   return flowie_interop_wait_listener(broker->process, broker->port);
 #endif
 }
 
 static int flowie_interop_broker_stop(flowie_interop_broker_t *broker, int status) {
-  if (!broker) return status == SALTS_OK ? SALTS_EINVAL : status;
+  if (!broker) return status == CMETA_OK ? SALTS_EINVAL : status;
   if (broker->process) {
-    salts_process_result_t result;
-    int rc = salts_process_poll(broker->process, &result);
+    cmeta_process_result_t result;
+    int rc = cmeta_process_poll(broker->process, &result);
     if (rc == SALTS_EBUSY) {
-      rc = salts_process_terminate(broker->process);
-      if (rc == SALTS_OK) rc = salts_process_wait(broker->process, &result);
+      rc = cmeta_process_terminate(broker->process);
+      if (rc == CMETA_OK) rc = cmeta_process_wait(broker->process, &result);
     }
-    if (status != SALTS_OK) {
+    if (status != CMETA_OK) {
       flowie_interop_report_stderr(broker->process, "flowie-server",
-                                   rc == SALTS_OK ? &result : NULL);
+                                   rc == CMETA_OK ? &result : NULL);
     }
-    if (status == SALTS_OK && rc != SALTS_OK) status = rc;
-    salts_process_destroy(broker->process);
+    if (status == CMETA_OK && rc != CMETA_OK) status = rc;
+    cmeta_process_destroy(broker->process);
   }
   if (broker->config_path) {
     (void)tt_remove_file(broker->config_path);
@@ -259,25 +259,25 @@ static int flowie_interop_format_endpoint(const flowie_interop_broker_t *broker,
   int written;
   if (!broker || !broker->host || !port || port_capacity == 0u) return SALTS_EINVAL;
   written = snprintf(port, port_capacity, "%u", (unsigned int)broker->port);
-  return written > 0 && (size_t)written < port_capacity ? SALTS_OK : SALTS_EMSGSIZE;
+  return written > 0 && (size_t)written < port_capacity ? CMETA_OK : SALTS_EMSGSIZE;
 }
 
-static int flowie_interop_expect_output(salts_process_t *subscriber, const char *expected) {
+static int flowie_interop_expect_output(cmeta_process_t *subscriber, const char *expected) {
   char output[FLOWIE_INTEROP_OUTPUT_CAPACITY];
   size_t output_size = 0u;
   size_t expected_size = strlen(expected);
   int rc = flowie_interop_wait_process(subscriber, 1, output, sizeof(output), &output_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   while (output_size != 0u && (output[output_size - 1u] == '\n' || output[output_size - 1u] == '\r'))
     --output_size;
   return output_size == expected_size && memcmp(output, expected, expected_size) == 0
-             ? SALTS_OK
+             ? CMETA_OK
              : SALTS_EPROTO;
 }
 
 static int flowie_interop_core_trace(const char *version, int qos) {
   flowie_interop_broker_t broker;
-  salts_process_t *subscriber = NULL;
+  cmeta_process_t *subscriber = NULL;
   char port[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   char qos_text[4];
   char topic[FLOWIE_INTEROP_NAME_CAPACITY];
@@ -290,36 +290,36 @@ static int flowie_interop_core_trace(const char *version, int qos) {
   const char *pub_args[] = {"-h", NULL, "-p", port, "-V", version, "-i", publisher_id,
                             "-t", topic, "-q", qos_text, "-m", payload, NULL};
   int rc = flowie_interop_broker_start(&broker);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   sub_args[1] = broker.host;
   pub_args[1] = broker.host;
-  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != SALTS_OK ||
+  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != CMETA_OK ||
       snprintf(qos_text, sizeof(qos_text), "%d", qos) <= 0 ||
-      snprintf(topic, sizeof(topic), "interop/core/%llu/%d", (unsigned long long)salts_hrtime(),
+      snprintf(topic, sizeof(topic), "interop/core/%llu/%d", (unsigned long long)cmeta_hrtime(),
                qos) <= 0 ||
       snprintf(payload, sizeof(payload), "payload-qos-%d", qos) <= 0 ||
       snprintf(subscriber_id, sizeof(subscriber_id), "interop-sub-%llu-%d",
-               (unsigned long long)salts_hrtime(), qos) <= 0 ||
+               (unsigned long long)cmeta_hrtime(), qos) <= 0 ||
       snprintf(publisher_id, sizeof(publisher_id), "interop-pub-%llu-%d",
-               (unsigned long long)salts_hrtime(), qos) <= 0) {
+               (unsigned long long)cmeta_hrtime(), qos) <= 0) {
     rc = SALTS_EMSGSIZE;
     goto cleanup;
   }
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, sub_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, pub_args);
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, payload);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, payload);
 cleanup:
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     fprintf(stderr, "interop core version=%s qos=%d status=%d\n", version, qos, rc);
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(subscriber);
   return flowie_interop_broker_stop(&broker, rc);
 }
 
 static int flowie_interop_unsubscribe_trace(const char *version) {
   flowie_interop_broker_t broker;
-  salts_process_t *subscriber = NULL;
+  cmeta_process_t *subscriber = NULL;
   char port[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   char topic[FLOWIE_INTEROP_NAME_CAPACITY];
   char probe_topic[FLOWIE_INTEROP_NAME_CAPACITY];
@@ -348,58 +348,58 @@ static int flowie_interop_unsubscribe_trace(const char *version) {
   const char *cleanup_args[] = {"-h", NULL, "-p", port, "-V", version, "-i", client_id,
                                 "-t", probe_topic, "-q", "0", "-n", NULL};
   int rc = flowie_interop_broker_start(&broker);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   initial_sub_args[1] = unsubscribe_args[1] = resume_args[1] = broker.host;
   initial_pub_args[1] = unsubscribe_probe_args[1] = stale_pub_args[1] = cleanup_args[1] =
       broker.host;
-  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != SALTS_OK ||
+  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != CMETA_OK ||
       snprintf(topic, sizeof(topic), "interop/unsubscribe/%llu",
-               (unsigned long long)salts_hrtime()) <= 0 ||
+               (unsigned long long)cmeta_hrtime()) <= 0 ||
       snprintf(probe_topic, sizeof(probe_topic), "interop/unsubscribe-probe/%llu",
-               (unsigned long long)salts_hrtime()) <= 0 ||
+               (unsigned long long)cmeta_hrtime()) <= 0 ||
       snprintf(client_id, sizeof(client_id), "i%016llx",
-               (unsigned long long)salts_hrtime()) <= 0 ||
+               (unsigned long long)cmeta_hrtime()) <= 0 ||
       snprintf(publisher_id, sizeof(publisher_id), "p%016llx",
-               (unsigned long long)salts_hrtime()) <= 0 ||
+               (unsigned long long)cmeta_hrtime()) <= 0 ||
       snprintf(expected_probe, sizeof(expected_probe), "%s:%s", probe_topic, probe_payload) <= 0) {
     rc = SALTS_EMSGSIZE;
     goto cleanup;
   }
 
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, initial_sub_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, initial_pub_args);
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, initial_payload);
-  salts_process_destroy(subscriber);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, initial_payload);
+  cmeta_process_destroy(subscriber);
   subscriber = NULL;
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
 
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, unsubscribe_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, unsubscribe_probe_args);
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, probe_payload);
-  salts_process_destroy(subscriber);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, probe_payload);
+  cmeta_process_destroy(subscriber);
   subscriber = NULL;
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
 
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, stale_pub_args);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, resume_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, unsubscribe_probe_args);
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, expected_probe);
-  if (rc == SALTS_OK) rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, cleanup_args);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, expected_probe);
+  if (rc == CMETA_OK) rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, cleanup_args);
 cleanup:
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(subscriber);
   return flowie_interop_broker_stop(&broker, rc);
 }
 
 static int flowie_interop_retained_trace(void) {
   flowie_interop_broker_t broker;
-  salts_process_t *subscriber = NULL;
+  cmeta_process_t *subscriber = NULL;
   char port[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   char topic[FLOWIE_INTEROP_NAME_CAPACITY];
   static const char payload[] = "retained-value";
@@ -410,27 +410,27 @@ static int flowie_interop_retained_trace(void) {
   const char *clear_args[] = {"-h", NULL, "-p", port, "-V", "mqttv5", "-t", topic,
                               "-q", "1", "-r", "-n", NULL};
   int rc = flowie_interop_broker_start(&broker);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   pub_args[1] = sub_args[1] = clear_args[1] = broker.host;
-  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != SALTS_OK ||
+  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != CMETA_OK ||
       snprintf(topic, sizeof(topic), "interop/retained/%llu",
-               (unsigned long long)salts_hrtime()) <= 0) {
+               (unsigned long long)cmeta_hrtime()) <= 0) {
     rc = SALTS_EMSGSIZE;
     goto cleanup;
   }
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, pub_args);
-  if (rc == SALTS_OK) rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, sub_args, 0u, &subscriber);
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, payload);
-  if (flowie_interop_run(FLOWIE_MOSQUITTO_PUB, clear_args) != SALTS_OK && rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, sub_args, 0u, &subscriber);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, payload);
+  if (flowie_interop_run(FLOWIE_MOSQUITTO_PUB, clear_args) != CMETA_OK && rc == CMETA_OK)
     rc = SALTS_EIO;
 cleanup:
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(subscriber);
   return flowie_interop_broker_stop(&broker, rc);
 }
 
 static int flowie_interop_offline_trace(int expire_message) {
   flowie_interop_broker_t broker;
-  salts_process_t *subscriber = NULL;
+  cmeta_process_t *subscriber = NULL;
   char output[FLOWIE_INTEROP_OUTPUT_CAPACITY];
   char port[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   char topic[FLOWIE_INTEROP_NAME_CAPACITY];
@@ -448,48 +448,48 @@ static int flowie_interop_offline_trace(int expire_message) {
       "publish", "message-expiry-interval", "1", "-m", payload, NULL};
   const char *const *pub_args = expire_message ? expiry_pub_args : normal_pub_args;
   int rc = flowie_interop_broker_start(&broker);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   sub_args[1] = resume_args[1] = normal_pub_args[1] = expiry_pub_args[1] = broker.host;
-  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != SALTS_OK ||
+  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != CMETA_OK ||
       snprintf(topic, sizeof(topic), "interop/offline/%llu",
-               (unsigned long long)salts_hrtime()) <= 0 ||
+               (unsigned long long)cmeta_hrtime()) <= 0 ||
       snprintf(client_id, sizeof(client_id), "interop-session-%llu",
-               (unsigned long long)salts_hrtime()) <= 0) {
+               (unsigned long long)cmeta_hrtime()) <= 0) {
     rc = SALTS_EMSGSIZE;
     goto cleanup;
   }
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, sub_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
-  rc = salts_process_terminate(subscriber);
-  if (rc == SALTS_OK) {
-    salts_process_result_t result;
-    rc = salts_process_wait(subscriber, &result);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  rc = cmeta_process_terminate(subscriber);
+  if (rc == CMETA_OK) {
+    cmeta_process_result_t result;
+    rc = cmeta_process_wait(subscriber, &result);
   }
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(subscriber);
   subscriber = NULL;
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   rc = flowie_interop_run(FLOWIE_MOSQUITTO_PUB, pub_args);
-  if (rc != SALTS_OK) goto cleanup;
-  if (expire_message) salts_sleep_ms(FLOWIE_INTEROP_EXPIRY_WAIT_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  if (expire_message) cmeta_sleep_ms(FLOWIE_INTEROP_EXPIRY_WAIT_MS);
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, resume_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   if (!expire_message) {
     rc = flowie_interop_expect_output(subscriber, payload);
   } else {
     size_t output_size = 0u;
     rc = flowie_interop_wait_process(subscriber, 0, output, sizeof(output), &output_size);
-    if (rc == SALTS_OK && output_size != 0u) rc = SALTS_EPROTO;
+    if (rc == CMETA_OK && output_size != 0u) rc = SALTS_EPROTO;
   }
 cleanup:
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(subscriber);
   return flowie_interop_broker_stop(&broker, rc);
 }
 
 static int flowie_interop_will_trace(void) {
   flowie_interop_broker_t broker;
-  salts_process_t *subscriber = NULL;
-  salts_process_t *will_client = NULL;
+  cmeta_process_t *subscriber = NULL;
+  cmeta_process_t *will_client = NULL;
   char port[FLOWIE_INTEROP_PORT_TEXT_CAPACITY];
   char topic[FLOWIE_INTEROP_NAME_CAPACITY];
   static const char payload[] = "unexpected-close";
@@ -499,52 +499,52 @@ static int flowie_interop_will_trace(void) {
                              "interop/unused", "--will-topic", topic, "--will-payload", payload,
                              "--will-qos", "1", NULL};
   int rc = flowie_interop_broker_start(&broker);
-  if (rc != SALTS_OK) goto cleanup;
+  if (rc != CMETA_OK) goto cleanup;
   sub_args[1] = will_args[1] = broker.host;
-  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != SALTS_OK ||
-      snprintf(topic, sizeof(topic), "interop/will/%llu", (unsigned long long)salts_hrtime()) <= 0) {
+  if (flowie_interop_format_endpoint(&broker, port, sizeof(port)) != CMETA_OK ||
+      snprintf(topic, sizeof(topic), "interop/will/%llu", (unsigned long long)cmeta_hrtime()) <= 0) {
     rc = SALTS_EMSGSIZE;
     goto cleanup;
   }
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_SUB, sub_args, 0u, &subscriber);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
   rc = flowie_interop_spawn(FLOWIE_MOSQUITTO_PUB, will_args, SALTS_PROCESS_PIPE_STDIN,
                             &will_client);
-  if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_INTEROP_READY_MS);
-  rc = salts_process_terminate(will_client);
-  if (rc == SALTS_OK) {
-    salts_process_result_t result;
-    rc = salts_process_wait(will_client, &result);
+  if (rc != CMETA_OK) goto cleanup;
+  cmeta_sleep_ms(FLOWIE_INTEROP_READY_MS);
+  rc = cmeta_process_terminate(will_client);
+  if (rc == CMETA_OK) {
+    cmeta_process_result_t result;
+    rc = cmeta_process_wait(will_client, &result);
   }
-  if (rc == SALTS_OK) rc = flowie_interop_expect_output(subscriber, payload);
+  if (rc == CMETA_OK) rc = flowie_interop_expect_output(subscriber, payload);
 cleanup:
-  salts_process_destroy(will_client);
-  salts_process_destroy(subscriber);
+  cmeta_process_destroy(will_client);
+  cmeta_process_destroy(subscriber);
   return flowie_interop_broker_stop(&broker, rc);
 }
 
 spec("Flowie fixed MQTT interoperability") {
   it("MQTT-INTEROP-002 runs Mosquitto MQTT 3.1.1 core QoS trace") {
     for (int qos = 0; qos <= 2; ++qos)
-      check_equal(flowie_interop_core_trace("mqttv311", qos), SALTS_OK);
-    check_equal(flowie_interop_unsubscribe_trace("mqttv311"), SALTS_OK);
+      check_equal(flowie_interop_core_trace("mqttv311", qos), CMETA_OK);
+    check_equal(flowie_interop_unsubscribe_trace("mqttv311"), CMETA_OK);
   }
 
   it("MQTT-INTEROP-002 runs Mosquitto MQTT 5 core QoS trace") {
     for (int qos = 0; qos <= 2; ++qos)
-      check_equal(flowie_interop_core_trace("mqttv5", qos), SALTS_OK);
-    check_equal(flowie_interop_unsubscribe_trace("mqttv5"), SALTS_OK);
+      check_equal(flowie_interop_core_trace("mqttv5", qos), CMETA_OK);
+    check_equal(flowie_interop_unsubscribe_trace("mqttv5"), CMETA_OK);
   }
 
   it("MQTT-INTEROP-003 round trips retained and offline persistent delivery") {
-    check_equal(flowie_interop_retained_trace(), SALTS_OK);
-    check_equal(flowie_interop_offline_trace(0), SALTS_OK);
+    check_equal(flowie_interop_retained_trace(), CMETA_OK);
+    check_equal(flowie_interop_offline_trace(0), CMETA_OK);
   }
 
   it("MQTT-INTEROP-003 publishes Will once and suppresses expired offline delivery") {
-    check_equal(flowie_interop_will_trace(), SALTS_OK);
-    check_equal(flowie_interop_offline_trace(1), SALTS_OK);
+    check_equal(flowie_interop_will_trace(), CMETA_OK);
+    check_equal(flowie_interop_offline_trace(1), CMETA_OK);
   }
 }

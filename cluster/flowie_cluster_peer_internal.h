@@ -3,7 +3,7 @@
 
 #include "flowie_cluster_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "flowie_security.h"
 #include "tstr.h"
 #include <cnet/cnet.h>
@@ -567,7 +567,7 @@ typedef int (*flowie_cluster_peer_owner_finalize_fn)(void *finalize_ctx, int dur
 /**
  * Finish one asynchronously accepted owner command. This schedules finalize()
  * and the derived reply back onto the owner lane. The completion context is
- * single-use. When this returns SALTS_OK, the adapter owns the finalize
+ * single-use. When this returns CMETA_OK, the adapter owns the finalize
  * obligation; when scheduling fails, finalize() is not called and the provider
  * retains finalize_ctx and must fail the shard closed because no cross-thread
  * MQTT-state mutation or reply callback is permitted.
@@ -578,7 +578,7 @@ typedef int (*flowie_cluster_peer_owner_complete_fn)(void *completion_ctx, int d
 
 /**
  * Stage one command on the owner lane and hand its durable work to an
- * asynchronous provider. Returning SALTS_OK transfers exactly one completion
+ * asynchronous provider. Returning CMETA_OK transfers exactly one completion
  * obligation to the provider; any other status means completion must not be
  * called. Borrowed command views expire when this function returns. While one
  * asynchronous command is outstanding, later commands receive SALTS_EBUSY so

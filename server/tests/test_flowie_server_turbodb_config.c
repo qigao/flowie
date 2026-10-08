@@ -1,7 +1,7 @@
 #include "flowie_server_turbodb_config_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -21,7 +21,7 @@ spec("Flowie server TurboDB configuration") {
                     "postgresql",
                     "{\"conninfo\":\"host=pg dbname=flowie\",\"application_name\":\"flowie\"}",
                     &config),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(config);
     database = flowie_server_turbodb_config_database(config);
     check_not_null(database);
@@ -38,7 +38,7 @@ spec("Flowie server TurboDB configuration") {
 
     check_equal(
         flowie_server_turbodb_config_create("sqlite", "{\"filename\":\":memory:\"}", &config),
-        SALTS_OK);
+        CMETA_OK);
     database = flowie_server_turbodb_config_database(config);
     check_equal(database->option_count, 1u);
     check_true(option_equal(&database->options[0], "filename", ":memory:"));

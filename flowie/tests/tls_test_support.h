@@ -67,27 +67,35 @@ static int tls_test_prepare_listener(test_socket_t *listen_socket, unsigned shor
   return 0;
 }
 
-/* Test-only localhost keypair. It is never installed or used by production code. */
+/* Test-only P-256 CA and localhost leaf (2026-2036), never installed.
+ * The leaf has CA=false, SAN localhost/127.0.0.1/::1, and server/client EKU.
+ * A CA certificate must not double as the TLS endpoint certificate. */
+static const char s_tls_test_ca_pem[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBfTCCASOgAwIBAgIUe7nhE767sa6vXvFNmy2XZBXSbJcwCgYIKoZIzj0EAwIw\n"
+    "GzEZMBcGA1UEAwwQRmxvd2llIFRlc3QgUm9vdDAeFw0yNjAxMDEwMDAwMDBaFw0z\n"
+    "NjAxMDEwMDAwMDBaMBsxGTAXBgNVBAMMEEZsb3dpZSBUZXN0IFJvb3QwWTATBgcq\n"
+    "hkjOPQIBBggqhkjOPQMBBwNCAAQ4zR1k+kxVa8k1PPPCtvZSP6/M+nmt0aFvCvAP\n"
+    "7J71uS7ygiBvQVf4ZWWcoZju29x+Z9Xy4alb7ZcYFimv1afuo0UwQzASBgNVHRMB\n"
+    "Af8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUb8Ww4/ETnPoj\n"
+    "fMwiI6QDRqNvVL8wCgYIKoZIzj0EAwIDSAAwRQIhALeJE82KOFX7ZtmLTD9tjW5G\n"
+    "7KI75ul8SA3wGyLq2Ty3AiAtwchaAkdS76P1NeCNQ6sTsqydCCwbm3I0kO2RTGbZ\n"
+    "tw==\n"
+    "-----END CERTIFICATE-----\n";
+
 static const char s_tls_test_cert_pem[] =
     "-----BEGIN CERTIFICATE-----\n"
-    "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\n"
+    "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\n"
+    "udsc\n"
     "-----END CERTIFICATE-----\n";
 
 
@@ -116,32 +124,9 @@ static const char s_tls_test_ca_pem[] =
 
 static const char s_tls_test_key_pem[] =
     "-----BEGIN PRIVATE KEY-----\n"
-    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC2WbeK8ov/F+bT\n"
-    "S0TV6gtp/bE3zJWn6gza7mOWnInFGEcKykhzt4oBlzyIFhHni+3ZU/6U+AogXNej\n"
-    "rT/yKjEMWDGBiiMJEB0FU5RwJUrNfe15peJqun3hb9drMVL2TTZNYzTNXlJZt/+C\n"
-    "SGdyzg/BlJc0XUmu/cUSKNSIasyXuppqqXWwtJ+1kAmkekj0QZEFblCEHWCGKjpB\n"
-    "95NXE2smOMEEkhB4HKlWO54lrz9/Qm35NCe2dv9MG4sMFPwkAggjgwi/GrFeAtMI\n"
-    "YQk5PEUwQAaMgecey5HJS2dqE2H+a0FH0Qd0r9s5tlnfydR9J3YJLxy5kVNhncxw\n"
-    "I9cRl+DdAgMBAAECggEABLwmJ7G+IGDYwc5PyoUyCC3J+wKxNSO+8zVi+R919Vv4\n"
-    "xkcz4+tVZk6sx/TYwKwxwCWt8+TP8ICwqcOfKDTfwqwMlwpE+CCGvGNr9JCHVXgq\n"
-    "YTEFRNO0XpT2oUYt2w7stMw5bAbBuSottI6YPxMqNhLbbUTp26Ujx6GvSR6K0vq+\n"
-    "WWYpq6ocVeEAuJWKrIm2Sn8M0CfooLi1ouU1EAeT8hoMiER7xEljA+PBOKQt0Zpn\n"
-    "N0Vuhrh4r3Gr+Mq1okqye9iCkvBnaFsUNE9DkozrXr5J8dNPOybxwSBP5H13sMOT\n"
-    "b1HgLg/h4zmmUhd5MuFjtCnmvywExQqqtHzYD0e5uQKBgQD8ttem9IdcDIiLggQo\n"
-    "dCKpNDHMGrXGRvEwg5TcgFVmJDCgQR3KpwAeyNyVQDSGWyVmUZwB1JYDXQtwzw6Z\n"
-    "KqeRqAbqu1wESqikjt2/2HQZSwJXXXCIRYAbnNF9ZQM8TtTmrcJ3bgAL4Gb0t7Vf\n"
-    "Ni7tzapTbft1sTj4ZxF2jL6f6QKBgQC4uKtS4RDeuJX5xxvdnvBo5Tr3Yxc6ef3T\n"
-    "iMeWC9yZTudtGTLnfflU/nTeVuIwlJEKj9dcR1i0pCGHHrkTNOALN4cJJk9qgeKd\n"
-    "liM3DZfukcOd8Sn1NnY8gnBb2jXqmyA72pVtGOrc1YZfI/lWHzSeHNCBYIfsC93t\n"
-    "eRmD9wW01QKBgBpSSP/gtECIJaiyMBCul/WbtBwYJBq0xOZSriyRSVPMLSxj2+CB\n"
-    "qGeMcD0zZMUhtTGFCoS+SamsBUcIqfKWGMH5CE9mmFzyEcKiBsK2ntELmQDUgKYQ\n"
-    "5xj5KnCvFrkvVMl6C6k40dRq2Q5gHAoAsL6gDz+FUw2dGdv1kEISwsARAoGAVhoe\n"
-    "IZ+vEWHQ5oCcyIzRWtOezLlvll5Opk9XWOVmij9xODVKuQTLN4b0Sr8M58AYa2fo\n"
-    "5qaK/oiS6Dy13/IBjLjxRJ6K3gZ07yeQepTngNiI6hIDkL02F7ZlUStBfn2YZM3a\n"
-    "YOQAdbdBzw8hpbcd+6VKu0OXl7tgUtTjw9Nc4ZECgYBn+fciDdVIj+MB7KTQKIH+\n"
-    "b/b4u/ueilmFdh/CwOfEKDaDGKHGVBJ74sINDLFTHVnVZCyu+aWKUX2CK+mUrC86\n"
-    "UPRfH282y+mkwFv4Zuu5Y1DhTYtlhS2AzjYPnxT+xN7ix3M198BKzn4gHiI4qhAK\n"
-    "th8JxHVsF9AEP3GTrIh/sA==\n"
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgmkcTsmw218MDZ+8y\n"
+    "LehXLcgQGph2PHQj2wpRgEKxz1yhRANCAASnuOtv72oaE2VWFFo+3REo/y9hr74Y\n"
+    "HJDiwQ1UiplsVsl5Qp6yDc6rfV7sUoIRN08pKRQEtbItEbHCnT+kuepd\n"
     "-----END PRIVATE KEY-----\n";
 
 static void tls_test_remove_file(const char *path) {
@@ -207,8 +192,24 @@ static int tls_test_write_ca_file(char *path, size_t path_len) {
 
 static int tls_test_write_server_files(char *cert_path, size_t cert_path_len,
                                        char *key_path, size_t key_path_len) {
+  FILE *chain;
+  int chain_ok;
   if (tls_test_write_temp_file(cert_path, cert_path_len, "crt", s_tls_test_cert_pem) != 0)
     return -1;
+  /* Some fixtures also use this file as their trust bundle. Keep the leaf first
+   * for server identity and append its actual trust anchor. */
+  chain = fopen(cert_path, "ab");
+  chain_ok = chain != NULL;
+  if (chain != NULL) {
+    chain_ok = fwrite(s_tls_test_ca_pem, 1u, sizeof(s_tls_test_ca_pem) - 1u, chain) ==
+               sizeof(s_tls_test_ca_pem) - 1u;
+    if (fclose(chain) != 0) chain_ok = 0;
+  }
+  if (!chain_ok) {
+    tls_test_remove_file(cert_path);
+    cert_path[0] = '\0';
+    return -1;
+  }
   if (tls_test_write_temp_file(key_path, key_path_len, "key", s_tls_test_key_pem) != 0) {
     tls_test_remove_file(cert_path);
     cert_path[0] = '\0';

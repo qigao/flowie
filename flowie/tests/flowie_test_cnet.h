@@ -5,7 +5,7 @@
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
-#include <salts_buffer.h>
+#include <cmeta_buffer.h>
 
 #include <stdio.h>
 #include <limits.h>
@@ -64,13 +64,13 @@ static void flowie_test_cnet_state(void *user, cnet_connection connection,
   if (!client) return;
   if (state == CNET_CONNECTION_CONNECTED) {
     client->connected = 1;
-    client->status = SALTS_OK;
+    client->status = CMETA_OK;
   } else if (state == CNET_CONNECTION_FAILED) {
     client->failed = 1;
     client->status = error ? error->status : SALTS_EIO;
   } else if (state == CNET_CONNECTION_CLOSING || state == CNET_CONNECTION_CLOSED) {
     client->closed = 1;
-    if (client->status == SALTS_OK && error) client->status = error->status;
+    if (client->status == CMETA_OK && error) client->status = error->status;
   }
 }
 
@@ -105,30 +105,30 @@ static int flowie_test_cnet_poll(flowie_test_cnet_client_t *client, uint32_t tim
   int status;
   if (!client) return SALTS_EINVAL;
   status = cnet_client_poll(&client->network, timeout_ms, &events);
-  if (status != SALTS_OK) {
+  if (status != CMETA_OK) {
     client->failed = 1;
     client->status = status;
     return status;
   }
-  if (client->failed) return client->status == SALTS_OK ? SALTS_EIO : client->status;
-  return SALTS_OK;
+  if (client->failed) return client->status == CMETA_OK ? SALTS_EIO : client->status;
+  return CMETA_OK;
 }
 
 static int flowie_test_cnet_wait(flowie_test_cnet_client_t *client, int *condition,
                                  uint32_t timeout_ms) {
-  const uint64_t deadline = salts_monotonic_ms() + timeout_ms;
+  const uint64_t deadline = cmeta_monotonic_ms() + timeout_ms;
   int status;
   if (!client || !condition) return SALTS_EINVAL;
   while (!*condition) {
-    const uint64_t now = salts_monotonic_ms();
+    const uint64_t now = cmeta_monotonic_ms();
     uint32_t slice;
     if (now >= deadline) return SALTS_ETIMEDOUT;
     slice = (uint32_t)(deadline - now);
     if (slice > 50u) slice = 50u;
     status = flowie_test_cnet_poll(client, slice);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static unsigned short flowie_test_cnet_port(void) {
@@ -139,12 +139,12 @@ static unsigned short flowie_test_cnet_port(void) {
                                   .backlog = 1u};
   uint16_t port = 0u;
   int status = cnet_listener_init(&listener, &config);
-  if (status == SALTS_OK) status = cnet_listener_port(&listener, &port);
+  if (status == CMETA_OK) status = cnet_listener_port(&listener, &port);
   if (listener.impl) {
     (void)cnet_listener_close(&listener);
     (void)cnet_listener_destroy(&listener);
   }
-  return status == SALTS_OK ? port : 0u;
+  return status == CMETA_OK ? port : 0u;
 }
 
 static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
@@ -157,15 +157,15 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
   if (port == 0u || (recv_buffer_bytes != 0u && recv_buffer_bytes > INT_MAX)) return NULL;
   client = (flowie_test_cnet_client_t *)calloc(1u, sizeof(*client));
   if (!client) return NULL;
-  client->status = SALTS_OK;
+  client->status = CMETA_OK;
   config = flowie_test_cnet_config();
   status = cnet_client_init(&client->network, &config);
-  if (status != SALTS_OK) goto fail;
+  if (status != CMETA_OK) goto fail;
   if (recv_buffer_bytes != 0u) {
     cnet_stream_socket_options socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
     socket_options.receive_buffer_bytes = recv_buffer_bytes;
     status = cnet_client_set_stream_socket_options(&client->network, &socket_options);
-    if (status != SALTS_OK) goto fail;
+    if (status != CMETA_OK) goto fail;
   }
   if (snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) < 0) goto fail;
   options = (cnet_connect_options){.uri = uri,
@@ -174,12 +174,12 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
                                                 .on_send = flowie_test_cnet_on_send,
                                                 .user = client}};
   status = cnet_connect(&client->network, &options, &client->connection);
-  if (status != SALTS_OK) goto fail;
+  if (status != CMETA_OK) goto fail;
   status = flowie_test_cnet_wait(client, &client->connected, FLOWIE_TEST_CNET_TIMEOUT_MS);
-  if (status != SALTS_OK) goto fail;
+  if (status != CMETA_OK) goto fail;
   status = cnet_receive(&client->network, client->connection,
                         sizeof(client->received) - client->received_size);
-  if (status != SALTS_OK) goto fail;
+  if (status != CMETA_OK) goto fail;
   return client;
 
 fail:
@@ -208,39 +208,39 @@ static int flowie_test_cnet_send(flowie_test_cnet_client_t *client, const uint8_
   client->sent = 0;
   status = cnet_send_buffer(&client->network, client->connection, buffer);
   mem_buffer_release(buffer);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   (void)flowie_test_cnet_poll(client, 0u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_test_cnet_recv_exact(flowie_test_cnet_client_t *client, uint8_t *data,
                                        size_t size) {
-  const uint64_t deadline = salts_monotonic_ms() + FLOWIE_TEST_CNET_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_TEST_CNET_TIMEOUT_MS;
   if (!client || (!data && size != 0u)) return SALTS_EINVAL;
   while (client->received_size < size && !client->closed && !client->failed &&
-         salts_monotonic_ms() < deadline) {
+         cmeta_monotonic_ms() < deadline) {
     int status = flowie_test_cnet_poll(client, 50u);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
   }
   if (client->received_size < size)
     return client->failed ? client->status : SALTS_ETIMEDOUT;
   if (size != 0u) memcpy(data, client->received, size);
   memmove(client->received, client->received + size, client->received_size - size);
   client->received_size -= size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_test_cnet_readable(flowie_test_cnet_client_t *client, uint32_t timeout_ms) {
-  const uint64_t deadline = salts_monotonic_ms() + timeout_ms;
+  const uint64_t deadline = cmeta_monotonic_ms() + timeout_ms;
   if (!client) return 0;
   if (client->received_size != 0u || client->closed || client->failed) return 1;
   while (client->received_size == 0u) {
-    const uint64_t now = salts_monotonic_ms();
+    const uint64_t now = cmeta_monotonic_ms();
     uint32_t slice;
     if (now >= deadline) break;
     slice = (uint32_t)(deadline - now);
     if (slice > 50u) slice = 50u;
-    if (flowie_test_cnet_poll(client, slice) != SALTS_OK) return 1;
+    if (flowie_test_cnet_poll(client, slice) != CMETA_OK) return 1;
   }
   return client->received_size != 0u;
 }
@@ -259,9 +259,9 @@ static int flowie_test_cnet_recv_mqtt5_connack(flowie_test_cnet_client_t *client
   expected[10] = (uint8_t)(maximum_packet_size >> 16u);
   expected[11] = (uint8_t)(maximum_packet_size >> 8u);
   expected[12] = (uint8_t)maximum_packet_size;
-  if (flowie_test_cnet_recv_exact(client, received, sizeof(received)) != SALTS_OK)
+  if (flowie_test_cnet_recv_exact(client, received, sizeof(received)) != CMETA_OK)
     return SALTS_EPROTO;
-  return memcmp(received, expected, sizeof(expected)) == 0 ? SALTS_OK : SALTS_EPROTO;
+  return memcmp(received, expected, sizeof(expected)) == 0 ? CMETA_OK : SALTS_EPROTO;
 }
 
 static void flowie_test_cnet_close(flowie_test_cnet_client_t *client) {

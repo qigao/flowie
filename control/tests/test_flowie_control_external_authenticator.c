@@ -1,7 +1,7 @@
 #include "flowie_control_external_authenticator_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -50,8 +50,8 @@ spec("Flowie control external authenticator contract") {
     authenticator.method = "oidc-token";
     authenticator.verify = external_auth_verify;
     mapper.map = external_identity_map;
-    check_equal(flowie_control_external_authenticator_validate(&authenticator), SALTS_OK);
-    check_equal(flowie_control_external_identity_mapper_validate(&mapper), SALTS_OK);
+    check_equal(flowie_control_external_authenticator_validate(&authenticator), CMETA_OK);
+    check_equal(flowie_control_external_identity_mapper_validate(&mapper), CMETA_OK);
 
     authenticator.capabilities &= ~FLOWIE_CONTROL_EXTERNAL_AUTH_ACCOUNT_STATE;
     check_equal(flowie_control_external_authenticator_validate(&authenticator), SALTS_EINVAL);
@@ -66,7 +66,7 @@ spec("Flowie control external authenticator contract") {
     flowie_control_external_auth_assertion_t assertion = valid_assertion();
 
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
-                SALTS_OK);
+                CMETA_OK);
     assertion.domain_id[0] = '\0';
     check_equal(flowie_control_external_auth_assertion_validate(&assertion, "oidc-token", 150u),
                 SALTS_EINVAL);
@@ -97,7 +97,7 @@ spec("Flowie control external authenticator contract") {
         FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAP_RESULT_INIT;
     check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_EINVAL);
     memcpy(result.principal_id, "device-a", sizeof("device-a"));
-    check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_OK);
+    check_equal(flowie_control_external_identity_map_result_validate(&result), CMETA_OK);
     result.principal_id[0] = '\n';
     check_equal(flowie_control_external_identity_map_result_validate(&result), SALTS_EINVAL);
   }
@@ -115,14 +115,14 @@ spec("Flowie control external authenticator contract") {
 
     config.trusted_issuer = "https://idp.example";
     config.subject_type = "device";
-    check_equal(flowie_control_external_subject_mapper_create(&config, &mapper), SALTS_OK);
+    check_equal(flowie_control_external_subject_mapper_create(&config, &mapper), CMETA_OK);
     check_not_null(mapper);
     interface = flowie_control_external_subject_mapper_interface(mapper);
-    check_equal(flowie_control_external_identity_mapper_validate(interface), SALTS_OK);
+    check_equal(flowie_control_external_identity_mapper_validate(interface), CMETA_OK);
     request.domain_id = "root-a";
     request.presented_identity = "device@example";
     request.assertion = &assertion;
-    check_equal(interface->map(interface->ctx, &request, &result), SALTS_OK);
+    check_equal(interface->map(interface->ctx, &request, &result), CMETA_OK);
     check_equal(result.principal_id, "tenant-42/device-a");
 
     memcpy(assertion.issuer, "https://other.example", sizeof("https://other.example"));

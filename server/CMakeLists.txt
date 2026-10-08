@@ -14,7 +14,7 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_config
     SOURCES tests/test_flowie_server_config.c flowie_server_config.c
-    LIBS Flowie::Protocol Orm::C Salts::CYaml Salts::Core
+    LIBS Flowie::Protocol Orm::C Salts::CYaml Salts::Core Salts::CFlow
          Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
     FOLDER "flowie/server/tests")
@@ -59,7 +59,7 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_turbodb_config
     SOURCES tests/test_flowie_server_turbodb_config.c flowie_server_turbodb_config.c
-    LIBS Orm::C Salts::JsonParser Salts::TinyTest
+    LIBS Orm::C Salts::CFlow Salts::JsonParser Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
     FOLDER "flowie/server/tests")
   set_tests_properties(

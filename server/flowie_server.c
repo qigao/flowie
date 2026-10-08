@@ -3,7 +3,7 @@
 #include "flowie_server_http_security_internal.h"
 #include "flowie_server_turbodb_config_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cmd_arger.h>
 #include "tlog.h"
 
@@ -38,7 +38,7 @@ static int flowie_server_publish(flowie_endpoint_core_t *endpoint, flowie_messag
   if (!endpoint || !message || !result || result->size < sizeof(*result)) return SALTS_EINVAL;
   rc = flowie_endpoint_core_send_message(endpoint, message);
   result->status = rc;
-  if (rc == SALTS_OK) result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
+  if (rc == CMETA_OK) result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
   return rc;
 }
 
@@ -65,11 +65,11 @@ static const char *flowie_server_transport_name(flowie_transport_t transport) {
   }
 }
 
-static int flowie_server_log_level(const char *value, salts_log_level_t *level) {
+static int flowie_server_log_level(const char *value, cmeta_log_level_t *level) {
   if (!level) return SALTS_EINVAL;
   if (!value || strcmp(value, "INFO") == 0 || strcmp(value, "info") == 0) {
     *level = SALTS_LOG_LEVEL_INFO;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (strcmp(value, "DEBUG") == 0 || strcmp(value, "debug") == 0)
     *level = SALTS_LOG_LEVEL_DEBUG;
@@ -81,7 +81,7 @@ static int flowie_server_log_level(const char *value, salts_log_level_t *level) 
     *level = SALTS_LOG_LEVEL_FATAL;
   else
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 typedef struct flowie_server_tuning_s {
@@ -169,21 +169,21 @@ static int flowie_server_tuning_apply(const flowie_server_tuning_t *tuning,
   config->tcp_keepalive_interval_ms = (uint64_t)tuning->tcp_keepalive_interval_ms;
   config->tcp_keepalive_count = (uint32_t)tuning->tcp_keepalive_count;
   config->reuse_port = tuning->reuse_port ? 1 : 0;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
-static tlog_t *flowie_server_logging_create(salts_log_level_t level) {
+static tlog_t *flowie_server_logging_create(cmeta_log_level_t level) {
   tlog_config_t config = {.min_level = level,
                           .buffer_size = FLOWIE_SERVER_LOG_BUFFER_BYTES,
                           .pool_size = FLOWIE_SERVER_LOG_POOL_BYTES};
-  salts_console_sink_opts_t console_options = {
+  cmeta_console_sink_opts_t console_options = {
       .output = stderr, .use_colors = 0, .pattern = SALTS_LOG_FULL_PATTERN};
   tlog_t *logger = tlog_create(&config);
-  salts_log_sink_t *sink;
+  cmeta_log_sink_t *sink;
   if (!logger) return NULL;
-  sink = salts_sink_console_create(&console_options);
-  if (!sink || tlog_add_sink(logger, sink) != SALTS_OK) {
-    salts_sink_destroy(sink);
+  sink = cmeta_sink_console_create(&console_options);
+  if (!sink || tlog_add_sink(logger, sink) != CMETA_OK) {
+    cmeta_sink_destroy(sink);
     tlog_destroy(logger);
     return NULL;
   }
@@ -201,7 +201,7 @@ static void flowie_server_logging_destroy(tlog_t *logger) {
   written_before_summary = (unsigned long long)tlog_get_written(logger);
   dropped_total = (unsigned long long)tlog_get_dropped(logger);
   pending_before_summary = tlog_get_queue_size(logger);
-  SALTS_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+  TLOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                   "logging-shutdown written_before_summary={} dropped_total={} "
                   "pending_before_summary={}",
                   written_before_summary, dropped_total, pending_before_summary);
@@ -263,11 +263,11 @@ static int flowie_server_security_runtime_create(
   realm_config.resource_uid = flowie_server_config_realm_resource_uid(config);
   realm_config.owner_name = flowie_server_config_realm_owner_name(config);
   realm_config.policy_source = flowie_server_config_acl_provider_name(config);
-  if (rc == SALTS_OK) rc = flowie_security_realm_create(&realm_config, &runtime->realm);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_security_realm_create(&realm_config, &runtime->realm);
+  if (rc == CMETA_OK)
     rc = flowie_security_realm_bind_authorization_provider(
         runtime->realm, flowie_server_http_security_acl_provider(runtime->http));
-  if (rc != SALTS_OK) flowie_server_security_runtime_destroy(runtime);
+  if (rc != CMETA_OK) flowie_server_security_runtime_destroy(runtime);
   return rc;
 }
 
@@ -296,7 +296,7 @@ int main(int argc, char **argv) {
   flowie_server_tuning_t tuning = FLOWIE_SERVER_TUNING_INIT;
   CmdArgerBool check_only = cmd_arger_false;
   CmdArgerBool require_security = cmd_arger_false;
-  salts_log_level_t log_level = SALTS_LOG_LEVEL_INFO;
+  cmeta_log_level_t log_level = SALTS_LOG_LEVEL_INFO;
   tlog_t *logger = NULL;
   int rc;
 
@@ -366,9 +366,9 @@ int main(int argc, char **argv) {
   if (config_path) {
     rc = flowie_server_config_load(config_path, profile_name, require_security ? 1 : 0,
                                    &server_config, &config_error);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       (void)fprintf(stderr, "flowie_server: invalid configuration at %s: %s (%s)\n",
-                    config_error.path, config_error.message, salts_strerror(rc));
+                    config_error.path, config_error.message, cmeta_strerror(rc));
       return EXIT_FAILURE;
     }
     endpoint_config = *flowie_server_config_endpoint(server_config);
@@ -383,7 +383,7 @@ int main(int argc, char **argv) {
     endpoint_config.path = path ? path : "/mqtt";
     endpoint_config.manage_sessions = 1;
     if (endpoint_config.transport == 0 || port <= 0 || port > UINT16_MAX ||
-        flowie_server_tuning_apply(&tuning, &endpoint_config) != SALTS_OK) {
+        flowie_server_tuning_apply(&tuning, &endpoint_config) != CMETA_OK) {
       (void)fprintf(stderr, "flowie_server: invalid listener options\n");
       return EXIT_FAILURE;
     }
@@ -393,16 +393,16 @@ int main(int argc, char **argv) {
   protocol_store_options = protocol_store_options ? protocol_store_options
                                                   : FLOWIE_SERVER_TURBODB_DEFAULT_OPTIONS;
   options.on_message = flowie_server_publish;
-  if (flowie_server_log_level(log_level_name, &log_level) != SALTS_OK) {
+  if (flowie_server_log_level(log_level_name, &log_level) != CMETA_OK) {
     (void)fprintf(stderr, "flowie_server: invalid log level: %s\n",
                   log_level_name ? log_level_name : "(null)");
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
   rc = flowie_server_turbodb_config_create(protocol_store_driver, protocol_store_options, &turbodb);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr, "flowie_server: invalid TurboDB configuration: %s\n",
-                  salts_strerror(rc));
+                  cmeta_strerror(rc));
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
@@ -413,13 +413,13 @@ int main(int argc, char **argv) {
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
-  SALTS_LOG_DEBUGF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+  TLOG_DEBUGF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                    "effective-config transport={} host={} port={} path={} reuse_port={} "
                    "protocol_store_driver={} log_level={}",
                    flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
                    endpoint_config.port, endpoint_config.path, endpoint_config.reuse_port,
-                   flowie_server_turbodb_config_driver(turbodb), salts_log_level_name(log_level));
-  SALTS_LOG_DEBUGF(
+                   flowie_server_turbodb_config_driver(turbodb), cmeta_log_level_name(log_level));
+  TLOG_DEBUGF(
       logger, FLOWIE_SERVER_LOG_COMPONENT,
       "effective-config max_packet_size={} max_connections={} max_sessions={} "
       "max_subscriptions_per_session={} max_inflight_per_session={} max_retained_messages={} "
@@ -431,7 +431,7 @@ int main(int argc, char **argv) {
       (unsigned long long)endpoint_config.max_inflight_per_session,
       (unsigned long long)endpoint_config.max_retained_messages,
       (unsigned long long)endpoint_config.send_hwm_bytes);
-  SALTS_LOG_DEBUGF(
+  TLOG_DEBUGF(
       logger, FLOWIE_SERVER_LOG_COMPONENT,
       "effective-config coroutine_stack_size={} stream_recv_buffer_bytes={} "
       "socket_recv_buffer_bytes={} socket_send_buffer_bytes={} timeout_ms={} recv_timeout_ms={} "
@@ -450,10 +450,10 @@ int main(int argc, char **argv) {
   if (server_config && flowie_server_config_realm_name(server_config)) {
     rc = flowie_server_security_runtime_create(server_config, &endpoint_config,
                                                &security_runtime);
-    if (rc != SALTS_OK) {
-      SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+    if (rc != CMETA_OK) {
+      TLOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                        "security-runtime-create-failed status={} reason={}", rc,
-                       salts_strerror(rc));
+                       cmeta_strerror(rc));
       flowie_server_logging_destroy(logger);
       flowie_server_turbodb_config_destroy(turbodb);
       flowie_server_config_destroy(server_config);
@@ -469,10 +469,10 @@ int main(int argc, char **argv) {
 
   rc = flowie_server_repository_open(flowie_server_turbodb_config_database(turbodb),
                                      &endpoint_config, &repository);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+  if (rc != CMETA_OK) {
+    TLOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "protocol-store-open-failed driver={} status={} reason={}",
-                     flowie_server_turbodb_config_driver(turbodb), rc, salts_strerror(rc));
+                     flowie_server_turbodb_config_driver(turbodb), rc, cmeta_strerror(rc));
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
@@ -483,9 +483,9 @@ int main(int argc, char **argv) {
   bindings.persistence = &persistence;
   rc = flowie_endpoint_core_create_ex("mqtt", &endpoint_config, &options, &execution, &bindings,
                                       &endpoint);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-create-failed status={} reason={}", rc, salts_strerror(rc));
+  if (rc != CMETA_OK) {
+    TLOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                     "endpoint-create-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
@@ -504,7 +504,7 @@ int main(int argc, char **argv) {
   }
   if (signal(SIGINT, flowie_server_signal) == SIG_ERR ||
       signal(SIGTERM, flowie_server_signal) == SIG_ERR) {
-    SALTS_LOG_ERROR(logger, FLOWIE_SERVER_LOG_COMPONENT,
+    TLOG_ERROR(logger, FLOWIE_SERVER_LOG_COMPONENT,
                     "signal-handler-install-failed action=check process signal policy");
     flowie_server_runtime_destroy(endpoint, repository);
     flowie_server_security_runtime_destroy(&security_runtime);
@@ -514,9 +514,9 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   rc = flowie_endpoint_core_start(endpoint);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-start-failed status={} reason={}", rc, salts_strerror(rc));
+  if (rc != CMETA_OK) {
+    TLOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                     "endpoint-start-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_runtime_destroy(endpoint, repository);
     flowie_server_security_runtime_destroy(&security_runtime);
     flowie_server_logging_destroy(logger);
@@ -524,25 +524,25 @@ int main(int argc, char **argv) {
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
-  SALTS_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+  TLOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                   "server-started transport={} host={} port={}",
                   flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
                   endpoint_config.port);
   (void)fprintf(stdout, "flowie_server: mqtt://%s:%d running; press Ctrl+C to stop\n",
                 endpoint_config.host, endpoint_config.port);
-  while (!flowie_server_stop_requested) salts_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
+  while (!flowie_server_stop_requested) cmeta_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
   rc = flowie_endpoint_core_stop(endpoint);
   flowie_server_runtime_destroy(endpoint, repository);
   flowie_server_security_runtime_destroy(&security_runtime);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-stop-failed status={} reason={}", rc, salts_strerror(rc));
+  if (rc != CMETA_OK) {
+    TLOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                     "endpoint-stop-failed status={} reason={}", rc, cmeta_strerror(rc));
     flowie_server_logging_destroy(logger);
     flowie_server_turbodb_config_destroy(turbodb);
     flowie_server_config_destroy(server_config);
     return EXIT_FAILURE;
   }
-  SALTS_LOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
+  TLOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
   flowie_server_logging_destroy(logger);
   flowie_server_turbodb_config_destroy(turbodb);
   flowie_server_config_destroy(server_config);

@@ -7,7 +7,7 @@
 
 #include "flowie_topic_index_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdlib.h>
@@ -70,16 +70,16 @@ static int flowie_topic_node_create(flowie_topic_index_t *index, flowie_topic_no
     }
   }
   rc = flowie_stl_error(hash_map_init_bytes(&node->exact_children, sizeof(vstr), _Alignof(vstr), sizeof(flowie_topic_node_t *), _Alignof(flowie_topic_node_t *), SIZE_MAX, flowie_topic_key_hash, flowie_topic_key_equal, NULL));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_stl_error(vec_init_bytes(&node->terminal_entries, sizeof(size_t), _Alignof(size_t), SIZE_MAX));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_stl_error(vec_init_bytes(&node->hash_entries, sizeof(size_t), _Alignof(size_t), SIZE_MAX));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   node->node_slot = vec_size(&index->nodes);
   rc = flowie_stl_error(vec_push(&index->nodes, &node));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   *out = node;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   flowie_topic_node_destroy(node);
@@ -91,21 +91,21 @@ int flowie_topic_index_init(flowie_topic_index_t *index) {
   if (!index) return SALTS_EINVAL;
   memset(index, 0, sizeof(*index));
   rc = flowie_stl_error(vec_init_bytes(&index->nodes, sizeof(flowie_topic_node_t *), _Alignof(flowie_topic_node_t *), SIZE_MAX));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_stl_error(vec_init_bytes(&index->match_active, sizeof(flowie_topic_node_t *), _Alignof(flowie_topic_node_t *), SIZE_MAX));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     vec_destroy(&index->nodes);
     return rc;
   }
   rc = flowie_stl_error(vec_init_bytes(&index->match_next, sizeof(flowie_topic_node_t *), _Alignof(flowie_topic_node_t *), SIZE_MAX));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     vec_destroy(&index->match_active);
     vec_destroy(&index->nodes);
     return rc;
   }
   index->initialized = 1;
   rc = flowie_topic_node_create(index, NULL, vstr_from_buf(NULL, 0u), 0, &index->root);
-  if (rc != SALTS_OK) flowie_topic_index_destroy(index);
+  if (rc != CMETA_OK) flowie_topic_index_destroy(index);
   return rc;
 }
 
@@ -129,13 +129,13 @@ static int flowie_topic_exact_child(flowie_topic_index_t *index, flowie_topic_no
   found = (flowie_topic_node_t **)hash_map_get(&parent->exact_children, &token);
   if (found) {
     *out = *found;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   rc = flowie_topic_node_create(index, parent, token, 0, &created);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   token = tstr_to_v(created->token);
   rc = flowie_stl_error(hash_map_put(&parent->exact_children, &token, &created));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_topic_node_t **slot =
         (flowie_topic_node_t **)vec_at(&index->nodes, created->node_slot);
     if (created->node_slot + 1u == vec_size(&index->nodes))
@@ -145,7 +145,7 @@ static int flowie_topic_exact_child(flowie_topic_index_t *index, flowie_topic_no
     return rc;
   }
   *out = created;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_topic_index_insert_bound(flowie_topic_index_t *index, flowie_mqtt_span_t filter,
@@ -169,7 +169,7 @@ int flowie_topic_index_insert_bound(flowie_topic_index_t *index, flowie_mqtt_spa
     if (token.len == 1u && token.data[0] == '#') {
       if (!last) return SALTS_EPROTO;
       rc = flowie_stl_error(vec_push(&node->hash_entries, &entry_index));
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) {
         binding->node = node;
         binding->position = vec_size(&node->hash_entries) - 1u;
         binding->bucket = FLOWIE_TOPIC_BUCKET_HASH;
@@ -179,18 +179,18 @@ int flowie_topic_index_insert_bound(flowie_topic_index_t *index, flowie_mqtt_spa
     if (token.len == 1u && token.data[0] == '+') {
       if (!node->plus_child) {
         rc = flowie_topic_node_create(index, node, vstr_from_buf(NULL, 0u), 1, &node->plus_child);
-        if (rc != SALTS_OK) return rc;
+        if (rc != CMETA_OK) return rc;
       }
       node = node->plus_child;
     } else {
       flowie_topic_node_t *child = NULL;
       rc = flowie_topic_exact_child(index, node, token, &child);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
       node = child;
     }
     if (last) {
       rc = flowie_stl_error(vec_push(&node->terminal_entries, &entry_index));
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) {
         binding->node = node;
         binding->position = vec_size(&node->terminal_entries) - 1u;
         binding->bucket = FLOWIE_TOPIC_BUCKET_TERMINAL;
@@ -225,7 +225,7 @@ static int flowie_topic_index_prune(flowie_topic_index_t *index, flowie_topic_no
     } else {
       vstr token = tstr_to_v(node->token);
       rc = flowie_stl_error(hash_map_remove(&parent->exact_children, &token, NULL));
-      if (rc != SALTS_OK) return SALTS_EPROTO;
+      if (rc != CMETA_OK) return SALTS_EPROTO;
     }
     {
       flowie_topic_node_t *const *slot =
@@ -233,7 +233,7 @@ static int flowie_topic_index_prune(flowie_topic_index_t *index, flowie_topic_no
       if (!slot || *slot != node) return SALTS_EPROTO;
     }
     rc = flowie_stl_error(vec_swap_remove(&index->nodes, removed_slot, NULL));
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (removed_slot < vec_size(&index->nodes)) {
       flowie_topic_node_t **moved =
           (flowie_topic_node_t **)vec_at(&index->nodes, removed_slot);
@@ -243,7 +243,7 @@ static int flowie_topic_index_prune(flowie_topic_index_t *index, flowie_topic_no
     flowie_topic_node_destroy(node);
     node = parent;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_topic_index_remove(flowie_topic_index_t *index, flowie_topic_index_binding_t *binding,
@@ -266,7 +266,7 @@ int flowie_topic_index_remove(flowie_topic_index_t *index, flowie_topic_index_bi
   if (!last) return SALTS_EPROTO;
   if (binding->position + 1u != vec_size(entries)) moved = *last;
   rc = flowie_stl_error(vec_swap_remove(entries, binding->position, NULL));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   binding->node = NULL;
   binding->position = 0u;
   binding->bucket = FLOWIE_TOPIC_BUCKET_NONE;
@@ -281,9 +281,9 @@ static int flowie_topic_entries_append(vec_t *matched, const vec_t *entries) {
     int rc;
     if (!entry) return SALTS_EPROTO;
     rc = flowie_stl_error(vec_push(matched, entry));
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_topic_index_match(flowie_topic_index_t *index, flowie_mqtt_span_t topic,
@@ -299,7 +299,7 @@ int flowie_topic_index_match(flowie_topic_index_t *index, flowie_mqtt_span_t top
   vec_clear(active);
   vec_clear(next);
   rc = flowie_stl_error(vec_push(active, &index->root));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   for (;;) {
     size_t end = offset;
     vstr token;
@@ -319,17 +319,17 @@ int flowie_topic_index_match(flowie_topic_index_t *index, flowie_mqtt_span_t top
       }
       if (!(first_level && topic.data[0] == '$')) {
         rc = flowie_topic_entries_append(matched, &(*node)->hash_entries);
-        if (rc != SALTS_OK) goto done;
+        if (rc != CMETA_OK) goto done;
         if ((*node)->plus_child) {
           rc = flowie_stl_error(vec_push(next, &(*node)->plus_child));
-          if (rc != SALTS_OK) goto done;
+          if (rc != CMETA_OK) goto done;
         }
       }
       exact =
           (flowie_topic_node_t *const *)hash_map_get_const(&(*node)->exact_children, &token);
       if (exact && *exact) {
         rc = flowie_stl_error(vec_push(next, exact));
-        if (rc != SALTS_OK) goto done;
+        if (rc != CMETA_OK) goto done;
       }
     }
     if (last) break;
@@ -352,10 +352,10 @@ int flowie_topic_index_match(flowie_topic_index_t *index, flowie_mqtt_span_t top
       goto done;
     }
     rc = flowie_topic_entries_append(matched, &(*node)->terminal_entries);
-    if (rc == SALTS_OK) rc = flowie_topic_entries_append(matched, &(*node)->hash_entries);
-    if (rc != SALTS_OK) goto done;
+    if (rc == CMETA_OK) rc = flowie_topic_entries_append(matched, &(*node)->hash_entries);
+    if (rc != CMETA_OK) goto done;
   }
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   return rc;
@@ -369,9 +369,9 @@ static int flowie_topic_entries_visit(const vec_t *entries, flowie_topic_index_v
     int rc;
     if (!entry) return SALTS_EPROTO;
     rc = visit(ctx, *entry);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_topic_node_visit_end(const flowie_topic_node_t *node,
@@ -379,7 +379,7 @@ static int flowie_topic_node_visit_end(const flowie_topic_node_t *node,
   int rc;
   if (!node) return SALTS_EPROTO;
   rc = flowie_topic_entries_visit(&node->terminal_entries, visit, ctx);
-  return rc == SALTS_OK ? flowie_topic_entries_visit(&node->hash_entries, visit, ctx) : rc;
+  return rc == CMETA_OK ? flowie_topic_entries_visit(&node->hash_entries, visit, ctx) : rc;
 }
 
 static int flowie_topic_index_visit_topic_node(const flowie_topic_node_t *node,
@@ -397,21 +397,21 @@ static int flowie_topic_index_visit_topic_node(const flowie_topic_node_t *node,
   last = end == topic.size;
   if (!(first_level && topic.data[0] == '$')) {
     rc = flowie_topic_entries_visit(&node->hash_entries, visit, ctx);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   exact = (flowie_topic_node_t *const *)hash_map_get_const(&node->exact_children, &token);
   if (exact && *exact) {
     rc = last ? flowie_topic_node_visit_end(*exact, visit, ctx)
               : flowie_topic_index_visit_topic_node(*exact, topic, end + 1u, 0, visit, ctx);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   if (node->plus_child && !(first_level && topic.data[0] == '$')) {
     rc = last ? flowie_topic_node_visit_end(node->plus_child, visit, ctx)
               : flowie_topic_index_visit_topic_node(node->plus_child, topic, end + 1u, 0, visit,
                                                     ctx);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_topic_index_visit_topic(const flowie_topic_index_t *index, flowie_mqtt_span_t topic,
@@ -449,25 +449,25 @@ static int flowie_topic_index_visit_containing_node(const flowie_topic_node_t *n
   requested_system = first_level && token.len != 0u && token.data[0] == '$';
   if (!requested_system) {
     rc = flowie_topic_entries_visit(&node->hash_entries, visit, ctx);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  if (requested_hash) return SALTS_OK;
+  if (requested_hash) return CMETA_OK;
   if (!requested_plus) {
     exact = (flowie_topic_node_t *const *)hash_map_get_const(&node->exact_children, &token);
     if (exact && *exact) {
       rc = last ? flowie_topic_node_visit_end(*exact, visit, ctx)
                 : flowie_topic_index_visit_containing_node(*exact, requested, end + 1u, 0, visit,
                                                            ctx);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
     }
   }
   if (node->plus_child && !requested_system) {
     rc = last ? flowie_topic_node_visit_end(node->plus_child, visit, ctx)
               : flowie_topic_index_visit_containing_node(node->plus_child, requested, end + 1u, 0,
                                                          visit, ctx);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_topic_index_visit_containing_filters(const flowie_topic_index_t *index,

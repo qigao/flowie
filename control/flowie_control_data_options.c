@@ -1,7 +1,7 @@
 #include "flowie_control_data_options_internal.h"
 
 #include "flowie_control_management_service_internal.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <dotenv.h>
 
 #include <string.h>
@@ -11,7 +11,7 @@ static int data_option_copy(char *output, size_t capacity, const char *value) {
   if (!output || !value || size == 0u) return SALTS_EINVAL;
   if (size >= capacity) return SALTS_ENAMETOOLONG;
   memcpy(output, value, size + 1u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int data_option_take(int argc, char **argv, int *index, const char *name,
@@ -38,7 +38,7 @@ int flowie_control_data_options_parse(int argc, char **argv, flowie_control_data
   int has_env = 0;
   int has_domain = 0;
   int has_data = 0;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!out || out->size < sizeof(*out) || argc < 2 || !argv) return SALTS_EINVAL;
   *out = value;
   if (strcmp(argv[1], "export") == 0)
@@ -47,7 +47,7 @@ int flowie_control_data_options_parse(int argc, char **argv, flowie_control_data
     value.command = FLOWIE_CONTROL_DATA_IMPORT;
   else
     return SALTS_EINVAL;
-  for (int index = 2; rc == SALTS_OK && index < argc; ++index) {
+  for (int index = 2; rc == CMETA_OK && index < argc; ++index) {
     const char *argument = argv[index];
     const char *selected;
     int matched;
@@ -94,13 +94,13 @@ int flowie_control_data_options_parse(int argc, char **argv, flowie_control_data
     }
     return SALTS_EINVAL;
   }
-  if (rc != SALTS_OK || !has_config || !has_data ||
+  if (rc != CMETA_OK || !has_config || !has_data ||
       (value.command == FLOWIE_CONTROL_DATA_EXPORT &&
        (!has_domain || value.dry_run ||
         strcmp(value.domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0)) ||
       (value.command == FLOWIE_CONTROL_DATA_IMPORT && has_domain))
-    return rc == SALTS_OK ? SALTS_EINVAL : rc;
+    return rc == CMETA_OK ? SALTS_EINVAL : rc;
   if (value.env_file[0] && dotenv_load(value.env_file, false) != 0) return SALTS_EIO;
   *out = value;
-  return SALTS_OK;
+  return CMETA_OK;
 }

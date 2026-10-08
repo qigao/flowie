@@ -3,7 +3,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,7 +32,7 @@ static int management_session_policy_version(void *ctx, const char *domain_id,
   if (version_out) *version_out = 0u;
   if (!domain_id || !version_out || strcmp(domain_id, "root-a") != 0) return SALTS_EINVAL;
   *version_out = 1u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static management_session_fixture_t
@@ -57,14 +57,14 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   check_not_null(fixture.database_path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture.database_path), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, &fixture.store), SALTS_OK);
+  check_equal(flowie_control_store_open(&store_config, &fixture.store), CMETA_OK);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "session-root";
   root.expected_revision = revision;
   root.occurred_at = 1u;
-  check_equal(flowie_control_store_domain_create(fixture.store, &root, &result), SALTS_OK);
+  check_equal(flowie_control_store_domain_create(fixture.store, &root, &result), CMETA_OK);
   revision = result.revision;
 
   user.domain_id = "root-a";
@@ -75,7 +75,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   user.expected_revision = revision;
   user.occurred_at = 2u;
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  check_equal(flowie_control_store_user_create(fixture.store, &user, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_create(fixture.store, &user, &result), CMETA_OK);
   revision = result.revision;
 
   credential.domain_id = "root-a";
@@ -87,7 +87,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   credential.initial_secret = SESSION_TEST_PASSWORD_A;
   credential.initial_secret_size = sizeof(SESSION_TEST_PASSWORD_A) - 1u;
   check_equal(flowie_control_store_credential_generate(fixture.store, &credential, &generated),
-              SALTS_OK);
+              CMETA_OK);
   revision = generated.revision;
   flowie_control_generated_credential_wipe(&generated);
 
@@ -96,7 +96,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   user.expected_revision = revision;
   user.occurred_at = 4u;
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  check_equal(flowie_control_store_user_create(fixture.store, &user, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_create(fixture.store, &user, &result), CMETA_OK);
   revision = result.revision;
 
   credential.principal_id = "admin-b";
@@ -107,7 +107,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   credential.initial_secret_size = sizeof(SESSION_TEST_PASSWORD_B) - 1u;
   generated = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   check_equal(flowie_control_store_credential_generate(fixture.store, &credential, &generated),
-              SALTS_OK);
+              CMETA_OK);
   revision = generated.revision;
   flowie_control_generated_credential_wipe(&generated);
 
@@ -118,7 +118,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   role.expected_revision = revision;
   role.occurred_at = 6u;
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  check_equal(flowie_control_store_role_create(fixture.store, &role, &result), SALTS_OK);
+  check_equal(flowie_control_store_role_create(fixture.store, &role, &result), CMETA_OK);
   revision = result.revision;
 
   assignment.domain_id = "root-a";
@@ -129,7 +129,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   assignment.expected_revision = revision;
   assignment.occurred_at = 7u;
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  check_equal(flowie_control_store_user_role_add(fixture.store, &assignment, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_role_add(fixture.store, &assignment, &result), CMETA_OK);
   revision = result.revision;
 
   assignment.principal_id = "admin-b";
@@ -137,12 +137,12 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   assignment.expected_revision = revision;
   assignment.occurred_at = 8u;
   result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-  check_equal(flowie_control_store_user_role_add(fixture.store, &assignment, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_role_add(fixture.store, &assignment, &result), CMETA_OK);
 
   auth_config.repository = flowie_control_store_repository(fixture.store);
   auth_config.policy_version.current = management_session_policy_version;
   auth_config.clock_seconds = management_session_clock;
-  check_equal(flowie_control_auth_service_create(&auth_config, &fixture.auth_service), SALTS_OK);
+  check_equal(flowie_control_auth_service_create(&auth_config, &fixture.auth_service), CMETA_OK);
 
   session_config.repository = flowie_control_store_repository(fixture.store);
   session_config.auth_service = fixture.auth_service;
@@ -151,7 +151,7 @@ management_session_fixture_open(size_t capacity, size_t max_sessions_per_princip
   session_config.ttl_seconds = 3600u;
   session_config.clock = management_session_clock;
   check_equal(flowie_control_management_session_store_create(&session_config, &fixture.sessions),
-              SALTS_OK);
+              CMETA_OK);
   fixture.capacity = capacity;
   fixture.max_sessions_per_principal = max_sessions_per_principal;
   return fixture;
@@ -170,7 +170,7 @@ static void management_session_fixture_recreate_sessions(management_session_fixt
   config.ttl_seconds = 3600u;
   config.clock = management_session_clock;
   check_equal(flowie_control_management_session_store_create(&config, &fixture->sessions),
-              SALTS_OK);
+              CMETA_OK);
 }
 
 static void management_session_fixture_close(management_session_fixture_t *fixture) {
@@ -200,13 +200,13 @@ spec("Flowie management sessions") {
 
     check_equal(
         management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A, token),
-        SALTS_OK);
+        CMETA_OK);
     management_session_fixture_recreate_sessions(&fixture);
     check_equal(flowie_control_management_session_resolve(fixture.sessions, token, &identity),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(identity.domain_id, "root-a");
     check_equal(identity.principal_id, "admin-a");
-    check_equal(flowie_control_management_session_revoke(fixture.sessions, token), SALTS_OK);
+    check_equal(flowie_control_management_session_revoke(fixture.sessions, token), CMETA_OK);
 
     management_session_fixture_recreate_sessions(&fixture);
     identity = (flowie_control_management_session_identity_t)
@@ -227,17 +227,17 @@ spec("Flowie management sessions") {
     for (size_t index = 0u; index < 5u; ++index)
       check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                            admin_a_tokens[index]),
-                  SALTS_OK);
+                  CMETA_OK);
 
     check_equal(
         flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[0], &identity),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(management_session_login(fixture.sessions, "admin-b", SESSION_TEST_PASSWORD_B,
                                          admin_b_token),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                          admin_a_tokens[5]),
-                SALTS_OK);
+                CMETA_OK);
 
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
@@ -249,14 +249,14 @@ spec("Flowie management sessions") {
           FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
       check_equal(flowie_control_management_session_resolve(fixture.sessions, admin_a_tokens[index],
                                                             &identity),
-                  SALTS_OK);
+                  CMETA_OK);
       check_equal(identity.principal_id, "admin-a");
     }
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
     check_equal(
         flowie_control_management_session_resolve(fixture.sessions, admin_b_token, &identity),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(identity.principal_id, "admin-b");
 
     management_session_fixture_close(&fixture);
@@ -272,16 +272,16 @@ spec("Flowie management sessions") {
 
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                          admin_a_first),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(management_session_login(fixture.sessions, "admin-b", SESSION_TEST_PASSWORD_B,
                                          admin_b_token),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(
         flowie_control_management_session_resolve(fixture.sessions, admin_a_first, &identity),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                          admin_a_second),
-                SALTS_OK);
+                CMETA_OK);
 
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
@@ -292,12 +292,12 @@ spec("Flowie management sessions") {
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
     check_equal(
         flowie_control_management_session_resolve(fixture.sessions, admin_a_first, &identity),
-        SALTS_OK);
+        CMETA_OK);
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
     check_equal(
         flowie_control_management_session_resolve(fixture.sessions, admin_a_second, &identity),
-        SALTS_OK);
+        CMETA_OK);
 
     management_session_fixture_close(&fixture);
   }
@@ -312,13 +312,13 @@ spec("Flowie management sessions") {
     for (size_t index = 0u; index < 3u; ++index)
       check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                            old_tokens[index]),
-                  SALTS_OK);
+                  CMETA_OK);
     fixture.capacity = 1u;
     fixture.max_sessions_per_principal = 1u;
     management_session_fixture_recreate_sessions(&fixture);
     check_equal(management_session_login(fixture.sessions, "admin-a", SESSION_TEST_PASSWORD_A,
                                          new_token),
-                SALTS_OK);
+                CMETA_OK);
 
     for (size_t index = 0u; index < 3u; ++index) {
       identity = (flowie_control_management_session_identity_t)
@@ -330,7 +330,7 @@ spec("Flowie management sessions") {
     identity = (flowie_control_management_session_identity_t)
         FLOWIE_CONTROL_MANAGEMENT_SESSION_IDENTITY_INIT;
     check_equal(flowie_control_management_session_resolve(fixture.sessions, new_token, &identity),
-                SALTS_OK);
+                CMETA_OK);
 
     management_session_fixture_close(&fixture);
   }

@@ -1,7 +1,7 @@
 #include "flowie_control_config_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -208,7 +208,7 @@ spec("Flowie controller configuration") {
                                "management:\n"
                                "  session:\n"
                                "    capacity: 1024\n";
-    check_equal(parse_config(yaml, &config, &error), SALTS_OK);
+    check_equal(parse_config(yaml, &config, &error), CMETA_OK);
     check_equal(config.turbodb.driver, "sqlite");
     check_equal(config.turbodb.option_count, 2u);
     check_equal(config.turbodb.options[0].keyword, "filename");
@@ -256,7 +256,7 @@ spec("Flowie controller configuration") {
 
     check_equal(parse_config(literal, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.password");
-    check_equal(parse_config(reference, &config, &error), SALTS_OK);
+    check_equal(parse_config(reference, &config, &error), CMETA_OK);
     check_equal(config.turbodb.options[0].value, "env://FLOWIE_CONTROL_DB_PASSWORD");
   }
 
@@ -283,14 +283,14 @@ spec("Flowie controller configuration") {
     check_equal(error.path, "$.storage.turbodb.options.conninfo");
     check_equal(parse_config(malformed_reference, &config, &error), SALTS_EINVAL);
     check_equal(error.path, "$.storage.turbodb.options.password");
-    check_equal(parse_config(valid_references, &config, &error), SALTS_OK);
+    check_equal(parse_config(valid_references, &config, &error), CMETA_OK);
     check_equal(config.turbodb.option_count, 3u);
   }
 
 #ifdef FLOWIE_CONTROL_TEST_CONFIG_PATH
   it("keeps the shipped controller example inside the schema") {
     check_equal(flowie_control_config_load(FLOWIE_CONTROL_TEST_CONFIG_PATH, &config, &error),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.coroutine_stack_size,
                 FLOWIE_CONTROL_CONFIG_LISTENER_DEFAULT_COROUTINE_STACK_SIZE);
@@ -300,7 +300,7 @@ spec("Flowie controller configuration") {
 #endif
 
   it("loads a valid configuration with secure defaults") {
-    check_equal(parse_config(valid_config, &config, &error), SALTS_OK);
+    check_equal(parse_config(valid_config, &config, &error), CMETA_OK);
     check_equal(config.listener.host, "127.0.0.1");
     check_equal(config.listener.port, 8443);
     check_equal(config.listener.coroutine_stack_size,
@@ -327,7 +327,7 @@ spec("Flowie controller configuration") {
   }
 
   it("defaults each principal to five concurrent management sessions") {
-    check_equal(parse_config(valid_turbodb_config, &config, &error), SALTS_OK);
+    check_equal(parse_config(valid_turbodb_config, &config, &error), CMETA_OK);
     check_equal(config.management.session_max_sessions_per_principal, 5u);
   }
 
@@ -473,7 +473,7 @@ spec("Flowie controller configuration") {
                                "    workers: 6\n"
                                "    queue_capacity: 256\n"
                                "    deadline_ms: 12000\n";
-    check_equal(parse_config(yaml, &config, &error), SALTS_OK);
+    check_equal(parse_config(yaml, &config, &error), CMETA_OK);
     check_true(config.auth.enabled);
     check_false(config.auth.external_https.enabled);
     check_equal(config.auth.method, "password");
@@ -542,7 +542,7 @@ spec("Flowie controller configuration") {
   }
 
   it("loads the bounded external HTTPS authentication configuration") {
-    check_equal(parse_config(valid_external_https_config, &config, &error), SALTS_OK);
+    check_equal(parse_config(valid_external_https_config, &config, &error), CMETA_OK);
     check_true(config.auth.external_https.enabled);
     check_equal(config.auth.external_https.url, "https://auth.example/v1/assert");
     check_equal(config.auth.external_https.service_token_ref,
@@ -615,7 +615,7 @@ spec("Flowie controller configuration") {
   }
 
   it("loads bounded JWT JWKS authentication configuration") {
-    check_equal(parse_config(valid_jwt_jwks_config, &config, &error), SALTS_OK);
+    check_equal(parse_config(valid_jwt_jwks_config, &config, &error), CMETA_OK);
     check_true(config.auth.jwt_jwks.enabled);
     check_false(config.auth.external_https.enabled);
     check_equal(config.auth.jwt_jwks.url, "https://identity.example/.well-known/jwks.json");

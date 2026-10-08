@@ -1,16 +1,16 @@
 #include "flowie.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
                                 flowie_publish_result_t *result, void *ctx) {
   (void)endpoint;
   (void)message;
   (void)ctx;
-  result->status = SALTS_OK;
+  result->status = CMETA_OK;
   result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 suite("Flowie standalone core") {
@@ -24,7 +24,7 @@ suite("Flowie standalone core") {
     config.manage_sessions = 1;
     options.on_message = flowie_test_dispatch;
     check_equal(flowie_endpoint_core_create("standalone", &config, &options, &endpoint),
-                 SALTS_OK);
+                 CMETA_OK);
     check_not_null(endpoint);
     flowie_endpoint_core_destroy(endpoint);
   }
@@ -48,7 +48,7 @@ suite("Flowie standalone core") {
     config.linger_ms = 250u;
     options.on_message = flowie_test_dispatch;
 
-    check_equal(flowie_endpoint_core_create("tuned", &config, &options, &endpoint), SALTS_OK);
+    check_equal(flowie_endpoint_core_create("tuned", &config, &options, &endpoint), CMETA_OK);
     check_not_null(endpoint);
     flowie_endpoint_core_destroy(endpoint);
   }
@@ -64,7 +64,7 @@ suite("Flowie standalone core") {
     route.owner_instance_id = 7u;
     route.session_id = 11u;
     route.session_generation = 13u;
-    check_equal(flowie_message_set_protocol_route(&message, &route), SALTS_OK);
+    check_equal(flowie_message_set_protocol_route(&message, &route), CMETA_OK);
     settlement.message.protocol = FLOWIE_PROTOCOL_MQTT;
     settlement.message.protocol_version = FLOWIE_MQTT_VERSION_5;
     settlement.message.kind = FLOWIE_PROTOCOL_MESSAGE_DATA;
@@ -72,10 +72,10 @@ suite("Flowie standalone core") {
     settlement.message.packet_id = 3u;
     settlement.message.session_generation = route.session_generation;
     settlement.requested_point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
-    check_equal(flowie_message_set_protocol_settlement(&message, &settlement), SALTS_OK);
+    check_equal(flowie_message_set_protocol_settlement(&message, &settlement), CMETA_OK);
     check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_message_complete_protocol_settlement(
                      &message, FLOWIE_PROTOCOL_SETTLE_ACCEPTED),
                  SALTS_EALREADY);

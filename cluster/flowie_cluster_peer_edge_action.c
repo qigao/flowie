@@ -35,7 +35,7 @@ int flowie_cluster_peer_edge_action_encode(
                  FLOWIE_CLUSTER_PEER_MQTT_REPLY_HEADER_SIZE;
   rc = flowie_cluster_peer_mqtt_reply_encode(mqtt_version, packet, close_after_send,
                                              settlement_point, packet_limit, &action);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   action_size = tstr_len(action);
   if (action_size > SIZE_MAX - FLOWIE_CLUSTER_PEER_EDGE_ACTION_HEADER_SIZE) {
     tstr_free(action);
@@ -66,7 +66,7 @@ int flowie_cluster_peer_edge_action_encode(
                                      action_sequence);
   memcpy(encoded + FLOWIE_CLUSTER_PEER_EDGE_ACTION_HEADER_SIZE, action, action_size);
   tstr_free(action);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_edge_action_decode(const void *data, size_t data_size,
@@ -107,12 +107,12 @@ int flowie_cluster_peer_edge_action_decode(const void *data, size_t data_size,
   rc = flowie_cluster_peer_mqtt_reply_decode(
       bytes + FLOWIE_CLUSTER_PEER_EDGE_ACTION_HEADER_SIZE, action_size, packet_limit,
       &decoded.action);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (decoded.action.packet.packet.size == 0u && !decoded.action.close_after_send &&
       decoded.action.settlement_point == 0)
     return SALTS_EPROTO;
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_edge_action_ack_encode(uint64_t action_sequence, tstr *out) {
@@ -129,7 +129,7 @@ int flowie_cluster_peer_edge_action_ack_encode(uint64_t action_sequence, tstr *o
   flowie_cluster_peer_wire_write_u16(encoded + 6u, FLOWIE_CLUSTER_PEER_EDGE_ACTION_ACK_SIZE);
   flowie_cluster_peer_wire_write_u32(encoded + 8u, FLOWIE_CLUSTER_PEER_EDGE_ACTION_ACK_SIZE);
   flowie_cluster_peer_wire_write_u64(encoded + 16u, action_sequence);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_edge_action_ack_decode(const void *data, size_t data_size,
@@ -150,5 +150,5 @@ int flowie_cluster_peer_edge_action_ack_decode(const void *data, size_t data_siz
   sequence = flowie_cluster_peer_wire_read_u64(bytes + 16u);
   if (sequence == 0u) return SALTS_EPROTO;
   *out_action_sequence = sequence;
-  return SALTS_OK;
+  return CMETA_OK;
 }

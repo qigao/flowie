@@ -9,8 +9,8 @@
 typedef struct tf_execution_call_s {
   tf_execution_call_fn fn;
   void *arg;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   atomic_int refs;
   int started;
   int canceled;
@@ -28,8 +28,8 @@ static size_t tf_execution_next_power_of_two(size_t value) {
 static void tf_execution_call_release(tf_execution_call_t *call) {
   if (call == NULL || atomic_fetch_sub_explicit(&call->refs, 1, memory_order_acq_rel) != 1)
     return;
-  salts_cond_destroy(&call->changed);
-  salts_mutex_destroy(&call->mutex);
+  cmeta_cond_destroy(&call->changed);
+  cmeta_mutex_destroy(&call->mutex);
   free(call);
 }
 
@@ -37,30 +37,30 @@ static void tf_execution_call_run(coro_t *coroutine, void *arg) {
   tf_execution_call_t *call = (tf_execution_call_t *)arg;
   int status;
   (void)coroutine;
-  salts_mutex_lock(&call->mutex);
+  cmeta_mutex_lock(&call->mutex);
   if (call->canceled) {
-    salts_mutex_unlock(&call->mutex);
+    cmeta_mutex_unlock(&call->mutex);
     return;
   }
   call->started = 1;
-  salts_cond_signal(&call->changed);
-  salts_mutex_unlock(&call->mutex);
+  cmeta_cond_signal(&call->changed);
+  cmeta_mutex_unlock(&call->mutex);
   status = call->fn(call->arg);
-  salts_mutex_lock(&call->mutex);
+  cmeta_mutex_lock(&call->mutex);
   call->status = status;
   call->done = 1;
-  salts_cond_signal(&call->changed);
-  salts_mutex_unlock(&call->mutex);
+  cmeta_cond_signal(&call->changed);
+  cmeta_mutex_unlock(&call->mutex);
 }
 
 static void tf_execution_call_cancel(void *arg, int status) {
   tf_execution_call_t *call = (tf_execution_call_t *)arg;
-  salts_mutex_lock(&call->mutex);
+  cmeta_mutex_lock(&call->mutex);
   call->started = 1;
   call->status = status;
   call->done = 1;
-  salts_cond_signal(&call->changed);
-  salts_mutex_unlock(&call->mutex);
+  cmeta_cond_signal(&call->changed);
+  cmeta_mutex_unlock(&call->mutex);
 }
 
 static void tf_execution_call_finalize(void *arg) {
@@ -74,17 +74,17 @@ int tf_execution_init(tf_execution_t *execution, const flowie_execution_binding_
     return SALTS_EINVAL;
   memset(execution, 0, sizeof(*execution));
   status = flowie_execution_binding_validate(binding);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   execution->kind = binding->kind;
   if (binding->kind == FLOWIE_EXECUTION_PRIVATE) {
-    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
     config.worker_count = 1u;
     config.queue_capacity_per_worker = tf_execution_next_power_of_two(coroutine_capacity * 2u);
     config.coroutine_pool.initial_capacity = coroutine_capacity < 16u ? coroutine_capacity : 16u;
     config.coroutine_pool.max_capacity = coroutine_capacity;
     config.coroutine_pool.stack_size = stack_size;
     if (config.queue_capacity_per_worker == 0u) return SALTS_ERANGE;
-    execution->executor = salts_coro_executor_create(&config);
+    execution->executor = coro_executor_create(&config);
     if (execution->executor == NULL) return SALTS_ENOMEM;
     execution->owns_executor = 1;
     execution->shard = 0u;
@@ -93,29 +93,29 @@ int tf_execution_init(tf_execution_t *execution, const flowie_execution_binding_
     execution->shard = binding->shard;
     execution->owns_executor = binding->kind == FLOWIE_EXECUTION_OWNED_EXECUTOR;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int tf_execution_start(tf_execution_t *execution) {
-  return execution == NULL || execution->executor == NULL ? SALTS_EINVAL : SALTS_OK;
+  return execution == NULL || execution->executor == NULL ? SALTS_EINVAL : CMETA_OK;
 }
 
 int tf_execution_post(tf_execution_t *execution, coro_fn fn, void *arg) {
-  salts_coro_executor_task_t task;
+  coro_executor_task_t task;
   if (execution == NULL || execution->executor == NULL || fn == NULL) return SALTS_EINVAL;
-  task = (salts_coro_executor_task_t){fn, NULL, NULL, arg};
-  return salts_coro_executor_submit_to(execution->executor, execution->shard, &task);
+  task = (coro_executor_task_t){fn, NULL, NULL, arg};
+  return coro_executor_submit_to(execution->executor, execution->shard, &task);
 }
 
 static int tf_execution_call_common(tf_execution_t *execution, tf_execution_call_fn fn, void *arg,
                                     uint64_t timeout_ns) {
   tf_execution_call_t *call;
-  salts_coro_executor_task_t task;
+  coro_executor_task_t task;
   int status;
   if (execution == NULL || execution->executor == NULL || fn == NULL || timeout_ns == 0u)
     return SALTS_EINVAL;
-  if (salts_coro_executor_current() == execution->executor &&
-      salts_coro_executor_current_shard(execution->executor) == execution->shard)
+  if (coro_executor_current() == execution->executor &&
+      coro_executor_current_shard(execution->executor) == execution->shard)
     return fn(arg);
   call = (tf_execution_call_t *)calloc(1u, sizeof(*call));
   if (call == NULL) return SALTS_ENOMEM;
@@ -123,34 +123,34 @@ static int tf_execution_call_common(tf_execution_t *execution, tf_execution_call
   call->arg = arg;
   call->status = SALTS_EALREADY;
   atomic_init(&call->refs, 2);
-  salts_mutex_init(&call->mutex);
-  salts_cond_init(&call->changed);
+  cmeta_mutex_init(&call->mutex);
+  cmeta_cond_init(&call->changed);
   if (call->mutex == NULL || call->changed == NULL) {
     atomic_store(&call->refs, 1);
     tf_execution_call_release(call);
     return SALTS_ENOMEM;
   }
-  task = (salts_coro_executor_task_t){tf_execution_call_run, tf_execution_call_cancel,
+  task = (coro_executor_task_t){tf_execution_call_run, tf_execution_call_cancel,
                                       tf_execution_call_finalize, call};
-  status = salts_coro_executor_submit_to(execution->executor, execution->shard, &task);
-  if (status != SALTS_OK) {
+  status = coro_executor_submit_to(execution->executor, execution->shard, &task);
+  if (status != CMETA_OK) {
     tf_execution_call_release(call);
     tf_execution_call_release(call);
     return status;
   }
-  salts_mutex_lock(&call->mutex);
+  cmeta_mutex_lock(&call->mutex);
   while (!call->started && !call->done) {
-    if (salts_cond_timedwait(&call->changed, &call->mutex, timeout_ns) != SALTS_OK) break;
+    if (cmeta_cond_timedwait(&call->changed, &call->mutex, timeout_ns) != CMETA_OK) break;
   }
   if (!call->started && !call->done) {
     call->canceled = 1;
     status = SALTS_ETIMEDOUT;
   } else {
     while (!call->done)
-      salts_cond_wait(&call->changed, &call->mutex);
+      cmeta_cond_wait(&call->changed, &call->mutex);
     status = call->status;
   }
-  salts_mutex_unlock(&call->mutex);
+  cmeta_mutex_unlock(&call->mutex);
   tf_execution_call_release(call);
   return status;
 }
@@ -172,9 +172,9 @@ void tf_execution_stop(tf_execution_t *execution) {
 void tf_execution_destroy(tf_execution_t *execution) {
   if (execution == NULL) return;
   if (execution->owns_executor && execution->executor != NULL) {
-    (void)salts_coro_executor_shutdown(execution->executor);
-    (void)salts_coro_executor_wait(execution->executor);
-    (void)salts_coro_executor_destroy(execution->executor);
+    (void)coro_executor_shutdown(execution->executor);
+    (void)coro_executor_wait(execution->executor);
+    (void)coro_executor_destroy(execution->executor);
   }
   memset(execution, 0, sizeof(*execution));
 }

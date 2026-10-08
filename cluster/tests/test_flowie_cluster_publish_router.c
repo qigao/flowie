@@ -1,7 +1,7 @@
 #include "flowie_cluster_publish_router_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -16,7 +16,7 @@ typedef struct flowie_publish_router_test_s {
 static int flowie_publish_router_commit(
     void *ctx, const flowie_cluster_publish_event_view_t *event) {
   (void)ctx;
-  return event ? SALTS_OK : SALTS_EINVAL;
+  return event ? CMETA_OK : SALTS_EINVAL;
 }
 
 static int flowie_publish_router_enqueue(
@@ -28,7 +28,7 @@ static int flowie_publish_router_enqueue(
       test->chunk_count >= 2u)
     return SALTS_EPROTO;
   test->chunks[test->chunk_count++] = payload->data.data_chunk;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_publish_router_propose(void *ctx,
@@ -39,7 +39,7 @@ static int flowie_publish_router_propose(void *ctx,
   ++test->proposal_count;
   test->command_id = proposal->command_id;
   test->proposal_size = proposal->data_length;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static tr_raft_transport_payload_t flowie_publish_router_ack(
@@ -81,7 +81,7 @@ spec("flowie cluster publish router") {
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){packet, sizeof(packet)}, 4096u,
                      &event),
-                 SALTS_OK);
+                 CMETA_OK);
     router_config.self_id = 1u;
     router_config.max_event_bytes = 4096u;
     router_config.max_inbound_streams = 4u;
@@ -93,7 +93,7 @@ spec("flowie cluster publish router") {
     router_config.propose_ctx = &test;
     check_equal(flowie_cluster_publish_router_create(&router_config,
                                                        &router),
-                 SALTS_OK);
+                 CMETA_OK);
     configuration.phase = TR_RAFT_CONF_FINAL;
     configuration.member_count = 3u;
     for (index = 0u; index < 3u; ++index) {
@@ -103,18 +103,18 @@ spec("flowie cluster publish router") {
     }
     check_equal(flowie_cluster_publish_router_submit_durable(
                      router, 7u, 44u, 99u, &configuration, &event),
-                 SALTS_OK);
+                 CMETA_OK);
     check_null(event);
     check_equal(test.chunk_count, 2u);
     check_equal(flowie_cluster_publish_router_outbound_count(router), 1u);
     ack = flowie_publish_router_ack(&test.chunks[0]);
-    check_equal(flowie_cluster_publish_router_handle(router, &ack), SALTS_OK);
+    check_equal(flowie_cluster_publish_router_handle(router, &ack), CMETA_OK);
     /* submit_durable marks the local staging object durable, so one remote
      * durable ACK completes the 2/3 majority and retires the outbound entry. */
     check_equal(test.proposal_count, 1u);
     check_equal(test.command_id, 99u);
     check_equal(test.proposal_size, TR_RAFT_DATA_DESCRIPTOR_ENCODED_SIZE);
     check_equal(flowie_cluster_publish_router_outbound_count(router), 0u);
-    check_equal(flowie_cluster_publish_router_destroy(router), SALTS_OK);
+    check_equal(flowie_cluster_publish_router_destroy(router), CMETA_OK);
   }
 }

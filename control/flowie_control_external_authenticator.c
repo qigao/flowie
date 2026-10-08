@@ -1,6 +1,6 @@
 #include "flowie_control_external_authenticator_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +32,7 @@ int flowie_control_external_authenticator_validate(
       !external_auth_text_valid(authenticator->method, FLOWIE_SECURITY_TYPE_MAX) ||
       !authenticator->verify)
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_external_identity_mapper_validate(
@@ -40,7 +40,7 @@ int flowie_control_external_identity_mapper_validate(
   if (!mapper || mapper->size < sizeof(*mapper) ||
       mapper->version != FLOWIE_CONTROL_EXTERNAL_IDENTITY_MAPPER_VERSION || !mapper->map)
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_external_auth_assertion_validate(
@@ -69,7 +69,7 @@ int flowie_control_external_auth_assertion_validate(
       if (strcmp(assertion->external_groups[previous], assertion->external_groups[index]) == 0)
         return SALTS_EINVAL;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_external_identity_map_result_validate(
@@ -77,7 +77,7 @@ int flowie_control_external_identity_map_result_validate(
   if (!result || result->size < sizeof(*result) ||
       !external_auth_text_valid(result->principal_id, FLOWIE_SECURITY_ID_MAX))
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int external_subject_map(void *ctx,
@@ -106,7 +106,7 @@ static int external_subject_map(void *ctx,
   subject_size = strlen(request->assertion->subject);
   memcpy(result.principal_id, request->assertion->subject, subject_size + 1u);
   *result_out = result;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_external_subject_mapper_create(
@@ -131,7 +131,7 @@ int flowie_control_external_subject_mapper_create(
   mapper->interface.ctx = mapper;
   mapper->interface.map = external_subject_map;
   *out = mapper;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_external_subject_mapper_destroy(

@@ -3,7 +3,7 @@
 
 #include "flowie_export.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -205,7 +205,7 @@ typedef struct flowie_protocol_settlement_request_s {
 
 #define FLOWIE_PROTOCOL_SETTLEMENT_REQUEST_INIT                                               \
   {sizeof(flowie_protocol_settlement_request_t), FLOWIE_PROTOCOL_MESSAGE_INIT,            \
-   FLOWIE_PROTOCOL_SETTLE_RECEIVED, SALTS_OK, 0u, 0u}
+   FLOWIE_PROTOCOL_SETTLE_RECEIVED, CMETA_OK, 0u, 0u}
 
 /**
  * Message-owned request for one later primitive settlement boundary.

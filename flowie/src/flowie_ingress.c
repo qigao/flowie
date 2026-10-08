@@ -1,7 +1,7 @@
 #include "flowie_ingress_internal.h"
 
-#include "salts_bytes.h"
-#include "salts_error.h"
+#include "cmeta_bytes.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdlib.h>
@@ -11,7 +11,7 @@ struct flowie_ingress_s {
   flowie_ingress_dispatch_fn dispatch;
   void *dispatch_ctx;
   flowie_mqtt_parse_options_t parse_options;
-  salts_bytes_t framing;
+  cmeta_bytes_t framing;
   flowie_protocol_route_t route;
   flowie_ingress_prepare_fn prepare;
   flowie_ingress_publish_complete_fn publish_complete;
@@ -61,7 +61,7 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
   msg->type = (uint32_t)packet->type;
   rc = flowie_mqtt_message_flags_encode(ingress->parse_options.version, packet->flags,
                                         &msg->flags);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   msg->buffer = mem_get_buffer(mem_global(), packet_size);
   if (!msg->buffer) return SALTS_ENOMEM;
   if (packet_size > 0u) memcpy(mem_buffer_data(msg->buffer), bytes, packet_size);
@@ -69,32 +69,32 @@ static int flowie_ingress_message_create(const flowie_ingress_t *ingress,
   msg->payload = vstr_from_buf(mem_buffer_data(msg->buffer), packet_size);
   if (ingress->has_route) {
     rc = flowie_message_set_protocol_route(msg, &ingress->route);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_message_cleanup(msg);
       return rc;
     }
   }
   if (ingress->has_protocol_settlement) {
     rc = flowie_message_set_protocol_settlement(msg, &ingress->protocol_settlement);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_message_cleanup(msg);
       return rc;
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
   int rc;
   for (;;) {
-    salts_bytes_view_t bytes;
+    cmeta_bytes_view_t bytes;
     flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
     flowie_mqtt_parse_error_t error = FLOWIE_MQTT_PARSE_ERROR_INIT;
     flowie_message_t msg;
     size_t consumed = 0u;
     int stop_after_publish = 0;
-    rc = salts_bytes_view(&ingress->framing, &bytes);
-    if (rc != SALTS_OK) return rc;
+    rc = cmeta_bytes_view(&ingress->framing, &bytes);
+    if (rc != CMETA_OK) return rc;
     if (bytes.size == 0u) break;
     rc = flowie_mqtt_packet_parse(bytes.data, bytes.size, &ingress->parse_options, &packet,
                                   &consumed, &error);
@@ -125,7 +125,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       int stop_pump = 0;
       ingress->has_protocol_settlement = 0;
       rc = ingress->prepare(ingress->prepare_ctx, ingress, &packet, &publish_packet, &stop_pump);
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         if (rc == SALTS_EPROTO)
           ingress->disconnect_reason = UINT8_C(0x82);
         else if (rc == SALTS_EMSGSIZE)
@@ -135,8 +135,8 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       }
       if (!publish_packet) {
         tstr_freep(&ingress->publish_packet_override);
-        rc = salts_bytes_consume(&ingress->framing, consumed);
-        if (rc != SALTS_OK) return rc;
+        rc = cmeta_bytes_consume(&ingress->framing, consumed);
+        if (rc != CMETA_OK) return rc;
         if (stop_pump) break;
         continue;
       }
@@ -152,28 +152,28 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
         &msg);
     tstr_freep(&ingress->publish_packet_override);
     ingress->has_protocol_settlement = 0;
-    if (rc != SALTS_OK) return rc;
-    rc = salts_bytes_consume(&ingress->framing, consumed);
+    if (rc != CMETA_OK) return rc;
+    rc = cmeta_bytes_consume(&ingress->framing, consumed);
     {
       flowie_publish_result_t result = FLOWIE_PUBLISH_RESULT_INIT;
-      if (rc == SALTS_OK)
+      if (rc == CMETA_OK)
         rc = ingress->dispatch(ingress->dispatch_ctx, &msg, &result);
       else result.status = rc;
       if (ingress->publish_complete) {
         int completion_rc = ingress->publish_complete(ingress->prepare_ctx, ingress, &msg, &result);
-        if (rc == SALTS_OK) rc = completion_rc;
+        if (rc == CMETA_OK) rc = completion_rc;
       }
     }
     flowie_message_cleanup(&msg);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     ++*published;
     if (stop_after_publish) break;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_ingress_terminal(flowie_ingress_t *ingress, int rc) {
-  if (rc != SALTS_OK && rc != FLOWIE_MQTT_PARSE_NEED_MORE) ingress->terminal_error = rc;
+  if (rc != CMETA_OK && rc != FLOWIE_MQTT_PARSE_NEED_MORE) ingress->terminal_error = rc;
   return rc;
 }
 
@@ -203,13 +203,13 @@ flowie_ingress_t *flowie_ingress_create(const flowie_ingress_config_t *config) {
     flowie_message_init(&route_probe);
     rc = flowie_message_set_protocol_route(&route_probe, &config->route);
     flowie_message_cleanup(&route_probe);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
     ingress->route = config->route;
     ingress->route.size = sizeof(ingress->route);
     ingress->has_route = 1;
   }
-  rc = salts_bytes_init(&ingress->framing, max_packet_size);
-  if (rc != SALTS_OK) goto fail;
+  rc = cmeta_bytes_init(&ingress->framing, max_packet_size);
+  if (rc != CMETA_OK) goto fail;
   return ingress;
 
 fail:
@@ -219,7 +219,7 @@ fail:
 
 void flowie_ingress_destroy(flowie_ingress_t *ingress) {
   if (!ingress) return;
-  salts_bytes_destroy(&ingress->framing);
+  cmeta_bytes_destroy(&ingress->framing);
   tstr_freep(&ingress->publish_packet_override);
   free(ingress);
 }
@@ -231,38 +231,38 @@ int flowie_ingress_feed(flowie_ingress_t *ingress, const void *data, size_t size
   int rc;
   if (!ingress || (!data && size != 0u) || !published) return SALTS_EINVAL;
   *published = 0u;
-  if (ingress->terminal_error != SALTS_OK) return ingress->terminal_error;
+  if (ingress->terminal_error != CMETA_OK) return ingress->terminal_error;
   while (remaining != 0u) {
-    size_t writable = salts_bytes_available(&ingress->framing);
+    size_t writable = cmeta_bytes_available(&ingress->framing);
     size_t chunk;
     if (writable == 0u) {
       rc = flowie_ingress_pump(ingress, published);
-      if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
-      writable = salts_bytes_available(&ingress->framing);
+      if (rc != CMETA_OK) return flowie_ingress_terminal(ingress, rc);
+      writable = cmeta_bytes_available(&ingress->framing);
       if (writable == 0u) return flowie_ingress_terminal(ingress, SALTS_EMSGSIZE);
     }
     chunk = remaining < writable ? remaining : writable;
-    rc = salts_bytes_append(&ingress->framing, cursor, chunk);
-    if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
+    rc = cmeta_bytes_append(&ingress->framing, cursor, chunk);
+    if (rc != CMETA_OK) return flowie_ingress_terminal(ingress, rc);
     cursor += chunk;
     remaining -= chunk;
     rc = flowie_ingress_pump(ingress, published);
-    if (rc != SALTS_OK) return flowie_ingress_terminal(ingress, rc);
+    if (rc != CMETA_OK) return flowie_ingress_terminal(ingress, rc);
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_ingress_resume(flowie_ingress_t *ingress, size_t *published) {
   int rc;
   if (!ingress || !published) return SALTS_EINVAL;
   *published = 0u;
-  if (ingress->terminal_error != SALTS_OK) return ingress->terminal_error;
+  if (ingress->terminal_error != CMETA_OK) return ingress->terminal_error;
   rc = flowie_ingress_pump(ingress, published);
-  return rc == SALTS_OK ? SALTS_OK : flowie_ingress_terminal(ingress, rc);
+  return rc == CMETA_OK ? CMETA_OK : flowie_ingress_terminal(ingress, rc);
 }
 
 size_t flowie_ingress_buffered_bytes(const flowie_ingress_t *ingress) {
-  return ingress ? salts_bytes_size(&ingress->framing) : 0u;
+  return ingress ? cmeta_bytes_size(&ingress->framing) : 0u;
 }
 
 flowie_mqtt_version_t flowie_ingress_version(const flowie_ingress_t *ingress) {
@@ -280,24 +280,24 @@ int flowie_ingress_set_route(flowie_ingress_t *ingress, const flowie_protocol_ro
   flowie_message_init(&probe);
   rc = flowie_message_set_protocol_route(&probe, route);
   flowie_message_cleanup(&probe);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   ingress->route = *route;
   ingress->route.size = sizeof(ingress->route);
   ingress->has_route = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_ingress_set_protocol_settlement(
     flowie_ingress_t *ingress, const flowie_protocol_settlement_envelope_t *settlement) {
   if (!ingress || !settlement || settlement->size < sizeof(*settlement) ||
       settlement->contract_version != FLOWIE_PROTOCOL_CONTRACT_VERSION ||
-      flowie_protocol_message_validate(&settlement->message) != SALTS_OK ||
+      flowie_protocol_message_validate(&settlement->message) != CMETA_OK ||
       settlement->settled_point != 0)
     return SALTS_EINVAL;
   ingress->protocol_settlement = *settlement;
   ingress->protocol_settlement.size = sizeof(ingress->protocol_settlement);
   ingress->has_protocol_settlement = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_ingress_set_publish_packet(flowie_ingress_t *ingress, const void *packet,
@@ -308,5 +308,5 @@ int flowie_ingress_set_publish_packet(flowie_ingress_t *ingress, const void *pac
   replacement = tstr_new_len(packet, packet_size);
   if (!replacement) return SALTS_ENOMEM;
   ingress->publish_packet_override = replacement;
-  return SALTS_OK;
+  return CMETA_OK;
 }

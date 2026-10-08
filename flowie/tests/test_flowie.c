@@ -3,7 +3,7 @@
 #include "flowie_session_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <ltv_parser.h>
 
 #include <stdlib.h>
@@ -85,13 +85,13 @@ static int flowie_test_owner_round_trip(flowie_session_owner_t *owner,
   if (!owner || !config || !restored_out) return SALTS_EINVAL;
   *restored_out = NULL;
   rc = flowie_session_owner_snapshot(owner, &snapshot);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_session_owner_record_encode(owner, NULL, 0u, &record_size);
-  if (rc != SALTS_ENOSPC || record_size == 0u) return rc == SALTS_OK ? SALTS_EPROTO : rc;
+  if (rc != SALTS_ENOSPC || record_size == 0u) return rc == CMETA_OK ? SALTS_EPROTO : rc;
   record = (uint8_t *)malloc(record_size);
   if (!record) return SALTS_ENOMEM;
   rc = flowie_session_owner_record_encode(owner, record, record_size, &record_size);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     restored_config = *config;
     restored_config.owner_instance_id = owner_instance_id;
     rc = flowie_session_owner_record_restore(&restored_config, client_id,
@@ -129,8 +129,8 @@ spec("flowie application bridges") {
     publish.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
 
     check_equal(flowie_publish_message_map(&publish, FLOWIE_MQTT_VERSION_5, 7u, 9u, 11u, &message),
-                 SALTS_OK);
-    check_equal(turbo_flow_protocol_message_validate(&message.metadata), SALTS_OK);
+                 CMETA_OK);
+    check_equal(turbo_flow_protocol_message_validate(&message.metadata), CMETA_OK);
     check_equal(message.metadata.protocol, TURBO_FLOW_PROTOCOL_MQTT);
     check_equal(message.metadata.packet_id, 42u);
     check_equal(message.route.owner_instance_id, 7u);
@@ -165,14 +165,14 @@ spec("flowie application bridges") {
     rule.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
     rule.match_kind = TURBO_FLOW_SECURITY_MATCH_ADAPTER;
     flowie_copy(rule.pattern, sizeof(rule.pattern), "root-a/+/events/#");
-    check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
+    check_equal(flowie_mqtt_security_matcher_init(&matcher), CMETA_OK);
     config.resource_uid = "security:flowie";
     config.owner_name = "flowie.security";
     config.policy_version = 3u;
     config.rules = &rule;
     config.rule_count = 1u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
+    check_equal(turbo_flow_security_realm_create(&config, &realm), CMETA_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
@@ -182,13 +182,13 @@ spec("flowie application bridges") {
     principal.role_count = 1u;
     flowie_copy(principal.roles[0], sizeof(principal.roles[0]), "writer");
     principal.policy_version = 3u;
-    check_equal(flowie_security_principal_validate(&principal), SALTS_OK);
+    check_equal(flowie_security_principal_validate(&principal), CMETA_OK);
     request.principal = &principal;
     request.domain_id = "root-a";
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
     request.resource = "root-a/device-1/events/temperature";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     check_equal(decision.effect, TURBO_FLOW_SECURITY_ALLOW);
 
     request.resource = "root-a/device-1/commands/reboot";
@@ -200,10 +200,10 @@ spec("flowie application bridges") {
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/+/events/temperature";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     request.resource = "root-a/device-1/events";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     request.resource = "root-a/#";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
@@ -236,18 +236,18 @@ spec("flowie application bridges") {
 
     request.protocol_context = NULL;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     expected = decision;
     validated_resource = tstr_new_len("root-a/device-1/events/temperature",
                                       sizeof("root-a/device-1/events/temperature") - 1u);
     check_not_null(validated_resource);
     check_equal(flowie_mqtt_validated_security_context_init(
                      &validated_context, FLOWIE_MQTT_SECURITY_TOPIC, validated_resource),
-                 SALTS_OK);
+                 CMETA_OK);
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
@@ -265,19 +265,19 @@ spec("flowie application bridges") {
     request.resource = "root-a/+/events/temperature";
     request.protocol_context = &context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     expected = decision;
     validated_resource =
         tstr_new_len("root-a/+/events/temperature", sizeof("root-a/+/events/temperature") - 1u);
     check_not_null(validated_resource);
     check_equal(flowie_mqtt_validated_security_context_init(
                      &validated_context, FLOWIE_MQTT_SECURITY_TOPIC_FILTER, validated_resource),
-                 SALTS_OK);
+                 CMETA_OK);
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
@@ -311,14 +311,14 @@ spec("flowie application bridges") {
     rules[1].action_mask = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     flowie_copy(rules[1].pattern, sizeof(rules[1].pattern),
                 "root-a/groups/operators/devices/%c/command");
-    check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
+    check_equal(flowie_mqtt_security_matcher_init(&matcher), CMETA_OK);
     config.resource_uid = "security:placeholders";
     config.owner_name = "flowie.security";
     config.policy_version = 4u;
     config.rules = rules;
     config.rule_count = 2u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
+    check_equal(turbo_flow_security_realm_create(&config, &realm), CMETA_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
@@ -335,7 +335,7 @@ spec("flowie application bridges") {
 
     request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
     request.resource = "root-a/groups/operators/devices/mqtt-user/event";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     request.resource = "root-a/groups/operators/devices/device-1/event";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
@@ -345,7 +345,7 @@ spec("flowie application bridges") {
     request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/groups/operators/devices/client-a/command";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), CMETA_OK);
     request.resource = "root-a/groups/operators/devices/+/command";
     decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
     check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
@@ -422,7 +422,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   flowie_session_owner_t *owner = NULL;
   size_t active_count = 0u;
   size_t step = 0u;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if ((!events && event_count != 0u) || !failed_index) return SALTS_EINVAL;
   *failed_index = SIZE_MAX;
   memset(model, 0, sizeof(model));
@@ -435,9 +435,9 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   owner = flowie_session_owner_create(&config);
   if (!owner) return SALTS_ENOMEM;
   rc = flowie_session_owner_open(owner, &connect);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_session_owner_route(owner, &route);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
 #define FLOWIE_OWNER_MODEL_REQUIRE(condition)                                                      \
   do {                                                                                             \
@@ -467,7 +467,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
             (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
         rc = flowie_session_owner_publish_begin(owner, &publish, &begin);
         if (entry->active) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && !begin.admit_graph);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == CMETA_OK && !begin.admit_graph);
           if (entry->pubrec_sent)
             FLOWIE_OWNER_MODEL_REQUIRE(begin.has_ack &&
                                        begin.ack.kind == FLOWIE_SESSION_ACK_PUBREC &&
@@ -475,7 +475,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         } else if (active_count == FLOWIE_OWNER_MODEL_HWM) {
           FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_ENOSPC);
         } else {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && begin.admit_graph && !begin.has_ack);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == CMETA_OK && begin.admit_graph && !begin.has_ack);
           entry->begin = begin;
           entry->active = 1u;
           entry->qos = publish.qos;
@@ -491,9 +491,9 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
           flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
           settlement.message = entry->begin.message.metadata;
           settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-          settlement.status = SALTS_OK;
+          settlement.status = CMETA_OK;
           rc = flowie_session_owner_publish_settle(owner, &route, &settlement, &ack);
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && ack.packet_id == packet_id);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == CMETA_OK && ack.packet_id == packet_id);
           if (entry->qos == 1u) {
             FLOWIE_OWNER_MODEL_REQUIRE(ack.kind == FLOWIE_SESSION_ACK_PUBACK);
             entry->active = 0u;
@@ -508,12 +508,12 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
         rc = flowie_session_owner_qos2_release(owner, &route, packet_id, &ack);
         if (entry->active && entry->qos == 2u && entry->pubrec_sent) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && ack.kind == FLOWIE_SESSION_ACK_PUBCOMP &&
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == CMETA_OK && ack.kind == FLOWIE_SESSION_ACK_PUBCOMP &&
                                      ack.packet_id == packet_id);
           entry->active = 0u;
           --active_count;
         } else {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc != SALTS_OK && ack.kind == FLOWIE_SESSION_ACK_NONE);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc != CMETA_OK && ack.kind == FLOWIE_SESSION_ACK_NONE);
         }
         break;
       }
@@ -525,22 +525,22 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         invalid.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
         invalid.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
         FLOWIE_OWNER_MODEL_REQUIRE(
-            flowie_session_owner_publish_begin(owner, &invalid, &begin) != SALTS_OK);
+            flowie_session_owner_publish_begin(owner, &invalid, &begin) != CMETA_OK);
         break;
       }
       default:
         FLOWIE_OWNER_MODEL_REQUIRE(0);
     }
     rc = flowie_session_owner_snapshot(owner, &snapshot);
-    FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && snapshot.inflight_count == active_count &&
+    FLOWIE_OWNER_MODEL_REQUIRE(rc == CMETA_OK && snapshot.inflight_count == active_count &&
                                snapshot.inflight_count <= FLOWIE_OWNER_MODEL_HWM);
   }
 
 done:
-  if (rc != SALTS_OK) *failed_index = step;
+  if (rc != CMETA_OK) *failed_index = step;
   if (owner) {
     int close_rc = flowie_session_owner_close(owner);
-    if (rc == SALTS_OK && close_rc != SALTS_OK) rc = close_rc;
+    if (rc == CMETA_OK && close_rc != CMETA_OK) rc = close_rc;
     flowie_session_owner_destroy(owner);
   }
 #undef FLOWIE_OWNER_MODEL_REQUIRE
@@ -616,7 +616,7 @@ spec("flowie internal session owner") {
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
 
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_true(result.accepted);
     check_false(result.close_after_reply);
     check_false(result.session_present);
@@ -625,23 +625,23 @@ spec("flowie internal session owner") {
     check_equal(result.route.session_generation, 1u);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_false(result.accepted);
     check_true(result.close_after_reply);
     check_equal(result.reply.reason_code, 0x89u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_true(result.accepted);
     check_true(result.session_present);
     check_true(result.reply.session_present);
     check_equal(result.route.session_generation, 2u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
 
     connect = flowie_test_connect(FLOWIE_MQTT_VERSION_5, "", 1, 0u);
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_false(result.accepted);
     check_true(result.close_after_reply);
     check_equal(result.reply.reason_code, 0x85u);
@@ -662,19 +662,19 @@ spec("flowie internal session owner") {
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
 
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_true(result.accepted);
     check_false(result.session_present);
     check_false(result.reply.session_present);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
 
     result = (flowie_session_connect_result_t)FLOWIE_SESSION_CONNECT_RESULT_INIT;
-    check_equal(flowie_session_owner_connect(owner, &connect, &result), SALTS_OK);
+    check_equal(flowie_session_owner_connect(owner, &connect, &result), CMETA_OK);
     check_true(result.accepted);
     check_true(result.session_present);
     check_false(result.reply.session_present);
     check_equal(result.reply.version, FLOWIE_MQTT_VERSION_3_1);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -693,17 +693,17 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     check_equal(flowie_session_owner_open(owner, &connect), SALTS_EALREADY);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.active, 1);
     check_equal(snapshot.session_expiry_interval, 60u);
     check_equal(snapshot.client_id.size, strlen("device-1"));
-    check_equal(flowie_session_owner_route(owner, &first), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_route(owner, &first), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     check_equal(flowie_session_owner_route(owner, &second), SALTS_EBUSY);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_route(owner, &second), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_route(owner, &second), CMETA_OK);
     check_equal(second.session_generation, first.session_generation + 1u);
     flowie_session_owner_destroy(owner);
   }
@@ -736,54 +736,54 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
 
     flowie_test_subscription_packet(&packet, &subscribe, entries, sizeof(entries), 2u, 41u);
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), CMETA_OK);
     check_equal(result.packet_id, 41u);
     check_equal(result.accepted_count, 2u);
     check_equal(result.changed, 1);
-    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), SALTS_OK);
+    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), CMETA_OK);
     check_equal(subscription.filter.size, 5u);
     check_equal(subscription.qos, 1);
-    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), CMETA_OK);
 
     flowie_test_subscription_packet(&packet, &subscribe, overflow, sizeof(overflow), 1u, 42u);
     result = (flowie_session_subscribe_result_t)FLOWIE_SESSION_SUBSCRIBE_RESULT_INIT;
     check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_ENOSPC);
-    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), CMETA_OK);
     check_equal(after.subscription_count, before.subscription_count);
     check_equal(after.resource_generation, before.resource_generation);
 
     flowie_test_subscription_packet(&packet, &subscribe, update, sizeof(update), 1u, 43u);
     result = (flowie_session_subscribe_result_t)FLOWIE_SESSION_SUBSCRIBE_RESULT_INIT;
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
-    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), SALTS_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), CMETA_OK);
+    check_equal(flowie_session_owner_subscription_at(owner, 0u, &subscription), CMETA_OK);
     check_equal(subscription.qos, 2);
-    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), CMETA_OK);
     check_equal(after.subscription_count, 2u);
     check_equal(after.inflight_count, 0u);
 
     flowie_test_unsubscribe_packet(&packet, &unsubscribe, remove, sizeof(remove), 2u, 44u);
-    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), CMETA_OK);
     check_equal(flowie_session_owner_unsubscribe(owner, &packet, &unsubscribe, reasons, 1u,
                                                   &unsubscribe_result),
                  SALTS_ENOSPC);
     check_equal(reasons[0], 0xa5u);
-    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), CMETA_OK);
     check_equal(after.subscription_count, before.subscription_count);
     check_equal(after.resource_generation, before.resource_generation);
 
     check_equal(flowie_session_owner_unsubscribe(owner, &packet, &unsubscribe, reasons,
                                                   sizeof(reasons), &unsubscribe_result),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(unsubscribe_result.packet_id, 44u);
     check_equal(unsubscribe_result.filter_count, 2u);
     check_equal(unsubscribe_result.removed_count, 1u);
     check_true(unsubscribe_result.changed);
     check_equal(reasons[0], 0x00u);
     check_equal(reasons[1], 0x11u);
-    check_equal(flowie_session_owner_snapshot(owner, &after), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &after), CMETA_OK);
     check_equal(after.subscription_count, 1u);
 
     flowie_session_owner_destroy(owner);
@@ -808,16 +808,16 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &persistent), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &persistent), CMETA_OK);
     flowie_test_subscription_packet(&packet, &subscribe, entry, sizeof(entry), 1u, 51u);
-    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_subscribe(owner, &packet, &subscribe, &result), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.subscription_count, 1u);
-    check_equal(flowie_session_owner_open(owner, &clean), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &clean), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.subscription_count, 0u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -844,29 +844,29 @@ spec("flowie internal session owner") {
     config.settlement.qos2 = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_route(owner, &route), CMETA_OK);
 
     publish.qos = 1u;
     publish.packet_id = 71u;
     publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
     publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
     publish.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
     check_equal(begin.admit_graph, 1);
     check_equal(begin.has_ack, 0);
     settlement.message = begin.message.metadata;
     settlement.status = SALTS_EIO;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_EIO);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_NONE);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 1u);
-    settlement.status = SALTS_OK;
+    settlement.status = CMETA_OK;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_RECEIVED;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_EBUSY);
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), CMETA_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBACK);
     check_equal(ack.packet_id, 71u);
     {
@@ -875,7 +875,7 @@ spec("flowie internal session owner") {
       uint8_t encoded[8];
       size_t written = 0u;
       check_equal(flowie_session_ack_control_packet(&ack, FLOWIE_MQTT_VERSION_5, &control),
-                   SALTS_OK);
+                   CMETA_OK);
       check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
                    FLOWIE_MQTT_PARSE_OK);
       check_equal(written, sizeof(expected));
@@ -884,7 +884,7 @@ spec("flowie internal session owner") {
 
     publish.packet_id = 73u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
     settlement.message = begin.message.metadata;
     settlement.status = SALTS_ETIMEDOUT;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
@@ -892,45 +892,45 @@ spec("flowie internal session owner") {
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_ETIMEDOUT);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_NONE);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 1u);
-    settlement.status = SALTS_OK;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
+    settlement.status = CMETA_OK;
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), CMETA_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBACK);
     check_equal(ack.packet_id, 73u);
 
     publish.qos = 2u;
     publish.packet_id = 72u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
     settlement.message = begin.message.metadata;
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_EBUSY);
     settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
-    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
+    check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), CMETA_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBREC);
 
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), SALTS_EBUSY);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
-    check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
+    check_equal(flowie_session_owner_route(owner, &route), CMETA_OK);
     publish.duplicate = 1u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+    check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
     check_equal(begin.admit_graph, 0);
     check_equal(begin.has_ack, 1);
     check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), SALTS_OK);
+    check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), CMETA_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBCOMP);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 0u);
 
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -962,57 +962,57 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &qos1_id), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &qos1_id), CMETA_OK);
     check_equal(qos1_id, 1u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, qos1_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-                 SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &qos2_id), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &qos2_id), CMETA_OK);
     check_equal(qos2_id, 2u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, qos2_id, (flowie_mqtt_span_t){publish_qos2, sizeof(publish_qos2)}, 0u),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &rejected_id), SALTS_ENOSPC);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 2u);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data[0], 0x3au);
 
     options.version = FLOWIE_MQTT_VERSION_5;
     check_equal(flowie_mqtt_packet_parse(puback, sizeof(puback), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_NONE);
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubrec, sizeof(pubrec), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
     check_equal(reply.packet_id, qos2_id);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.size, sizeof(expected_pubrel));
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubcomp, sizeof(pubcomp), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 0u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1042,60 +1042,60 @@ spec("flowie internal session owner") {
     config.max_inflight = 4u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &packet_id), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 2u, &packet_id), CMETA_OK);
     check_equal(packet_id, 1u);
     check_equal(flowie_session_owner_delivery_commit(
                      owner, packet_id,
                      (flowie_mqtt_span_t){outbound_publish, sizeof(outbound_publish)}, 0u),
-                 SALTS_OK);
+                 CMETA_OK);
 
     /* Committed PUBLISH: restore retransmits the one owned packet with DUP set. */
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 107u, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.size, sizeof(outbound_publish));
     check_equal(pending.data[0], 0x3cu);
 
     options.version = FLOWIE_MQTT_VERSION_5;
     check_equal(flowie_mqtt_packet_parse(pubrec, sizeof(pubrec), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
     check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREL);
 
     /* Committed PUBREC and emitted PUBREL share one durable WAIT_PUBCOMP state. */
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 109u, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 113u, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.data, expected_pubrel, sizeof(expected_pubrel));
 
     packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
     reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_mqtt_packet_parse(pubcomp, sizeof(pubcomp), &options, &packet, NULL, NULL),
                  FLOWIE_MQTT_PARSE_OK);
-    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_ack(owner, &packet, &reply), CMETA_OK);
     check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 127u, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     flowie_session_owner_destroy(owner);
     owner = restored;
     restored = NULL;
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(owner);
 
@@ -1104,7 +1104,7 @@ spec("flowie internal session owner") {
     config.session_id = 137u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     {
       flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
       flowie_session_publish_begin_result_t begin = FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
@@ -1115,38 +1115,38 @@ spec("flowie internal session owner") {
       publish.packet_id = 77u;
       publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
       publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
-      check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
-      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+      check_equal(flowie_session_owner_route(owner, &route), CMETA_OK);
+      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
       check_true(begin.admit_graph);
       settlement.message = begin.message.metadata;
-      settlement.status = SALTS_OK;
+      settlement.status = CMETA_OK;
       settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
       check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &reply),
-                   SALTS_OK);
+                   CMETA_OK);
       check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREC);
       check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 139u, &restored),
-                   SALTS_OK);
+                   CMETA_OK);
       flowie_session_owner_destroy(owner);
       owner = restored;
       restored = NULL;
-      check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+      check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
       publish.duplicate = 1u;
       begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
+      check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), CMETA_OK);
       check_false(begin.admit_graph);
       check_true(begin.has_ack);
       check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
       route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
-      check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
+      check_equal(flowie_session_owner_route(owner, &route), CMETA_OK);
       reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
-      check_equal(flowie_session_owner_qos2_release(owner, &route, 77u, &reply), SALTS_OK);
+      check_equal(flowie_session_owner_qos2_release(owner, &route, 77u, &reply), CMETA_OK);
       check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBCOMP);
       check_equal(flowie_test_owner_round_trip(owner, &config, connect.client_id, 149u, &restored),
-                   SALTS_OK);
+                   CMETA_OK);
       flowie_session_owner_destroy(owner);
       owner = restored;
       restored = NULL;
-      check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+      check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
       check_equal(snapshot.inflight_count, 0u);
     }
     flowie_session_owner_destroy(owner);
@@ -1173,22 +1173,22 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.session_expiry_interval, 60u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), CMETA_OK);
     check_equal(packet_id, 1u);
     check_equal(
         flowie_session_owner_delivery_commit_queued(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-        SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+        CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 SALTS_OK);
+                 CMETA_OK);
     restored_config = config;
     restored_config.owner_instance_id = 47u;
     restored_config.session_id = 1u;
@@ -1196,20 +1196,20 @@ spec("flowie internal session owner") {
                      &restored_config,
                      (flowie_mqtt_span_t){connect.client_id.data, connect.client_id.size},
                      snapshot.resource_generation, record, record_size, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     free(record);
     check_not_null(restored);
-    check_equal(flowie_session_owner_open(restored, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_open(restored, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), CMETA_OK);
     check_equal(pending.data[0], 0x3au);
-    check_equal(flowie_session_owner_close(restored), SALTS_OK);
+    check_equal(flowie_session_owner_close(restored), CMETA_OK);
     flowie_session_owner_destroy(restored);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.data[0], 0x32u);
-    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(owner, 0u, &pending), CMETA_OK);
     check_equal(pending.data[0], 0x3au);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1249,7 +1249,7 @@ spec("flowie internal session owner") {
     config.max_inflight = 4u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     flowie_test_subscription_packet(&subscribe_packet, &subscribe, subscription_entry,
                                     sizeof(subscription_entry), 1u, 17u);
     subscribe.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
@@ -1271,18 +1271,18 @@ spec("flowie internal session owner") {
                  FLOWIE_MQTT_PARSE_NEED_MORE);
     check_equal(
         flowie_session_owner_subscribe(owner, &subscribe_packet, &subscribe, &subscribe_result),
-        SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
+        CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), CMETA_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 0u),
-        SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+        CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     clone = flowie_session_owner_clone(owner);
     check_not_null(clone);
-    check_equal(flowie_session_owner_snapshot(clone, &restored_snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(clone, &restored_snapshot), CMETA_OK);
     check_equal(restored_snapshot.resource_generation, snapshot.resource_generation);
-    check_equal(flowie_session_owner_delivery_pending_at(clone, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(clone, 0u, &pending), CMETA_OK);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data + 1u, publish_qos1 + 1u, sizeof(publish_qos1) - 1u);
     flowie_session_owner_destroy(clone);
@@ -1292,7 +1292,7 @@ spec("flowie internal session owner") {
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 SALTS_OK);
+                 CMETA_OK);
     restored_config = config;
     restored_config.owner_instance_id = 61u;
     restored_config.session_id = 1u;
@@ -1300,9 +1300,9 @@ spec("flowie internal session owner") {
                      &restored_config,
                      (flowie_mqtt_span_t){connect.client_id.data, connect.client_id.size},
                      snapshot.resource_generation, record, record_size, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     check_not_null(restored);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), CMETA_OK);
     check_false(restored_snapshot.active);
     check_equal(restored_snapshot.owner_instance_id, restored_config.owner_instance_id);
     check_equal(restored_snapshot.session_id, snapshot.session_id);
@@ -1311,9 +1311,9 @@ spec("flowie internal session owner") {
     check_equal(restored_snapshot.inflight_count, 1u);
     check_equal(restored_snapshot.subscription_count, 1u);
     check_equal(flowie_session_owner_subscription_at(restored, 0u, &restored_subscription),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(restored_subscription.subscription_identifier, 42u);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), CMETA_OK);
     check_equal(pending.data[0], 0x3au);
     flowie_session_owner_destroy(restored);
     restored = NULL;
@@ -1361,17 +1361,17 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), CMETA_OK);
     check_equal(flowie_session_owner_delivery_commit_queued(
                      owner, packet_id,
                      (flowie_mqtt_span_t){expiring_publish, sizeof(expiring_publish)}, 110u),
-                 SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &before), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &before), CMETA_OK);
     check_equal(flowie_session_owner_delivery_pending_at_ex(owner, 0u, 105u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(pending_packet_id, packet_id);
     check_equal(expiry_at, 110u);
     check_equal(pending.data[9], 0u);
@@ -1383,7 +1383,7 @@ spec("flowie internal session owner") {
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(ltv_parse(record, record_size, &header_message), LTV_PARSE_OK);
     check_equal(header_message.type, 1u);
     check_equal(header_message.value_size, 8u);
@@ -1398,18 +1398,18 @@ spec("flowie internal session owner") {
     check_equal(flowie_session_owner_record_restore(&restored_config, connect.client_id,
                                                      before.resource_generation, record,
                                                      record_size, &restored),
-                 SALTS_OK);
+                 CMETA_OK);
     free(record);
     check_not_null(restored);
     check_equal(flowie_session_owner_delivery_pending_at_ex(restored, 0u, 107u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(expiry_at, 110u);
     check_equal(pending.data[12], 3u);
-    check_equal(flowie_session_owner_snapshot(restored, &before), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_expire(restored, 110u, &removed_count), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &before), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_expire(restored, 110u, &removed_count), CMETA_OK);
     check_equal(removed_count, 1u);
-    check_equal(flowie_session_owner_snapshot(restored, &after), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &after), CMETA_OK);
     check_equal(after.resource_generation, before.resource_generation + 1u);
     check_equal(after.inflight_count, 0u);
     flowie_session_owner_destroy(restored);
@@ -1423,9 +1423,9 @@ spec("flowie internal session owner") {
             &restored_config,
             (flowie_mqtt_span_t){(const uint8_t *)"legacy-expiry", sizeof("legacy-expiry") - 1u},
             2u, legacy_record, legacy_size, &restored),
-        SALTS_OK);
+        CMETA_OK);
     check_not_null(restored);
-    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_pending_at(restored, 0u, &pending), CMETA_OK);
     check_equal(pending.data[12], 10u);
     flowie_session_owner_destroy(restored);
     restored = NULL;
@@ -1458,8 +1458,8 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), CMETA_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 110u),
@@ -1486,23 +1486,23 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &packet_id), CMETA_OK);
     check_equal(
         flowie_session_owner_delivery_commit(
             owner, packet_id, (flowie_mqtt_span_t){publish_qos1, sizeof(publish_qos1)}, 110u),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     check_true(record_size != 0u);
     check_equal(flowie_session_owner_delivery_pending_at_ex(owner, 0u, 107u, &pending,
                                                              &pending_packet_id, &expiry_at),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(pending_packet_id, packet_id);
     check_equal(expiry_at, 110u);
     check_equal(pending.size, sizeof(publish_qos1));
     check_equal(pending.data[0], 0x3au);
     check_equal(pending.data + 1u, publish_qos1 + 1u, sizeof(publish_qos1) - 1u);
-    check_equal(flowie_session_owner_delivery_expire(owner, 110u, &removed_count), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_expire(owner, 110u, &removed_count), CMETA_OK);
     check_equal(removed_count, 1u);
     flowie_session_owner_destroy(owner);
   }
@@ -1538,10 +1538,10 @@ spec("flowie internal session owner") {
     connect.will_properties.values = (flowie_mqtt_span_t){will_properties, sizeof(will_properties)};
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     will_topic[0] = 'X';
     will_payload[0] = 0x55u;
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_true(snapshot.has_will);
     check_false(snapshot.will_pending);
     check_equal(snapshot.will_qos, 2u);
@@ -1550,24 +1550,24 @@ spec("flowie internal session owner") {
     check_equal(snapshot.will_topic.size, sizeof(will_topic) - 1u);
     check_equal(snapshot.will_topic.data, "status/device", sizeof(will_topic) - 1u);
     check_equal(snapshot.will_payload.data, "\x00\xff\x7f", sizeof(will_payload));
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_true(snapshot.will_pending);
     check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_session_owner_record_restore(&config, reconnect.client_id,
                                                      snapshot.resource_generation, record,
                                                      record_size, &restored),
-                 SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), CMETA_OK);
     check_true(restored_snapshot.will_pending);
     check_equal(restored_snapshot.will_delay_interval, 2u);
     generation = restored_snapshot.resource_generation;
-    check_equal(flowie_session_owner_will_complete(restored), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_will_complete(restored), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), CMETA_OK);
     check_false(restored_snapshot.has_will);
     check_false(restored_snapshot.will_pending);
     check_equal(restored_snapshot.resource_generation, generation + 1u);
@@ -1577,32 +1577,32 @@ spec("flowie internal session owner") {
     free(record);
     record = NULL;
 
-    check_equal(flowie_session_owner_open(owner, &reconnect), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &reconnect), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_false(snapshot.has_will);
     check_false(snapshot.will_pending);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
 
     connect.will_topic.data = (const uint8_t *)"status/device";
     connect.will_payload.data = (const uint8_t *)"offline";
     connect.will_payload.size = strlen("offline");
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     disconnect.version = FLOWIE_MQTT_VERSION_5;
     disconnect.type = FLOWIE_MQTT_PACKET_DISCONNECT;
     disconnect.reason_code = 0u;
     disconnect.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     disconnect.properties.values.data = will_properties;
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_false(snapshot.has_will);
     check_false(snapshot.will_pending);
 
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     disconnect.reason_code = 0x04u;
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_true(snapshot.has_will);
     check_true(snapshot.will_pending);
     flowie_session_owner_destroy(owner);
@@ -1623,23 +1623,23 @@ spec("flowie internal session owner") {
     config.max_inflight = 2u;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     disconnect.version = FLOWIE_MQTT_VERSION_5;
     disconnect.type = FLOWIE_MQTT_PACKET_DISCONNECT;
     disconnect.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     disconnect.properties.values = (flowie_mqtt_span_t){expiry_one, sizeof(expiry_one)};
-    check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_disconnect(owner, &disconnect), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_equal(snapshot.session_expiry_interval, 1u);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
 
     connect = flowie_test_connect(FLOWIE_MQTT_VERSION_5, "expiry-zero", 1, 0u);
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
     check_equal(flowie_session_owner_disconnect(owner, &disconnect), SALTS_EPROTO);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
     flowie_session_owner_destroy(owner);
   }
 
@@ -1702,21 +1702,21 @@ spec("flowie internal session owner") {
 
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
-    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    check_equal(flowie_session_owner_close(owner), SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(flowie_session_owner_open(owner, &connect), CMETA_OK);
+    check_equal(flowie_session_owner_close(owner), CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), CMETA_OK);
     check_true(snapshot.will_pending);
     check_equal(flowie_session_owner_record_encode(owner, NULL, 0u, &record_size), SALTS_ENOSPC);
     check_greater(record_size, STORE_BOUNDARY_PAYLOAD_SIZE);
     record = (uint8_t *)malloc(record_size);
     check_not_null(record);
     check_equal(flowie_session_owner_record_encode(owner, record, record_size, &record_size),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_session_owner_record_restore(
                      &config, connect.client_id, snapshot.resource_generation, record,
                      record_size, &restored),
-                 SALTS_OK);
-    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_session_owner_snapshot(restored, &restored_snapshot), CMETA_OK);
     check_equal(restored_snapshot.client_id.size, STORE_BOUNDARY_UTF8_SIZE);
     check_equal(restored_snapshot.client_id.data, client_id, STORE_BOUNDARY_UTF8_SIZE);
     check_equal(restored_snapshot.will_topic.size, STORE_BOUNDARY_UTF8_SIZE);
@@ -1763,6 +1763,6 @@ spec("flowie internal session owner") {
       info("first_failed=%zu minimized_events=%zu minimized_failed=%zu", original_failed_index,
            reduced_count, failed_index);
     }
-    check_equal(rc, SALTS_OK);
+    check_equal(rc, CMETA_OK);
   }
 }

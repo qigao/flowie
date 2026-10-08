@@ -1,6 +1,6 @@
 #include "flowie_control_validation_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +37,7 @@ int flowie_control_acl_document_syntax_validate(const char *domain_id, const cha
   if (!workspace) return SALTS_ENOMEM;
   flowie_control_acl_document_init(&workspace->document);
   rc = flowie_control_acl_parse(document_text, document_size, &workspace->document);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   domain_size = strlen(domain_id);
   for (size_t index = 0u; index < workspace->document.entry_count; ++index) {
     const char *topic = workspace->document.entries[index].topic;
@@ -48,13 +48,13 @@ int flowie_control_acl_document_syntax_validate(const char *domain_id, const cha
   }
   rc = flowie_control_acl_format(&workspace->document, workspace->canonical,
                                  sizeof(workspace->canonical), &canonical_size);
-  if (rc != SALTS_OK || canonical_size != document_size ||
+  if (rc != CMETA_OK || canonical_size != document_size ||
       memcmp(workspace->canonical, document_text, document_size) != 0) {
     rc = SALTS_EPROTO;
     goto done;
   }
   if (document_out) *document_out = workspace->document;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   free(workspace);

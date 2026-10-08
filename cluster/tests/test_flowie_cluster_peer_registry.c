@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -19,13 +19,13 @@ static int flowie_cluster_peer_registry_test_authorize(void *ctx, vstr peer_node
   (void)peer_node_id;
   (void)peer_boot_id;
   (void)certificate_sha256;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_peer_registry_test_receive(void *ctx,
                                                      const flowie_cluster_peer_frame_t *frame) {
   (void)ctx;
-  return frame ? SALTS_OK : SALTS_EINVAL;
+  return frame ? CMETA_OK : SALTS_EINVAL;
 }
 
 static flowie_cluster_peer_link_config_t flowie_cluster_peer_registry_test_link_config(
@@ -90,12 +90,12 @@ spec("flowie cluster peer link registry") {
         flowie_cluster_peer_registry_test_link_config(local_boot, "node-c", second_boot);
     registry_config.max_links = 1u;
     registry_config.max_inflight_sends = 1u;
-    check_equal(flowie_cluster_peer_link_create(&first_config, &first), SALTS_OK);
-    check_equal(flowie_cluster_peer_link_create(&second_config, &second), SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_create(&registry_config, &registry), SALTS_OK);
+    check_equal(flowie_cluster_peer_link_create(&first_config, &first), CMETA_OK);
+    check_equal(flowie_cluster_peer_link_create(&second_config, &second), CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_create(&registry_config, &registry), CMETA_OK);
     check_equal(flowie_cluster_peer_registry_register(registry, vstr_from_cstr("node-b"),
                                                        first_boot, first),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_peer_registry_register(registry, vstr_from_cstr("node-b"),
                                                        first_boot, first),
                  SALTS_EALREADY);
@@ -107,7 +107,7 @@ spec("flowie cluster peer link registry") {
                  SALTS_ENOSPC);
     frame = flowie_cluster_peer_registry_test_frame(local_boot, "node-b", first_boot);
     check_equal(flowie_cluster_peer_registry_send(registry, &frame, NULL, NULL), SALTS_EBUSY);
-    check_equal(flowie_cluster_peer_registry_snapshot(registry, &snapshot), SALTS_OK);
+    check_equal(flowie_cluster_peer_registry_snapshot(registry, &snapshot), CMETA_OK);
     check_equal(snapshot.registered_links, 1u);
     check_equal(snapshot.inflight_sends, 0u);
     check_equal(flowie_cluster_peer_registry_unregister(registry, vstr_from_cstr("node-b"),
@@ -115,12 +115,12 @@ spec("flowie cluster peer link registry") {
                  SALTS_EBUSY);
     check_equal(flowie_cluster_peer_registry_unregister(registry, vstr_from_cstr("node-b"),
                                                          first_boot, first),
-                 SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_close(registry), SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_drain(registry, 0u), SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_destroy(registry), SALTS_OK);
-    check_equal(flowie_cluster_peer_link_destroy(first), SALTS_OK);
-    check_equal(flowie_cluster_peer_link_destroy(second), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_close(registry), CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_drain(registry, 0u), CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_destroy(registry), CMETA_OK);
+    check_equal(flowie_cluster_peer_link_destroy(first), CMETA_OK);
+    check_equal(flowie_cluster_peer_link_destroy(second), CMETA_OK);
   }
 
   it("rejects unbounded capacity and destruction before quiescence") {
@@ -130,10 +130,10 @@ spec("flowie cluster peer link registry") {
     check_null(registry);
     config.max_links = 1u;
     config.max_inflight_sends = 1u;
-    check_equal(flowie_cluster_peer_registry_create(&config, &registry), SALTS_OK);
+    check_equal(flowie_cluster_peer_registry_create(&config, &registry), CMETA_OK);
     check_equal(flowie_cluster_peer_registry_destroy(registry), SALTS_EBUSY);
-    check_equal(flowie_cluster_peer_registry_close(registry), SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_drain(registry, 0u), SALTS_OK);
-    check_equal(flowie_cluster_peer_registry_destroy(registry), SALTS_OK);
+    check_equal(flowie_cluster_peer_registry_close(registry), CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_drain(registry, 0u), CMETA_OK);
+    check_equal(flowie_cluster_peer_registry_destroy(registry), CMETA_OK);
   }
 }

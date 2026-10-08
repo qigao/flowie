@@ -3,8 +3,8 @@
 
 #include "base64_utils.h"
 #include "monocypher.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <json_parser.h>
 
 #include <ctype.h>
@@ -35,7 +35,7 @@ struct flowie_control_auth_iris_endpoint_s {
   flowie_control_service_credential_resolver_t *service_credentials;
   size_t max_request_body_size;
   size_t max_secret_size;
-  salts_threadpool_t *local_executor;
+  cmeta_threadpool_t *local_executor;
   uint32_t local_executor_deadline_ms;
   flowie_control_http_app_t *bound_app;
 };
@@ -96,13 +96,13 @@ static void flowie_control_auth_http_free_value(json_value_t *value) {
 
 static int flowie_control_auth_http_add(json_value_t *object, const char *field,
                                         json_value_t *value) {
-  if (value && json_object_add_checked(object, field, value)) return SALTS_OK;
+  if (value && json_object_add_checked(object, field, value)) return CMETA_OK;
   flowie_control_auth_http_free_value(value);
   return SALTS_ENOMEM;
 }
 
 static int flowie_control_auth_http_array_add(json_value_t *array, json_value_t *value) {
-  if (value && json_array_add_checked(array, value)) return SALTS_OK;
+  if (value && json_array_add_checked(array, value)) return CMETA_OK;
   flowie_control_auth_http_free_value(value);
   return SALTS_ENOMEM;
 }
@@ -123,7 +123,7 @@ static int flowie_control_auth_http_fields_exact(const json_value_t *object,
     }
     if (!known) return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_auth_http_json_u64(const json_value_t *value, uint64_t *out) {
@@ -141,7 +141,7 @@ static int flowie_control_auth_http_json_u64(const json_value_t *value, uint64_t
   parsed = strtoull(buffer, &end, 10);
   if (!end || *end != '\0') return SALTS_EPROTO;
   *out = (uint64_t)parsed;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_auth_http_copy_string(const json_value_t *object, const char *field,
@@ -158,7 +158,7 @@ static int flowie_control_auth_http_copy_string(const json_value_t *object, cons
     return SALTS_EPROTO;
   memcpy(output, text, size);
   output[size] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_auth_http_fingerprint_valid(const char *value) {
@@ -207,21 +207,21 @@ int flowie_control_auth_http_decode_request(const char *body, size_t body_size,
   if (!document)
     return SALTS_EPROTO;
   if (flowie_control_auth_http_fields_exact(document, allowed,
-                                            sizeof(allowed) / sizeof(allowed[0])) != SALTS_OK ||
+                                            sizeof(allowed) / sizeof(allowed[0])) != CMETA_OK ||
       flowie_control_auth_http_json_u64(json_object_get(document, "version"), &version) !=
-          SALTS_OK ||
+          CMETA_OK ||
       version != FLOWIE_CONTROL_AUTH_HTTP_PROTOCOL_VERSION ||
       flowie_control_auth_http_copy_string(document, "identity", request_out->identity,
-                                           sizeof(request_out->identity), 1) != SALTS_OK ||
+                                           sizeof(request_out->identity), 1) != CMETA_OK ||
       flowie_control_auth_http_copy_string(document, "method", request_out->method,
-                                           sizeof(request_out->method), 1) != SALTS_OK ||
+                                           sizeof(request_out->method), 1) != CMETA_OK ||
       flowie_control_auth_http_copy_string(document, "protocol", request_out->protocol,
-                                           sizeof(request_out->protocol), 1) != SALTS_OK ||
+                                           sizeof(request_out->protocol), 1) != CMETA_OK ||
       flowie_control_auth_http_copy_string(document, "remote_address", request_out->remote_address,
-                                           sizeof(request_out->remote_address), 1) != SALTS_OK ||
+                                           sizeof(request_out->remote_address), 1) != CMETA_OK ||
       flowie_control_auth_http_copy_string(
           document, "peer_certificate_sha256", request_out->peer_certificate_sha256,
-          sizeof(request_out->peer_certificate_sha256), 0) != SALTS_OK ||
+          sizeof(request_out->peer_certificate_sha256), 0) != CMETA_OK ||
       !flowie_control_auth_http_fingerprint_valid(request_out->peer_certificate_sha256))
     goto done;
 
@@ -241,7 +241,7 @@ int flowie_control_auth_http_decode_request(const char *body, size_t body_size,
   if (strlen(canonical) != encoded_size || memcmp(canonical, encoded, encoded_size) != 0) goto done;
   memcpy(request_out->secret, decoded, decoded_size);
   request_out->secret_size = decoded_size;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (canonical) {
@@ -253,7 +253,7 @@ done:
     free(decoded);
   }
   json_free(document);
-  if (rc != SALTS_OK) flowie_control_auth_http_request_clear(request_out);
+  if (rc != CMETA_OK) flowie_control_auth_http_request_clear(request_out);
   return rc;
 }
 
@@ -306,7 +306,7 @@ int flowie_control_auth_http_encode_principal(const flowie_security_principal_t 
       goto done;
     }
     if (flowie_control_auth_http_array_add(
-            roles, json_create_string(principal->roles[index])) != SALTS_OK)
+            roles, json_create_string(principal->roles[index])) != CMETA_OK)
       goto done;
   }
   for (uint32_t index = 0u; index < principal->group_count; ++index) {
@@ -316,43 +316,43 @@ int flowie_control_auth_http_encode_principal(const flowie_security_principal_t 
       goto done;
     }
     if (flowie_control_auth_http_array_add(
-            groups, json_create_string(principal->groups[index])) != SALTS_OK)
+            groups, json_create_string(principal->groups[index])) != CMETA_OK)
       goto done;
   }
   if (flowie_control_auth_http_add(
           document, "version",
-          json_create_uint64(FLOWIE_CONTROL_AUTH_HTTP_PROTOCOL_VERSION)) != SALTS_OK ||
+          json_create_uint64(FLOWIE_CONTROL_AUTH_HTTP_PROTOCOL_VERSION)) != CMETA_OK ||
       flowie_control_auth_http_add(document, "authenticated", json_create_bool(true)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "id",
-                                   json_create_string(principal->principal_id)) != SALTS_OK ||
+                                   json_create_string(principal->principal_id)) != CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "type",
                                    json_create_string(principal->principal_type)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "domain",
                                    json_create_string(principal->domain_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "auth_method",
-                                   json_create_string(principal->auth_method)) != SALTS_OK ||
+                                   json_create_string(principal->auth_method)) != CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "scope", json_create_string(scope)) !=
-          SALTS_OK)
+          CMETA_OK)
     goto done;
-  if (flowie_control_auth_http_add(principal_json, "roles", roles) != SALTS_OK) {
+  if (flowie_control_auth_http_add(principal_json, "roles", roles) != CMETA_OK) {
     roles = NULL;
     goto done;
   }
   roles = NULL;
-  if (flowie_control_auth_http_add(principal_json, "groups", groups) != SALTS_OK) {
+  if (flowie_control_auth_http_add(principal_json, "groups", groups) != CMETA_OK) {
     groups = NULL;
     goto done;
   }
   groups = NULL;
   if (flowie_control_auth_http_add(principal_json, "expires_at",
-                                   json_create_uint64(principal->expires_at)) != SALTS_OK ||
+                                   json_create_uint64(principal->expires_at)) != CMETA_OK ||
       flowie_control_auth_http_add(principal_json, "policy_version",
-                                   json_create_uint64(principal->policy_version)) != SALTS_OK)
+                                   json_create_uint64(principal->policy_version)) != CMETA_OK)
     goto done;
-  if (flowie_control_auth_http_add(document, "principal", principal_json) != SALTS_OK) {
+  if (flowie_control_auth_http_add(document, "principal", principal_json) != CMETA_OK) {
     principal_json = NULL;
     goto done;
   }
@@ -366,7 +366,7 @@ int flowie_control_auth_http_encode_principal(const flowie_security_principal_t 
     rc = SALTS_EFBIG;
     goto done;
   }
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   flowie_control_auth_http_free_value(roles);
@@ -386,11 +386,11 @@ static int flowie_control_auth_http_encode_denied(char **body_out, size_t *body_
   if (!document) return SALTS_ENOMEM;
   if (flowie_control_auth_http_add(
           document, "version",
-          json_create_uint64(FLOWIE_CONTROL_AUTH_HTTP_PROTOCOL_VERSION)) == SALTS_OK &&
+          json_create_uint64(FLOWIE_CONTROL_AUTH_HTTP_PROTOCOL_VERSION)) == CMETA_OK &&
       flowie_control_auth_http_add(document, "authenticated", json_create_bool(false)) ==
-          SALTS_OK) {
+          CMETA_OK) {
     *body_out = json_serialize(document, body_size_out);
-    if (*body_out) rc = SALTS_OK;
+    if (*body_out) rc = CMETA_OK;
   }
   json_free(document);
   return rc;
@@ -412,7 +412,7 @@ static int flowie_control_auth_http_header(const Req *req, const char *name,
   }
   if (matches != 1u || !found) return SALTS_EPROTO;
   *value_out = found;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_control_auth_http_wipe_header(Req *req, const char *name) {
@@ -438,10 +438,10 @@ static int flowie_control_auth_http_resolve_caller(
 
   if (!endpoint || !caller_out || caller_out->size < sizeof(*caller_out)) return SALTS_EINVAL;
   rc = flowie_control_auth_http_header(req, "Authorization", &authorization);
-  if (rc != SALTS_OK) return SALTS_EPERM;
+  if (rc != CMETA_OK) return SALTS_EPERM;
   if (flowie_control_auth_http_header(req, "X-Flowie-Service-Domain", &service_domain) !=
-          SALTS_OK ||
-      flowie_control_auth_http_header(req, "X-Flowie-Service-Id", &service_id) != SALTS_OK)
+          CMETA_OK ||
+      flowie_control_auth_http_header(req, "X-Flowie-Service-Id", &service_id) != CMETA_OK)
     return SALTS_EPERM;
   authorization_size = strnlen(authorization, FLOWIE_CONTROL_AUTH_HTTP_AUTHORIZATION_MAX + 1u);
   if (authorization_size <= sizeof(prefix) - 1u ||
@@ -517,8 +517,8 @@ int flowie_control_auth_iris_endpoint_authenticate_verified(
   job->result = SALTS_EIO;
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(endpoint->local_executor, flowie_control_auth_local_job_run,
-                                  job) != SALTS_OK) {
+  if (cmeta_threadpool_try_submit(endpoint->local_executor, flowie_control_auth_local_job_run,
+                                  job) != CMETA_OK) {
     flowie_control_auth_local_job_release(job);
     flowie_control_auth_local_job_release(job);
     return SALTS_EBUSY;
@@ -527,9 +527,9 @@ int flowie_control_auth_iris_endpoint_authenticate_verified(
   completed = atomic_load_explicit(&job->completed, memory_order_acquire);
   if (completed) {
     rc = job->result;
-    if (rc == SALTS_OK) *principal_out = job->principal;
+    if (rc == CMETA_OK) *principal_out = job->principal;
   } else {
-    rc = wait_rc == SALTS_OK ? SALTS_ETIMEDOUT : wait_rc;
+    rc = wait_rc == CMETA_OK ? SALTS_ETIMEDOUT : wait_rc;
   }
   flowie_control_auth_local_job_release(job);
   return rc;
@@ -560,34 +560,34 @@ int flowie_control_auth_iris_endpoint_process(flowie_control_auth_iris_endpoint_
   }
   if (!req->method || strcmp(req->method, "POST") != 0 || req->body_stream || !req->body ||
       req->body_len == 0u || req->body_len > endpoint->max_request_body_size ||
-      flowie_control_auth_http_header(req, "Content-Type", &content_type) != SALTS_OK ||
+      flowie_control_auth_http_header(req, "Content-Type", &content_type) != CMETA_OK ||
       !flowie_control_auth_http_ascii_equal(content_type, "application/json"))
     goto done;
   rc = flowie_control_auth_http_decode_request(req->body, req->body_len, endpoint->max_secret_size,
                                                &request);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     if (rc == SALTS_ENOMEM) status = SERVICE_UNAVAILABLE;
     goto done;
   }
   rc = flowie_control_auth_iris_adapter_optional_verified_peer_certificate(
       req, peer_certificate_sha256);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     status = flowie_control_auth_http_response_status(rc);
     goto done;
   }
   rc = flowie_control_auth_http_resolve_caller(endpoint, req, &caller);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     status = flowie_control_auth_http_response_status(rc);
     goto done;
   }
   rc = flowie_control_auth_iris_endpoint_authenticate_verified(endpoint, &caller, &request,
                                                                &principal);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     status = flowie_control_auth_http_response_status(rc);
     goto done;
   }
   rc = flowie_control_auth_http_encode_principal(&principal, body_out, body_size_out);
-  status = rc == SALTS_OK ? OK : SERVICE_UNAVAILABLE;
+  status = rc == CMETA_OK ? OK : SERVICE_UNAVAILABLE;
 
 done:
   flowie_control_auth_http_request_clear(&request);
@@ -595,12 +595,12 @@ done:
   crypto_wipe(peer_certificate_sha256, sizeof(peer_certificate_sha256));
   if (req->body && req->body_len > 0u) crypto_wipe(req->body, req->body_len);
   flowie_control_auth_http_wipe_header(req, "Authorization");
-  if (rc != SALTS_OK && !*body_out) {
+  if (rc != CMETA_OK && !*body_out) {
     int encode_rc = flowie_control_auth_http_encode_denied(body_out, body_size_out);
-    if (encode_rc != SALTS_OK) return encode_rc;
+    if (encode_rc != CMETA_OK) return encode_rc;
   }
   *status_out = status;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_auth_iris_endpoint_handle(flowie_control_auth_iris_endpoint_t *endpoint,
@@ -613,7 +613,7 @@ void flowie_control_auth_iris_endpoint_handle(flowie_control_auth_iris_endpoint_
   set_header(res, "Cache-Control", "no-store");
   set_header(res, "Pragma", "no-cache");
   if (flowie_control_auth_iris_endpoint_process(endpoint, req, &status, &body, &body_size) !=
-      SALTS_OK) {
+      CMETA_OK) {
     reply(res, INTERNAL_SERVER_ERROR, "application/json", internal_error,
           sizeof(internal_error) - 1u);
     return;
@@ -657,9 +657,9 @@ int flowie_control_auth_iris_endpoint_create(
   endpoint->max_secret_size = config->max_secret_size;
   endpoint->local_executor_deadline_ms = config->local_executor_deadline_ms;
   if (config->local_executor_enabled) {
-    salts_threadpool_config_t executor_config = {(int)config->local_executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->local_executor_workers,
                                                  config->local_executor_queue_capacity};
-    endpoint->local_executor = salts_threadpool_create_with_config(&executor_config);
+    endpoint->local_executor = cmeta_threadpool_create_with_config(&executor_config);
     if (!endpoint->local_executor) {
       crypto_wipe(endpoint, sizeof(*endpoint));
       free(endpoint);
@@ -667,7 +667,7 @@ int flowie_control_auth_iris_endpoint_create(
     }
   }
   *out = endpoint;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_auth_iris_endpoint_destroy(flowie_control_auth_iris_endpoint_t *endpoint) {
@@ -678,7 +678,7 @@ void flowie_control_auth_iris_endpoint_destroy(flowie_control_auth_iris_endpoint
     (void)flowie_control_http_app_unbind_context(endpoint->bound_app,
                                                  FLOWIE_CONTROL_AUTH_HTTP_PATH, endpoint);
   }
-  salts_threadpool_destroy(endpoint->local_executor);
+  cmeta_threadpool_destroy(endpoint->local_executor);
   endpoint->local_executor = NULL;
   crypto_wipe(endpoint, sizeof(*endpoint));
   free(endpoint);
@@ -688,14 +688,14 @@ int flowie_control_auth_iris_endpoint_register(flowie_control_auth_iris_endpoint
                                                flowie_control_http_app_t *app) {
   if (!endpoint || !app || endpoint->bound_app) return SALTS_EINVAL;
   if (flowie_control_http_app_bind_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH, endpoint) !=
-      SALTS_OK)
+      CMETA_OK)
     return SALTS_EBUSY;
   endpoint->bound_app = app;
   if (flowie_control_http_app_post(app, FLOWIE_CONTROL_AUTH_HTTP_PATH,
-                                   flowie_control_auth_iris_registered_handler) != SALTS_OK) {
+                                   flowie_control_auth_iris_registered_handler) != CMETA_OK) {
     endpoint->bound_app = NULL;
     (void)flowie_control_http_app_unbind_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH, endpoint);
     return SALTS_EBUSY;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }

@@ -1,6 +1,6 @@
 #include "flowie_cluster_owner_projection_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -100,7 +100,7 @@ int flowie_cluster_owner_command_encode(
   memcpy(output + FLOWIE_OWNER_OFFSET_NODE, command->node_id,
          command->node_id_size);
   *output_size = encoded_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_owner_command_decode(
@@ -134,7 +134,7 @@ int flowie_cluster_owner_command_decode(
   command.node_id[node_id_size] = '\0';
   if (!flowie_owner_command_valid(&command)) return SALTS_EPROTO;
   *out = command;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_owner_projection_apply_batch(
@@ -153,7 +153,7 @@ int flowie_cluster_owner_projection_apply_batch(
     rc = flowie_cluster_owner_command_decode(entries[index].data,
                                              entries[index].data_length,
                                              &command);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     directory_entry.shard_id = command.shard_id;
     directory_entry.owner.shard_id = command.shard_id;
     if (command.kind == FLOWIE_CLUSTER_OWNER_COMMAND_ASSIGN) {
@@ -161,11 +161,11 @@ int flowie_cluster_owner_projection_apply_batch(
       rc = flowie_cluster_owner_token_init(
           &directory_entry.owner, command.shard_id, command.owner_epoch,
           command.node_id, command.node_id_size, command.boot_id);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
     }
     rc = flowie_cluster_owner_directory_apply(
         projection->directory, &directory_entry, entries[index].index);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }

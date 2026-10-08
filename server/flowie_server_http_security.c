@@ -2,7 +2,7 @@
 
 #include "base64_utils.h"
 #include <http_client/http.h>
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 #include <uri_parser.h>
 
@@ -69,13 +69,13 @@ static void flowie_server_json_destroy(json_value_t *value) {
 }
 
 static int flowie_server_json_add(json_value_t *object, const char *key, json_value_t *value) {
-  if (value && json_object_add_checked(object, key, value)) return SALTS_OK;
+  if (value && json_object_add_checked(object, key, value)) return CMETA_OK;
   flowie_server_json_destroy(value);
   return SALTS_ENOMEM;
 }
 
 static int flowie_server_json_array_add(json_value_t *array, json_value_t *value) {
-  if (value && json_array_add_checked(array, value)) return SALTS_OK;
+  if (value && json_array_add_checked(array, value)) return CMETA_OK;
   flowie_server_json_destroy(value);
   return SALTS_ENOMEM;
 }
@@ -97,7 +97,7 @@ static int flowie_server_json_u64(const json_value_t *value, uint64_t *out) {
     if (errno != 0 || end != copy + length) return SALTS_EPROTO;
   }
   *out = (uint64_t)parsed;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_server_json_copy(const json_value_t *object, const char *key, char *out,
@@ -113,7 +113,7 @@ static int flowie_server_json_copy(const json_value_t *object, const char *key, 
   if (!text || (required && length == 0u) || length >= capacity) return SALTS_EPROTO;
   memcpy(out, text, length);
   out[length] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_server_json_strings(const json_value_t *object, const char *key, char *out,
@@ -136,7 +136,7 @@ static int flowie_server_json_strings(const json_value_t *object, const char *ke
     out[i * stride + length] = '\0';
   }
   *count_out = (uint32_t)count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_http_auth_encode(const flowie_security_auth_request_t *request,
@@ -159,27 +159,27 @@ int flowie_server_http_auth_encode(const flowie_security_auth_request_t *request
   if (!document) goto done;
   if (flowie_server_json_add(document, "version",
                              json_create_uint64(FLOWIE_SERVER_AUTH_PROTOCOL_VERSION)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(document, "identity",
-                             json_create_string(request->identity)) != SALTS_OK ||
+                             json_create_string(request->identity)) != CMETA_OK ||
       flowie_server_json_add(document, "method", json_create_string(request->method)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(document, "secret_base64",
-                             json_create_string(secret_base64)) != SALTS_OK ||
+                             json_create_string(secret_base64)) != CMETA_OK ||
       flowie_server_json_add(document, "protocol",
                              json_create_string(request->protocol ? request->protocol :
-                                                                          "")) != SALTS_OK ||
+                                                                          "")) != CMETA_OK ||
       flowie_server_json_add(
           document, "remote_address",
           json_create_string(request->remote_address ? request->remote_address : "")) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(
           document, "peer_certificate_sha256",
-          json_create_string(fingerprint ? fingerprint : "")) != SALTS_OK)
+          json_create_string(fingerprint ? fingerprint : "")) != CMETA_OK)
     goto done;
   *body_out = json_serialize(document, body_size_out);
   if (!*body_out) goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (secret_base64) {
@@ -197,7 +197,7 @@ static int flowie_server_scope(const char *text, flowie_security_scope_t *scope)
   else if (strcmp(text, "domain") == 0) *scope = FLOWIE_SECURITY_SCOPE_DOMAIN;
   else if (strcmp(text, "system") == 0) *scope = FLOWIE_SECURITY_SCOPE_SYSTEM;
   else return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_http_auth_decode(const char *body, size_t body_size, const char *method,
@@ -215,7 +215,7 @@ int flowie_server_http_auth_decode(const char *body, size_t body_size, const cha
   document = json_parse(body, body_size);
   if (!document)
     return SALTS_EPROTO;
-  if (flowie_server_json_u64(json_object_get(document, "version"), &version) != SALTS_OK ||
+  if (flowie_server_json_u64(json_object_get(document, "version"), &version) != CMETA_OK ||
       version != FLOWIE_SERVER_AUTH_PROTOCOL_VERSION)
     goto done;
   authenticated = json_object_get(document, "authenticated");
@@ -227,36 +227,36 @@ int flowie_server_http_auth_decode(const char *body, size_t body_size, const cha
   principal = json_object_get(document, "principal");
   if (!principal || json_type(principal) != JSON_OBJECT) goto done;
   if (flowie_server_json_copy(principal, "id", principal_out->principal_id,
-                              sizeof(principal_out->principal_id), 1) != SALTS_OK ||
+                              sizeof(principal_out->principal_id), 1) != CMETA_OK ||
       flowie_server_json_copy(principal, "type", principal_out->principal_type,
-                              sizeof(principal_out->principal_type), 1) != SALTS_OK ||
+                              sizeof(principal_out->principal_type), 1) != CMETA_OK ||
       flowie_server_json_copy(principal, "domain", principal_out->domain_id,
-                              sizeof(principal_out->domain_id), 0) != SALTS_OK ||
+                              sizeof(principal_out->domain_id), 0) != CMETA_OK ||
       flowie_server_json_copy(principal, "auth_method", principal_out->auth_method,
-                              sizeof(principal_out->auth_method), 1) != SALTS_OK ||
+                              sizeof(principal_out->auth_method), 1) != CMETA_OK ||
       strcmp(principal_out->auth_method, method) != 0)
     goto done;
   scope = json_object_get(principal, "scope");
   if (!scope || json_type(scope) != JSON_STRING ||
-      flowie_server_scope(json_string(scope), &principal_out->scope) != SALTS_OK ||
+      flowie_server_scope(json_string(scope), &principal_out->scope) != CMETA_OK ||
       flowie_server_json_strings(principal, "roles", (char *)principal_out->roles,
                                  sizeof(principal_out->roles[0]), FLOWIE_SECURITY_MAX_ROLES,
-                                 &principal_out->role_count) != SALTS_OK ||
+                                 &principal_out->role_count) != CMETA_OK ||
       flowie_server_json_strings(principal, "groups", (char *)principal_out->groups,
                                  sizeof(principal_out->groups[0]), FLOWIE_SECURITY_MAX_GROUPS,
-                                 &principal_out->group_count) != SALTS_OK ||
+                                 &principal_out->group_count) != CMETA_OK ||
       flowie_server_json_u64(json_object_get(principal, "expires_at"),
-                             &principal_out->expires_at) != SALTS_OK ||
+                             &principal_out->expires_at) != CMETA_OK ||
       flowie_server_json_u64(json_object_get(principal, "policy_version"),
-                             &principal_out->policy_version) != SALTS_OK ||
+                             &principal_out->policy_version) != CMETA_OK ||
       principal_out->policy_version == 0u ||
       (principal_out->scope != FLOWIE_SECURITY_SCOPE_SYSTEM && !principal_out->domain_id[0]))
     goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   json_free(document);
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *principal_out = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   return rc;
 }
@@ -264,11 +264,11 @@ done:
 static int flowie_server_json_add_strings(json_value_t *object, const char *key,
                                           const char *values, size_t stride, uint32_t count) {
   json_value_t *array = json_create_array();
-  int rc = array ? SALTS_OK : SALTS_ENOMEM;
-  for (uint32_t i = 0u; rc == SALTS_OK && i < count; ++i)
+  int rc = array ? CMETA_OK : SALTS_ENOMEM;
+  for (uint32_t i = 0u; rc == CMETA_OK && i < count; ++i)
     rc = flowie_server_json_array_add(array,
                                       json_create_string(values + (size_t)i * stride));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_server_json_add(object, key, array);
     array = NULL;
   }
@@ -287,7 +287,7 @@ static int flowie_server_span_copy(const uint8_t *data, size_t size, char **out)
   if (size != 0u) memcpy(copy, data, size);
   copy[size] = '\0';
   *out = copy;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_http_acl_encode(const flowie_security_request_t *request,
@@ -313,9 +313,9 @@ int flowie_server_http_acl_encode(const flowie_security_request_t *request,
                      : request->action == FLOWIE_SECURITY_ACTION_CONNECT ? "connect" : NULL;
   if (!access) return SALTS_EINVAL;
   rc = flowie_server_span_copy(request->username, request->username_size, &username);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_server_span_copy(request->client_id, request->client_id_size, &client_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   document = (json_value_t *)json_create_object();
   principal = json_create_object();
   if (!document || !principal) {
@@ -324,42 +324,42 @@ int flowie_server_http_acl_encode(const flowie_security_request_t *request,
   }
   if (flowie_server_json_add(principal, "id",
                              json_create_string(request->principal->principal_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(principal, "type",
                              json_create_string(request->principal->principal_type)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(principal, "domain",
                              json_create_string(request->principal->domain_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(principal, "expires_at",
                              json_create_uint64(request->principal->expires_at)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(principal, "policy_version",
                              json_create_uint64(request->principal->policy_version)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add_strings(principal, "roles", (const char *)request->principal->roles,
                                      sizeof(request->principal->roles[0]),
-                                     request->principal->role_count) != SALTS_OK ||
+                                     request->principal->role_count) != CMETA_OK ||
       flowie_server_json_add_strings(principal, "groups",
                                      (const char *)request->principal->groups,
                                      sizeof(request->principal->groups[0]),
-                                     request->principal->group_count) != SALTS_OK ||
+                                     request->principal->group_count) != CMETA_OK ||
       flowie_server_json_add(document, "version",
                              json_create_uint64(FLOWIE_SERVER_ACL_PROTOCOL_VERSION)) !=
-          SALTS_OK ||
-      flowie_server_json_add(document, "access", json_create_string(access)) != SALTS_OK ||
+          CMETA_OK ||
+      flowie_server_json_add(document, "access", json_create_string(access)) != CMETA_OK ||
       flowie_server_json_add(document, "topic", json_create_string(request->resource)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(document, "username", json_create_string(username)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_server_json_add(document, "client_id", json_create_string(client_id)) !=
-          SALTS_OK)
+          CMETA_OK)
     goto no_memory;
   rc = flowie_server_json_add(document, "principal", principal);
   principal = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   *body_out = json_serialize(document, body_size_out);
-  rc = *body_out ? SALTS_OK : SALTS_ENOMEM;
+  rc = *body_out ? CMETA_OK : SALTS_ENOMEM;
   goto done;
 
 no_memory:
@@ -385,7 +385,7 @@ static int flowie_server_decision_reason(const char *text,
   else if (strcmp(text, "policy_version_mismatch") == 0)
     *reason = FLOWIE_SECURITY_REASON_POLICY_VERSION_MISMATCH;
   else return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_http_acl_decode(const char *body, size_t body_size,
@@ -404,13 +404,13 @@ int flowie_server_http_acl_decode(const char *body, size_t body_size,
     return SALTS_EPROTO;
   allowed = json_object_get(document, "allowed");
   reason = json_object_get(document, "reason");
-  if (flowie_server_json_u64(json_object_get(document, "version"), &version) != SALTS_OK ||
+  if (flowie_server_json_u64(json_object_get(document, "version"), &version) != CMETA_OK ||
       version != FLOWIE_SERVER_ACL_PROTOCOL_VERSION || !allowed ||
       json_type(allowed) != JSON_BOOL || !reason ||
       json_type(reason) != JSON_STRING ||
-      flowie_server_decision_reason(json_string(reason), &decision_out->reason) != SALTS_OK ||
+      flowie_server_decision_reason(json_string(reason), &decision_out->reason) != CMETA_OK ||
       flowie_server_json_u64(json_object_get(document, "policy_version"),
-                             &decision_out->policy_version) != SALTS_OK ||
+                             &decision_out->policy_version) != CMETA_OK ||
       decision_out->policy_version == 0u)
     goto done;
   decision_out->effect =
@@ -420,11 +420,11 @@ int flowie_server_http_acl_decode(const char *body, size_t body_size,
       (decision_out->effect == FLOWIE_SECURITY_DENY &&
        decision_out->reason == FLOWIE_SECURITY_REASON_ALLOW_RULE))
     goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   json_free(document);
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *decision_out = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
   return rc;
 }
@@ -452,7 +452,7 @@ static int flowie_server_http_token_copy(const char *reference, char **out) {
   if (!copy) return SALTS_ENOMEM;
   memcpy(copy, value, size + 1u);
   *out = copy;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_server_http_token_destroy(char *token) {
@@ -496,7 +496,7 @@ static int flowie_server_http_endpoint_init(
   endpoint->max_response_size = max_response_size;
   endpoint->timeout_ms = config->timeout_ms;
   written = snprintf(endpoint->ca_file, sizeof(endpoint->ca_file), "%s", config->ca_file);
-  return written > 0 && (size_t)written < sizeof(endpoint->ca_file) ? SALTS_OK : SALTS_ERANGE;
+  return written > 0 && (size_t)written < sizeof(endpoint->ca_file) ? CMETA_OK : SALTS_ERANGE;
 }
 
 static chttp_client_config
@@ -553,9 +553,9 @@ static int flowie_server_http_post(const flowie_server_http_endpoint_t *endpoint
                                         .ca_file = endpoint->ca_file,
                                         .server_name = endpoint->server_name};
   rc = chttp_tls_profile_init(&tls_profile, &tls_config);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = chttp_client_init(&client, &client_config);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   options = (chttp_options){.connection_uri = endpoint->connection_uri,
                             .authority = endpoint->authority,
                             .target = endpoint->target,
@@ -570,7 +570,7 @@ static int flowie_server_http_post(const flowie_server_http_endpoint_t *endpoint
 done:
   if (client.impl != NULL) {
     int destroy_rc = chttp_client_destroy(&client, FLOWIE_SERVER_HTTP_DESTROY_TIMEOUT_MS);
-    if (rc == SALTS_OK && destroy_rc != SALTS_OK) rc = destroy_rc;
+    if (rc == CMETA_OK && destroy_rc != CMETA_OK) rc = destroy_rc;
   }
   (void)chttp_tls_profile_destroy(&tls_profile);
   flowie_server_secure_clear(authorization, sizeof(authorization));
@@ -586,7 +586,7 @@ static int flowie_server_http_response_status(const chttp_response *response) {
   if (response->status_code != 200u || !content_type ||
       strncmp(content_type, "application/json", sizeof("application/json") - 1u) != 0)
     return SALTS_EIO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_http_headers(const flowie_server_http_provider_config_t *config,
@@ -607,7 +607,7 @@ int flowie_server_http_headers(const flowie_server_http_provider_config_t *confi
   headers[1] = "Accept: application/json";
   headers[2] = service_id;
   headers[3] = service_domain;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_server_http_authenticate(void *ctx,
@@ -623,12 +623,12 @@ static int flowie_server_http_authenticate(void *ctx,
       strcmp(request->method, security->auth_config.method) != 0)
     return SALTS_EPERM;
   rc = flowie_server_http_auth_encode(request, &body, &body_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_server_http_post(&security->auth_endpoint, &security->auth_config,
                                security->auth_token, body, body_size, &response);
-  if (rc != SALTS_OK) rc = SALTS_EIO;
-  if (rc == SALTS_OK) rc = flowie_server_http_response_status(&response);
-  if (rc == SALTS_OK)
+  if (rc != CMETA_OK) rc = SALTS_EIO;
+  if (rc == CMETA_OK) rc = flowie_server_http_response_status(&response);
+  if (rc == CMETA_OK)
     rc = flowie_server_http_auth_decode((const char *)response.body, response.body_size,
                                         security->auth_config.method, principal_out);
   chttp_response_destroy(&response);
@@ -647,12 +647,12 @@ static int flowie_server_http_authorize(void *ctx, const flowie_security_request
   (void)now_epoch_seconds;
   if (!security || !request || !decision_out) return SALTS_EINVAL;
   rc = flowie_server_http_acl_encode(request, &body, &body_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_server_http_post(&security->acl_endpoint, &security->acl_config,
                                security->acl_token, body, body_size, &response);
-  if (rc != SALTS_OK) rc = SALTS_EIO;
-  if (rc == SALTS_OK) rc = flowie_server_http_response_status(&response);
-  if (rc == SALTS_OK)
+  if (rc != CMETA_OK) rc = SALTS_EIO;
+  if (rc == CMETA_OK) rc = flowie_server_http_response_status(&response);
+  if (rc == CMETA_OK)
     rc = flowie_server_http_acl_decode((const char *)response.body, response.body_size,
                                        decision_out);
   chttp_response_destroy(&response);
@@ -674,15 +674,15 @@ int flowie_server_http_security_create(const flowie_server_http_provider_config_
   security->auth_config = *auth;
   security->acl_config = *acl;
   rc = flowie_server_http_token_copy(auth->service_token_ref, &security->auth_token);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_server_http_token_copy(acl->service_token_ref, &security->acl_token);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_server_http_endpoint_init(&security->auth_endpoint, &security->auth_config,
                                           FLOWIE_SERVER_SECURITY_RESPONSE_LIMIT);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_server_http_endpoint_init(&security->acl_endpoint, &security->acl_config,
                                           security->acl_config.max_body_size);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_server_http_security_destroy(security);
     return rc;
   }
@@ -691,7 +691,7 @@ int flowie_server_http_security_create(const flowie_server_http_provider_config_
   security->acl_provider = (flowie_security_authorization_provider_t){
       sizeof(security->acl_provider), security, flowie_server_http_authorize};
   *out = security;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_server_http_security_destroy(flowie_server_http_security_t *security) {

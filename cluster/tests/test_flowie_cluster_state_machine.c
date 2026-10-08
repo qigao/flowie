@@ -1,7 +1,7 @@
 #include "flowie_cluster_state_machine_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -24,7 +24,7 @@ static int flowie_state_machine_publish(
   capture->term = term;
   capture->command_id = command_id;
   capture->descriptor = *descriptor;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static flowie_cluster_owner_directory_t *flowie_state_machine_directory(void) {
@@ -35,7 +35,7 @@ static flowie_cluster_owner_directory_t *flowie_state_machine_directory(void) {
   config.cluster_id = vstr_from_cstr("cluster-a");
   config.listener_id = vstr_from_cstr("mqtt");
   check_equal(flowie_cluster_owner_directory_create(&config, &directory),
-               SALTS_OK);
+               CMETA_OK);
   return directory;
 }
 
@@ -64,7 +64,7 @@ spec("flowie cluster unified Raft state machine") {
     check_equal(flowie_cluster_owner_command_encode(
                      &owner_command, entries[0].data, sizeof(entries[0].data),
                      &entries[0].data_length),
-                 SALTS_OK);
+                 CMETA_OK);
 
     descriptor.stream_id = 71u;
     descriptor.stream_size = 4096u;
@@ -75,14 +75,14 @@ spec("flowie cluster unified Raft state machine") {
     check_equal(tr_raft_data_descriptor_encode(
                      &descriptor, entries[1].data, sizeof(entries[1].data),
                      &encoded_size),
-                 SALTS_OK);
+                 CMETA_OK);
     entries[1].data_length = encoded_size;
 
     check_equal(flowie_cluster_state_machine_apply_batch(&state, entries, 2u),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_owner_directory_resolve_shard(directory, 1u,
                                                                &owner),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(owner.owner_epoch, 9u);
     check_equal(capture.count, 1u);
     check_equal(capture.index, 11u);

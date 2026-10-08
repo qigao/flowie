@@ -2,8 +2,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,19 +71,19 @@ spec("Flowie Control TurboDB live contract") {
     database.options = &option;
     database.option_count = 1u;
     store_config.database = &database;
-    check_equal(flowie_control_store_open(&store_config, &store), SALTS_OK);
+    check_equal(flowie_control_store_open(&store_config, &store), CMETA_OK);
     if (!store) return;
-    check_equal(flowie_control_store_current_revision(store, &revision), SALTS_OK);
+    check_equal(flowie_control_store_current_revision(store, &revision), CMETA_OK);
 
     (void)snprintf(domain_id, sizeof(domain_id), "live-%llu",
-                   (unsigned long long)salts_hrtime());
+                   (unsigned long long)cmeta_hrtime());
     live_request(request_id, sizeof(request_id), domain_id, "domain");
     domain.domain_id = domain_id;
     domain.actor = "live-test";
     domain.request_id = request_id;
     domain.expected_revision = revision;
     domain.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_domain_create(store, &domain, &result), SALTS_OK);
+    check_equal(flowie_control_store_domain_create(store, &domain, &result), CMETA_OK);
 
     live_request(request_id, sizeof(request_id), domain_id, "user");
     user.domain_id = domain_id;
@@ -93,7 +93,7 @@ spec("Flowie Control TurboDB live contract") {
     user.request_id = request_id;
     user.expected_revision = result.revision;
     user.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), CMETA_OK);
 
     live_request(request_id, sizeof(request_id), domain_id, "credential");
     credential_issue.domain_id = domain_id;
@@ -103,11 +103,11 @@ spec("Flowie Control TurboDB live contract") {
     credential_issue.expected_revision = result.revision;
     credential_issue.occurred_at = occurred_at++;
     check_equal(flowie_control_store_credential_generate(store, &credential_issue, &credential),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_store_credential_verify(store, domain_id, "device",
                                                        credential.token, credential.token_size,
                                                        &credential_verified),
-                SALTS_OK);
+                CMETA_OK);
     result.revision = credential.revision;
     flowie_control_generated_credential_wipe(&credential);
 
@@ -118,7 +118,7 @@ spec("Flowie Control TurboDB live contract") {
     group.request_id = request_id;
     group.expected_revision = result.revision;
     group.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_group_create(store, &group, &result), SALTS_OK);
+    check_equal(flowie_control_store_group_create(store, &group, &result), CMETA_OK);
 
     live_request(request_id, sizeof(request_id), domain_id, "membership");
     membership.domain_id = domain_id;
@@ -128,7 +128,7 @@ spec("Flowie Control TurboDB live contract") {
     membership.request_id = request_id;
     membership.expected_revision = result.revision;
     membership.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_membership_add(store, &membership, &result), SALTS_OK);
+    check_equal(flowie_control_store_membership_add(store, &membership, &result), CMETA_OK);
 
     live_request(request_id, sizeof(request_id), domain_id, "role");
     role.domain_id = domain_id;
@@ -137,7 +137,7 @@ spec("Flowie Control TurboDB live contract") {
     role.request_id = request_id;
     role.expected_revision = result.revision;
     role.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_role_create(store, &role, &result), SALTS_OK);
+    check_equal(flowie_control_store_role_create(store, &role, &result), CMETA_OK);
 
     live_request(request_id, sizeof(request_id), domain_id, "user-role");
     user_role.domain_id = domain_id;
@@ -147,21 +147,21 @@ spec("Flowie Control TurboDB live contract") {
     user_role.request_id = request_id;
     user_role.expected_revision = result.revision;
     user_role.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_user_role_add(store, &user_role, &result), SALTS_OK);
+    check_equal(flowie_control_store_user_role_add(store, &user_role, &result), CMETA_OK);
 
     check_equal(flowie_control_store_effective_groups(store, domain_id, "device", &groups),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(groups.group_count, 1u);
     check_equal(groups.groups[0], "operators");
     check_equal(flowie_control_store_effective_roles(store, domain_id, "device", &roles),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(roles.role_count, 1u);
     check_equal(roles.roles[0], "reader");
 
     (void)snprintf(rule_line, sizeof(rule_line),
                    "user device allow {\n  read topic %s/groups/operators/devices/%%u/event\n}",
                    domain_id);
-    check_equal(flowie_control_acl_parse(rule_line, strlen(rule_line), &document), SALTS_OK);
+    check_equal(flowie_control_acl_parse(rule_line, strlen(rule_line), &document), CMETA_OK);
     live_request(request_id, sizeof(request_id), domain_id, "rule");
     rule.domain_id = domain_id;
     rule.ordinal = 10u;
@@ -170,8 +170,8 @@ spec("Flowie Control TurboDB live contract") {
     rule.request_id = request_id;
     rule.expected_revision = result.revision;
     rule.occurred_at = occurred_at++;
-    check_equal(flowie_control_store_policy_subject_rule_put(store, &rule, &result), SALTS_OK);
-    check_equal(flowie_control_store_policy_validate(store, domain_id, &validation), SALTS_OK);
+    check_equal(flowie_control_store_policy_subject_rule_put(store, &rule, &result), CMETA_OK);
+    check_equal(flowie_control_store_policy_validate(store, domain_id, &validation), CMETA_OK);
     check_equal(validation.rule_count, 2u);
 
     live_request(request_id, sizeof(request_id), domain_id, "publish");
@@ -181,14 +181,14 @@ spec("Flowie Control TurboDB live contract") {
     publish.expected_revision = result.revision;
     publish.occurred_at = occurred_at++;
     publish.expires_at = UINT64_C(4102444800);
-    check_equal(flowie_control_store_policy_publish(store, &publish, &published), SALTS_OK);
+    check_equal(flowie_control_store_policy_publish(store, &publish, &published), CMETA_OK);
     check_equal(published.policy_version, 1u);
-    check_equal(flowie_control_store_policy_bundle_load(store, domain_id, 1u, &bundle), SALTS_OK);
+    check_equal(flowie_control_store_policy_bundle_load(store, domain_id, 1u, &bundle), CMETA_OK);
     check_equal(bundle.policy_version, 1u);
     check_equal(bundle.rule_count, 2u);
     flowie_control_store_policy_bundle_release(&bundle);
 
-    session_nonce = salts_hrtime();
+    session_nonce = cmeta_hrtime();
     for (size_t index = 0u; index < sizeof(session.token_digest); ++index)
       session.token_digest[index] =
           (uint8_t)((session_nonce >> ((index % sizeof(session_nonce)) * 8u)) ^ index);
@@ -199,19 +199,19 @@ spec("Flowie Control TurboDB live contract") {
     session.expires_at = occurred_at + 600u;
     check_equal(flowie_control_store_management_session_issue(store, &session, 8u, 2u,
                                                               occurred_at),
-                SALTS_OK);
+                CMETA_OK);
     flowie_control_store_destroy(store);
     store = NULL;
 
-    check_equal(flowie_control_store_open(&store_config, &store), SALTS_OK);
+    check_equal(flowie_control_store_open(&store_config, &store), CMETA_OK);
     check_equal(flowie_control_store_management_session_resolve(
                     store, session.token_digest, occurred_at + 1u, &restored_session),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(restored_session.domain_id, domain_id);
     check_equal(restored_session.principal_id, "device");
     check_equal(restored_session.csrf, session.csrf);
     check_equal(flowie_control_store_management_session_revoke(store, session.token_digest),
-                SALTS_OK);
+                CMETA_OK);
     flowie_control_store_destroy(store);
   }
 }

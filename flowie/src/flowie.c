@@ -2,7 +2,7 @@
 #include "flowie_security_internal.h"
 #include "flowie_topic_index_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +30,7 @@ int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
   mapped.metadata.duplicate = publish->duplicate;
   mapped.metadata.retain = publish->retain;
   rc = flowie_protocol_message_validate(&mapped.metadata);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   mapped.route.protocol = FLOWIE_PROTOCOL_MQTT;
   mapped.route.owner_instance_id = owner_instance_id;
   mapped.route.session_id = session_id;
@@ -39,7 +39,7 @@ int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,
   mapped.properties = publish->properties;
   mapped.payload = publish->payload;
   *out = mapped;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 typedef struct flowie_mqtt_security_leaf_s {
@@ -60,7 +60,7 @@ static int flowie_security_principal_text_validate(const char *value, size_t cap
   const char *end;
   if (!value || capacity == 0u) return SALTS_EINVAL;
   end = (const char *)memchr(value, '\0', capacity);
-  return !end || (required && end == value) ? SALTS_EPROTO : SALTS_OK;
+  return !end || (required && end == value) ? SALTS_EPROTO : CMETA_OK;
 }
 
 int flowie_security_principal_validate(const flowie_security_principal_t *principal) {
@@ -71,27 +71,27 @@ int flowie_security_principal_validate(const flowie_security_principal_t *princi
       principal->role_count > FLOWIE_SECURITY_MAX_ROLES ||
       principal->group_count > FLOWIE_SECURITY_MAX_GROUPS || principal->policy_version == 0u ||
       flowie_security_principal_text_validate(principal->principal_id,
-                                              sizeof(principal->principal_id), 1) != SALTS_OK ||
+                                              sizeof(principal->principal_id), 1) != CMETA_OK ||
       flowie_security_principal_text_validate(principal->principal_type,
-                                              sizeof(principal->principal_type), 1) != SALTS_OK ||
+                                              sizeof(principal->principal_type), 1) != CMETA_OK ||
       flowie_security_principal_text_validate(
           principal->domain_id, sizeof(principal->domain_id),
-          principal->scope != FLOWIE_SECURITY_SCOPE_SYSTEM) != SALTS_OK ||
+          principal->scope != FLOWIE_SECURITY_SCOPE_SYSTEM) != CMETA_OK ||
       flowie_security_principal_text_validate(principal->auth_method,
-                                              sizeof(principal->auth_method), 1) != SALTS_OK)
+                                              sizeof(principal->auth_method), 1) != CMETA_OK)
     return SALTS_EPROTO;
   for (uint32_t index = 0u; index < principal->role_count; ++index)
     if (flowie_security_principal_text_validate(principal->roles[index],
-                                                sizeof(principal->roles[index]), 1) != SALTS_OK)
+                                                sizeof(principal->roles[index]), 1) != CMETA_OK)
       return SALTS_EPROTO;
   for (uint32_t index = 0u; index < principal->group_count; ++index) {
     if (flowie_security_principal_text_validate(principal->groups[index],
-                                                sizeof(principal->groups[index]), 1) != SALTS_OK)
+                                                sizeof(principal->groups[index]), 1) != CMETA_OK)
       return SALTS_EPROTO;
     for (uint32_t prior = 0u; prior < index; ++prior)
       if (strcmp(principal->groups[index], principal->groups[prior]) == 0) return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_context_t *out,
@@ -107,7 +107,7 @@ int flowie_mqtt_validated_security_context_init(flowie_mqtt_validated_security_c
                                               tstr_len(parser_validated_resource)};
   initialized.provenance = &FLOWIE_MQTT_VALIDATED_SECURITY_PROVENANCE;
   *out = initialized;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_security_resource(const flowie_security_request_t *request,
@@ -150,7 +150,7 @@ static int flowie_mqtt_security_resource(const flowie_security_request_t *reques
   *kind_out = kind;
   *validated_out = validated;
   *context_out = context;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter_out,
@@ -182,7 +182,7 @@ static int flowie_mqtt_security_filter_compile(const char *pattern, char *filter
   }
   filter_out[written] = '\0';
   *uses_placeholders_out = uses_placeholders;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_security_identity_segment_valid(flowie_mqtt_span_t value) {
@@ -262,13 +262,13 @@ static int flowie_mqtt_security_compile_leaf(void *ctx,
   compiled = (flowie_mqtt_security_leaf_t *)calloc(1u, sizeof(*compiled));
   if (!compiled) return SALTS_ENOMEM;
   rc = flowie_topic_index_init(&compiled->topics);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     compiled->candidates = (flowie_mqtt_security_candidate_t *)calloc(
         input->candidate_count, sizeof(*compiled->candidates));
     if (!compiled->candidates) rc = SALTS_ENOMEM;
   }
   compiled->candidate_count = input->candidate_count;
-  for (size_t position = 0u; rc == SALTS_OK && position < input->candidate_count; ++position) {
+  for (size_t position = 0u; rc == CMETA_OK && position < input->candidate_count; ++position) {
     size_t rule_index = input->candidate_rule_indices[position];
     const flowie_security_rule_t *rule =
         rule_index < input->rule_count ? &input->rules[rule_index] : NULL;
@@ -283,7 +283,7 @@ static int flowie_mqtt_security_compile_leaf(void *ctx,
     rc = flowie_mqtt_security_filter_compile(
         rule->pattern, compiled_filter, sizeof(compiled_filter),
         &compiled->candidates[position].uses_placeholders);
-    if (rc != SALTS_OK) break;
+    if (rc != CMETA_OK) break;
     compiled->candidates[position].pattern = rule->pattern;
     filter = (flowie_mqtt_span_t){(const uint8_t *)compiled_filter, strlen(compiled_filter)};
     if (!flowie_mqtt_topic_filter_validate(filter)) {
@@ -292,14 +292,14 @@ static int flowie_mqtt_security_compile_leaf(void *ctx,
     }
     rc = flowie_topic_index_insert(&compiled->topics, filter, position);
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_topic_index_destroy(&compiled->topics);
     free(compiled->candidates);
     free(compiled);
     return rc;
   }
   *compiled_leaf_out = compiled;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 typedef struct flowie_mqtt_security_emit_context_s {
@@ -319,7 +319,7 @@ static int flowie_mqtt_security_emit_candidate(void *ctx, size_t candidate_posit
   if (candidate->uses_placeholders &&
       !flowie_mqtt_security_placeholders_match(candidate->pattern, state->resource,
                                                state->security))
-    return SALTS_OK;
+    return CMETA_OK;
   return state->emit(state->emit_ctx, candidate_position);
 }
 
@@ -337,9 +337,9 @@ static int flowie_mqtt_security_evaluate_leaf(void *ctx, const void *compiled_le
   (void)ctx;
   if (!compiled || !request || request->size < sizeof(*request) || !emit || !request->resource)
     return SALTS_EINVAL;
-  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return SALTS_OK;
+  if (request->resource_type != FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC) return CMETA_OK;
   rc = flowie_mqtt_security_resource(request, &resource, &kind, &validated, &security_context);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   emit_context = (flowie_mqtt_security_emit_context_t){compiled, security_context, resource, emit,
                                                        emit_ctx};
   if (kind == FLOWIE_MQTT_SECURITY_TOPIC_FILTER) {
@@ -368,5 +368,5 @@ int flowie_mqtt_security_matcher_init(flowie_security_matcher_t *out) {
   matcher.evaluate_leaf = flowie_mqtt_security_evaluate_leaf;
   matcher.destroy_leaf = flowie_mqtt_security_destroy_leaf;
   *out = matcher;
-  return SALTS_OK;
+  return CMETA_OK;
 }

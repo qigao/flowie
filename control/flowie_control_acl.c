@@ -1,7 +1,7 @@
 #include "flowie_control_acl_internal.h"
 #include "flowie_control_acl_grammar_gen.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +13,7 @@ void FlowieControlAclParse(void *parser, int token_id, flowie_control_acl_token_
 void FlowieControlAclParseFree(void *parser, void (*free_proc)(void *));
 
 static void flowie_control_acl_set_error(flowie_control_acl_parse_ctx_t *ctx, int status) {
-  if (ctx && ctx->status == SALTS_OK) ctx->status = status;
+  if (ctx && ctx->status == CMETA_OK) ctx->status = status;
 }
 
 void flowie_control_acl_parse_fail(flowie_control_acl_parse_ctx_t *ctx) {
@@ -26,14 +26,14 @@ static int flowie_control_acl_copy_token(char *output, size_t capacity,
     return SALTS_EPROTO;
   memcpy(output, token.value, token.length);
   output[token.length] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
                                      flowie_security_subject_kind_t subject_kind,
                                      flowie_control_acl_token_t subject,
                                      flowie_security_effect_t connection_effect) {
-  if (!ctx || ctx->status != SALTS_OK) return;
+  if (!ctx || ctx->status != CMETA_OK) return;
   if (subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
       subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
       subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP) {
@@ -45,7 +45,7 @@ void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
     return;
   }
   if (flowie_control_acl_copy_token(ctx->document.subject, sizeof(ctx->document.subject),
-                                    subject) != SALTS_OK) {
+                                    subject) != CMETA_OK) {
     flowie_control_acl_set_error(ctx, SALTS_EPROTO);
     return;
   }
@@ -77,7 +77,7 @@ static size_t flowie_control_acl_topic_alternatives(flowie_control_acl_parse_ctx
   const char *cursor;
   const char *close;
   size_t count = 0u;
-  if (!ctx || ctx->status != SALTS_OK || !value || length < sizeof("{a,b}") - 1u ||
+  if (!ctx || ctx->status != CMETA_OK || !value || length < sizeof("{a,b}") - 1u ||
       value[0] != '{' || value[length - 1u] != '}') {
     flowie_control_acl_set_error(ctx, SALTS_EPROTO);
     return 0u;
@@ -128,7 +128,7 @@ flowie_control_acl_topic_parse(flowie_control_acl_parse_ctx_t *ctx,
   const char *end;
   size_t level = 0u;
   memset(&topic, 0, sizeof(topic));
-  if (!ctx || ctx->status != SALTS_OK || !pattern.value || pattern.length == 0u) {
+  if (!ctx || ctx->status != CMETA_OK || !pattern.value || pattern.length == 0u) {
     flowie_control_acl_set_error(ctx, SALTS_EPROTO);
     return topic;
   }
@@ -171,7 +171,7 @@ flowie_control_acl_topic_parse(flowie_control_acl_parse_ctx_t *ctx,
       }
       topic.alternative_count =
           flowie_control_acl_topic_alternatives(ctx, cursor, segment_length);
-      if (ctx->status != SALTS_OK) return topic;
+      if (ctx->status != CMETA_OK) return topic;
     } else if (!(segment_length == 1u && cursor[0] == '+') &&
                !flowie_control_acl_topic_static(cursor, segment_length, 1)) {
       flowie_control_acl_set_error(ctx, SALTS_EPROTO);
@@ -198,7 +198,7 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
                                   flowie_security_effect_t effect, uint32_t action_mask,
                                   flowie_control_acl_topic_parse_t topic) {
   flowie_control_acl_entry_t *entry;
-  if (!ctx || ctx->status != SALTS_OK) return;
+  if (!ctx || ctx->status != CMETA_OK) return;
   if (ctx->document.entry_count >= FLOWIE_CONTROL_ACL_MAX_ENTRIES) {
     flowie_control_acl_set_error(ctx, SALTS_ENOSPC);
     return;
@@ -236,7 +236,7 @@ int flowie_control_acl_parse(const char *text, size_t text_size,
   flowie_control_acl_token_t token;
   void *parser = NULL;
   int token_id = FLOWIE_CONTROL_ACL_LEX_END;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (out && out->size >= sizeof(*out)) flowie_control_acl_document_init(out);
   if (!text || text_size == 0u || text_size > FLOWIE_CONTROL_ACL_DOCUMENT_MAX ||
       memchr(text, '\0', text_size) || !out || out->size < sizeof(*out))
@@ -252,19 +252,19 @@ int flowie_control_acl_parse(const char *text, size_t text_size,
   flowie_control_acl_lexer_init(&lexer, text, text_size);
   while ((token_id = flowie_control_acl_lexer_next(&lexer, &token)) > 0) {
     FlowieControlAclParse(parser, token_id, token, ctx);
-    if (ctx->status != SALTS_OK) break;
+    if (ctx->status != CMETA_OK) break;
   }
-  if (token_id < 0 && ctx->status == SALTS_OK) ctx->status = SALTS_EPROTO;
-  if (ctx->status == SALTS_OK) {
+  if (token_id < 0 && ctx->status == CMETA_OK) ctx->status = SALTS_EPROTO;
+  if (ctx->status == CMETA_OK) {
     memset(&token, 0, sizeof(token));
     token.line = lexer.line;
     token.column = lexer.column;
     FlowieControlAclParse(parser, 0, token, ctx);
   }
   FlowieControlAclParseFree(parser, free);
-  rc = ctx->status != SALTS_OK || !ctx->accepted ? (ctx->status ? ctx->status : SALTS_EPROTO)
-                                                  : SALTS_OK;
-  if (rc == SALTS_OK) *out = ctx->document;
+  rc = ctx->status != CMETA_OK || !ctx->accepted ? (ctx->status ? ctx->status : SALTS_EPROTO)
+                                                  : CMETA_OK;
+  if (rc == CMETA_OK) *out = ctx->document;
   free(ctx);
   return rc;
 }
@@ -298,14 +298,14 @@ static int flowie_control_acl_append(char *output, size_t capacity, size_t *offs
     return SALTS_ENOSPC;
   memcpy(output + *offset, text, text_size);
   *offset += text_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_acl_format(const flowie_control_acl_document_t *document, char *text_out,
                               size_t text_capacity, size_t *text_size_out) {
   size_t offset = 0u;
   const char *subject_kind;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (text_size_out) *text_size_out = 0u;
   if (!document || document->size < sizeof(*document) ||
       !(subject_kind = flowie_control_acl_subject_kind_name(document->subject_kind)) ||
@@ -317,16 +317,16 @@ int flowie_control_acl_format(const flowie_control_acl_document_t *document, cha
   flowie_control_acl_append(text_out, text_capacity - 1u, &offset, value, sizeof(value) - 1u)
   rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, subject_kind,
                                  strlen(subject_kind));
-  if (rc == SALTS_OK) rc = FLOWIE_ACL_APPEND_LITERAL(" ");
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = FLOWIE_ACL_APPEND_LITERAL(" ");
+  if (rc == CMETA_OK)
     rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, document->subject,
                                    strlen(document->subject));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = document->connection_effect == FLOWIE_SECURITY_ALLOW
              ? FLOWIE_ACL_APPEND_LITERAL(" allow")
              : FLOWIE_ACL_APPEND_LITERAL(" deny");
-  if (rc == SALTS_OK && document->entry_count != 0u) rc = FLOWIE_ACL_APPEND_LITERAL(" {\n");
-  for (size_t index = 0u; rc == SALTS_OK && index < document->entry_count; ++index) {
+  if (rc == CMETA_OK && document->entry_count != 0u) rc = FLOWIE_ACL_APPEND_LITERAL(" {\n");
+  for (size_t index = 0u; rc == CMETA_OK && index < document->entry_count; ++index) {
     const flowie_control_acl_entry_t *entry = &document->entries[index];
     const char *access = flowie_control_acl_access_name(entry->action_mask);
     if (!access || !entry->topic[0] ||
@@ -336,19 +336,19 @@ int flowie_control_acl_format(const flowie_control_acl_document_t *document, cha
       break;
     }
     rc = FLOWIE_ACL_APPEND_LITERAL("  ");
-    if (rc == SALTS_OK && entry->effect == FLOWIE_SECURITY_DENY)
+    if (rc == CMETA_OK && entry->effect == FLOWIE_SECURITY_DENY)
       rc = FLOWIE_ACL_APPEND_LITERAL("deny ");
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, access,
                                      strlen(access));
-    if (rc == SALTS_OK) rc = FLOWIE_ACL_APPEND_LITERAL(" topic ");
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK) rc = FLOWIE_ACL_APPEND_LITERAL(" topic ");
+    if (rc == CMETA_OK)
       rc = flowie_control_acl_append(text_out, text_capacity - 1u, &offset, entry->topic,
                                      strlen(entry->topic));
-    if (rc == SALTS_OK) rc = FLOWIE_ACL_APPEND_LITERAL("\n");
+    if (rc == CMETA_OK) rc = FLOWIE_ACL_APPEND_LITERAL("\n");
   }
-  if (rc == SALTS_OK && document->entry_count != 0u) rc = FLOWIE_ACL_APPEND_LITERAL("}");
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK && document->entry_count != 0u) rc = FLOWIE_ACL_APPEND_LITERAL("}");
+  if (rc == CMETA_OK) {
     text_out[offset] = '\0';
     *text_size_out = offset;
   }
@@ -372,7 +372,7 @@ static int flowie_control_acl_rule_base(const flowie_control_acl_document_t *doc
   rule->subject_kind = document->subject_kind;
   memcpy(rule->subject, document->subject, subject_size + 1u);
   memcpy(rule->domain_id, domain_id, domain_size + 1u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_expand_topic(const flowie_control_acl_document_t *document,
@@ -406,7 +406,7 @@ static int flowie_control_acl_expand_topic(const flowie_control_acl_document_t *
     written += replacement_size;
   }
   output[written] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_rule_add(const flowie_control_acl_document_t *document,
@@ -420,16 +420,16 @@ static int flowie_control_acl_rule_add(const flowie_control_acl_document_t *docu
   if (!entry || !rules || !count) return SALTS_EINVAL;
   if (*count >= rule_capacity) return SALTS_ENOSPC;
   rc = flowie_control_acl_rule_base(document, domain_id, &rule);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rule.effect = entry->effect;
   rule.action_mask = entry->action_mask;
   rule.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
   rule.match_kind = FLOWIE_SECURITY_MATCH_ADAPTER;
   rc = flowie_control_acl_expand_topic(document, entry, alternative, alternative_size,
                                        rule.pattern);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rules[(*count)++] = rule;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_acl_compile(const flowie_control_acl_document_t *document,
@@ -443,14 +443,14 @@ int flowie_control_acl_compile(const flowie_control_acl_document_t *document,
       document->entry_count > FLOWIE_CONTROL_ACL_MAX_ENTRIES)
     return SALTS_EINVAL;
   rc = flowie_control_acl_rule_base(document, domain_id, &rules[count]);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rules[count].effect = document->connection_effect;
   rules[count].action_mask = FLOWIE_SECURITY_ACTION_CONNECT;
   rules[count].resource_type = FLOWIE_SECURITY_RESOURCE_GENERIC;
   rules[count].match_kind = FLOWIE_SECURITY_MATCH_PREFIX;
   rules[count].pattern[0] = '\0';
   ++count;
-  for (size_t index = 0u; rc == SALTS_OK && index < document->entry_count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < document->entry_count; ++index) {
     const flowie_control_acl_entry_t *entry = &document->entries[index];
     if (entry->alternative_count <= 1u) {
       rc = flowie_control_acl_rule_add(document, domain_id, entry, NULL, 0u, rules,
@@ -475,14 +475,14 @@ int flowie_control_acl_compile(const flowie_control_acl_document_t *document,
         }
         rc = flowie_control_acl_rule_add(document, domain_id, entry, cursor,
                                          (size_t)(end - cursor), rules, rule_capacity, &count);
-        if (rc != SALTS_OK) break;
+        if (rc != CMETA_OK) break;
         ++expanded;
         cursor = comma ? comma + 1u : close;
       }
-      if (rc == SALTS_OK && expanded != entry->alternative_count) rc = SALTS_EPROTO;
+      if (rc == CMETA_OK && expanded != entry->alternative_count) rc = SALTS_EPROTO;
     }
   }
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *rule_count_out = count;
-  return SALTS_OK;
+  return CMETA_OK;
 }

@@ -7,7 +7,7 @@
 
 #include "flowie_cluster_publish_egress_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -73,10 +73,10 @@ int flowie_cluster_publish_egress_create(
   if (!egress) return SALTS_ENOMEM;
   egress->config = *config;
   rc = flowie_stl_error(vec_init_bytes(&egress->legs, sizeof(flowie_cluster_publish_egress_leg_t), _Alignof(flowie_cluster_publish_egress_leg_t), SIZE_MAX));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_stl_error(vec_reserve(&egress->legs,
                          config->configuration.member_count - 1u));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   for (index = 0u; index < config->configuration.member_count; ++index) {
     const tr_raft_conf_member_t *member =
         &config->configuration.members[index];
@@ -95,17 +95,17 @@ int flowie_cluster_publish_egress_create(
     sender_config.max_inflight_chunks = config->max_inflight_chunks;
     rc = flowie_cluster_publish_stream_sender_create(&sender_config,
                                                        &leg.sender);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
     rc = flowie_cluster_publish_stream_sender_begin(
         leg.sender, config->term, config->stream_id, *event,
         tstr_len(*event));
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_cluster_publish_stream_sender_destroy(leg.sender);
       goto fail;
     }
     leg.peer_id = member->node_id;
     rc = flowie_stl_error(vec_push(&egress->legs, &leg));
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_cluster_publish_stream_sender_destroy(leg.sender);
       goto fail;
     }
@@ -117,7 +117,7 @@ int flowie_cluster_publish_egress_create(
   egress->event = *event;
   *event = NULL;
   *out = egress;
-  return SALTS_OK;
+  return CMETA_OK;
 fail:
   flowie_cluster_publish_egress_free(egress);
   return rc;
@@ -133,9 +133,9 @@ int flowie_cluster_publish_egress_mark_local_durable(
   int rc;
   if (!egress) return SALTS_EINVAL;
   egress->local_durable = 1;
-  if (!egress->quorum) return SALTS_OK;
+  if (!egress->quorum) return CMETA_OK;
   rc = flowie_cluster_publish_quorum_mark_local_durable(egress->quorum);
-  if (rc != SALTS_OK) egress->local_durable = 0;
+  if (rc != CMETA_OK) egress->local_durable = 0;
   return rc;
 }
 
@@ -149,25 +149,25 @@ static int flowie_cluster_publish_egress_pump_leg(
     payload.kind = TR_RAFT_WIRE_PAYLOAD_DATA_CHUNK;
     rc = flowie_cluster_publish_stream_sender_next(
         leg->sender, &payload.data.data_chunk);
-    if (rc == SALTS_EBUSY || rc == SALTS_ENOENT) return SALTS_OK;
-    if (rc != SALTS_OK) return rc;
+    if (rc == SALTS_EBUSY || rc == SALTS_ENOENT) return CMETA_OK;
+    if (rc != CMETA_OK) return rc;
     if (!egress->quorum) {
       rc = flowie_cluster_publish_quorum_create(
           egress->config.self_id, &egress->config.configuration,
           &payload.data.data_chunk, &egress->quorum);
-      if (rc == SALTS_OK && egress->local_durable)
+      if (rc == CMETA_OK && egress->local_durable)
         rc = flowie_cluster_publish_quorum_mark_local_durable(egress->quorum);
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         (void)flowie_cluster_publish_stream_sender_cancel(
             leg->sender, payload.data.data_chunk.stream_offset);
         return rc;
       }
     }
     rc = egress->config.enqueue(egress->config.enqueue_ctx, &payload);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       int cancel_rc = flowie_cluster_publish_stream_sender_cancel(
           leg->sender, payload.data.data_chunk.stream_offset);
-      return cancel_rc == SALTS_OK ? rc : cancel_rc;
+      return cancel_rc == CMETA_OK ? rc : cancel_rc;
     }
   }
 }
@@ -182,9 +182,9 @@ int flowie_cluster_publish_egress_pump(
         (flowie_cluster_publish_egress_leg_t *)vec_at(&egress->legs,
                                                             index);
     rc = flowie_cluster_publish_egress_pump_leg(egress, leg);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_publish_egress_acknowledge(
@@ -199,11 +199,11 @@ int flowie_cluster_publish_egress_acknowledge(
   leg = flowie_cluster_publish_egress_find(egress, ack->from);
   if (!leg) return SALTS_ENOENT;
   rc = flowie_cluster_publish_stream_sender_acknowledge(leg->sender, ack);
-  if (rc == SALTS_OK && ack->durable) {
+  if (rc == CMETA_OK && ack->durable) {
     if (!egress->quorum) return SALTS_EPROTO;
     rc = flowie_cluster_publish_quorum_acknowledge(egress->quorum, ack);
   }
-  if (rc == SALTS_OK) rc = flowie_cluster_publish_egress_pump_leg(egress, leg);
+  if (rc == CMETA_OK) rc = flowie_cluster_publish_egress_pump_leg(egress, leg);
   return rc;
 }
 

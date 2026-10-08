@@ -71,12 +71,12 @@ static int external_https_secret_acquire(void *ctx, const char *reference,
   if (!fixture || !reference || strcmp(reference, "env://EXTERNAL_AUTH_TOKEN") != 0 || !lease)
     return SALTS_ENOENT;
   (void)atomic_fetch_add_explicit(&fixture->acquire_calls, 1, memory_order_relaxed);
-  if (fixture->acquire_status != SALTS_OK) return fixture->acquire_status;
+  if (fixture->acquire_status != CMETA_OK) return fixture->acquire_status;
   lease->bytes = fixture->token ? fixture->token : default_token;
   lease->byte_count = fixture->token ? fixture->token_size : sizeof(default_token) - 1u;
   lease->version = fixture->token ? fixture->token_version : 1u;
   lease->provider_lease = fixture;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void external_https_secret_release(void *ctx, flowie_security_secret_lease_t *lease) {
@@ -163,7 +163,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
   flowie_control_external_https_authenticator_t *authenticator = NULL;
   external_https_task_t task;
-  salts_thread_t worker = {0};
+  cmeta_thread_t worker = {0};
   int worker_started = 0;
   int rc = SALTS_EIO;
 
@@ -202,7 +202,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   config.tls.client_cert_file = options->configure_client_identity ? cert_file : NULL;
   config.tls.client_key_file = options->configure_client_identity ? key_file : NULL;
   rc = flowie_control_external_https_authenticator_create(&config, &authenticator);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   fixture.token = options->request_token;
   fixture.token_size = options->request_token_size;
   fixture.token_version = 3u;
@@ -210,22 +210,22 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   task.request = external_https_request();
   task.assertion =
       (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  rc = salts_thread_create(&worker, external_https_verify_task, &task);
-  if (rc != SALTS_OK) goto done;
+  rc = cmeta_thread_create(&worker, external_https_verify_task, &task);
+  if (rc != CMETA_OK) goto done;
   worker_started = 1;
-  rc = salts_thread_join(&worker);
+  rc = cmeta_thread_join(&worker);
   worker_started = 0;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->status = task.status;
   result->assertion = task.assertion;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
-  if (worker_started) (void)salts_thread_join(&worker);
+  if (worker_started) (void)cmeta_thread_join(&worker);
   if (authenticator &&
       flowie_control_external_https_authenticator_get_stats(authenticator, &result->stats) !=
-          SALTS_OK &&
-      rc == SALTS_OK)
+          CMETA_OK &&
+      rc == CMETA_OK)
     rc = SALTS_EIO;
   flowie_control_external_https_authenticator_destroy(authenticator);
   flow_mtls_test_server_join(&server);
@@ -248,7 +248,7 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(flowie_control_external_https_decode_response(
                     EXTERNAL_HTTPS_RESPONSE_BODY, sizeof(EXTERNAL_HTTPS_RESPONSE_BODY) - 1u,
                     "oidc-token", &assertion),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(assertion.issuer, "https://idp.example");
     check_equal(assertion.domain_id, "root-a");
     check_equal(assertion.subject, "tenant-42/device-a");
@@ -313,7 +313,7 @@ spec("Flowie control external HTTPS authenticator") {
     size_t body_size = 0u;
 
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(body);
     document = json_parse(body, body_size);
     check_not_null(document);
@@ -337,7 +337,7 @@ spec("Flowie control external HTTPS authenticator") {
     body_size = 0u;
     request.domain_id = "";
     check_equal(flowie_control_external_https_encode_request(&request, &body, &body_size),
-                SALTS_OK);
+                CMETA_OK);
     document = json_parse(body, body_size);
     check_not_null(document);
     check_equal(json_string(json_object_get(document, "domain")), "");
@@ -395,17 +395,17 @@ spec("Flowie control external HTTPS authenticator") {
     check_null(authenticator);
     config = external_https_config(&fixture);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(authenticator);
     interface = flowie_control_external_https_authenticator_interface(authenticator);
     check_not_null(interface);
-    check_equal(flowie_control_external_authenticator_validate(interface), SALTS_OK);
+    check_equal(flowie_control_external_authenticator_validate(interface), CMETA_OK);
     request.protocol = NULL;
     check_equal(interface->verify(interface->ctx, &request, &assertion), SALTS_EINVAL);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 1);
     check_equal(atomic_load_explicit(&fixture.release_calls, memory_order_relaxed), 1);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(stats.started_requests, 0u);
     stats.size = 0u;
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
@@ -424,8 +424,8 @@ spec("Flowie control external HTTPS authenticator") {
                                                  "application/json", EXTERNAL_HTTPS_RESPONSE_BODY);
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
-    check_equal(result.status, SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
+    check_equal(result.status, CMETA_OK);
     check_true(result.peer_verified);
     check_equal(result.assertion.subject, "tenant-42/device-a");
     check_equal(result.assertion.external_group_count, 2u);
@@ -443,7 +443,7 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EPERM);
     check_true(result.peer_verified);
     check_equal(result.stats.started_requests, 1u);
@@ -457,7 +457,7 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EBUSY);
     check_true(result.peer_verified);
     check_equal(result.acquire_calls, 2u);
@@ -471,7 +471,7 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_options_t options =
         external_https_network_options(response, sizeof(response) - 1u);
 
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_equal(result.stats.remote_server_failures, 1u);
@@ -488,7 +488,7 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EPROTO);
     check_true(result.peer_verified);
     check_equal(result.stats.protocol_failures, 1u);
@@ -505,7 +505,7 @@ spec("Flowie control external HTTPS authenticator") {
     options = external_https_network_options(response, (size_t)response_size);
     options.response_delay_ms = 250u;
     options.timeout_ms = 50u;
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_equal(result.stats.transport_failures, 1u);
@@ -515,7 +515,7 @@ spec("Flowie control external HTTPS authenticator") {
     external_https_network_result_t result;
     external_https_network_options_t options = external_https_network_options(NULL, 0u);
 
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
     check_greater(result.request_size, 0u);
@@ -532,7 +532,7 @@ spec("Flowie control external HTTPS authenticator") {
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
     options.configure_client_identity = 0;
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EIO);
     check_false(result.peer_verified);
     check_equal(result.request_size, 0u);
@@ -549,7 +549,7 @@ spec("Flowie control external HTTPS authenticator") {
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
     options.configure_ca = 0;
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
     check_equal(result.status, SALTS_EIO);
     check_equal(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
@@ -570,8 +570,8 @@ spec("Flowie control external HTTPS authenticator") {
     options.creation_token_size = sizeof(creation_token) - 1u;
     options.request_token = request_token;
     options.request_token_size = sizeof(request_token) - 1u;
-    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
-    check_equal(result.status, SALTS_OK);
+    check_equal(external_https_run_mtls(&options, &result), CMETA_OK);
+    check_equal(result.status, CMETA_OK);
     check_equal(result.acquire_calls, 2u);
     check_contains((const char *)result.request, "Authorization: Bearer rotated-token\r\n");
     check_null(strstr((const char *)result.request, "Authorization: Bearer initial-token"));
@@ -582,7 +582,7 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t task;
-    salts_thread_t worker = {0};
+    cmeta_thread_t worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
 
@@ -591,19 +591,19 @@ spec("Flowie control external HTTPS authenticator") {
     atomic_init(&fixture.release_calls, 0);
     atomic_init(&task.done, 0);
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(authenticator);
     fixture.acquire_status = SALTS_EIO;
     task.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
     task.request = external_https_request();
     task.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    check_equal(salts_thread_create(&worker, external_https_verify_task, &task), SALTS_OK);
-    check_equal(salts_thread_join(&worker), SALTS_OK);
+    check_equal(cmeta_thread_create(&worker, external_https_verify_task, &task), CMETA_OK);
+    check_equal(cmeta_thread_join(&worker), CMETA_OK);
 
     check_equal(task.status, SALTS_EIO);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(stats.started_requests, 1u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.local_failures, 1u);
@@ -624,8 +624,8 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t first;
     external_https_task_t second;
-    salts_thread_t first_worker = {0};
-    salts_thread_t second_worker = {0};
+    cmeta_thread_t first_worker = {0};
+    cmeta_thread_t second_worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
     int response_size;
@@ -655,7 +655,7 @@ spec("Flowie control external HTTPS authenticator") {
     config.tls.client_cert_file = cert_file;
     config.tls.client_key_file = key_file;
     check_equal(flowie_control_external_https_authenticator_create(&config, &authenticator),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(authenticator);
     first.authenticator = flowie_control_external_https_authenticator_interface(authenticator);
     first.request = external_https_request();
@@ -665,23 +665,23 @@ spec("Flowie control external HTTPS authenticator") {
     second.request = external_https_request();
     second.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    check_equal(salts_thread_create(&first_worker, external_https_verify_task, &first), SALTS_OK);
+    check_equal(cmeta_thread_create(&first_worker, external_https_verify_task, &first), CMETA_OK);
     while (atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed) < 2 &&
            !atomic_load_explicit(&first.done, memory_order_acquire))
-      salts_thread_yield();
+      cmeta_thread_yield();
     check_false(atomic_load_explicit(&first.done, memory_order_acquire));
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
-    check_equal(salts_thread_create(&second_worker, external_https_verify_task, &second), SALTS_OK);
-    check_equal(salts_thread_join(&second_worker), SALTS_OK);
+    check_equal(cmeta_thread_create(&second_worker, external_https_verify_task, &second), CMETA_OK);
+    check_equal(cmeta_thread_join(&second_worker), CMETA_OK);
     check_equal(second.status, SALTS_EBUSY);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
-    check_equal(salts_thread_join(&first_worker), SALTS_OK);
-    check_equal(first.status, SALTS_OK);
+    check_equal(cmeta_thread_join(&first_worker), CMETA_OK);
+    check_equal(first.status, CMETA_OK);
     check_true(server.peer_verified);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
     check_equal(atomic_load_explicit(&fixture.release_calls, memory_order_relaxed), 2);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(stats.started_requests, 2u);
     check_equal(stats.in_flight, 0u);
     check_equal(stats.succeeded, 1u);

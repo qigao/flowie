@@ -4,9 +4,9 @@
 #include "flowie_control_store_internal.h"
 #include "flowie_control_test_turbodb.h"
 
-#include "salts_coro.h"
+#include "coro.h"
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <stdint.h>
@@ -62,7 +62,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   user.request_id = "auth-endpoint-service";
   user.expected_revision = revision;
   user.occurred_at = 1100u + revision;
-  check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_create(store, &user, &result), CMETA_OK);
   revision = result.revision;
 
   issue.domain_id = "root-a";
@@ -71,7 +71,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   issue.request_id = "auth-endpoint-service-credential";
   issue.expected_revision = revision;
   issue.occurred_at = 1200u + revision;
-  check_equal(flowie_control_store_credential_generate(store, &issue, credential), SALTS_OK);
+  check_equal(flowie_control_store_credential_generate(store, &issue, credential), CMETA_OK);
   revision = credential->revision;
 
   role.domain_id = "root-a";
@@ -80,7 +80,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   role.request_id = "auth-endpoint-service-role";
   role.expected_revision = revision;
   role.occurred_at = 1300u + revision;
-  check_equal(flowie_control_store_role_create(store, &role, &result), SALTS_OK);
+  check_equal(flowie_control_store_role_create(store, &role, &result), CMETA_OK);
   revision = result.revision;
 
   assignment.domain_id = "root-a";
@@ -90,7 +90,7 @@ static uint64_t auth_endpoint_service_create(flowie_control_store_t *store, uint
   assignment.request_id = "auth-endpoint-service-assignment";
   assignment.expected_revision = revision;
   assignment.occurred_at = 1400u + revision;
-  check_equal(flowie_control_store_user_role_add(store, &assignment, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_role_add(store, &assignment, &result), CMETA_OK);
   return result.revision;
 }
 
@@ -109,20 +109,20 @@ static void auth_endpoint_service_fixture_open(auth_endpoint_service_fixture_t *
   check_not_null(fixture->database_path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture->database_path), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, &fixture->store), SALTS_OK);
+  check_equal(flowie_control_store_open(&store_config, &fixture->store), CMETA_OK);
 
   domain.domain_id = "root-a";
   domain.actor = "bootstrap";
   domain.request_id = "auth-endpoint-domain";
   domain.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(fixture->store, &domain, &result), SALTS_OK);
+  check_equal(flowie_control_store_domain_create(fixture->store, &domain, &result), CMETA_OK);
   (void)auth_endpoint_service_create(fixture->store, result.revision, &fixture->credential);
 
   resolver_config.listener_id = "broker-https";
   resolver_config.repository = flowie_control_store_repository(fixture->store);
   check_equal(
       flowie_control_service_credential_resolver_create(&resolver_config, &fixture->resolver),
-      SALTS_OK);
+      CMETA_OK);
 }
 
 static void auth_endpoint_service_fixture_close(auth_endpoint_service_fixture_t *fixture) {
@@ -167,7 +167,7 @@ static int auth_executor_policy_version(void *ctx, const char *domain_id,
   if (policy_version_out) *policy_version_out = 0u;
   if (!domain_id || strcmp(domain_id, "root-a") != 0 || !policy_version_out) return SALTS_EINVAL;
   *policy_version_out = 1u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_t workers,
@@ -195,14 +195,14 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   check_not_null(fixture->database_path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture->database_path), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, &fixture->store), SALTS_OK);
+  check_equal(flowie_control_store_open(&store_config, &fixture->store), CMETA_OK);
   check_not_null(fixture->store);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "executor-root";
   root.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(fixture->store, &root, &result), SALTS_OK);
+  check_equal(flowie_control_store_domain_create(fixture->store, &root, &result), CMETA_OK);
 
   user.domain_id = "root-a";
   user.principal_id = "device-a";
@@ -211,7 +211,7 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   user.request_id = "executor-user";
   user.expected_revision = 1u;
   user.occurred_at = 1001u;
-  check_equal(flowie_control_store_user_create(fixture->store, &user, &result), SALTS_OK);
+  check_equal(flowie_control_store_user_create(fixture->store, &user, &result), CMETA_OK);
 
   issue.domain_id = "root-a";
   issue.principal_id = "device-a";
@@ -221,26 +221,26 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   issue.occurred_at = 1002u;
   check_equal(
       flowie_control_store_credential_generate(fixture->store, &issue, &fixture->credential),
-      SALTS_OK);
+      CMETA_OK);
   (void)auth_endpoint_service_create(fixture->store, fixture->credential.revision,
                                      &fixture->service_credential);
 
   service_config.repository = flowie_control_store_repository(fixture->store);
   service_config.policy_version.current = auth_executor_policy_version;
   service_config.clock_seconds = auth_executor_clock;
-  check_equal(flowie_control_auth_service_create(&service_config, &fixture->service), SALTS_OK);
+  check_equal(flowie_control_auth_service_create(&service_config, &fixture->service), CMETA_OK);
   check_not_null(fixture->service);
 
   adapter_config.service = fixture->service;
   check_equal(flowie_control_auth_iris_adapter_create(&adapter_config, &fixture->adapter),
-              SALTS_OK);
+              CMETA_OK);
   check_not_null(fixture->adapter);
 
   credential_config.listener_id = "broker-https";
   credential_config.repository = flowie_control_store_repository(fixture->store);
   check_equal(flowie_control_service_credential_resolver_create(&credential_config,
                                                                 &fixture->service_credentials),
-              SALTS_OK);
+              CMETA_OK);
   endpoint_config.adapter = fixture->adapter;
   endpoint_config.service_credentials = fixture->service_credentials;
   endpoint_config.local_executor_enabled = 1;
@@ -248,7 +248,7 @@ static void auth_executor_fixture_open(auth_executor_fixture_t *fixture, uint32_
   endpoint_config.local_executor_queue_capacity = queue_capacity;
   endpoint_config.local_executor_deadline_ms = deadline_ms;
   check_equal(flowie_control_auth_iris_endpoint_create(&endpoint_config, &fixture->endpoint),
-              SALTS_OK);
+              CMETA_OK);
   check_not_null(fixture->endpoint);
 }
 
@@ -311,7 +311,7 @@ spec("flowie control auth iris adapter") {
     memset(fingerprint, 0xa5, sizeof(fingerprint));
     check_equal(
         flowie_control_auth_iris_adapter_optional_verified_peer_certificate(&request, fingerprint),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(fingerprint, "");
 
   }
@@ -325,7 +325,7 @@ spec("flowie control auth iris adapter") {
     flowie_control_auth_http_request_t zero = {0};
 
     check_equal(flowie_control_auth_http_decode_request(body, sizeof(body) - 1u, 4096u, &request),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(request.identity, "device-a");
     check_equal(request.method, "password");
     check_equal(request.protocol, "mqtt");
@@ -393,7 +393,7 @@ spec("flowie control auth iris adapter") {
     principal.expires_at = 100u;
     principal.policy_version = 7u;
 
-    check_equal(flowie_control_auth_http_encode_principal(&principal, &body, &body_size), SALTS_OK);
+    check_equal(flowie_control_auth_http_encode_principal(&principal, &body, &body_size), CMETA_OK);
     check_not_null(body);
     document = json_parse(body, body_size);
     check_not_null(document);
@@ -442,13 +442,13 @@ spec("flowie control auth iris adapter") {
     size_t response_size = 0u;
 
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
+    check_equal(auth_endpoint_make_adapter(&adapter), CMETA_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), CMETA_OK);
     memcpy(mutable_body, body, sizeof(body));
     auth_endpoint_request_init(&request, mutable_body, sizeof(body) - 1u, headers, 1, NULL);
     check_equal(flowie_control_auth_iris_endpoint_process(endpoint, &request, &status, &response,
                                                           &response_size),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(status, FORBIDDEN);
     check_equal(mutable_body, (char[sizeof(body)]){0}, sizeof(body));
     json_serialize_free(response);
@@ -478,13 +478,13 @@ spec("flowie control auth iris adapter") {
     size_t response_size = 0u;
 
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
+    check_equal(auth_endpoint_make_adapter(&adapter), CMETA_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), CMETA_OK);
     memcpy(mutable_body, body, sizeof(body));
     auth_endpoint_request_init(&request, mutable_body, sizeof(body) - 1u, headers, 4, NULL);
     check_equal(flowie_control_auth_iris_endpoint_process(endpoint, &request, &status, &response,
                                                           &response_size),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(status, FORBIDDEN);
     check_not_null(response);
     check_equal(mutable_body, (char[sizeof(body)]){0}, sizeof(body));
@@ -544,13 +544,13 @@ spec("flowie control auth iris adapter") {
     }
     coro_scheduler_run(scheduler);
     for (size_t index = 0u; index < TASK_COUNT; ++index) {
-      if (tasks[index].result == SALTS_OK) {
+      if (tasks[index].result == CMETA_OK) {
         ++succeeded;
         check_equal(tasks[index].principal.principal_id, "device-a");
       } else if (tasks[index].result == SALTS_EBUSY) {
         ++overloaded;
       } else {
-        check_equal(tasks[index].result, SALTS_OK);
+        check_equal(tasks[index].result, CMETA_OK);
       }
     }
     check_greater(succeeded, 0);
@@ -569,9 +569,9 @@ spec("flowie control auth iris adapter") {
 
     check_not_null(app);
     auth_endpoint_service_fixture_open(&service_fixture);
-    check_equal(auth_endpoint_make_adapter(&adapter), SALTS_OK);
-    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), SALTS_OK);
-    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), SALTS_OK);
+    check_equal(auth_endpoint_make_adapter(&adapter), CMETA_OK);
+    check_equal(auth_endpoint_make_endpoint(adapter, &service_fixture, &endpoint), CMETA_OK);
+    check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), CMETA_OK);
     check_equal(flowie_control_http_app_lookup_context(app, FLOWIE_CONTROL_AUTH_HTTP_PATH), endpoint);
     check_equal(flowie_control_auth_iris_endpoint_register(endpoint, app), SALTS_EINVAL);
     flowie_control_auth_iris_endpoint_destroy(endpoint);

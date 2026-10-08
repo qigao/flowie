@@ -6,7 +6,7 @@
 #include "flowie_control_store_schema_internal.h"
 #include "flowie_control_validation_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <limits.h>
@@ -131,9 +131,9 @@ static int flowie_control_schema_preflight(flowie_control_database_t *database,
   }
   if (has_version) {
     *initialized_out = 1;
-    return SALTS_OK;
+    return CMETA_OK;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_schema_initialize(flowie_control_database_t *database,
@@ -144,7 +144,7 @@ static int flowie_control_schema_initialize(flowie_control_database_t *database,
   schema = flowie_control_store_schema_sql(driver, NULL);
   if (!schema) return SALTS_EINVAL;
   status = flowie_control_database_exec(database, schema, NULL, NULL, NULL);
-  if (status == FLOWIE_CONTROL_DB_OK) return SALTS_OK;
+  if (status == FLOWIE_CONTROL_DB_OK) return CMETA_OK;
   return flowie_control_database_status(status);
 }
 
@@ -167,7 +167,7 @@ static int flowie_control_schema_validate(flowie_control_database_t *database) {
     rc = SALTS_EPROTO;
     goto done;
   }
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 done:
   (void)flowie_control_database_finalize(statement);
   return rc;
@@ -185,7 +185,7 @@ static int flowie_control_open_database(const flowie_control_store_t *store,
     return flowie_control_database_status(status);
   }
   *out = database;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_control_store_database_config_destroy(flowie_control_store_t *store) {
@@ -231,7 +231,7 @@ static int flowie_control_store_database_config_copy(flowie_control_store_t *sto
       (orm_string_view_t){store->database_driver, tstr_len(store->database_driver)};
   if (source->option_count == 0u) {
     store->database_config.options = NULL;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   store->database_options =
       (orm_option_t *)calloc(source->option_count, sizeof(*store->database_options));
@@ -258,14 +258,14 @@ static int flowie_control_store_database_config_copy(flowie_control_store_t *sto
         store->database_option_values[index], tstr_len(store->database_option_values[index])};
   }
   store->database_config.options = store->database_options;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_bind_text(flowie_control_statement_t *statement, int index,
                                     const char *value) {
   int status =
       flowie_control_database_bind_text(statement, index, value, -1, FLOWIE_CONTROL_DB_TRANSIENT);
-  return status == FLOWIE_CONTROL_DB_OK ? SALTS_OK : flowie_control_database_status(status);
+  return status == FLOWIE_CONTROL_DB_OK ? CMETA_OK : flowie_control_database_status(status);
 }
 
 static int flowie_control_bind_blob(flowie_control_statement_t *statement, int index,
@@ -274,7 +274,7 @@ static int flowie_control_bind_blob(flowie_control_statement_t *statement, int i
   if (!statement || (!value && size != 0u) || size > (size_t)INT_MAX) return SALTS_EINVAL;
   status = flowie_control_database_bind_blob(statement, index, value, (int)size,
                                              FLOWIE_CONTROL_DB_TRANSIENT);
-  return status == FLOWIE_CONTROL_DB_OK ? SALTS_OK : flowie_control_database_status(status);
+  return status == FLOWIE_CONTROL_DB_OK ? CMETA_OK : flowie_control_database_status(status);
 }
 
 static int flowie_control_copy_column(flowie_control_statement_t *statement, int column, char *out,
@@ -290,7 +290,7 @@ static int flowie_control_copy_column(flowie_control_statement_t *statement, int
     return SALTS_EPROTO;
   memcpy(out, text, (size_t)length);
   out[length] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_read_revision(flowie_control_database_t *database,
@@ -307,7 +307,7 @@ static int flowie_control_read_revision(flowie_control_database_t *database,
       flowie_control_database_column_type(statement, 0) == FLOWIE_CONTROL_DB_INTEGER &&
       flowie_control_database_column_int64(statement, 0) >= 0) {
     *revision_out = (uint64_t)flowie_control_database_column_int64(statement, 0);
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   } else {
     rc = status == FLOWIE_CONTROL_DB_ROW ? SALTS_EPROTO : flowie_control_database_status(status);
   }
@@ -332,11 +332,11 @@ static int flowie_control_advance_revision(flowie_control_database_t *database, 
     status = flowie_control_database_bind_int64(statement, 2, (int64_t)current);
   if (status == FLOWIE_CONTROL_DB_OK) status = flowie_control_database_step(statement);
   rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-           ? SALTS_OK
+           ? CMETA_OK
            : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                : flowie_control_database_status(status));
   (void)flowie_control_database_finalize(statement);
-  if (rc == SALTS_OK) *next_out = next;
+  if (rc == CMETA_OK) *next_out = next;
   return rc;
 }
 
@@ -358,10 +358,10 @@ static int flowie_control_replay(flowie_control_database_t *database, const char
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, request_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   if (status != FLOWIE_CONTROL_DB_ROW ||
@@ -386,7 +386,7 @@ static int flowie_control_replay(flowie_control_database_t *database, const char
   result->revision = (uint64_t)flowie_control_database_column_int64(statement, 5);
   result->replayed = 1;
   *found_out = 1;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -408,20 +408,20 @@ static int flowie_control_insert_audit(flowie_control_database_t *database, cons
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, request_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, actor);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, operation);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 4, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 5, target_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 6, target_detail);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, actor);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, operation);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 4, domain_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 5, target_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 6, target_detail);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 7, (int64_t)revision) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(statement, 8, (int64_t)occurred_at) !=
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(statement, 8, (int64_t)occurred_at) !=
                             FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   return rc;
@@ -448,13 +448,13 @@ static int flowie_control_domain_exists(flowie_control_database_t *database,
       database, "SELECT 1 FROM flowie_control_domain WHERE domain_id=?1", -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) rc = SALTS_ENOENT;
   else if (status != FLOWIE_CONTROL_DB_ROW ||
            flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE)
     rc = status == FLOWIE_CONTROL_DB_ROW ? SALTS_EPROTO : flowie_control_database_status(status);
-  else rc = SALTS_OK;
+  else rc = CMETA_OK;
 done:
   (void)flowie_control_database_finalize(statement);
   return rc;
@@ -474,8 +474,8 @@ static int flowie_control_group_lookup(flowie_control_database_t *database, cons
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, group_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, group_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -493,7 +493,7 @@ static int flowie_control_group_lookup(flowie_control_database_t *database, cons
   }
   *depth_out = (uint32_t)flowie_control_database_column_int(statement, 0);
   *enabled_out = flowie_control_database_column_int(statement, 1);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -518,8 +518,8 @@ static int flowie_control_group_references(flowie_control_database_t *database,
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, group_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, group_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status != FLOWIE_CONTROL_DB_ROW ||
       flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
@@ -533,7 +533,7 @@ static int flowie_control_group_references(flowie_control_database_t *database,
   }
   *active_child_out = flowie_control_database_column_int(statement, 0);
   *direct_membership_out = flowie_control_database_column_int(statement, 1);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -559,7 +559,7 @@ static int flowie_control_policy_subject_referenced(flowie_control_database_t *d
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     const unsigned char *line;
     int line_size;
@@ -580,30 +580,30 @@ static int flowie_control_policy_subject_referenced(flowie_control_database_t *d
       flowie_security_rule_t rule = FLOWIE_SECURITY_RULE_INIT;
       if ((size_t)line_size > FLOWIE_SECURITY_RULE_LINE_MAX ||
           flowie_security_rule_parse_line((const char *)line, (size_t)line_size, &rule) !=
-              SALTS_OK ||
+              CMETA_OK ||
           strcmp(rule.domain_id, domain_id) != 0) {
         rc = SALTS_EPROTO;
         goto done;
       }
       if (rule.subject_kind == subject_kind && strcmp(rule.subject, subject) == 0) {
         *referenced_out = 1;
-        rc = SALTS_OK;
+        rc = CMETA_OK;
         goto done;
       }
     } else {
       flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
-      if (flowie_control_acl_parse((const char *)line, (size_t)line_size, &document) != SALTS_OK) {
+      if (flowie_control_acl_parse((const char *)line, (size_t)line_size, &document) != CMETA_OK) {
         rc = SALTS_EPROTO;
         goto done;
       }
       if (document.subject_kind == subject_kind && strcmp(document.subject, subject) == 0) {
         *referenced_out = 1;
-        rc = SALTS_OK;
+        rc = CMETA_OK;
         goto done;
       }
     }
   }
-  rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+  rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -622,8 +622,8 @@ static int flowie_control_user_enabled(flowie_control_database_t *database, cons
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -637,7 +637,7 @@ static int flowie_control_user_enabled(flowie_control_database_t *database, cons
     goto done;
   }
   *enabled_out = flowie_control_database_column_int(statement, 0);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -663,8 +663,8 @@ static int flowie_control_credential_record_read(flowie_control_database_t *data
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -689,7 +689,7 @@ static int flowie_control_credential_record_read(flowie_control_database_t *data
       }
     }
     *out = record;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   if (flowie_control_database_column_type(statement, 2) != FLOWIE_CONTROL_DB_INTEGER ||
@@ -737,11 +737,11 @@ static int flowie_control_credential_record_read(flowie_control_database_t *data
   record.credential_revision = (uint64_t)flowie_control_database_column_int64(statement, 9);
   record.credential_exists = 1;
   *out = record;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
-  if (rc != SALTS_OK) flowie_control_credential_wipe(&record, sizeof(record));
+  if (rc != CMETA_OK) flowie_control_credential_wipe(&record, sizeof(record));
   return rc;
 }
 
@@ -757,8 +757,8 @@ static int flowie_control_role_enabled(flowie_control_database_t *database, cons
       &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, role_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, role_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -772,7 +772,7 @@ static int flowie_control_role_enabled(flowie_control_database_t *database, cons
     goto done;
   }
   *enabled_out = flowie_control_database_column_int(statement, 0);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -795,8 +795,8 @@ static int flowie_control_effective_roles_database(flowie_control_database_t *da
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     if (view.role_count >= FLOWIE_SECURITY_MAX_ROLES) {
       rc = SALTS_ENOSPC;
@@ -804,7 +804,7 @@ static int flowie_control_effective_roles_database(flowie_control_database_t *da
     }
     rc = flowie_control_copy_column(statement, 0, view.roles[view.role_count],
                                     sizeof(view.roles[view.role_count]));
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     ++view.role_count;
   }
   if (status != FLOWIE_CONTROL_DB_DONE) {
@@ -812,7 +812,7 @@ static int flowie_control_effective_roles_database(flowie_control_database_t *da
     goto done;
   }
   *out = view;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -840,8 +840,8 @@ static int flowie_control_effective_groups_database(flowie_control_database_t *d
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     if (view.group_count >= FLOWIE_SECURITY_MAX_GROUPS) {
       rc = SALTS_ENOSPC;
@@ -849,7 +849,7 @@ static int flowie_control_effective_groups_database(flowie_control_database_t *d
     }
     rc = flowie_control_copy_column(statement, 0, view.groups[view.group_count],
                                     sizeof(view.groups[view.group_count]));
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     ++view.group_count;
   }
   if (status != FLOWIE_CONTROL_DB_DONE) {
@@ -857,7 +857,7 @@ static int flowie_control_effective_groups_database(flowie_control_database_t *d
     goto done;
   }
   *out = view;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -880,7 +880,7 @@ flowie_control_policy_subject_kind_text(flowie_security_subject_kind_t subject_k
 
 static int flowie_control_policy_publish_detail(uint64_t expires_at, char output[64]) {
   int written = snprintf(output, 64u, "expires_at=%llu", (unsigned long long)expires_at);
-  return written > 0 && written < 64 ? SALTS_OK : SALTS_EINVAL;
+  return written > 0 && written < 64 ? CMETA_OK : SALTS_EINVAL;
 }
 
 static int flowie_control_policy_subject_enabled(flowie_control_database_t *database,
@@ -921,12 +921,12 @@ static int flowie_control_policy_document_validate(flowie_control_database_t *da
   flowie_control_acl_document_init(document);
   rc = flowie_control_acl_document_syntax_validate(domain_id, document_text, document_size,
                                                    document);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_domain_exists(database, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_policy_subject_enabled(database, domain_id, document->subject_kind,
                                              document->subject, &enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!enabled) {
     rc = SALTS_EPERM;
     goto done;
@@ -945,7 +945,7 @@ static int flowie_control_policy_document_validate(flowie_control_database_t *da
   if (document_out) *document_out = *document;
   *rule_count_out = rule_count;
   *deny_rule_count_out = deny_count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   free(document);
@@ -964,7 +964,7 @@ static int flowie_control_policy_validate_database(flowie_control_database_t *da
   int rc;
   if (!database || !domain_id || !out || out->size < sizeof(*out)) return SALTS_EINVAL;
   rc = flowie_control_read_revision(database, &validation.store_revision);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   subjects = (char *)calloc(FLOWIE_SECURITY_MAX_RULES, FLOWIE_SECURITY_ID_MAX + 1u);
   if (!subjects) return SALTS_ENOMEM;
   subject_kinds =
@@ -983,7 +983,7 @@ static int flowie_control_policy_validate_database(flowie_control_database_t *da
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     const unsigned char *line;
     int line_size;
@@ -1005,7 +1005,7 @@ static int flowie_control_policy_validate_database(flowie_control_database_t *da
     }
     rc = flowie_control_policy_document_validate(database, domain_id, (const char *)line,
                                                  (size_t)line_size, &document, &expanded, &denied);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     if (flowie_control_database_column_int(statement, 0) != (int)document.subject_kind ||
         !flowie_control_column_text_equal(statement, 1, document.subject)) {
       rc = SALTS_EPROTO;
@@ -1038,7 +1038,7 @@ static int flowie_control_policy_validate_database(flowie_control_database_t *da
     goto done;
   }
   *out = validation;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -1084,7 +1084,7 @@ static int flowie_control_policy_diagnostic_add(
     }
   }
   result->diagnostics[result->diagnostic_count++] = diagnostic;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int
@@ -1132,7 +1132,7 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
   dry_run.diagnostics = out->diagnostics;
   dry_run.diagnostic_capacity = out->diagnostic_capacity;
   rc = flowie_control_read_revision(database, &dry_run.store_revision);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   used_ordinals = (uint8_t *)calloc(FLOWIE_SECURITY_MAX_RULES, sizeof(*used_ordinals));
   if (!used_ordinals) return SALTS_ENOMEM;
   matched_changes = (uint8_t *)calloc(change_count, sizeof(*matched_changes));
@@ -1154,7 +1154,7 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
         rc = flowie_control_policy_diagnostic_add(
             &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DUPLICATE_CHANGE, index, change,
             FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES);
-        if (rc != SALTS_OK) goto done;
+        if (rc != CMETA_OK) goto done;
         invalid_changes[index] = 1u;
         break;
       }
@@ -1170,7 +1170,7 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     const unsigned char *subject_id;
     const unsigned char *document_text;
@@ -1201,7 +1201,7 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
       continue;
     rc = flowie_control_policy_document_validate(database, domain_id, (const char *)document_text,
                                                  (size_t)document_size, NULL, &expanded, &denied);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     if (used_ordinals[(size_t)ordinal]) {
       rc = SALTS_EPROTO;
       goto done;
@@ -1245,16 +1245,16 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
         rc = flowie_control_policy_diagnostic_add(
             &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_DELETE_TARGET_NOT_FOUND, index, change,
             FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
-        if (rc != SALTS_OK) goto done;
+        if (rc != CMETA_OK) goto done;
       }
       continue;
     }
     rc = flowie_control_policy_document_validate(database, domain_id, change->document,
                                                  change->document_size, &document, &expanded,
                                                  &denied);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       rc = flowie_control_policy_candidate_error(&dry_run, rc, index, change);
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
       continue;
     }
     if (document.subject_kind != change->subject_kind ||
@@ -1262,14 +1262,14 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
       rc = flowie_control_policy_diagnostic_add(
           &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_INVALID_DOCUMENT, index, change,
           FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_SUBJECT_ID);
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
       continue;
     }
     if (used_ordinals[change->ordinal]) {
       rc = flowie_control_policy_diagnostic_add(
           &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_ORDINAL_CONFLICT, index, change,
           FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ORDINAL);
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
       continue;
     }
     used_ordinals[change->ordinal] = 1u;
@@ -1277,7 +1277,7 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
       rc = flowie_control_policy_diagnostic_add(
           &dry_run, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_RULE_LIMIT, index, change,
           FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_ENTRIES);
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
       continue;
     }
     dry_run.rule_count += expanded;
@@ -1287,21 +1287,21 @@ flowie_control_policy_dry_run_database(flowie_control_database_t *database, cons
     dry_run.rule_count = 0u;
     dry_run.deny_rule_count = 0u;
     *out = dry_run;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   if (dry_run.rule_count == 0u) {
     rc = flowie_control_policy_diagnostic_add(&dry_run,
                                               FLOWIE_CONTROL_POLICY_DIAGNOSTIC_EMPTY_POLICY, 0u,
                                               NULL, FLOWIE_CONTROL_POLICY_DIAGNOSTIC_FIELD_CHANGES);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     *out = dry_run;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   dry_run.valid = 1;
   *out = dry_run;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -1322,17 +1322,17 @@ int flowie_control_store_open(const flowie_control_store_config_t *config,
   store = (flowie_control_store_t *)calloc(1u, sizeof(*store));
   if (!store) return SALTS_ENOMEM;
   rc = flowie_control_store_database_config_copy(store, config->database);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_control_schema_preflight(database, &initialized);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (!initialized) {
     int initialize_rc = flowie_control_schema_initialize(database, store->database_driver);
-    if (initialize_rc != SALTS_OK) {
+    if (initialize_rc != CMETA_OK) {
       /* A concurrent initializer may have committed while this connection waited. */
       rc = flowie_control_schema_preflight(database, &initialized);
-      if (rc != SALTS_OK) goto fail;
+      if (rc != CMETA_OK) goto fail;
       if (!initialized) {
         rc = initialize_rc;
         goto fail;
@@ -1340,14 +1340,14 @@ int flowie_control_store_open(const flowie_control_store_config_t *config,
     }
   }
   rc = flowie_control_schema_validate(database);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   (void)flowie_control_database_close(database);
   database = NULL;
   store->repository = (flowie_control_repository_t)FLOWIE_CONTROL_REPOSITORY_INIT;
   rc = flowie_control_repository_bind_turbodb(store, &store->repository);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   *out = store;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   if (database) (void)flowie_control_database_close(database);
@@ -1363,7 +1363,7 @@ void flowie_control_store_destroy(flowie_control_store_t *store) {
 }
 
 const flowie_control_repository_t *flowie_control_store_repository(flowie_control_store_t *store) {
-  if (!store || flowie_control_repository_validate(&store->repository) != SALTS_OK) return NULL;
+  if (!store || flowie_control_repository_validate(&store->repository) != CMETA_OK) return NULL;
   return &store->repository;
 }
 
@@ -1398,9 +1398,9 @@ static int flowie_control_management_session_next_sequence(flowie_control_databa
   status = flowie_control_database_step(statement);
   sequence =
       status == FLOWIE_CONTROL_DB_ROW ? flowie_control_database_column_int64(statement, 0) : 0;
-  rc = status == FLOWIE_CONTROL_DB_ROW && sequence > 0 ? SALTS_OK : SALTS_EIO;
+  rc = status == FLOWIE_CONTROL_DB_ROW && sequence > 0 ? CMETA_OK : SALTS_EIO;
   (void)flowie_control_database_finalize(statement);
-  if (rc == SALTS_OK) *sequence_out = (uint64_t)sequence;
+  if (rc == CMETA_OK) *sequence_out = (uint64_t)sequence;
   return rc;
 }
 
@@ -1414,10 +1414,10 @@ static int flowie_control_management_session_delete_expired(flowie_control_datab
       &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
   status = flowie_control_database_bind_int64(statement, 1, (int64_t)now);
-  rc = status == FLOWIE_CONTROL_DB_OK ? SALTS_OK : flowie_control_database_status(status);
-  if (rc == SALTS_OK) {
+  rc = status == FLOWIE_CONTROL_DB_OK ? CMETA_OK : flowie_control_database_status(status);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   return rc;
@@ -1440,19 +1440,19 @@ static int flowie_control_management_session_count(flowie_control_database_t *da
                 : "SELECT COUNT(*) FROM flowie_control_management_session",
       -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
   if (domain_id) {
     rc = flowie_control_bind_text(statement, 1, domain_id);
-    if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+    if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     count =
         status == FLOWIE_CONTROL_DB_ROW ? flowie_control_database_column_int64(statement, 0) : -1;
     rc = status == FLOWIE_CONTROL_DB_ROW && count >= 0 && (uint64_t)count <= (uint64_t)SIZE_MAX
-             ? SALTS_OK
+             ? CMETA_OK
              : SALTS_EIO;
-    if (rc == SALTS_OK) *count_out = (size_t)count;
+    if (rc == CMETA_OK) *count_out = (size_t)count;
   }
   (void)flowie_control_database_finalize(statement);
   return rc;
@@ -1477,21 +1477,21 @@ static int flowie_control_management_session_evict(flowie_control_database_t *da
   status = flowie_control_database_prepare(database, domain_id ? principal_sql : global_sql, -1,
                                            &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) return flowie_control_database_status(status);
-  rc = SALTS_OK;
+  rc = CMETA_OK;
   if (domain_id) {
     rc = flowie_control_bind_text(statement, 1, domain_id);
-    if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+    if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status =
         flowie_control_database_bind_int64(statement, domain_id ? 3 : 1, (int64_t)remove_count);
-    rc = status == FLOWIE_CONTROL_DB_OK ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_OK ? CMETA_OK : flowie_control_database_status(status);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE &&
                  flowie_control_database_changes(database) == (int)remove_count
-             ? SALTS_OK
+             ? CMETA_OK
              : SALTS_EIO;
   }
   (void)flowie_control_database_finalize(statement);
@@ -1514,7 +1514,7 @@ int flowie_control_store_management_session_issue(
       max_sessions_per_principal > FLOWIE_CONTROL_MANAGEMENT_SESSION_MAX_PER_PRINCIPAL)
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -1522,23 +1522,23 @@ int flowie_control_store_management_session_issue(
   }
   transaction_started = 1;
   rc = flowie_control_management_session_delete_expired(database, now);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_management_session_count(database, record->domain_id, record->principal_id,
                                                &count);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (count >= max_sessions_per_principal) {
     rc = flowie_control_management_session_evict(database, record->domain_id, record->principal_id,
                                                  count - max_sessions_per_principal + 1u);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
   }
   rc = flowie_control_management_session_count(database, NULL, NULL, &count);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (count >= capacity) {
     rc = flowie_control_management_session_evict(database, NULL, NULL, count - capacity + 1u);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
   }
   rc = flowie_control_management_session_next_sequence(database, &sequence);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "INSERT INTO flowie_control_management_session(token_digest,domain_id,principal_id,csrf,"
@@ -1549,22 +1549,22 @@ int flowie_control_store_management_session_issue(
     goto done;
   }
   rc = flowie_control_bind_blob(statement, 1, record->token_digest, sizeof(record->token_digest));
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, record->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, record->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 4, record->csrf);
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, record->domain_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, record->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 4, record->csrf);
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)record->expires_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 6, (int64_t)sequence) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : flowie_control_database_status(status);
   }
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
@@ -1573,7 +1573,7 @@ int flowie_control_store_management_session_issue(
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -1602,7 +1602,7 @@ int flowie_control_store_management_session_resolve(
     return SALTS_EINVAL;
   memcpy(record.token_digest, token_digest, sizeof(record.token_digest));
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -1619,7 +1619,7 @@ int flowie_control_store_management_session_resolve(
     goto done;
   }
   rc = flowie_control_bind_blob(statement, 1, token_digest, sizeof(record.token_digest));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -1627,10 +1627,10 @@ int flowie_control_store_management_session_resolve(
   }
   if (status != FLOWIE_CONTROL_DB_ROW ||
       flowie_control_copy_column(statement, 0, record.domain_id, sizeof(record.domain_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_copy_column(statement, 1, record.principal_id, sizeof(record.principal_id)) !=
-          SALTS_OK ||
-      flowie_control_copy_column(statement, 2, record.csrf, sizeof(record.csrf)) != SALTS_OK) {
+          CMETA_OK ||
+      flowie_control_copy_column(statement, 2, record.csrf, sizeof(record.csrf)) != CMETA_OK) {
     rc = SALTS_EIO;
     goto done;
   }
@@ -1657,13 +1657,13 @@ int flowie_control_store_management_session_resolve(
       goto done;
     }
     rc = flowie_control_bind_blob(statement, 1, token_digest, sizeof(record.token_digest));
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       status = flowie_control_database_step(statement);
       rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_ENOENT : flowie_control_database_status(status);
     }
   } else {
     rc = flowie_control_management_session_next_sequence(database, &sequence);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     status = flowie_control_database_prepare(
         database, "UPDATE flowie_control_management_session SET last_used=?1 WHERE token_digest=?2",
         -1, &statement, NULL);
@@ -1672,18 +1672,18 @@ int flowie_control_store_management_session_resolve(
       goto done;
     }
     status = flowie_control_database_bind_int64(statement, 1, (int64_t)sequence);
-    rc = status == FLOWIE_CONTROL_DB_OK ? SALTS_OK : flowie_control_database_status(status);
-    if (rc == SALTS_OK)
+    rc = status == FLOWIE_CONTROL_DB_OK ? CMETA_OK : flowie_control_database_status(status);
+    if (rc == CMETA_OK)
       rc = flowie_control_bind_blob(statement, 2, token_digest, sizeof(record.token_digest));
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       status = flowie_control_database_step(statement);
       rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-               ? SALTS_OK
+               ? CMETA_OK
                : SALTS_EIO;
     }
     record.last_used = sequence;
   }
-  if (rc != SALTS_OK && rc != SALTS_ENOENT) goto done;
+  if (rc != CMETA_OK && rc != SALTS_ENOENT) goto done;
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
@@ -1692,7 +1692,7 @@ int flowie_control_store_management_session_resolve(
     goto done;
   }
   transaction_started = 0;
-  if (rc == SALTS_OK) *out = record;
+  if (rc == CMETA_OK) *out = record;
 
 done:
   (void)flowie_control_database_finalize(statement);
@@ -1711,7 +1711,7 @@ int flowie_control_store_management_session_revoke(
   int rc;
   if (!store || !token_digest) return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database, "DELETE FROM flowie_control_management_session WHERE token_digest=?1", -1,
       &statement, NULL);
@@ -1721,10 +1721,10 @@ int flowie_control_store_management_session_revoke(
   }
   rc = flowie_control_bind_blob(statement, 1, token_digest,
                                 FLOWIE_CONTROL_MANAGEMENT_SESSION_DIGEST_SIZE);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     if (status != FLOWIE_CONTROL_DB_DONE) rc = flowie_control_database_status(status);
-    else rc = flowie_control_database_changes(database) == 1 ? SALTS_OK : SALTS_ENOENT;
+    else rc = flowie_control_database_changes(database) == 1 ? CMETA_OK : SALTS_ENOENT;
   }
 
 done:
@@ -1753,7 +1753,7 @@ int flowie_control_store_domain_create(flowie_control_store_t *store,
                                            command->occurred_at))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -1763,10 +1763,10 @@ int flowie_control_store_domain_create(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_DOMAIN_CREATE, command->domain_id,
                              command->domain_id, FLOWIE_CONTROL_TARGET_DOMAIN, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -1783,23 +1783,23 @@ int flowie_control_store_domain_create(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_DOMAIN_CREATE, command->domain_id,
                                    command->domain_id, FLOWIE_CONTROL_TARGET_DOMAIN, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -1810,14 +1810,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -1847,7 +1847,7 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
       (command->parent_group_id && strcmp(command->group_id, command->parent_group_id) == 0))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -1859,10 +1859,10 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
       command->domain_id, command->group_id,
       command->parent_group_id ? command->parent_group_id : FLOWIE_CONTROL_TARGET_DOMAIN, result,
       &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -1870,7 +1870,7 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
   if (command->parent_group_id) {
     rc = flowie_control_group_lookup(database, command->domain_id, command->parent_group_id,
                                      &parent_depth, &parent_enabled);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     if (!parent_enabled) {
       rc = SALTS_EPERM;
       goto done;
@@ -1881,7 +1881,7 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
     }
   } else {
     rc = flowie_control_domain_exists(database, command->domain_id);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
   }
   if (current >= (uint64_t)INT64_MAX) {
     rc = SALTS_ERANGE;
@@ -1898,41 +1898,41 @@ int flowie_control_store_group_create(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->group_id);
-  if (rc == SALTS_OK && command->parent_group_id)
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->group_id);
+  if (rc == CMETA_OK && command->parent_group_id)
     rc = flowie_control_bind_text(statement, 3, command->parent_group_id);
-  else if (rc == SALTS_OK &&
+  else if (rc == CMETA_OK &&
            flowie_control_database_bind_null(statement, 3) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int(statement, 4,
                                        command->parent_group_id ? (int)(parent_depth + 1u) : 0) !=
           FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 5, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 6, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_GROUP_CREATE,
       command->domain_id, command->group_id,
       command->parent_group_id ? command->parent_group_id : FLOWIE_CONTROL_TARGET_DOMAIN, next,
       command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -1943,14 +1943,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -1980,7 +1980,7 @@ int flowie_control_store_group_delete(flowie_control_store_t *store,
       strcmp(command->group_id, command->domain_id) == 0)
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -1990,20 +1990,20 @@ int flowie_control_store_group_delete(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_GROUP_DELETE, command->domain_id,
                              command->group_id, FLOWIE_CONTROL_TARGET_GROUP, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_group_lookup(database, command->domain_id, command->group_id, &group_depth,
                                    &group_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_group_references(database, command->domain_id, command->group_id, &child,
                                        &direct_membership);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (child || direct_membership) {
     rc = SALTS_EBUSY;
     goto done;
@@ -2011,13 +2011,13 @@ int flowie_control_store_group_delete(flowie_control_store_t *store,
   rc = flowie_control_policy_subject_referenced(database, command->domain_id,
                                                 FLOWIE_SECURITY_SUBJECT_GROUP, command->group_id,
                                                 &policy_reference);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (policy_reference) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database, "DELETE FROM flowie_control_group WHERE domain_id=?1 AND group_id=?2", -1,
       &statement, NULL);
@@ -2026,22 +2026,22 @@ int flowie_control_store_group_delete(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->group_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->group_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_GROUP_DELETE, command->domain_id,
                                    command->group_id, FLOWIE_CONTROL_TARGET_GROUP, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -2052,14 +2052,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -2084,7 +2084,7 @@ int flowie_control_store_user_create(flowie_control_store_t *store,
       !flowie_control_text_valid(command->principal_type, FLOWIE_SECURITY_TYPE_MAX))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2094,16 +2094,16 @@ int flowie_control_store_user_create(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_USER_CREATE, command->domain_id,
                              command->principal_id, command->principal_type, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_domain_exists(database, command->domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (current >= (uint64_t)INT64_MAX) {
     rc = SALTS_ERANGE;
     goto done;
@@ -2119,31 +2119,31 @@ int flowie_control_store_user_create(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->principal_type);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->principal_type);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 4, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_USER_CREATE, command->domain_id,
                                    command->principal_id, command->principal_type, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -2154,14 +2154,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -2187,7 +2187,7 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
                                            command->expected_revision, command->occurred_at))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2197,10 +2197,10 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_USER_DISABLE, command->domain_id,
                              command->principal_id, NULL, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -2215,8 +2215,8 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -2228,7 +2228,7 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_copy_column(statement, 0, principal_type, sizeof(principal_type));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (flowie_control_database_column_int(statement, 1) != 1) {
     rc = SALTS_EALREADY;
     goto done;
@@ -2238,13 +2238,13 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
   rc = flowie_control_policy_subject_referenced(database, command->domain_id,
                                                 FLOWIE_SECURITY_SUBJECT_PRINCIPAL,
                                                 command->principal_id, &policy_reference);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (policy_reference) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "UPDATE flowie_control_user SET enabled=0,revision=?1,updated_at=?2 WHERE domain_id=?3 "
@@ -2261,21 +2261,21 @@ int flowie_control_store_user_disable(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 3, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 4, command->principal_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 4, command->principal_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_USER_DISABLE,
       command->domain_id, command->principal_id, principal_type, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -2286,14 +2286,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -2310,7 +2310,7 @@ int flowie_control_store_user_get(flowie_control_store_t *store, const char *dom
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database,
       "SELECT domain_id,principal_id,principal_type,enabled,revision,created_at,updated_at "
@@ -2321,8 +2321,8 @@ int flowie_control_store_user_get(flowie_control_store_t *store, const char *dom
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -2340,11 +2340,11 @@ int flowie_control_store_user_get(flowie_control_store_t *store, const char *dom
     goto done;
   }
   rc = flowie_control_copy_column(statement, 0, view.domain_id, sizeof(view.domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view.principal_id, sizeof(view.principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, view.principal_type, sizeof(view.principal_type));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   view.enabled = flowie_control_database_column_int(statement, 3);
   if (view.enabled != 0 && view.enabled != 1) {
     rc = SALTS_EPROTO;
@@ -2354,7 +2354,7 @@ int flowie_control_store_user_get(flowie_control_store_t *store, const char *dom
   view.created_at = (uint64_t)flowie_control_database_column_int64(statement, 5);
   view.updated_at = (uint64_t)flowie_control_database_column_int64(statement, 6);
   *out = view;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -2401,24 +2401,24 @@ static int flowie_control_store_credential_issue(
     return SALTS_EINVAL;
   flowie_control_credential_default_params(&params);
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_replay(database, command->request_id, command->actor, operation,
                              command->domain_id, command->principal_id,
                              FLOWIE_CONTROL_DETAIL_ARGON2ID, &replay, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) {
     rc = SALTS_EALREADY;
     goto done;
   }
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_credential_record_read(database, command->domain_id, command->principal_id,
                                              &record);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!record.user_enabled) {
     rc = SALTS_EPERM;
     goto done;
@@ -2439,9 +2439,9 @@ static int flowie_control_store_credential_issue(
     rc = flowie_control_credential_hash(command->initial_secret, command->initial_secret_size, salt,
                                         verifier, &params);
   else rc = flowie_control_credential_generate(token, salt, verifier, &params);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2453,20 +2453,20 @@ static int flowie_control_store_credential_issue(
   rc = flowie_control_replay(database, command->request_id, command->actor, operation,
                              command->domain_id, command->principal_id,
                              FLOWIE_CONTROL_DETAIL_ARGON2ID, &replay, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) {
     rc = SALTS_EALREADY;
     goto done;
   }
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_credential_record_read(database, command->domain_id, command->principal_id,
                                              &record);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!record.user_enabled) {
     rc = SALTS_EPERM;
     goto done;
@@ -2480,7 +2480,7 @@ static int flowie_control_store_credential_issue(
     goto done;
   }
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       require_existing
@@ -2496,41 +2496,41 @@ static int flowie_control_store_credential_issue(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 3, params.algorithm) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(statement, 4, params.memory_blocks) !=
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(statement, 4, params.memory_blocks) !=
                             FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 5, params.passes) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 6, params.lanes) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) rc = flowie_control_bind_blob(statement, 7, salt, sizeof(salt));
-  if (rc == SALTS_OK) rc = flowie_control_bind_blob(statement, 8, verifier, sizeof(verifier));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_blob(statement, 7, salt, sizeof(salt));
+  if (rc == CMETA_OK) rc = flowie_control_bind_blob(statement, 8, verifier, sizeof(verifier));
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 9, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 10, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor, operation,
                                    command->domain_id, command->principal_id,
                                    FLOWIE_CONTROL_DETAIL_ARGON2ID, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2542,7 +2542,7 @@ static int flowie_control_store_credential_issue(
     memcpy(result->token, token, sizeof(result->token));
     result->token_size = FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE;
   }
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -2553,7 +2553,7 @@ done:
   flowie_control_credential_wipe(token, sizeof(token));
   flowie_control_credential_wipe(salt, sizeof(salt));
   flowie_control_credential_wipe(verifier, sizeof(verifier));
-  if (rc != SALTS_OK && result && result->size >= sizeof(*result))
+  if (rc != CMETA_OK && result && result->size >= sizeof(*result))
     *result = (flowie_control_generated_credential_t)FLOWIE_CONTROL_GENERATED_CREDENTIAL_INIT;
   return rc;
 }
@@ -2593,7 +2593,7 @@ int flowie_control_store_credential_revoke(
                                            command->expected_revision, command->occurred_at))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2603,17 +2603,17 @@ int flowie_control_store_credential_revoke(
   rc = flowie_control_replay(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_CREDENTIAL_REVOKE,
       command->domain_id, command->principal_id, FLOWIE_CONTROL_TARGET_CREDENTIAL, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_credential_record_read(database, command->domain_id, command->principal_id,
                                              &record);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!record.credential_exists) {
     rc = SALTS_ENOENT;
     goto done;
@@ -2623,7 +2623,7 @@ int flowie_control_store_credential_revoke(
     goto done;
   }
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "UPDATE flowie_control_credential SET enabled=0,revision=?1,updated_at=?2 WHERE "
@@ -2640,22 +2640,22 @@ int flowie_control_store_credential_revoke(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 3, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 4, command->principal_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 4, command->principal_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_CREDENTIAL_REVOKE, command->domain_id,
                                    command->principal_id, FLOWIE_CONTROL_TARGET_CREDENTIAL, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -2666,7 +2666,7 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -2674,7 +2674,7 @@ done:
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
   flowie_control_credential_wipe(&record, sizeof(record));
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -2700,29 +2700,29 @@ int flowie_control_store_credential_verify(flowie_control_store_t *store, const 
     return SALTS_EINVAL;
   flowie_control_credential_default_params(&dummy_params);
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_credential_record_read(database, domain_id, principal_id, &record);
   (void)flowie_control_database_close(database);
   database = NULL;
   if (rc == SALTS_ENOENT) {
     user_exists = 0;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   }
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_credential_verify(secret, secret_size,
                                         record.credential_exists ? record.salt : dummy_salt,
                                         record.credential_exists ? record.verifier : dummy_verifier,
                                         record.credential_exists ? &record.params : &dummy_params);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!user_exists || !record.user_enabled || !record.credential_exists ||
       !record.credential_enabled) {
     rc = SALTS_EPERM;
     goto done;
   }
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_credential_record_read(database, domain_id, principal_id, &fresh);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!fresh.user_enabled || !fresh.credential_exists || !fresh.credential_enabled ||
       fresh.user_revision != record.user_revision ||
       fresh.credential_revision != record.credential_revision) {
@@ -2731,7 +2731,7 @@ int flowie_control_store_credential_verify(flowie_control_store_t *store, const 
   }
   result->user_revision = fresh.user_revision;
   result->credential_revision = fresh.credential_revision;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (database) (void)flowie_control_database_close(database);
@@ -2739,7 +2739,7 @@ done:
   flowie_control_credential_wipe(&fresh, sizeof(fresh));
   flowie_control_credential_wipe(dummy_salt, sizeof(dummy_salt));
   flowie_control_credential_wipe(dummy_verifier, sizeof(dummy_verifier));
-  if (rc != SALTS_OK && result && result->size >= sizeof(*result))
+  if (rc != CMETA_OK && result && result->size >= sizeof(*result))
     *result =
         (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
   return rc;
@@ -2765,7 +2765,7 @@ int flowie_control_store_credential_resolve(flowie_control_store_t *store, const
       result->size < sizeof(*result))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status == FLOWIE_CONTROL_DB_OK)
     status = flowie_control_database_bind_text(statement, 1, principal_id, -1,
@@ -2807,12 +2807,12 @@ int flowie_control_store_credential_resolve(flowie_control_store_t *store, const
   }
   rc = flowie_control_store_credential_verify(store, resolved.domain_id, principal_id, secret,
                                               secret_size, &resolved.verified);
-  if (rc == SALTS_OK) *result = resolved;
+  if (rc == CMETA_OK) *result = resolved;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (database) (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *result = (flowie_control_credential_resolution_t)FLOWIE_CONTROL_CREDENTIAL_RESOLUTION_INIT;
   return rc;
 }
@@ -2831,22 +2831,22 @@ int flowie_control_store_credential_state(flowie_control_store_t *store, const c
       result->size < sizeof(*result))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_credential_record_read(database, domain_id, principal_id, &record);
   if (rc == SALTS_ENOENT) rc = SALTS_EPERM;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!record.user_enabled || !record.credential_exists || !record.credential_enabled) {
     rc = SALTS_EPERM;
     goto done;
   }
   result->user_revision = record.user_revision;
   result->credential_revision = record.credential_revision;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (database) (void)flowie_control_database_close(database);
   flowie_control_credential_wipe(&record, sizeof(record));
-  if (rc != SALTS_OK && result && result->size >= sizeof(*result))
+  if (rc != CMETA_OK && result && result->size >= sizeof(*result))
     *result =
         (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
   return rc;
@@ -2858,9 +2858,9 @@ int flowie_control_store_current_revision(flowie_control_store_t *store, uint64_
   if (revision_out) *revision_out = 0u;
   if (!store || !revision_out) return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc == SALTS_OK) rc = flowie_control_read_revision(database, revision_out);
+  if (rc == CMETA_OK) rc = flowie_control_read_revision(database, revision_out);
   if (database) (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *revision_out = 0u;
+  if (rc != CMETA_OK) *revision_out = 0u;
   return rc;
 }
 
@@ -2890,7 +2890,7 @@ int flowie_control_store_principal_snapshot(
     return SALTS_EINVAL;
 
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2903,8 +2903,8 @@ int flowie_control_store_principal_snapshot(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_EPERM;
@@ -2932,13 +2932,13 @@ int flowie_control_store_principal_snapshot(
     goto done;
   }
   rc = flowie_control_copy_column(statement, 0, snapshot.domain_id, sizeof(snapshot.domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, snapshot.principal_id,
                                     sizeof(snapshot.principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, snapshot.principal_type,
                                     sizeof(snapshot.principal_type));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   snapshot.user_revision = (uint64_t)user_revision;
   snapshot.credential_revision = (uint64_t)credential_revision;
   (void)flowie_control_database_finalize(statement);
@@ -2946,10 +2946,10 @@ int flowie_control_store_principal_snapshot(
 
   rc = flowie_control_effective_groups_database(database, domain_id, principal_id,
                                                 &snapshot.effective_groups);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_effective_roles_database(database, domain_id, principal_id,
                                                  &snapshot.effective_roles);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -2957,14 +2957,14 @@ int flowie_control_store_principal_snapshot(
   }
   transaction_started = 0;
   *out = snapshot;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started && database)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   if (database) (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK && out && out->size >= sizeof(*out))
+  if (rc != CMETA_OK && out && out->size >= sizeof(*out))
     *out = (flowie_control_principal_snapshot_t)FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
   return rc;
 }
@@ -2991,7 +2991,7 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
     return SALTS_EINVAL;
 
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3004,8 +3004,8 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, principal_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_EPERM;
@@ -3025,13 +3025,13 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
     goto done;
   }
   rc = flowie_control_copy_column(statement, 0, snapshot.domain_id, sizeof(snapshot.domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, snapshot.principal_id,
                                     sizeof(snapshot.principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, snapshot.principal_type,
                                     sizeof(snapshot.principal_type));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   snapshot.user_revision = (uint64_t)user_revision;
   snapshot.credential_revision = assertion_revision;
   (void)flowie_control_database_finalize(statement);
@@ -3039,10 +3039,10 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
 
   rc = flowie_control_effective_groups_database(database, domain_id, principal_id,
                                                 &snapshot.effective_groups);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_effective_roles_database(database, domain_id, principal_id,
                                                  &snapshot.effective_roles);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3050,14 +3050,14 @@ int flowie_control_store_external_principal_snapshot(flowie_control_store_t *sto
   }
   transaction_started = 0;
   *out = snapshot;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started && database)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   if (database) (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK && out && out->size >= sizeof(*out))
+  if (rc != CMETA_OK && out && out->size >= sizeof(*out))
     *out = (flowie_control_principal_snapshot_t)FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
   return rc;
 }
@@ -3088,7 +3088,7 @@ int flowie_control_store_membership_add(flowie_control_store_t *store,
       strcmp(command->group_id, command->domain_id) == 0)
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3098,24 +3098,24 @@ int flowie_control_store_membership_add(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_MEMBERSHIP_ADD, command->domain_id,
                              command->principal_id, command->group_id, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_user_enabled(database, command->domain_id, command->principal_id,
                                    &user_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!user_enabled) {
     rc = SALTS_EPERM;
     goto done;
   }
   rc = flowie_control_group_lookup(database, command->domain_id, command->group_id, &group_depth,
                                    &group_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!group_enabled) {
     rc = SALTS_EPERM;
     goto done;
@@ -3135,33 +3135,33 @@ int flowie_control_store_membership_add(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->group_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->group_id);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 4, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_effective_groups_database(database, command->domain_id, command->principal_id,
                                                 &effective);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_MEMBERSHIP_ADD,
       command->domain_id, command->principal_id, command->group_id, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3172,14 +3172,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3205,7 +3205,7 @@ int flowie_control_store_membership_remove(
       strcmp(command->group_id, command->domain_id) == 0)
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3215,10 +3215,10 @@ int flowie_control_store_membership_remove(
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_MEMBERSHIP_REMOVE, command->domain_id,
                              command->principal_id, command->group_id, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -3233,24 +3233,24 @@ int flowie_control_store_membership_remove(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->group_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->group_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_ENOENT
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_MEMBERSHIP_REMOVE,
       command->domain_id, command->principal_id, command->group_id, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3261,14 +3261,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3285,13 +3285,13 @@ int flowie_control_store_effective_groups(flowie_control_store_t *store, const c
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_control_user_enabled(database, domain_id, principal_id, &enabled);
-  if (rc == SALTS_OK && !enabled) rc = SALTS_EPERM;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK && !enabled) rc = SALTS_EPERM;
+  if (rc == CMETA_OK)
     rc = flowie_control_effective_groups_database(database, domain_id, principal_id, &view);
   (void)flowie_control_database_close(database);
-  if (rc == SALTS_OK) *out = view;
+  if (rc == CMETA_OK) *out = view;
   return rc;
 }
 
@@ -3316,7 +3316,7 @@ int flowie_control_store_role_create(flowie_control_store_t *store,
       !flowie_control_text_valid(command->role_id, FLOWIE_SECURITY_TYPE_MAX))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3326,16 +3326,16 @@ int flowie_control_store_role_create(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_ROLE_CREATE, command->domain_id,
                              command->role_id, FLOWIE_CONTROL_TARGET_ROLE, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_domain_exists(database, command->domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (current >= (uint64_t)INT64_MAX) {
     rc = SALTS_ERANGE;
     goto done;
@@ -3351,29 +3351,29 @@ int flowie_control_store_role_create(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->role_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->role_id);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 3, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 4, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_ROLE_CREATE,
       command->domain_id, command->role_id, FLOWIE_CONTROL_TARGET_ROLE, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3384,14 +3384,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3418,7 +3418,7 @@ int flowie_control_store_role_disable(flowie_control_store_t *store,
       !flowie_control_text_valid(command->role_id, FLOWIE_SECURITY_TYPE_MAX))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3428,16 +3428,16 @@ int flowie_control_store_role_disable(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_ROLE_DISABLE, command->domain_id,
                              command->role_id, FLOWIE_CONTROL_TARGET_ROLE, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_role_enabled(database, command->domain_id, command->role_id, &role_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!role_enabled) {
     rc = SALTS_EALREADY;
     goto done;
@@ -3445,13 +3445,13 @@ int flowie_control_store_role_disable(flowie_control_store_t *store,
   rc = flowie_control_policy_subject_referenced(database, command->domain_id,
                                                 FLOWIE_SECURITY_SUBJECT_ROLE, command->role_id,
                                                 &policy_reference);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (policy_reference) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "UPDATE flowie_control_role SET enabled=0,revision=?1,updated_at=?2 WHERE domain_id=?3 "
@@ -3468,21 +3468,21 @@ int flowie_control_store_role_disable(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 3, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 4, command->role_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 4, command->role_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_EBUSY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_ROLE_DISABLE,
       command->domain_id, command->role_id, FLOWIE_CONTROL_TARGET_ROLE, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3493,14 +3493,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3528,7 +3528,7 @@ int flowie_control_store_user_role_add(flowie_control_store_t *store,
       !flowie_control_text_valid(command->role_id, FLOWIE_SECURITY_TYPE_MAX))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3538,23 +3538,23 @@ int flowie_control_store_user_role_add(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_USER_ROLE_ADD, command->domain_id,
                              command->principal_id, command->role_id, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_user_enabled(database, command->domain_id, command->principal_id,
                                    &user_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!user_enabled) {
     rc = SALTS_EPERM;
     goto done;
   }
   rc = flowie_control_role_enabled(database, command->domain_id, command->role_id, &role_enabled);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!role_enabled) {
     rc = SALTS_EPERM;
     goto done;
@@ -3575,33 +3575,33 @@ int flowie_control_store_user_role_add(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->role_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->role_id);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 4, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK
                                           : ((status & 0xff) == FLOWIE_CONTROL_DB_CONSTRAINT
                                                  ? SALTS_EALREADY
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_effective_roles_database(database, command->domain_id, command->principal_id,
                                                &effective);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_USER_ROLE_ADD,
       command->domain_id, command->principal_id, command->role_id, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3612,14 +3612,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3644,7 +3644,7 @@ int flowie_control_store_user_role_remove(flowie_control_store_t *store,
       !flowie_control_text_valid(command->role_id, FLOWIE_SECURITY_TYPE_MAX))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3654,10 +3654,10 @@ int flowie_control_store_user_role_remove(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_USER_ROLE_REMOVE, command->domain_id,
                              command->principal_id, command->role_id, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -3672,24 +3672,24 @@ int flowie_control_store_user_role_remove(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->role_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, command->principal_id);
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->role_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_ENOENT
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(
       database, command->request_id, command->actor, FLOWIE_CONTROL_OPERATION_USER_ROLE_REMOVE,
       command->domain_id, command->principal_id, command->role_id, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3700,14 +3700,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3724,13 +3724,13 @@ int flowie_control_store_effective_roles(flowie_control_store_t *store, const ch
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_control_user_enabled(database, domain_id, principal_id, &enabled);
-  if (rc == SALTS_OK && !enabled) rc = SALTS_EPERM;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK && !enabled) rc = SALTS_EPERM;
+  if (rc == CMETA_OK)
     rc = flowie_control_effective_roles_database(database, domain_id, principal_id, &view);
   (void)flowie_control_database_close(database);
-  if (rc == SALTS_OK) *out = view;
+  if (rc == CMETA_OK) *out = view;
   return rc;
 }
 
@@ -3760,7 +3760,7 @@ int flowie_control_store_policy_subject_rule_put(
   if (!canonical) return SALTS_ENOMEM;
   rc = flowie_control_acl_format(command->document, canonical,
                                  FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u, &canonical_size);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   canonical[canonical_size] = '\0';
   document = command->document;
   if (!flowie_control_command_common_valid(command->domain_id, document->subject, command->actor,
@@ -3770,7 +3770,7 @@ int flowie_control_store_policy_subject_rule_put(
     goto done;
   }
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3780,10 +3780,10 @@ int flowie_control_store_policy_subject_rule_put(
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_POLICY_SUBJECT_RULE_PUT, command->domain_id,
                              document->subject, canonical, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -3791,7 +3791,7 @@ int flowie_control_store_policy_subject_rule_put(
   rc = flowie_control_policy_document_validate(database, command->domain_id, canonical,
                                                canonical_size, NULL, &expanded_rule_count,
                                                &deny_rule_count);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (current >= (uint64_t)INT64_MAX) {
     rc = SALTS_ERANGE;
     goto done;
@@ -3810,34 +3810,34 @@ int flowie_control_store_policy_subject_rule_put(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int(
+  if (rc == CMETA_OK && flowie_control_database_bind_int(
                             statement, 2, (int)document->subject_kind) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, document->subject);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, document->subject);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 4, command->ordinal) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 5, canonical);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 5, canonical);
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 6, (int64_t)next) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 7, (int64_t)command->occurred_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_POLICY_SUBJECT_RULE_PUT,
                                    command->domain_id, document->subject, canonical, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -3848,7 +3848,7 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -3856,7 +3856,7 @@ done:
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   if (database) (void)flowie_control_database_close(database);
   free(canonical);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -3873,7 +3873,7 @@ int flowie_control_store_policy_validate(flowie_control_store_t *store, const ch
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3881,7 +3881,7 @@ int flowie_control_store_policy_validate(flowie_control_store_t *store, const ch
   }
   transaction_started = 1;
   rc = flowie_control_policy_validate_database(database, domain_id, &validation);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3889,7 +3889,7 @@ int flowie_control_store_policy_validate(flowie_control_store_t *store, const ch
   }
   transaction_started = 0;
   *out = validation;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (transaction_started)
@@ -3915,7 +3915,7 @@ int flowie_control_store_policy_dry_run(flowie_control_store_t *store, const cha
   dry_run.diagnostic_capacity = result->diagnostic_capacity;
   *result = dry_run;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3923,7 +3923,7 @@ int flowie_control_store_policy_dry_run(flowie_control_store_t *store, const cha
   }
   transaction_started = 1;
   rc = flowie_control_policy_dry_run_database(database, domain_id, changes, change_count, &dry_run);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_exec(database, "COMMIT", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -3931,7 +3931,7 @@ int flowie_control_store_policy_dry_run(flowie_control_store_t *store, const cha
   }
   transaction_started = 0;
   *result = dry_run;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (transaction_started)
@@ -3964,7 +3964,7 @@ int flowie_control_store_policy_subject_rule_get(flowie_control_store_t *store,
        subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database,
       "SELECT ordinal,rule_document,revision,updated_at FROM flowie_control_policy_draft "
@@ -3975,11 +3975,11 @@ int flowie_control_store_policy_subject_rule_get(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int(statement, 2, (int)subject_kind) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, subject_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, subject_id);
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -4000,12 +4000,12 @@ int flowie_control_store_policy_subject_rule_get(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_acl_parse((const char *)text, (size_t)text_size, &view.document);
-  if (rc == SALTS_OK && (view.document.subject_kind != subject_kind ||
+  if (rc == CMETA_OK && (view.document.subject_kind != subject_kind ||
                          strcmp(view.document.subject, subject_id) != 0))
     rc = SALTS_EPROTO;
-  if (rc == SALTS_OK && flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE)
+  if (rc == CMETA_OK && flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE)
     rc = SALTS_EPROTO;
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     view.ordinal = (uint32_t)ordinal;
     view.revision = (uint64_t)revision;
     view.updated_at = (uint64_t)updated_at;
@@ -4046,7 +4046,7 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
         (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
   }
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database,
       "SELECT ordinal,subject_kind,subject_id,rule_document,revision,updated_at FROM "
@@ -4058,19 +4058,19 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int(statement, 2, (int)subject_kind) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int(statement, 3, has_after) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK &&
+  if (rc == CMETA_OK &&
       flowie_control_database_bind_int64(statement, 4, after_ordinal) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 5, (int64_t)(item_capacity + 1u)) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     flowie_control_policy_subject_rule_view_t *view;
     const unsigned char *text;
@@ -4101,7 +4101,7 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
     stored_kind = flowie_control_database_column_int(statement, 1);
     view = &items[count];
     rc = flowie_control_acl_parse((const char *)text, (size_t)text_size, &view->document);
-    if (rc != SALTS_OK || stored_kind != (int)view->document.subject_kind ||
+    if (rc != CMETA_OK || stored_kind != (int)view->document.subject_kind ||
         !flowie_control_column_text_equal(statement, 2, view->document.subject)) {
       rc = SALTS_EPROTO;
       goto done;
@@ -4116,12 +4116,12 @@ int flowie_control_store_policy_subject_rule_list(flowie_control_store_t *store,
     goto done;
   }
   *count_out = count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   (void)flowie_control_database_finalize(statement);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     *count_out = 0u;
     *has_more_out = 0;
   }
@@ -4151,7 +4151,7 @@ int flowie_control_store_policy_subject_rule_delete(
                                            command->occurred_at))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -4161,10 +4161,10 @@ int flowie_control_store_policy_subject_rule_delete(
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_POLICY_SUBJECT_RULE_DELETE,
                              command->domain_id, command->subject_id, kind_text, result, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) goto commit;
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
@@ -4179,27 +4179,27 @@ int flowie_control_store_policy_subject_rule_delete(
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int(
+  if (rc == CMETA_OK && flowie_control_database_bind_int(
                             statement, 2, (int)command->subject_kind) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 3, command->subject_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 3, command->subject_id);
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
     rc = status == FLOWIE_CONTROL_DB_DONE && flowie_control_database_changes(database) == 1
-             ? SALTS_OK
+             ? CMETA_OK
              : (status == FLOWIE_CONTROL_DB_DONE ? SALTS_ENOENT
                                                  : flowie_control_database_status(status));
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_POLICY_SUBJECT_RULE_DELETE,
                                    command->domain_id, command->subject_id, kind_text, next,
                                    command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->replayed = 0;
 
@@ -4210,14 +4210,14 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
+  if (rc != CMETA_OK) *result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
   return rc;
 }
 
@@ -4236,9 +4236,9 @@ int flowie_control_store_policy_status(flowie_control_store_t *store, const char
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_control_read_revision(database, &view.store_revision);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "SELECT (SELECT COUNT(*) FROM flowie_control_policy_draft WHERE domain_id=?1),"
@@ -4250,7 +4250,7 @@ int flowie_control_store_policy_status(flowie_control_store_t *store, const char
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     (void)flowie_control_database_finalize(statement);
@@ -4263,7 +4263,7 @@ int flowie_control_store_policy_status(flowie_control_store_t *store, const char
       goto done;
     }
     rc = flowie_control_bind_text(statement, 1, domain_id);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     status = flowie_control_database_step(statement);
     if (status != FLOWIE_CONTROL_DB_ROW ||
         flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
@@ -4293,7 +4293,7 @@ int flowie_control_store_policy_status(flowie_control_store_t *store, const char
     view.published_rule_count = (size_t)published_count;
   }
   *out = view;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -4333,7 +4333,7 @@ int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const
       bundle_out->size < sizeof(*bundle_out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -4353,10 +4353,10 @@ int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 2, (int64_t)required_version) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -4399,7 +4399,7 @@ int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     const unsigned char *line;
     int line_size;
@@ -4417,7 +4417,7 @@ int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const
     if (ordinal < 0 || (uint64_t)ordinal != (uint64_t)expected_ordinal || !line || line_size <= 0 ||
         (size_t)line_size > FLOWIE_SECURITY_RULE_LINE_MAX ||
         memchr(line, '\0', (size_t)line_size) ||
-        flowie_security_rule_parse_line((const char *)line, (size_t)line_size, &rule) != SALTS_OK ||
+        flowie_security_rule_parse_line((const char *)line, (size_t)line_size, &rule) != CMETA_OK ||
         strcmp(rule.domain_id, domain_id) != 0) {
       rc = SALTS_EPROTO;
       goto done;
@@ -4442,7 +4442,7 @@ int flowie_control_store_policy_bundle_load(flowie_control_store_t *store, const
   bundle_out->rule_count = rule_count;
   bundle_out->provider_bundle = owner;
   owner = NULL;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -4453,7 +4453,7 @@ done:
     free(owner->rules);
     free(owner);
   }
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *bundle_out = (flowie_security_policy_bundle_t)FLOWIE_SECURITY_POLICY_BUNDLE_INIT;
   return rc;
 }
@@ -4487,10 +4487,10 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
                                            command->occurred_at) ||
       command->expires_at > (uint64_t)INT64_MAX ||
       (command->expires_at != 0u && command->expires_at <= command->occurred_at) ||
-      flowie_control_policy_publish_detail(command->expires_at, publish_detail) != SALTS_OK)
+      flowie_control_policy_publish_detail(command->expires_at, publish_detail) != CMETA_OK)
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_exec(database, "BEGIN", NULL, NULL, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
@@ -4500,7 +4500,7 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
   rc = flowie_control_replay(database, command->request_id, command->actor,
                              FLOWIE_CONTROL_OPERATION_POLICY_PUBLISH, command->domain_id,
                              command->domain_id, publish_detail, &replay, &found);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (found) {
     status = flowie_control_database_prepare(
         database,
@@ -4511,7 +4511,7 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
       goto done;
     }
     rc = flowie_control_bind_text(statement, 1, command->request_id);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     status = flowie_control_database_step(statement);
     if (status != FLOWIE_CONTROL_DB_ROW ||
         flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
@@ -4527,13 +4527,13 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto commit;
   }
   rc = flowie_control_read_revision(database, &current);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (command->expected_revision != 0u && current != command->expected_revision) {
     rc = SALTS_EBUSY;
     goto done;
   }
   rc = flowie_control_policy_validate_database(database, command->domain_id, &validation);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   compiled_rules = (flowie_security_rule_t *)calloc(validation.rule_count, sizeof(*compiled_rules));
   if (!compiled_rules) {
     rc = SALTS_ENOMEM;
@@ -4548,7 +4548,7 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_ROW) {
     if (flowie_control_database_column_type(statement, 0) != FLOWIE_CONTROL_DB_INTEGER ||
@@ -4576,13 +4576,13 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "INSERT INTO flowie_control_published_bundle(namespace_name,policy_version,expires_at) "
@@ -4594,19 +4594,19 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->domain_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)next_policy) !=
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)next_policy) !=
                             FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 3, (int64_t)command->expires_at) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "SELECT rule_document FROM flowie_control_policy_draft WHERE domain_id=?1 ORDER BY ordinal",
@@ -4622,7 +4622,7 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(draft, 1, command->domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(draft)) == FLOWIE_CONTROL_DB_ROW) {
     const unsigned char *line;
     int line_size;
@@ -4637,14 +4637,14 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     line_size = flowie_control_database_column_bytes(draft, 0);
     if (!line || line_size <= 0 ||
         flowie_control_acl_document_syntax_validate(command->domain_id, (const char *)line,
-                                                    (size_t)line_size, &document) != SALTS_OK) {
+                                                    (size_t)line_size, &document) != CMETA_OK) {
       rc = SALTS_EPROTO;
       goto done;
     }
     rc = flowie_control_acl_compile(&document, command->domain_id, compiled_rules + ordinal,
                                     validation.rule_count - ordinal, &compiled_count);
-    if (rc != SALTS_OK || compiled_count == 0u) {
-      rc = rc != SALTS_OK ? rc : SALTS_EPROTO;
+    if (rc != CMETA_OK || compiled_count == 0u) {
+      rc = rc != CMETA_OK ? rc : SALTS_EPROTO;
       goto done;
     }
     for (size_t index = 0u; index < compiled_count; ++index) {
@@ -4652,24 +4652,24 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
       size_t canonical_size = 0u;
       rc = flowie_security_rule_format_line(&compiled_rules[ordinal + index], canonical,
                                             sizeof(canonical), &canonical_size);
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
       (void)flowie_control_database_reset(insert_rule);
       (void)flowie_control_database_clear_bindings(insert_rule);
       rc = flowie_control_bind_text(insert_rule, 1, command->domain_id);
-      if (rc == SALTS_OK && flowie_control_database_bind_int64(
+      if (rc == CMETA_OK && flowie_control_database_bind_int64(
                                 insert_rule, 2, (int64_t)(ordinal + index)) != FLOWIE_CONTROL_DB_OK)
         rc = flowie_control_database_status(flowie_control_database_errcode(database));
-      if (rc == SALTS_OK &&
+      if (rc == CMETA_OK &&
           flowie_control_database_bind_text(insert_rule, 3, canonical, (int)canonical_size,
                                             FLOWIE_CONTROL_DB_TRANSIENT) != FLOWIE_CONTROL_DB_OK)
         rc = flowie_control_database_status(flowie_control_database_errcode(database));
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) {
         int insert_status = flowie_control_database_step(insert_rule);
         rc = insert_status == FLOWIE_CONTROL_DB_DONE
-                 ? SALTS_OK
+                 ? CMETA_OK
                  : flowie_control_database_status(insert_status);
       }
-      if (rc != SALTS_OK) goto done;
+      if (rc != CMETA_OK) goto done;
     }
     ordinal += compiled_count;
   }
@@ -4682,11 +4682,11 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
   (void)flowie_control_database_finalize(insert_rule);
   insert_rule = NULL;
   rc = flowie_control_advance_revision(database, current, &next);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_insert_audit(database, command->request_id, command->actor,
                                    FLOWIE_CONTROL_OPERATION_POLICY_PUBLISH, command->domain_id,
                                    command->domain_id, publish_detail, next, command->occurred_at);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_prepare(
       database,
       "INSERT INTO flowie_control_policy_publish_result(request_id,policy_version) VALUES(?1,?2)",
@@ -4696,16 +4696,16 @@ int flowie_control_store_policy_publish(flowie_control_store_t *store,
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, command->request_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)next_policy) !=
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)next_policy) !=
                             FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     status = flowie_control_database_step(statement);
-    rc = status == FLOWIE_CONTROL_DB_DONE ? SALTS_OK : flowie_control_database_status(status);
+    rc = status == FLOWIE_CONTROL_DB_DONE ? CMETA_OK : flowie_control_database_status(status);
   }
   (void)flowie_control_database_finalize(statement);
   statement = NULL;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   result->revision = next;
   result->policy_version = next_policy;
   result->replayed = 0;
@@ -4717,7 +4717,7 @@ commit:
     goto done;
   }
   transaction_started = 0;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -4727,7 +4727,7 @@ done:
   if (transaction_started)
     (void)flowie_control_database_exec(database, "ROLLBACK", NULL, NULL, NULL);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *result = (flowie_control_policy_publish_result_t)FLOWIE_CONTROL_POLICY_PUBLISH_RESULT_INIT;
   return rc;
 }
@@ -4746,7 +4746,7 @@ int flowie_control_store_domain_get(flowie_control_store_t *store, const char *d
       out->size < sizeof(*out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database, "SELECT domain_id FROM flowie_control_domain WHERE domain_id=?1", -1, &statement,
       NULL);
@@ -4755,7 +4755,7 @@ int flowie_control_store_domain_get(flowie_control_store_t *store, const char *d
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   status = flowie_control_database_step(statement);
   if (status == FLOWIE_CONTROL_DB_DONE) {
     rc = SALTS_ENOENT;
@@ -4766,9 +4766,9 @@ int flowie_control_store_domain_get(flowie_control_store_t *store, const char *d
     goto done;
   }
   rc = flowie_control_copy_column(statement, 0, view.domain_id, sizeof(view.domain_id));
-  if (rc == SALTS_OK && flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE)
+  if (rc == CMETA_OK && flowie_control_database_step(statement) != FLOWIE_CONTROL_DB_DONE)
     rc = SALTS_EPROTO;
-  if (rc == SALTS_OK) *out = view;
+  if (rc == CMETA_OK) *out = view;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
@@ -4796,7 +4796,7 @@ int flowie_control_store_domain_list(flowie_control_store_t *store, const char *
     items[index] = (flowie_control_domain_view_t)FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
   }
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status =
       flowie_control_database_prepare(database,
                                       "SELECT domain_id FROM flowie_control_domain "
@@ -4807,10 +4807,10 @@ int flowie_control_store_domain_list(flowie_control_store_t *store, const char *
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, after_domain_id ? after_domain_id : "");
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 2, (int64_t)(item_capacity + 1u)) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     if (count == item_capacity) {
       *has_more_out = 1;
@@ -4818,7 +4818,7 @@ int flowie_control_store_domain_list(flowie_control_store_t *store, const char *
     }
     rc = flowie_control_copy_column(statement, 0, items[count].domain_id,
                                     sizeof(items[count].domain_id));
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     ++count;
   }
   if (status != FLOWIE_CONTROL_DB_DONE) {
@@ -4826,12 +4826,12 @@ int flowie_control_store_domain_list(flowie_control_store_t *store, const char *
     goto done;
   }
   *count_out = count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     *count_out = 0u;
     *has_more_out = 0;
   }
@@ -4872,25 +4872,25 @@ static int flowie_control_text_page(flowie_control_store_t *store, const char *d
                                            item_capacity, count_out, has_more_out))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_bind_text(statement, 2, after_id ? after_id : "");
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK) rc = flowie_control_bind_text(statement, 2, after_id ? after_id : "");
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 3, (int64_t)(item_capacity + 1u)) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     if (count == item_capacity) {
       *has_more_out = 1;
       continue;
     }
     rc = decode(statement, cursor + count * item_size);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     ++count;
   }
   if (status != FLOWIE_CONTROL_DB_DONE) {
@@ -4898,12 +4898,12 @@ static int flowie_control_text_page(flowie_control_store_t *store, const char *d
     goto done;
   }
   *count_out = count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     *count_out = 0u;
     *has_more_out = 0;
   }
@@ -4928,17 +4928,17 @@ static int flowie_control_user_page_row(flowie_control_statement_t *statement, v
     return SALTS_EPROTO;
   *view = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
   rc = flowie_control_copy_column(statement, 0, view->domain_id, sizeof(view->domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view->principal_id, sizeof(view->principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, view->principal_type,
                                     sizeof(view->principal_type));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   view->enabled = enabled;
   view->revision = (uint64_t)revision;
   view->created_at = (uint64_t)created_at;
   view->updated_at = (uint64_t)updated_at;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_group_page_row(flowie_control_statement_t *statement, void *item) {
@@ -4963,18 +4963,18 @@ static int flowie_control_group_page_row(flowie_control_statement_t *statement, 
     return SALTS_EPROTO;
   *view = (flowie_control_group_view_t)FLOWIE_CONTROL_GROUP_VIEW_INIT;
   rc = flowie_control_copy_column(statement, 0, view->domain_id, sizeof(view->domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view->group_id, sizeof(view->group_id));
-  if (rc == SALTS_OK && flowie_control_database_column_type(statement, 2) != FLOWIE_CONTROL_DB_NULL)
+  if (rc == CMETA_OK && flowie_control_database_column_type(statement, 2) != FLOWIE_CONTROL_DB_NULL)
     rc = flowie_control_copy_column(statement, 2, view->parent_group_id,
                                     sizeof(view->parent_group_id));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   view->depth = (uint32_t)depth;
   view->enabled = enabled;
   view->revision = (uint64_t)revision;
   view->created_at = (uint64_t)created_at;
   view->updated_at = (uint64_t)updated_at;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_role_page_row(flowie_control_statement_t *statement, void *item) {
@@ -4995,14 +4995,14 @@ static int flowie_control_role_page_row(flowie_control_statement_t *statement, v
     return SALTS_EPROTO;
   *view = (flowie_control_role_view_t)FLOWIE_CONTROL_ROLE_VIEW_INIT;
   rc = flowie_control_copy_column(statement, 0, view->domain_id, sizeof(view->domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view->role_id, sizeof(view->role_id));
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   view->enabled = enabled;
   view->revision = (uint64_t)revision;
   view->created_at = (uint64_t)created_at;
   view->updated_at = (uint64_t)updated_at;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_membership_page_row(flowie_control_statement_t *statement, void *item) {
@@ -5010,10 +5010,10 @@ static int flowie_control_membership_page_row(flowie_control_statement_t *statem
   int rc;
   *view = (flowie_control_membership_view_t)FLOWIE_CONTROL_MEMBERSHIP_VIEW_INIT;
   rc = flowie_control_copy_column(statement, 0, view->domain_id, sizeof(view->domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view->principal_id,
                                     sizeof(view->principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, view->group_id, sizeof(view->group_id));
   return rc;
 }
@@ -5023,10 +5023,10 @@ static int flowie_control_user_role_page_row(flowie_control_statement_t *stateme
   int rc;
   *view = (flowie_control_user_role_view_t)FLOWIE_CONTROL_USER_ROLE_VIEW_INIT;
   rc = flowie_control_copy_column(statement, 0, view->domain_id, sizeof(view->domain_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 1, view->principal_id,
                                     sizeof(view->principal_id));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_copy_column(statement, 2, view->role_id, sizeof(view->role_id));
   return rc;
 }
@@ -5051,28 +5051,28 @@ static int flowie_control_tuple_text_page(
        !flowie_control_text_valid(after_second_id, FLOWIE_SECURITY_ID_MAX)))
     return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(database, sql, -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
     rc = flowie_control_database_status(status);
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_bind_text(statement, 2, after_first_id ? after_first_id : "");
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_bind_text(statement, 3, after_second_id ? after_second_id : "");
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 4, (int64_t)(item_capacity + 1u)) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     if (count == item_capacity) {
       *has_more_out = 1;
       continue;
     }
     rc = decode(statement, cursor + count * item_size);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     ++count;
   }
   if (status != FLOWIE_CONTROL_DB_DONE) {
@@ -5080,12 +5080,12 @@ static int flowie_control_tuple_text_page(
     goto done;
   }
   *count_out = count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     *count_out = 0u;
     *has_more_out = 0;
   }
@@ -5174,7 +5174,7 @@ int flowie_control_store_audit_list(flowie_control_store_t *store, const char *d
     items[index] = (flowie_control_audit_view_t)FLOWIE_CONTROL_AUDIT_VIEW_INIT;
   }
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(
       database,
       "SELECT request_id,actor,operation,domain_id,target_id,target_detail,result_revision,"
@@ -5186,13 +5186,13 @@ int flowie_control_store_audit_list(flowie_control_store_t *store, const char *d
     goto done;
   }
   rc = flowie_control_bind_text(statement, 1, domain_id);
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)after_revision) !=
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(statement, 2, (int64_t)after_revision) !=
                             FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc == SALTS_OK && flowie_control_database_bind_int64(
+  if (rc == CMETA_OK && flowie_control_database_bind_int64(
                             statement, 3, (int64_t)(item_capacity + 1u)) != FLOWIE_CONTROL_DB_OK)
     rc = flowie_control_database_status(flowie_control_database_errcode(database));
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   while ((status = flowie_control_database_step(statement)) == FLOWIE_CONTROL_DB_ROW) {
     flowie_control_audit_view_t *view;
     int64_t revision;
@@ -5210,18 +5210,18 @@ int flowie_control_store_audit_list(flowie_control_store_t *store, const char *d
     }
     view = &items[count];
     rc = flowie_control_copy_column(statement, 0, view->request_id, sizeof(view->request_id));
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_copy_column(statement, 1, view->actor, sizeof(view->actor));
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_copy_column(statement, 2, view->operation, sizeof(view->operation));
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_copy_column(statement, 3, view->domain_id, sizeof(view->domain_id));
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_copy_column(statement, 4, view->target_id, sizeof(view->target_id));
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_copy_column(statement, 5, view->target_detail,
                                       sizeof(view->target_detail));
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     view->revision = (uint64_t)revision;
     view->occurred_at = (uint64_t)occurred_at;
     ++count;
@@ -5231,12 +5231,12 @@ int flowie_control_store_audit_list(flowie_control_store_t *store, const char *d
     goto done;
   }
   *count_out = count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);
   (void)flowie_control_database_close(database);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     *count_out = 0u;
     *has_more_out = 0;
   }
@@ -5249,7 +5249,7 @@ int flowie_control_store_revision(flowie_control_store_t *store, uint64_t *revis
   if (revision_out) *revision_out = 0u;
   if (!store || !revision_out) return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_control_read_revision(database, revision_out);
   (void)flowie_control_database_close(database);
   return rc;
@@ -5264,7 +5264,7 @@ int flowie_control_store_audit_count(flowie_control_store_t *store, size_t *coun
   if (count_out) *count_out = 0u;
   if (!store || !count_out) return SALTS_EINVAL;
   rc = flowie_control_open_database(store, &database);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   status = flowie_control_database_prepare(database, "SELECT COUNT(*) FROM flowie_control_audit",
                                            -1, &statement, NULL);
   if (status != FLOWIE_CONTROL_DB_OK) {
@@ -5280,7 +5280,7 @@ int flowie_control_store_audit_count(flowie_control_store_t *store, size_t *coun
     goto done;
   }
   *count_out = (size_t)count;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (statement) (void)flowie_control_database_finalize(statement);

@@ -3,7 +3,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 
@@ -21,7 +21,7 @@ static repository_fixture_t repository_fixture_open(void) {
   check_not_null(fixture.path);
   check_equal(flowie_control_test_turbodb_init(&test_database, fixture.path), 0);
   config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&config, &fixture.store), SALTS_OK);
+  check_equal(flowie_control_store_open(&config, &fixture.store), CMETA_OK);
   fixture.repository = flowie_control_store_repository(fixture.store);
   check_not_null(fixture.repository);
   return fixture;
@@ -41,7 +41,7 @@ spec("Flowie control repository provider contract") {
     flowie_control_repository_auth_ops_t auth = *candidate.auth;
     flowie_control_repository_policy_ops_t policy = *candidate.policy;
 
-    check_equal(flowie_control_repository_validate(fixture.repository), SALTS_OK);
+    check_equal(flowie_control_repository_validate(fixture.repository), CMETA_OK);
 
     candidate.version = FLOWIE_CONTROL_REPOSITORY_VERSION + 1u;
     check_equal(flowie_control_repository_validate(&candidate), SALTS_EINVAL);

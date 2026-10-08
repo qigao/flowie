@@ -1,7 +1,7 @@
 #include "flowie_control_startup_options_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -42,7 +42,7 @@ spec("Flowie control startup options") {
 
     check_not_null(path);
     check_equal(tt_write_file(path, content, sizeof(content) - 1u), 0);
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_OK);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), CMETA_OK);
     check_equal(options.config_path, "dotenv-control.yml");
     check_equal(options.env_file, path);
     check_true(options.check_only);
@@ -59,7 +59,7 @@ spec("Flowie control startup options") {
     check_not_null(path);
     check_equal(tt_write_file(path, content, sizeof(content) - 1u), 0);
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CONFIG, "process-control.yml"), 0);
-    check_equal(flowie_control_startup_options_parse(3, argv, &options), SALTS_OK);
+    check_equal(flowie_control_startup_options_parse(3, argv, &options), CMETA_OK);
     check_equal(options.config_path, "process-control.yml");
     check_equal(options.env_file, path);
     check_equal(tt_remove_file(path), 0);
@@ -72,7 +72,7 @@ spec("Flowie control startup options") {
 
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CONFIG, "process-control.yml"), 0);
     check_equal(startup_test_env_set(FLOWIE_CONTROL_ENV_CHECK, "false"), 0);
-    check_equal(flowie_control_startup_options_parse(4, argv, &options), SALTS_OK);
+    check_equal(flowie_control_startup_options_parse(4, argv, &options), CMETA_OK);
     check_equal(options.config_path, "cli-control.yml");
     check_true(options.check_only);
   }

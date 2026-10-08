@@ -1,8 +1,8 @@
 #include "flowie_cluster_raft_store_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,11 +21,11 @@ static void flowie_raft_store_cleanup(const char *path) {
   if (!path) return;
   for (segment = 1u; segment <= 4u; ++segment) {
     (void)snprintf(generated, sizeof(generated), "%s.%08zu.wal", path, segment);
-    if (salts_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
+    if (cmeta_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == CMETA_OK)
       check_equal(tt_remove_file(generated), 0);
   }
   (void)snprintf(generated, sizeof(generated), "%s.lock", path);
-  if (salts_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == SALTS_OK)
+  if (cmeta_fs_access(generated, SALTS_FS_ACCESS_EXISTS) == CMETA_OK)
     check_equal(tt_remove_file(generated), 0);
   check_equal(tt_remove_file(path), 0);
 }
@@ -43,7 +43,7 @@ static int flowie_raft_store_apply(void *ctx, const tr_raft_entry_t *entries,
     memcpy(capture->data, entries[index].data, entries[index].data_length);
     ++capture->apply_count;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static flowie_cluster_raft_store_config_t flowie_raft_store_config(
@@ -85,30 +85,30 @@ spec("flowie cluster TurboRaft durable store") {
 
     check_not_null(path);
     config = flowie_raft_store_config(path, voters, &first);
-    check_equal(flowie_cluster_raft_store_open(&config, &store), SALTS_OK);
-    check_equal(flowie_cluster_raft_store_tick(store, 3u, 3u), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_open(&config, &store), CMETA_OK);
+    check_equal(flowie_cluster_raft_store_tick(store, 3u, 3u), CMETA_OK);
     proposal.command_id = 41u;
     proposal.data = command;
     proposal.data_length = sizeof(command);
     check_equal(flowie_cluster_raft_store_propose(store, &proposal, &receipt),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(first.apply_count, 1u);
     check_equal(first.command_id, 41u);
-    check_equal(flowie_cluster_raft_store_status(store, &status), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_status(store, &status), CMETA_OK);
     check_equal(status.core.commit_index, 1u);
     check_equal(status.core.applied_index, 1u);
-    check_equal(flowie_cluster_raft_store_close(store), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_close(store), CMETA_OK);
 
     config = flowie_raft_store_config(path, voters, &recovered);
-    check_equal(flowie_cluster_raft_store_open(&config, &store), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_open(&config, &store), CMETA_OK);
     check_equal(recovered.apply_count, 1u);
     check_equal(recovered.command_id, 41u);
     check_equal(recovered.data_size, sizeof(command));
     check_equal(recovered.data, command, sizeof(command));
-    check_equal(flowie_cluster_raft_store_status(store, &status), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_status(store, &status), CMETA_OK);
     check_equal(status.core.commit_index, 1u);
     check_equal(status.core.applied_index, 1u);
-    check_equal(flowie_cluster_raft_store_close(store), SALTS_OK);
+    check_equal(flowie_cluster_raft_store_close(store), CMETA_OK);
     flowie_raft_store_cleanup(path);
     free(path);
   }

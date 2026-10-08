@@ -3,9 +3,9 @@
 #include "flowie_mqtt_client.h"
 #include "flowie_mqtt_protocol.h"
 #include "flowie_rule_internal.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -44,7 +44,7 @@ typedef struct flowie_client_source_s {
   uint32_t reconnect_initial_ms;
   uint32_t reconnect_max_ms;
   flowie_mqtt_client_t *client;
-  salts_thread_t supervisor;
+  cmeta_thread_t supervisor;
   int supervisor_started;
   turbo_flow_t *flow;
   tstr source_name;
@@ -112,7 +112,7 @@ static int flowie_client_source_error(turbo_flow_config_error_t *error, int stat
 static int flowie_client_source_parse_status(int status) {
   switch (status) {
   case FLOWIE_MQTT_PARSE_OK:
-    return SALTS_OK;
+    return CMETA_OK;
   case FLOWIE_MQTT_PARSE_NO_MEMORY:
     return SALTS_ENOMEM;
   case FLOWIE_MQTT_PARSE_TOO_LARGE:
@@ -160,13 +160,13 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
   else if (capacity > source->max_packet_size)
     rc = SALTS_EMSGSIZE;
   else
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   turbo_flow_msg_init(&message);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     message.buffer = mem_get_buffer(mem_global(), capacity);
     if (!message.buffer) rc = SALTS_ENOMEM;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     packet.version = FLOWIE_MQTT_VERSION_5;
     packet.qos = publish->qos;
     packet.retain = publish->retain;
@@ -178,7 +178,7 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
     rc = flowie_client_source_parse_status(flowie_mqtt_publish_packet_encode(
         &packet, (uint8_t *)mem_buffer_data(message.buffer), capacity, &written));
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     mem_set_used(message.buffer, written);
     message.type = FLOWIE_MQTT_PACKET_PUBLISH;
     fixed_flags = (uint8_t)((publish->duplicate ? 0x08u : 0u) |
@@ -186,11 +186,11 @@ static int flowie_client_source_message(flowie_mqtt_client_t *client,
                             (publish->retain ? 0x01u : 0u));
     rc = flowie_mqtt_message_flags_encode(FLOWIE_MQTT_VERSION_5, fixed_flags, &message.flags);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     message.payload = vstr_from_buf(mem_buffer_data(message.buffer), written);
     rc = flowie_mqtt_rule_bind_projection(&message, NULL);
   }
-  if (rc == SALTS_OK) rc = turbo_flow_publish(source->flow, source->source_name, &message);
+  if (rc == CMETA_OK) rc = turbo_flow_publish(source->flow, source->source_name, &message);
   turbo_flow_msg_cleanup(&message);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   return rc;
@@ -206,7 +206,7 @@ static void flowie_client_source_connect_complete(
   (void)atomic_fetch_add_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   atomic_store_explicit(&source->last_status, status, memory_order_release);
   atomic_store_explicit(&source->state,
-                        status == SALTS_OK ? FLOWIE_CLIENT_SOURCE_CONNECTED
+                        status == CMETA_OK ? FLOWIE_CLIENT_SOURCE_CONNECTED
                                            : FLOWIE_CLIENT_SOURCE_FAILED,
                         memory_order_release);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
@@ -222,7 +222,7 @@ static void flowie_client_source_subscribe_complete(
   (void)atomic_fetch_add_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
   atomic_store_explicit(&source->last_status, status, memory_order_release);
   atomic_store_explicit(&source->state,
-                        status == SALTS_OK ? FLOWIE_CLIENT_SOURCE_READY
+                        status == CMETA_OK ? FLOWIE_CLIENT_SOURCE_READY
                                            : FLOWIE_CLIENT_SOURCE_FAILED,
                         memory_order_release);
   (void)atomic_fetch_sub_explicit(&source->callback_depth, 1u, memory_order_acq_rel);
@@ -298,15 +298,15 @@ static int flowie_client_source_wait(flowie_client_source_t *source, uint32_t de
     uint32_t step = delay_ms - elapsed;
     if (!atomic_load_explicit(&source->started, memory_order_acquire)) return SALTS_ESHUTDOWN;
     if (step > FLOWIE_CLIENT_SOURCE_POLL_MS) step = FLOWIE_CLIENT_SOURCE_POLL_MS;
-    salts_sleep_ms(step);
+    cmeta_sleep_ms(step);
     elapsed += step;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_client_source_wait_callbacks(flowie_client_source_t *source) {
   while (atomic_load_explicit(&source->callback_depth, memory_order_acquire) != 0u)
-    salts_thread_yield();
+    cmeta_thread_yield();
 }
 
 static void flowie_client_source_supervise(void *ctx) {
@@ -315,10 +315,10 @@ static void flowie_client_source_supervise(void *ctx) {
   while (atomic_load_explicit(&source->started, memory_order_acquire)) {
     flowie_client_source_state_t state =
         (flowie_client_source_state_t)atomic_load_explicit(&source->state, memory_order_acquire);
-    int rc = SALTS_OK;
+    int rc = CMETA_OK;
     if (state == FLOWIE_CLIENT_SOURCE_CONNECTED) {
       rc = flowie_client_source_subscribe(source);
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         atomic_store_explicit(&source->last_status, rc, memory_order_release);
         atomic_store_explicit(&source->state, FLOWIE_CLIENT_SOURCE_FAILED, memory_order_release);
       }
@@ -333,13 +333,13 @@ static void flowie_client_source_supervise(void *ctx) {
       (void)flowie_client_source_wait(source, FLOWIE_CLIENT_SOURCE_POLL_MS);
       continue;
     }
-    if (flowie_client_source_wait(source, reconnect_delay) != SALTS_OK) break;
+    if (flowie_client_source_wait(source, reconnect_delay) != CMETA_OK) break;
     flowie_client_source_wait_callbacks(source);
     flowie_mqtt_client_destroy(source->client);
     source->client = NULL;
     rc = flowie_client_source_client_create(source);
-    if (rc == SALTS_OK) rc = flowie_client_source_connect(source);
-    if (rc != SALTS_OK) {
+    if (rc == CMETA_OK) rc = flowie_client_source_connect(source);
+    if (rc != CMETA_OK) {
       atomic_store_explicit(&source->last_status, rc, memory_order_release);
       atomic_store_explicit(&source->state, FLOWIE_CLIENT_SOURCE_FAILED, memory_order_release);
     }
@@ -365,14 +365,14 @@ static int flowie_client_source_start(void *ctx, turbo_flow_t *flow,
   if (!source->source_name) return SALTS_ENOMEM;
   source->flow = flow;
   rc = flowie_client_source_client_create(source);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   atomic_store_explicit(&source->started, 1, memory_order_release);
   rc = flowie_client_source_connect(source);
-  if (rc != SALTS_OK) goto fail_started;
-  rc = salts_thread_create(&source->supervisor, flowie_client_source_supervise, source);
-  if (rc != SALTS_OK) goto fail_started;
+  if (rc != CMETA_OK) goto fail_started;
+  rc = cmeta_thread_create(&source->supervisor, flowie_client_source_supervise, source);
+  if (rc != CMETA_OK) goto fail_started;
   source->supervisor_started = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail_started:
   atomic_store_explicit(&source->started, 0, memory_order_release);
@@ -393,7 +393,7 @@ static void flowie_client_source_stop(void *ctx, turbo_flow_t *flow,
   if (!source) return;
   atomic_store_explicit(&source->started, 0, memory_order_release);
   if (source->supervisor_started) {
-    (void)salts_thread_join(&source->supervisor);
+    (void)cmeta_thread_join(&source->supervisor);
     source->supervisor_started = 0;
   } else if (source->client) {
     flowie_client_source_wait_callbacks(source);
@@ -424,7 +424,7 @@ static int flowie_client_source_transport(const char *text,
   else if (strcmp(text, "ws") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_WS;
   else if (strcmp(text, "wss") == 0) *out = FLOWIE_MQTT_CLIENT_TRANSPORT_WSS;
   else return SALTS_ENOTSUP;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
@@ -446,7 +446,7 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
     return SALTS_EINVAL;
   *error = (turbo_flow_config_error_t)TURBO_FLOW_CONFIG_ERROR_INIT;
   rc = turbo_flow_resolved_config_adapter(resolved, name, &view);
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     return flowie_client_source_error(error, rc, name, NULL, "adapter is not resolved");
   if (strcmp(view.kind, "flowie_client") != 0)
     return flowie_client_source_error(error, SALTS_EINVAL, name, NULL,
@@ -465,11 +465,11 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
       return flowie_client_source_error(error, SALTS_EINVAL, name, field,
                                         "unknown Flowie client field");
   }
-  if (turbo_flow_resolved_adapter_get_string(&view, "host", &host) != SALTS_OK || !host[0] ||
-      turbo_flow_resolved_adapter_get_string(&view, "transport", &transport) != SALTS_OK ||
-      turbo_flow_resolved_adapter_get_string(&view, "client_id", &client_id) != SALTS_OK ||
+  if (turbo_flow_resolved_adapter_get_string(&view, "host", &host) != CMETA_OK || !host[0] ||
+      turbo_flow_resolved_adapter_get_string(&view, "transport", &transport) != CMETA_OK ||
+      turbo_flow_resolved_adapter_get_string(&view, "client_id", &client_id) != CMETA_OK ||
       !client_id[0] ||
-      turbo_flow_resolved_adapter_get_string(&view, "topic_filter", &topic_filter) != SALTS_OK ||
+      turbo_flow_resolved_adapter_get_string(&view, "topic_filter", &topic_filter) != CMETA_OK ||
       !topic_filter[0] || strlen(client_id) > UINT16_MAX || strlen(topic_filter) > UINT16_MAX)
     return flowie_client_source_error(error, SALTS_EINVAL, name, NULL,
                                       "required Flowie client string is invalid");
@@ -477,20 +477,20 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   if (!source) return SALTS_ENOMEM;
   atomic_init(&source->started, 0);
   atomic_init(&source->state, FLOWIE_CLIENT_SOURCE_DISCONNECTED);
-  atomic_init(&source->last_status, SALTS_OK);
+  atomic_init(&source->last_status, CMETA_OK);
   atomic_init(&source->callback_depth, 0u);
   source->host = tstr_dup(host);
   source->client_id = tstr_dup(client_id);
   source->topic_filter = tstr_dup(topic_filter);
   rc = flowie_client_source_transport(transport, &source->transport);
-  if (rc != SALTS_OK) goto invalid;
+  if (rc != CMETA_OK) goto invalid;
   rc = turbo_flow_resolved_adapter_get_string(&view, "path", &path);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     source->path = tstr_dup(path);
   else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_string(&view, "ca_file", &ca_file);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     source->ca_file = tstr_dup(ca_file);
   else if (rc != SALTS_ENOENT)
     goto invalid;
@@ -502,7 +502,7 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
 #define FLOWIE_CLIENT_GET_U64(field_name, target, maximum)                                         \
   do {                                                                                             \
     rc = turbo_flow_resolved_adapter_get_u64(&view, field_name, &value);                           \
-    if (rc != SALTS_OK || value > (uint64_t)(maximum)) goto invalid;                               \
+    if (rc != CMETA_OK || value > (uint64_t)(maximum)) goto invalid;                               \
     target = value;                                                                                \
   } while (0)
   FLOWIE_CLIENT_GET_U64("port", source->port, 65535u);
@@ -515,22 +515,22 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   FLOWIE_CLIENT_GET_U64("reconnect_max_ms", source->reconnect_max_ms, UINT32_MAX);
 #undef FLOWIE_CLIENT_GET_U64
   rc = turbo_flow_resolved_adapter_get_bool(&view, "clean_start", &clean_start);
-  if (rc != SALTS_OK) goto invalid;
+  if (rc != CMETA_OK) goto invalid;
   source->clean_start = clean_start ? 1u : 0u;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "stream_recv_buffer_bytes", &value);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     if (value > SIZE_MAX) goto invalid_range;
     source->stream_recv_buffer_bytes = (size_t)value;
   } else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "socket_recv_buffer_bytes", &value);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     if (value > INT_MAX) goto invalid_range;
     source->socket_recv_buffer_bytes = (size_t)value;
   } else if (rc != SALTS_ENOENT)
     goto invalid;
   rc = turbo_flow_resolved_adapter_get_u64(&view, "socket_send_buffer_bytes", &value);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     if (value > INT_MAX) goto invalid_range;
     source->socket_send_buffer_bytes = (size_t)value;
   } else if (rc != SALTS_ENOENT)
@@ -553,7 +553,7 @@ int flowie_register_resolved_client_source(turbo_flow_t *flow, const char *name,
   ops.shutdown = flowie_client_source_shutdown;
   rc = turbo_flow_register_adapter_with_resources(flow, name, &ops, source,
                                                   &FLOWIE_CLIENT_SOURCE_SCHEMA, NULL, 0u);
-  if (rc == SALTS_OK) return SALTS_OK;
+  if (rc == CMETA_OK) return CMETA_OK;
 
 invalid:
   flowie_client_source_shutdown(source);

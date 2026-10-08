@@ -8,9 +8,9 @@
 #include "flowie_topic_index_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_process.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_process.h"
+#include "cmeta_thread.h"
 
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -61,7 +61,7 @@ typedef struct flowie_soak_resources_s {
 
 typedef struct flowie_soak_index_owner_s {
   flowie_topic_index_t *index;
-  salts_mutex_t mutex;
+  cmeta_mutex_t mutex;
   size_t subscription_count;
   atomic_int ready;
   atomic_int stop;
@@ -81,10 +81,10 @@ static void flowie_soak_index_publish_thread(void *arg) {
   vec_t matches = {0};
   char topic[64];
   size_t sequence;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!publisher || !publisher->owner) return;
   owner = publisher->owner;
-  if (flowie_stl_error(vec_init_bytes(&matches, sizeof(size_t), _Alignof(size_t), SIZE_MAX)) != SALTS_OK) {
+  if (flowie_stl_error(vec_init_bytes(&matches, sizeof(size_t), _Alignof(size_t), SIZE_MAX)) != CMETA_OK) {
     atomic_store_explicit(&owner->status, SALTS_ENOMEM, memory_order_release);
     return;
   }
@@ -98,27 +98,27 @@ static void flowie_soak_index_publish_thread(void *arg) {
       break;
     }
     vec_clear(&matches);
-    salts_mutex_lock(&owner->mutex);
+    cmeta_mutex_lock(&owner->mutex);
     rc = flowie_topic_index_match(
         owner->index, (flowie_mqtt_span_t){(const uint8_t *)topic, (size_t)written}, &matches);
-    if (rc == SALTS_OK && vec_size(&matches) > 1u) rc = SALTS_EPROTO;
-    if (rc == SALTS_OK && vec_size(&matches) == 1u) {
+    if (rc == CMETA_OK && vec_size(&matches) > 1u) rc = SALTS_EPROTO;
+    if (rc == CMETA_OK && vec_size(&matches) == 1u) {
       const size_t *matched = (const size_t *)vec_at_const(&matches, 0u);
       if (!matched || *matched != target) rc = SALTS_EPROTO;
     }
-    if (rc == SALTS_OK && atomic_load_explicit(&owner->ready, memory_order_acquire) &&
+    if (rc == CMETA_OK && atomic_load_explicit(&owner->ready, memory_order_acquire) &&
         vec_size(&matches) != 1u) {
       rc = SALTS_EPROTO;
-    } else if (rc == SALTS_OK &&
+    } else if (rc == CMETA_OK &&
                atomic_load_explicit(&owner->ready, memory_order_acquire)) {
       atomic_fetch_add_explicit(&owner->ready_match_count, 1u, memory_order_relaxed);
     }
-    salts_mutex_unlock(&owner->mutex);
-    if (rc != SALTS_OK) break;
+    cmeta_mutex_unlock(&owner->mutex);
+    if (rc != CMETA_OK) break;
     atomic_fetch_add_explicit(&owner->publish_count, 1u, memory_order_relaxed);
     ++sequence;
   }
-  if (rc != SALTS_OK) atomic_store_explicit(&owner->status, rc, memory_order_release);
+  if (rc != CMETA_OK) atomic_store_explicit(&owner->status, rc, memory_order_release);
   vec_destroy(&matches);
 }
 
@@ -208,23 +208,23 @@ static int flowie_soak_resource_snapshot(flowie_soak_resources_t *out) {
 #else
   return SALTS_ENOTSUP;
 #endif
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_soak_wait_for_process_release(const flowie_soak_resources_t *baseline,
                                                 flowie_soak_resources_t *current) {
   const uint64_t deadline =
-      salts_monotonic_ms() + (uint64_t)FLOWIE_SOAK_PROCESS_RELEASE_TIMEOUT_MS;
+      cmeta_monotonic_ms() + (uint64_t)FLOWIE_SOAK_PROCESS_RELEASE_TIMEOUT_MS;
   int rc;
   if (!baseline || !current) return SALTS_EINVAL;
   /* pthread_join may return before Linux removes the exiting task from procfs. */
   do {
     rc = flowie_soak_resource_snapshot(current);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (current->handles <= baseline->handles && current->threads <= baseline->threads)
-      return SALTS_OK;
-    salts_sleep_ms(1u);
-  } while (salts_monotonic_ms() < deadline);
+      return CMETA_OK;
+    cmeta_sleep_ms(1u);
+  } while (cmeta_monotonic_ms() < deadline);
   return SALTS_ENOSPC;
 }
 
@@ -255,60 +255,60 @@ static size_t flowie_soak_duration_ms(const char *case_suffix) {
   return (size_t)parsed;
 }
 
-static void flowie_soak_report_child_stream(salts_process_t *process, int stdout_stream) {
+static void flowie_soak_report_child_stream(cmeta_process_t *process, int stdout_stream) {
   char buffer[4096];
   size_t count = 0u;
   int rc;
   if (!process) return;
   do {
-    rc = stdout_stream ? salts_process_read_stdout(process, buffer, sizeof(buffer), &count)
-                       : salts_process_read_stderr(process, buffer, sizeof(buffer), &count);
+    rc = stdout_stream ? cmeta_process_read_stdout(process, buffer, sizeof(buffer), &count)
+                       : cmeta_process_read_stderr(process, buffer, sizeof(buffer), &count);
     if (count != 0u) (void)fwrite(buffer, 1u, count, stderr);
-  } while (rc == SALTS_OK && count != 0u);
+  } while (rc == CMETA_OK && count != 0u);
 }
 
 static int flowie_soak_run_child_args(const char *program, const char *const *args,
                                       const char *description) {
-  salts_process_options_t options;
-  salts_process_t *process = NULL;
-  salts_process_result_t result = {0};
+  cmeta_process_options_t options;
+  cmeta_process_t *process = NULL;
+  cmeta_process_result_t result = {0};
   flowie_soak_resources_t resources_before;
   flowie_soak_resources_t resources_after;
   int release_rc;
   int rc;
   rc = flowie_soak_resource_snapshot(&resources_before);
-  if (rc != SALTS_OK) return rc;
-  salts_process_options_init(&options);
+  if (rc != CMETA_OK) return rc;
+  cmeta_process_options_init(&options);
   options.program = program;
   options.args = args;
   options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   options.timeout_ms = FLOWIE_SOAK_CHILD_TIMEOUT_MS;
   options.max_output_bytes = 65536u;
-  rc = salts_process_spawn(&options, &process);
-  if (rc != SALTS_OK) {
+  rc = cmeta_process_spawn(&options, &process);
+  if (rc != CMETA_OK) {
     fprintf(stderr, "SOAK_CHILD_FAILURE program=%s command=\"%s\" spawn_status=%d\n", program,
             description, rc);
     return rc;
   }
-  rc = salts_process_wait(process, &result);
-  if (rc == SALTS_OK && (result.state != SALTS_PROCESS_EXITED || result.exit_code != 0)) {
+  rc = cmeta_process_wait(process, &result);
+  if (rc == CMETA_OK && (result.state != SALTS_PROCESS_EXITED || result.exit_code != 0)) {
     fprintf(stderr,
             "SOAK_CHILD_FAILURE program=%s command=\"%s\" state=%s exit_code=%d "
             "term_signal=%d error_code=%d\nstdout:\n",
-            program, description, salts_process_state_name(result.state), result.exit_code,
+            program, description, cmeta_process_state_name(result.state), result.exit_code,
             result.term_signal, result.error_code);
     flowie_soak_report_child_stream(process, 1);
     fputs("\nstderr:\n", stderr);
     flowie_soak_report_child_stream(process, 0);
     fputc('\n', stderr);
     rc = SALTS_EIO;
-  } else if (rc != SALTS_OK) {
+  } else if (rc != CMETA_OK) {
     fprintf(stderr, "SOAK_CHILD_FAILURE program=%s command=\"%s\" wait_status=%d\n", program,
             description, rc);
   }
-  salts_process_destroy(process);
+  cmeta_process_destroy(process);
   release_rc = flowie_soak_wait_for_process_release(&resources_before, &resources_after);
-  if (release_rc != SALTS_OK) {
+  if (release_rc != CMETA_OK) {
     fprintf(stderr,
             "SOAK_CHILD_RESOURCE_FAILURE program=%s command=\"%s\" "
             "handles_before=%zu handles_current=%zu threads_before=%zu threads_current=%zu "
@@ -316,7 +316,7 @@ static int flowie_soak_run_child_args(const char *program, const char *const *ar
             program, description, resources_before.handles, resources_after.handles,
             resources_before.threads, resources_after.threads,
             FLOWIE_SOAK_PROCESS_RELEASE_TIMEOUT_MS);
-    if (rc == SALTS_OK) rc = release_rc;
+    if (rc == CMETA_OK) rc = release_rc;
   }
   return rc;
 }
@@ -338,9 +338,9 @@ static int flowie_soak_run_series(const char *case_id, const char *const *progra
   size_t completed = 0u;
   size_t latency_count = 0u;
   size_t rss_tolerance;
-  const uint64_t series_started_at = salts_hrtime();
+  const uint64_t series_started_at = cmeta_hrtime();
   const uint64_t deadline_ms =
-      duration_ms != 0u ? salts_monotonic_ms() + (uint64_t)duration_ms : 0u;
+      duration_ms != 0u ? cmeta_monotonic_ms() + (uint64_t)duration_ms : 0u;
   int rc;
   if (!case_id || !programs || !filters || trace_count == 0u || iterations == 0u ||
       iterations > FLOWIE_SOAK_MAX_ITERATIONS || duration_ms > FLOWIE_SOAK_MAX_DURATION_MS)
@@ -348,21 +348,21 @@ static int flowie_soak_run_series(const char *case_id, const char *const *progra
 
   /* Warm process spawning and library initialization before taking the leak baseline. */
   rc = flowie_soak_run_child(programs[0], filters[0]);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_soak_resource_snapshot(&baseline);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   current = baseline;
   rss_tolerance = flowie_soak_env_size("FLOWIE_MQTT_SOAK_RSS_TOLERANCE_BYTES",
                                        FLOWIE_SOAK_DEFAULT_RSS_TOLERANCE,
                                        1024u * 1024u * 1024u);
 
   while (completed < iterations ||
-         (deadline_ms != 0u && salts_monotonic_ms() < deadline_ms)) {
+         (deadline_ms != 0u && cmeta_monotonic_ms() < deadline_ms)) {
     const size_t trace = (size_t)(flowie_soak_random(&random_state) % trace_count);
-    const uint64_t started_at = salts_hrtime();
+    const uint64_t started_at = cmeta_hrtime();
     uint64_t latency;
     rc = flowie_soak_run_child(programs[trace], filters[trace]);
-    latency = salts_hrtime() - started_at;
+    latency = cmeta_hrtime() - started_at;
     ++completed;
     if (latency_count < FLOWIE_SOAK_LATENCY_SAMPLES) {
       latencies[latency_count++] = latency;
@@ -370,8 +370,8 @@ static int flowie_soak_run_series(const char *case_id, const char *const *progra
       const size_t slot = (size_t)(flowie_soak_random(&random_state) % completed);
       if (slot < FLOWIE_SOAK_LATENCY_SAMPLES) latencies[slot] = latency;
     }
-    if (rc != SALTS_OK) ++failures;
-    if (flowie_soak_resource_snapshot(&current) != SALTS_OK) return SALTS_EIO;
+    if (rc != CMETA_OK) ++failures;
+    if (flowie_soak_resource_snapshot(&current) != CMETA_OK) return SALTS_EIO;
     if (current.handles > baseline.handles || current.threads > baseline.threads ||
         current.rss_bytes > baseline.rss_bytes + rss_tolerance) {
       fprintf(stderr,
@@ -390,20 +390,20 @@ static int flowie_soak_run_series(const char *case_id, const char *const *progra
          "p50_ns=%" PRIu64 " p95_ns=%" PRIu64 " p99_ns=%" PRIu64
          " rss_baseline=%zu rss_final=%zu handles_baseline=%zu handles_final=%zu "
          "threads_baseline=%zu threads_final=%zu resource_monotonic_growth=false\n",
-         case_id, seed, completed, failures, salts_hrtime() - series_started_at, completed,
+         case_id, seed, completed, failures, cmeta_hrtime() - series_started_at, completed,
          concurrency, backend_retries == SIZE_MAX ? completed : backend_retries,
          flowie_soak_percentile(latencies, latency_count, 50u),
          flowie_soak_percentile(latencies, latency_count, 95u),
          flowie_soak_percentile(latencies, latency_count, 99u), baseline.rss_bytes,
          current.rss_bytes, baseline.handles, current.handles, baseline.threads, current.threads);
-  return failures == 0u ? SALTS_OK : SALTS_EIO;
+  return failures == 0u ? CMETA_OK : SALTS_EIO;
 }
 
 static int flowie_soak_index_cycle(size_t *publish_count_out) {
   flowie_topic_index_t index;
   flowie_soak_index_owner_t owner;
   flowie_soak_index_publisher_t *publishers = NULL;
-  salts_thread_t *threads = NULL;
+  cmeta_thread_t *threads = NULL;
   flowie_topic_index_binding_t *bindings = NULL;
   vec_t matches = {0};
   const size_t count = flowie_soak_env_size("FLOWIE_MQTT_SOAK_SUBSCRIPTIONS",
@@ -418,54 +418,54 @@ static int flowie_soak_index_cycle(size_t *publish_count_out) {
   int matches_initialized = 0;
   int mutex_initialized = 0;
   int atomics_initialized = 0;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (publish_count_out) *publish_count_out = 0u;
   if (!publish_count_out || count < 2u) return SALTS_EINVAL;
   memset(&index, 0, sizeof(index));
   memset(&owner, 0, sizeof(owner));
   bindings = (flowie_topic_index_binding_t *)calloc(count, sizeof(*bindings));
   publishers = (flowie_soak_index_publisher_t *)calloc(publisher_count, sizeof(*publishers));
-  threads = (salts_thread_t *)calloc(publisher_count, sizeof(*threads));
+  threads = (cmeta_thread_t *)calloc(publisher_count, sizeof(*threads));
   if (!bindings || !publishers || !threads) {
     rc = SALTS_ENOMEM;
     goto cleanup;
   }
-  if (flowie_topic_index_init(&index) != SALTS_OK) {
+  if (flowie_topic_index_init(&index) != CMETA_OK) {
     rc = SALTS_ENOMEM;
     goto cleanup;
   }
   index_initialized = 1;
-  if (flowie_stl_error(vec_init_bytes(&matches, sizeof(size_t), _Alignof(size_t), SIZE_MAX)) != SALTS_OK) {
+  if (flowie_stl_error(vec_init_bytes(&matches, sizeof(size_t), _Alignof(size_t), SIZE_MAX)) != CMETA_OK) {
     rc = SALTS_ENOMEM;
     goto cleanup;
   }
   matches_initialized = 1;
   owner.index = &index;
   owner.subscription_count = count;
-  salts_mutex_init(&owner.mutex);
+  cmeta_mutex_init(&owner.mutex);
   mutex_initialized = 1;
   atomic_init(&owner.ready, 0);
   atomic_init(&owner.stop, 0);
-  atomic_init(&owner.status, SALTS_OK);
+  atomic_init(&owner.status, CMETA_OK);
   atomic_init(&owner.publish_count, 0u);
   atomic_init(&owner.ready_match_count, 0u);
   atomics_initialized = 1;
   for (size_t i = 0u; i < publisher_count; ++i) {
     publishers[i].owner = &owner;
     publishers[i].ordinal = i;
-    rc = salts_thread_create(&threads[i], flowie_soak_index_publish_thread, &publishers[i]);
-    if (rc != SALTS_OK) goto cleanup;
+    rc = cmeta_thread_create(&threads[i], flowie_soak_index_publish_thread, &publishers[i]);
+    if (rc != CMETA_OK) goto cleanup;
     ++started_threads;
   }
   {
-    const uint64_t deadline = salts_monotonic_ms() + 2000u;
+    const uint64_t deadline = cmeta_monotonic_ms() + 2000u;
     while (atomic_load_explicit(&owner.publish_count, memory_order_acquire) < publisher_count &&
-           atomic_load_explicit(&owner.status, memory_order_acquire) == SALTS_OK &&
-           salts_monotonic_ms() < deadline)
-      salts_thread_yield();
+           atomic_load_explicit(&owner.status, memory_order_acquire) == CMETA_OK &&
+           cmeta_monotonic_ms() < deadline)
+      cmeta_thread_yield();
     if (atomic_load_explicit(&owner.publish_count, memory_order_acquire) < publisher_count) {
       rc = atomic_load_explicit(&owner.status, memory_order_acquire);
-      if (rc == SALTS_OK) rc = SALTS_ETIMEDOUT;
+      if (rc == CMETA_OK) rc = SALTS_ETIMEDOUT;
       goto cleanup;
     }
   }
@@ -475,34 +475,34 @@ static int flowie_soak_index_cycle(size_t *publish_count_out) {
       rc = SALTS_EIO;
       goto cleanup;
     }
-    salts_mutex_lock(&owner.mutex);
+    cmeta_mutex_lock(&owner.mutex);
     rc = flowie_topic_index_insert_bound(
         &index, (flowie_mqtt_span_t){(const uint8_t *)filter, (size_t)written}, i, &bindings[i]);
-    salts_mutex_unlock(&owner.mutex);
-    if (rc != SALTS_OK) goto cleanup;
+    cmeta_mutex_unlock(&owner.mutex);
+    if (rc != CMETA_OK) goto cleanup;
   }
   atomic_store_explicit(&owner.ready, 1, memory_order_release);
   for (size_t i = 0u; i < count; i += 2u) {
     moved = FLOWIE_TOPIC_INDEX_NO_ENTRY;
-    salts_mutex_lock(&owner.mutex);
+    cmeta_mutex_lock(&owner.mutex);
     rc = flowie_topic_index_remove(&index, &bindings[i], i, &moved);
-    salts_mutex_unlock(&owner.mutex);
-    if (rc != SALTS_OK) goto cleanup;
+    cmeta_mutex_unlock(&owner.mutex);
+    if (rc != CMETA_OK) goto cleanup;
     if (moved != FLOWIE_TOPIC_INDEX_NO_ENTRY) bindings[moved].position = bindings[i].position;
   }
   {
-    const uint64_t deadline = salts_monotonic_ms() + 2000u;
+    const uint64_t deadline = cmeta_monotonic_ms() + 2000u;
     while (atomic_load_explicit(&owner.ready_match_count, memory_order_acquire) == 0u &&
-           atomic_load_explicit(&owner.status, memory_order_acquire) == SALTS_OK &&
-           salts_monotonic_ms() < deadline)
-      salts_thread_yield();
+           atomic_load_explicit(&owner.status, memory_order_acquire) == CMETA_OK &&
+           cmeta_monotonic_ms() < deadline)
+      cmeta_thread_yield();
     if (atomic_load_explicit(&owner.ready_match_count, memory_order_acquire) == 0u &&
-        atomic_load_explicit(&owner.status, memory_order_acquire) == SALTS_OK) {
+        atomic_load_explicit(&owner.status, memory_order_acquire) == CMETA_OK) {
       rc = SALTS_ETIMEDOUT;
       goto cleanup;
     }
   }
-  if (atomic_load_explicit(&owner.status, memory_order_acquire) != SALTS_OK) {
+  if (atomic_load_explicit(&owner.status, memory_order_acquire) != CMETA_OK) {
     rc = atomic_load_explicit(&owner.status, memory_order_acquire);
     goto cleanup;
   }
@@ -513,25 +513,25 @@ static int flowie_soak_index_cycle(size_t *publish_count_out) {
       rc = SALTS_EMSGSIZE;
       goto cleanup;
     }
-    salts_mutex_lock(&owner.mutex);
+    cmeta_mutex_lock(&owner.mutex);
     rc = flowie_topic_index_match(
         &index, (flowie_mqtt_span_t){(const uint8_t *)topic, (size_t)written}, &matches);
-    salts_mutex_unlock(&owner.mutex);
+    cmeta_mutex_unlock(&owner.mutex);
   }
-  if (rc != SALTS_OK || vec_size(&matches) != 1u)
+  if (rc != CMETA_OK || vec_size(&matches) != 1u)
     rc = SALTS_EPROTO;
 cleanup:
   if (atomics_initialized) atomic_store_explicit(&owner.stop, 1, memory_order_release);
   for (size_t i = 0u; i < started_threads; ++i) {
-    int join_rc = salts_thread_join(&threads[i]);
-    if (rc == SALTS_OK && join_rc != SALTS_OK) rc = join_rc;
-    salts_thread_destroy(&threads[i]);
+    int join_rc = cmeta_thread_join(&threads[i]);
+    if (rc == CMETA_OK && join_rc != CMETA_OK) rc = join_rc;
+    cmeta_thread_destroy(&threads[i]);
   }
-  if (rc == SALTS_OK && started_threads != 0u)
+  if (rc == CMETA_OK && started_threads != 0u)
     rc = atomic_load_explicit(&owner.status, memory_order_acquire);
   if (started_threads != 0u)
     *publish_count_out = atomic_load_explicit(&owner.publish_count, memory_order_relaxed);
-  if (mutex_initialized) salts_mutex_destroy(&owner.mutex);
+  if (mutex_initialized) cmeta_mutex_destroy(&owner.mutex);
   if (matches_initialized) vec_destroy(&matches);
   if (index_initialized) flowie_topic_index_destroy(&index);
   free(threads);
@@ -551,15 +551,15 @@ spec("Flowie MQTT scheduled soak") {
     size_t threads_max;
     size_t sample_count = 1u;
 
-    check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDPOINT_TEST, args, "--list"), SALTS_OK);
-    check_equal(flowie_soak_resource_snapshot(&first), SALTS_OK);
+    check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDPOINT_TEST, args, "--list"), CMETA_OK);
+    check_equal(flowie_soak_resource_snapshot(&first), CMETA_OK);
     handles_min = handles_max = first.handles;
     threads_min = threads_max = first.threads;
 
     for (size_t iteration = 0u; iteration < FLOWIE_SOAK_RESOURCE_REPRO_ITERATIONS; ++iteration) {
       check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDPOINT_TEST, args, "--list"),
-                   SALTS_OK);
-      check_equal(flowie_soak_resource_snapshot(&sample), SALTS_OK);
+                   CMETA_OK);
+      check_equal(flowie_soak_resource_snapshot(&sample), CMETA_OK);
       ++sample_count;
       if (sample.handles < handles_min) handles_min = sample.handles;
       if (sample.handles > handles_max) handles_max = sample.handles;
@@ -578,7 +578,7 @@ spec("Flowie MQTT scheduled soak") {
     flowie_soak_resources_t baseline;
     flowie_soak_resources_t current;
 
-    check_equal(flowie_soak_resource_snapshot(&baseline), SALTS_OK);
+    check_equal(flowie_soak_resource_snapshot(&baseline), CMETA_OK);
     check_greater_equal(baseline.threads, 1u);
     --baseline.threads;
     check_equal(flowie_soak_wait_for_process_release(&baseline, &current), SALTS_ENOSPC);
@@ -597,7 +597,7 @@ spec("Flowie MQTT scheduled soak") {
     check_equal(flowie_soak_run_series("MQTT-SOAK-001", programs, filters, 3u, iterations,
                                         flowie_soak_duration_ms("001"), flowie_soak_seed(), 2u,
                                         0u),
-                 SALTS_OK);
+                 CMETA_OK);
   }
 
   it("MQTT-SOAK-002 adds and removes one hundred thousand subscriptions") {
@@ -608,10 +608,10 @@ spec("Flowie MQTT scheduled soak") {
     flowie_soak_resources_t baseline;
     flowie_soak_resources_t current;
     const uint64_t seed = flowie_soak_seed();
-    const uint64_t series_started_at = salts_hrtime();
+    const uint64_t series_started_at = cmeta_hrtime();
     const size_t duration_ms = flowie_soak_duration_ms("002");
     const uint64_t deadline_ms =
-        duration_ms != 0u ? salts_monotonic_ms() + (uint64_t)duration_ms : 0u;
+        duration_ms != 0u ? cmeta_monotonic_ms() + (uint64_t)duration_ms : 0u;
     const size_t publisher_count = flowie_soak_env_size(
         "FLOWIE_MQTT_SOAK_PUBLISHERS", FLOWIE_SOAK_DEFAULT_PUBLISHERS, 64u);
     size_t concurrent_publishes = 0u;
@@ -620,17 +620,17 @@ spec("Flowie MQTT scheduled soak") {
     size_t total_publishes = 0u;
     uint64_t random_state = seed;
     check_less_equal(duration_ms, FLOWIE_SOAK_MAX_DURATION_MS);
-    check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
+    check_equal(flowie_soak_index_cycle(&concurrent_publishes), CMETA_OK);
     check_true(concurrent_publishes != 0u);
-    check_equal(flowie_soak_resource_snapshot(&baseline), SALTS_OK);
+    check_equal(flowie_soak_resource_snapshot(&baseline), CMETA_OK);
     while (cycles < iterations ||
-           (deadline_ms != 0u && salts_monotonic_ms() < deadline_ms)) {
-      const uint64_t started_at = salts_hrtime();
+           (deadline_ms != 0u && cmeta_monotonic_ms() < deadline_ms)) {
+      const uint64_t started_at = cmeta_hrtime();
       uint64_t latency;
-      check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
+      check_equal(flowie_soak_index_cycle(&concurrent_publishes), CMETA_OK);
       check_true(concurrent_publishes != 0u);
       total_publishes += concurrent_publishes;
-      latency = salts_hrtime() - started_at;
+      latency = cmeta_hrtime() - started_at;
       ++cycles;
       if (latency_count < FLOWIE_SOAK_LATENCY_SAMPLES) {
         latencies[latency_count++] = latency;
@@ -639,7 +639,7 @@ spec("Flowie MQTT scheduled soak") {
         if (slot < FLOWIE_SOAK_LATENCY_SAMPLES) latencies[slot] = latency;
       }
     }
-    check_equal(flowie_soak_resource_snapshot(&current), SALTS_OK);
+    check_equal(flowie_soak_resource_snapshot(&current), CMETA_OK);
     check_true(current.handles <= baseline.handles);
     check_true(current.threads <= baseline.threads);
     check_true(current.rss_bytes <=
@@ -654,7 +654,7 @@ spec("Flowie MQTT scheduled soak") {
            " p99_ns=%" PRIu64 " rss_baseline=%zu rss_final=%zu handles_baseline=%zu "
            "handles_final=%zu threads_baseline=%zu threads_final=%zu "
            "resource_monotonic_growth=false\n",
-           seed, cycles + total_publishes, salts_hrtime() - series_started_at,
+           seed, cycles + total_publishes, cmeta_hrtime() - series_started_at,
            total_publishes, publisher_count,
            flowie_soak_percentile(latencies, latency_count, 50u),
            flowie_soak_percentile(latencies, latency_count, 95u),
@@ -672,7 +672,7 @@ spec("Flowie MQTT scheduled soak") {
     check_equal(flowie_soak_run_series("MQTT-SOAK-003", programs, filters, 2u, iterations,
                                         flowie_soak_duration_ms("003"), flowie_soak_seed(), 3u,
                                         0u),
-                 SALTS_OK);
+                 CMETA_OK);
   }
 
   it("MQTT-SOAK-004 repeats TLS and WSS shutdown boundary traces") {
@@ -688,7 +688,7 @@ spec("Flowie MQTT scheduled soak") {
     check_equal(flowie_soak_run_series("MQTT-SOAK-004", programs, filters, 5u, iterations,
                                         flowie_soak_duration_ms("004"), flowie_soak_seed(), 1u,
                                         0u),
-                 SALTS_OK);
+                 CMETA_OK);
   }
 
   it("MQTT-SOAK-005 repeats provider outage and lost-commit recovery traces") {
@@ -701,7 +701,7 @@ spec("Flowie MQTT scheduled soak") {
     check_equal(flowie_soak_run_series("MQTT-SOAK-005", programs, filters, trace_count, iterations,
                                         flowie_soak_duration_ms("005"), flowie_soak_seed(), 1u,
                                         SIZE_MAX),
-                 SALTS_OK);
+                 CMETA_OK);
   }
 
   it("MQTT-SOAK-006 repeats ingress and Disruptor HWM shutdown traces") {
@@ -716,6 +716,6 @@ spec("Flowie MQTT scheduled soak") {
     check_equal(flowie_soak_run_series("MQTT-SOAK-006", programs, filters, 3u, iterations,
                                         flowie_soak_duration_ms("006"), flowie_soak_seed(), 1u,
                                         0u),
-                 SALTS_OK);
+                 CMETA_OK);
   }
 }

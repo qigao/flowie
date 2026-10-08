@@ -1,0 +1,153 @@
+name: Flowie Salts 3 development integration
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+            preset: ci-linux-release-user
+            db_preset: ci-linux-release
+          - os: windows-2025
+            rid: windows-x64
+            preset: ci-win-release-user
+            db_preset: ci-windows-release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: 216979789c1d68b8355161c91177652f65ab64c8
+          path: _deps/salts-utils
+          persist-credentials: false
+      - uses: ./_deps/salts-utils/.github/actions/setup-build-host
+      - name: Import matching MSVC environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vs = $env:VSINSTALL
+          $developerEnvironment = & $env:ComSpec /d /s /c "`"$vs\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 >nul && set"
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
+          foreach ($entry in $developerEnvironment) {
+            $name, $value = $entry -split '=', 2
+            if ($name -match '^[A-Za-z_][A-Za-z0-9_]*$' -and $name -ne 'VCPKG_ROOT' -and
+                $value -cne [Environment]::GetEnvironmentVariable($name)) {
+              "$name=$value" >> $env:GITHUB_ENV
+            }
+          }
+      - name: Restore released Salts SDK
+        shell: pwsh
+        working-directory: _deps/salts-utils
+        run: ./cmake/ci/restore-native-sdk.ps1 -SaltsRid '${{ matrix.rid }}' -Re2cRid '${{ matrix.rid }}'
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/chttp
+          ref: 6565e40c3050435f81ce1f696b777861a569a9af
+          path: _deps/chttp
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/turbodb
+          ref: 5c2f332779f0eb4e7e457dc01fc2d2fac77975a3
+          path: _deps/turbodb
+          persist-credentials: false
+      - name: Rebuild complete dependency SDKs against Salts 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:QIGAO_SDK_RID = '${{ matrix.rid }}'
+          $env:QIGAO_TARGET_TRIPLET = if ($IsWindows) { $env:QIGAO_VCPKG_WINDOWS_TRIPLET } else { 'x64-linux' }
+          $env:QIGAO_HOST_TRIPLET = if ($IsWindows) { $env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET } else { 'x64-linux' }
+          $env:TURBODB_CI_PKG_ROOT = "$env:GITHUB_WORKSPACE/stage/dependencies"
+          $dependencies = @(
+            @{ Directory='salts-utils'; Preset='ci-sdk-release-user'; Root="stage/sdk/${{ matrix.rid }}"; Variable='SALTS_UTILS_ROOT' },
+            @{ Directory='chttp'; Preset='ci-sdk-release-user'; Root="stage/sdk/${{ matrix.rid }}"; Variable='HTTP_SERVICES_ROOT' },
+            @{ Directory='turbodb'; Preset='${{ matrix.db_preset }}'; Root="$env:TURBODB_CI_PKG_ROOT/turbodb/release"; Variable='TURBODB_ROOT' }
+          )
+          foreach ($dependency in $dependencies) {
+            Push-Location "_deps/$($dependency.Directory)"
+            try {
+              $options = @()
+              if ($dependency.Directory -eq 'turbodb') {
+                $options += @('-DBUILD_TESTS=OFF', "-DVCPKG_TARGET_TRIPLET=$env:QIGAO_TARGET_TRIPLET", "-DVCPKG_HOST_TRIPLET=$env:QIGAO_HOST_TRIPLET")
+              }
+              cmake --preset $dependency.Preset @options
+              if ($LASTEXITCODE -ne 0) { throw "Dependency configure failed: $($dependency.Directory)" }
+              cmake --build --preset $dependency.Preset --parallel 2
+              if ($LASTEXITCODE -ne 0) { throw "Dependency build failed: $($dependency.Directory)" }
+              cmake --build --preset "install-$($dependency.Preset)" --parallel 2
+              if ($LASTEXITCODE -ne 0) { throw "Dependency install failed: $($dependency.Directory)" }
+              $root = [IO.Path]::GetFullPath($dependency.Root, (Get-Location).Path)
+              [Environment]::SetEnvironmentVariable($dependency.Variable, $root)
+              "$($dependency.Variable)=$root" >> $env:GITHUB_ENV
+              if ($dependency.Directory -eq 'salts-utils') {
+                $env:SALTS_UTILS_HOST_ROOT = $root
+                "SALTS_UTILS_HOST_ROOT=$root" >> $env:GITHUB_ENV
+              }
+              if ($IsWindows) { $env:PATH = "$root/bin$([IO.Path]::PathSeparator)$env:PATH" }
+              else { $env:LD_LIBRARY_PATH = "$root/lib:$root/bin:$env:SALTS_ROOT/lib:$env:LD_LIBRARY_PATH" }
+            } finally { Pop-Location }
+          }
+          if ($IsWindows) { "PATH=$env:PATH" >> $env:GITHUB_ENV }
+          else { "LD_LIBRARY_PATH=$env:LD_LIBRARY_PATH" >> $env:GITHUB_ENV }
+      - name: Build and test the complete Flowie graph
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake --preset '${{ matrix.preset }}'
+          if ($LASTEXITCODE -ne 0) { throw 'Flowie configure failed' }
+          cmake --build --preset '${{ matrix.preset }}' --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Flowie build failed' }
+          ctest --preset '${{ matrix.preset }}' --no-tests=error --timeout 180 --output-junit build/native-ci/results.xml
+          if ($LASTEXITCODE -ne 0) { throw 'Flowie tests failed' }
+      - name: Record SDK identities
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/native-ci | Out-Null
+          "consumer=$(git rev-parse HEAD)" | Set-Content build/native-ci/acceptance.txt
+          foreach ($dependency in @('salts-utils','chttp','turbodb')) {
+            "${dependency}=$(git -C _deps/$dependency rev-parse HEAD)" | Add-Content build/native-ci/acceptance.txt
+          }
+          if ($env:SALTS_ROOT) {
+            Get-Content (Join-Path $env:SALTS_ROOT 'salts-sdk-manifest.txt') | Add-Content build/native-ci/acceptance.txt
+          }
+          Get-Content build/native-ci/acceptance.txt | Add-Content $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: salts3-acceptance-${{ matrix.rid }}
+          path: |
+            build/native-ci/acceptance.txt
+            build/native-ci/results.xml
+            build/native-ci/Testing/Temporary/LastTest.log
+            build/native-ci/CMakeFiles/CMakeConfigureLog.yaml

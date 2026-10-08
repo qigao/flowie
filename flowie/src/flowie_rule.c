@@ -1,7 +1,7 @@
 #include "flowie_rule_internal.h"
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -87,7 +87,7 @@ int flowie_mqtt_message_flags_encode(flowie_mqtt_version_t version, uint8_t fixe
       (fixed_flags & FLOWIE_MQTT_MESSAGE_FIXED_FLAGS_INVALID_MASK) != 0u)
     return SALTS_EINVAL;
   *flags_out = ((uint32_t)version << FLOWIE_MQTT_MESSAGE_VERSION_SHIFT) | fixed_flags;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 const turbo_flow_expr_schema_t *flowie_mqtt_rule_schema(void) { return &FLOWIE_MQTT_RULE_SCHEMA; }
@@ -98,7 +98,7 @@ int flowie_mqtt_message_flags_version(uint32_t flags, flowie_mqtt_version_t *ver
   encoded = (flags & FLOWIE_MQTT_MESSAGE_VERSION_MASK) >> FLOWIE_MQTT_MESSAGE_VERSION_SHIFT;
   if (!flowie_mqtt_version_is_supported((flowie_mqtt_version_t)encoded)) return SALTS_EPROTO;
   *version_out = (flowie_mqtt_version_t)encoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_message_version(const turbo_flow_msg_t *message,
@@ -175,7 +175,7 @@ static int flowie_mqtt_projection_materialize_properties(flowie_mqtt_projection_
   value.as.i64 = (int64_t)user_property_count;
   flowie_mqtt_projection_commit(projection, FLOWIE_MQTT_RULE_USER_PROPERTY_COUNT, &value);
   projection->parsed_bits |= FLOWIE_MQTT_RULE_ALL_FACTS;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_projection_materialize(flowie_mqtt_projection_t *projection,
@@ -240,7 +240,7 @@ static int flowie_mqtt_projection_packet(const turbo_flow_msg_t *message,
                                  &options, packet_out, &consumed, NULL) != FLOWIE_MQTT_PARSE_OK ||
         consumed != message->payload.len)
       return SALTS_EPROTO;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (packet_hint->size < sizeof(*packet_hint) ||
       packet_hint->abi_version != FLOWIE_MQTT_PROTOCOL_ABI_V1 || packet_hint->version != version ||
@@ -262,7 +262,7 @@ static int flowie_mqtt_projection_packet(const turbo_flow_msg_t *message,
     packet_out->packet.data = (const uint8_t *)message->payload.data;
     packet_out->body.data = packet_out->packet.data + body_offset;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_projection_decode(const turbo_flow_msg_t *message,
@@ -278,21 +278,21 @@ static int flowie_mqtt_projection_decode(const turbo_flow_msg_t *message,
   projection->packet = (flowie_mqtt_packet_view_t)FLOWIE_MQTT_PACKET_VIEW_INIT;
   projection->publish = (flowie_mqtt_publish_view_t)FLOWIE_MQTT_PUBLISH_VIEW_INIT;
   rc = flowie_mqtt_message_version(message, &version);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_projection_packet(message, packet_hint, version, &projection->packet);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (projection->packet.type != FLOWIE_MQTT_PACKET_PUBLISH ||
       flowie_mqtt_publish_parse(&projection->packet, &projection->publish) != FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
   rc = flowie_mqtt_projection_materialize(projection, version, message->flags);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (projection->parsed_bits != FLOWIE_MQTT_RULE_ALL_FACTS) return SALTS_EPROTO;
   projection->wire_data = message->payload.data;
   projection->wire_size = message->payload.len;
   projection->generation = UINT64_C(1);
   projection->message_type = message->type;
   projection->message_flags = message->flags;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_projection_clone(const void *value, void *ctx, void **out) {
@@ -304,7 +304,7 @@ static int flowie_mqtt_projection_clone(const void *value, void *ctx, void **out
   if (!copy) return SALTS_ENOMEM;
   *copy = *(const flowie_mqtt_projection_t *)value;
   *out = copy;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_mqtt_projection_destroy(void *value, void *ctx) {
@@ -340,11 +340,11 @@ int flowie_mqtt_rule_bind_projection(turbo_flow_msg_t *message,
   projection = (flowie_mqtt_projection_t *)malloc(sizeof(*projection));
   if (!projection) return SALTS_ENOMEM;
   rc = flowie_mqtt_projection_decode(message, packet_hint, projection);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = turbo_flow_msg_bind_projection(message, &FLOWIE_MQTT_PROJECTION_SCHEMA, projection,
                                         flowie_mqtt_projection_clone,
                                         flowie_mqtt_projection_destroy, NULL);
-  if (rc != SALTS_OK) free(projection);
+  if (rc != CMETA_OK) free(projection);
   return rc;
 }
 
@@ -368,7 +368,7 @@ static int flowie_mqtt_rule_values(const flowie_mqtt_projection_t *projection,
     if ((projection->present_bits & bit) != 0u) values[i] = projection->values[value_index];
     else memset(&values[i], 0, sizeof(values[i]));
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_mqtt_payload_view(const turbo_flow_msg_t *message, vstr *payload_out, void *ctx) {
@@ -386,12 +386,12 @@ int flowie_mqtt_payload_view(const turbo_flow_msg_t *message, vstr *payload_out,
     if (!flowie_mqtt_projection_matches(projection, message)) return SALTS_EPROTO;
   } else {
     rc = flowie_mqtt_projection_decode(message, NULL, &decoded);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     projection = &decoded;
   }
   *payload_out = vstr_from_buf((const char *)projection->publish.payload.data,
                                  projection->publish.payload.size);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_mqtt_rule_facts_provider(const turbo_flow_msg_t *message,
@@ -417,12 +417,12 @@ int flowie_mqtt_rule_facts_provider(const turbo_flow_msg_t *message,
     if (!flowie_mqtt_projection_matches(projection, message)) return SALTS_EPROTO;
   } else {
     rc = flowie_mqtt_projection_decode(message, NULL, &decoded);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     projection = &decoded;
   }
   rc = flowie_mqtt_rule_values(projection, schema, values);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *values_out = values;
   *value_count_out = schema->field_count;
-  return SALTS_OK;
+  return CMETA_OK;
 }

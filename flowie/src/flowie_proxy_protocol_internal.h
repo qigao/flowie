@@ -103,7 +103,7 @@ typedef struct flowie_proxy_protocol_v2_tlv_cursor_s {
  * Incrementally parse exactly one mandatory PROXY v2 header. The caller must
  * enable this parser only after authenticating the direct peer as trusted.
  *
- * Returns SALTS_OK with *consumed set to the exact header size,
+ * Returns CMETA_OK with *consumed set to the exact header size,
  * FLOWIE_PROXY_PROTOCOL_INCOMPLETE for a valid prefix that needs more bytes,
  * SALTS_EMSGSIZE when the advertised header exceeds max_header_size, or a
  * protocol error for any invalid/missing v2 header. Bytes after *consumed are
