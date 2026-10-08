@@ -393,6 +393,51 @@ spec("Flowie multiple network owners") {
     for (size_t index = 0u; index < 4u; ++index) flowie_test_cnet_close(clients[index]);
   }
 
+  it("recycles bounded manager records and handoff credits across repeated generations") {
+    for (uint32_t owners = 1u; owners <= 2u; ++owners) {
+      flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+      flowie_connection stale[2] = {{0}};
+      uint16_t port = 0u;
+      unsigned char received[4];
+      memset(&probe, 0, sizeof(probe));
+      config.network_workers = owners;
+      config.stream.connection_capacity = owners;
+      config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                          flowie_multi_close, NULL, &probe};
+      check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+      check_equal(flowie_server_start(&probe.server), SALTS_OK);
+      check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+      for (int round = 0; round < 32; ++round) {
+        for (uint32_t index = 0u; index < owners; ++index) {
+          clients[index] = flowie_test_cnet_connect(port);
+          check_not_null(clients[index]);
+          check_equal(flowie_multi_wait(&probe.opened, round * (int)owners + (int)index + 1), SALTS_OK);
+        }
+        for (uint32_t index = 0u; index < owners; ++index) {
+          const flowie_connection current = {index + 1u, atomic_load(&probe.generations[index])};
+          if (round != 0) {
+            check_not_equal(current.generation, stale[index].generation);
+            check_equal(flowie_server_close(&probe.server, stale[index], SALTS_ECANCELED), SALTS_OK);
+            check_equal(flowie_server_send(&probe.server, stale[index], "old!", 4u), SALTS_OK);
+          }
+          check_equal(flowie_server_send(&probe.server, current, "live", 4u), SALTS_OK);
+          check_equal(flowie_test_cnet_recv_exact(clients[index], received, 4u), SALTS_OK);
+          check_equal(memcmp(received, "live", 4u), 0);
+          stale[index] = current;
+          check_equal(flowie_server_close(&probe.server, current, SALTS_ECANCELED), SALTS_OK);
+        }
+        check_equal(flowie_multi_wait(&probe.closed, (round + 1) * (int)owners), SALTS_OK);
+        for (uint32_t index = 0u; index < owners; ++index) {
+          flowie_test_cnet_close(clients[index]);
+          clients[index] = NULL;
+        }
+      }
+      check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+      check_equal(atomic_load(&probe.error), SALTS_OK);
+      check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+    }
+  }
+
   it("places new connections on the least occupied owner without migrating live connections") {
     flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
     flowie_connection closed;

@@ -186,7 +186,8 @@ done:
   return rc;
 }
 
-static int flowie_transport_tcp_sg_burst_case(uint32_t network_workers) {
+static int flowie_transport_sg_burst_case(uint32_t network_workers,
+                                          const cnet_tls_client_config *tls) {
   static const uint8_t expected_pingresp[] = {0xd0u, 0x00u};
   flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
   flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
@@ -203,7 +204,7 @@ static int flowie_transport_tcp_sg_burst_case(uint32_t network_workers) {
   int rc = SALTS_OK;
 
   if (port == 0u) return SALTS_EIO;
-  config.transport = FLOWIE_TRANSPORT_TCP;
+  config.transport = tls ? FLOWIE_TRANSPORT_TLS : FLOWIE_TRANSPORT_TCP;
   config.host = "127.0.0.1";
   config.port = (int)port;
   config.max_connections = network_workers;
@@ -232,7 +233,7 @@ static int flowie_transport_tcp_sg_burst_case(uint32_t network_workers) {
     rc = SALTS_EPROTO;
     goto done;
   }
-  client = flowie_test_cnet_connect(port);
+  client = flowie_test_cnet_connect_configured(port, 0u, tls);
   if (client == FLOWIE_TEST_INVALID_CNET_CLIENT) {
     rc = SALTS_EIO;
     goto done;
@@ -266,7 +267,8 @@ static int flowie_transport_tcp_sg_burst_case(uint32_t network_workers) {
    * processing_input keeps the connection reply drain deferred until all 64
    * PINGRESP packets are queued. The endpoint batch limit is 64 while CNet's
    * retained vector limit is 32, so the production path must lower this batch
-   * as two retained SG logical writes without changing stream order.
+   * as two logical writes without changing stream order. Each command's small
+   * ranges are packed into one contiguous retained range by Flowie::Connection.
    */
   rc = flowie_test_cnet_send(client, burst, sizeof(burst));
   if (rc != SALTS_OK) {
@@ -556,17 +558,44 @@ done:
   return rc;
 }
 
+static int flowie_transport_tls_burst_case(uint32_t network_workers) {
+  char ca_path[512] = {0};
+  char cert_path[512] = {0};
+  char key_path[512] = {0};
+  cnet_tls_client_config tls = {.size = sizeof(tls), .ca_file = ca_path};
+  int rc = SALTS_EIO;
+  if (tls_test_write_ca_file(ca_path, sizeof(ca_path)) != 0 ||
+      tls_test_write_server_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)) != 0 ||
+      tls_test_set_server_env(cert_path, key_path) != 0)
+    goto done;
+  rc = flowie_transport_sg_burst_case(network_workers, &tls);
+done:
+  tls_test_clear_server_env();
+  tls_test_remove_file(key_path);
+  tls_test_remove_file(cert_path);
+  tls_test_remove_file(ca_path);
+  return rc;
+}
+
 spec("Flowie TCP/TLS/WS/WSS release baseline") {
   it("reports authentication provider unavailability in CONNACK") {
     check_equal(flowie_transport_auth_unavailable_case(), SALTS_OK);
   }
 
-  it("chunks one 64-reply TCP batch across the retained CNet SG vector limit") {
-    check_equal(flowie_transport_tcp_sg_burst_case(1u), SALTS_OK);
+  it("delivers a 64-reply TCP burst through bounded small-packet storage") {
+    check_equal(flowie_transport_sg_burst_case(1u, NULL), SALTS_OK);
   }
 
   it("preserves MQTT reply batching with multiple TCP network owners") {
-    check_equal(flowie_transport_tcp_sg_burst_case(2u), SALTS_OK);
+    check_equal(flowie_transport_sg_burst_case(2u, NULL), SALTS_OK);
+  }
+
+  it("delivers a 64-reply TLS burst through bounded small-packet storage") {
+    check_equal(flowie_transport_tls_burst_case(1u), SALTS_OK);
+  }
+
+  it("preserves small-packet TLS replies with multiple network owners") {
+    check_equal(flowie_transport_tls_burst_case(2u), SALTS_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TCP") {

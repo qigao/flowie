@@ -146,8 +146,8 @@ static unsigned short flowie_test_cnet_port(void) {
   return status == SALTS_OK ? port : 0u;
 }
 
-static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
-    unsigned short port, size_t recv_buffer_bytes) {
+static flowie_test_cnet_client_t *flowie_test_cnet_connect_configured(
+    unsigned short port, size_t recv_buffer_bytes, const cnet_tls_client_config *tls) {
   flowie_test_cnet_client_t *client;
   cnet_client_config config;
   cnet_connect_options options;
@@ -158,6 +158,10 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
   if (!client) return NULL;
   client->status = SALTS_OK;
   config = flowie_test_cnet_config();
+  if (tls != NULL) {
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    config.tls_handshake_timeout_ms = FLOWIE_TEST_CNET_TIMEOUT_MS;
+  }
   status = cnet_client_init(&client->network, &config);
   if (status != SALTS_OK) goto fail;
   if (recv_buffer_bytes != 0u) {
@@ -166,8 +170,10 @@ static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
     status = cnet_client_set_stream_socket_options(&client->network, &socket_options);
     if (status != SALTS_OK) goto fail;
   }
-  if (snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) < 0) goto fail;
+  if (snprintf(uri, sizeof(uri), "%s://127.0.0.1:%u", tls ? "tls" : "tcp",
+               (unsigned int)port) < 0) goto fail;
   options = (cnet_connect_options){.uri = uri,
+                                   .tls = tls,
                                    .observer = {.on_state = flowie_test_cnet_state,
                                                 .on_receive = flowie_test_cnet_receive,
                                                 .on_send = flowie_test_cnet_on_send,
@@ -188,6 +194,11 @@ fail:
   }
   free(client);
   return NULL;
+}
+
+static flowie_test_cnet_client_t *flowie_test_cnet_connect_with_recv_buffer(
+    unsigned short port, size_t recv_buffer_bytes) {
+  return flowie_test_cnet_connect_configured(port, recv_buffer_bytes, NULL);
 }
 
 static flowie_test_cnet_client_t *flowie_test_cnet_connect(unsigned short port) {

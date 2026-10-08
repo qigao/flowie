@@ -113,9 +113,10 @@ int flowie_server_send(flowie_server *server, flowie_connection connection, cons
                        size_t size);
 
 /**
- * Thread-safe retained scatter/gather admission for TCP/TLS streams.
- * Each canonical slice is retained before this call returns SALTS_OK, so the
- * caller may release its slice references immediately after successful admission.
+ * Thread-safe scatter/gather admission for TCP/TLS streams. Before SALTS_OK,
+ * bytes are retained or copied into bounded small-packet storage. The caller
+ * may then release its slice references; any still-shared backing must remain
+ * immutable. Failed admission leaves the caller's references unchanged.
  */
 int flowie_server_send_slicev(flowie_server *server, flowie_connection connection,
                               const mem_slice_t *segments, size_t segment_count);

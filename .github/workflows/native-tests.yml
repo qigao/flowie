@@ -4,6 +4,11 @@ on:
   push:
     branches: ['**']
   workflow_dispatch:
+    inputs:
+      salts_ref:
+        description: Optional Salts commit to build and qualify before Flowie
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -12,6 +17,10 @@ permissions:
 concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
+
+# Temporary source pin until the #1001 SDK is published.
+env:
+  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '99c8c45fb85fc5f9e126e9b0a23e5a8c13a0ad2e' }}
 
 jobs:
   test:
@@ -52,6 +61,13 @@ jobs:
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
         with:
           version: '4.6.3'
+      - uses: actions/checkout@v4
+        if: env.SALTS_SOURCE_REF != ''
+        with:
+          repository: qigao/salts
+          ref: ${{ env.SALTS_SOURCE_REF }}
+          path: build/dependencies/salts
+          persist-credentials: false
       - name: Restore published SDKs
         shell: pwsh
         env:
@@ -68,6 +84,7 @@ jobs:
             @{ Repo='turbodb'; Package='TurboDB.Native'; Directory='turbodb'; Tag='v2.3.1' }
           )
           foreach ($sdk in $sdks) {
+            if ($sdk.Repo -eq 'salts' -and $env:SALTS_SOURCE_REF) { continue }
             $arguments = @('release', 'view', '--repo', ('qigao/' + $sdk.Repo), '--json', 'tagName,assets')
             if ($sdk.Tag) { $arguments += $sdk.Tag }
             $releaseJson = & gh @arguments
@@ -98,6 +115,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config
           # NuGet stores this host tool as 0644; restore execution permission after extraction.
           chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
+      - name: Qualify candidate Salts on Linux
+        if: runner.os == 'Linux' && env.SALTS_SOURCE_REF != ''
+        shell: bash
+        working-directory: build/dependencies/salts
+        run: |
+          set -euo pipefail
+          # The candidate's registry lock owns its provider version.
+          unset VCPKG_OVERLAY_PORTS
+          export PROJECT_ROOT="$GITHUB_WORKSPACE"
+          cmake --preset linux-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --build --preset linux-release-ci --parallel 2
+          ctest --preset linux-release-ci -R '^cnet_.*test$' --no-tests=error --timeout 180 --output-on-failure
+          cmake --build --preset install-linux-release-ci --parallel 2
+          mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
+          cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
       - name: Configure, build and test Linux
         if: runner.os == 'Linux'
         shell: bash
@@ -114,6 +146,28 @@ jobs:
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+      - name: Qualify candidate Salts on Windows
+        if: runner.os == 'Windows' && env.SALTS_SOURCE_REF != ''
+        shell: cmd
+        working-directory: build/dependencies/salts
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          set "VCPKG_OVERLAY_PORTS="
+          set "VCPKG_WINDOWS_TRIPLET=x64-windows"
+          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
+          cmake --preset win-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-ci --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-ci -R "^cnet_.*test$" --no-tests=error --timeout 180 --output-on-failure
+          if errorlevel 1 exit /b 1
+          cmake --build --preset install-win-release-ci --parallel 2
+          if errorlevel 1 exit /b 1
+          powershell -NoProfile -Command "New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts') | Out-Null; Copy-Item -LiteralPath 'stage/sdk/windows-x64' -Destination (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts/release') -Recurse -ErrorAction Stop"
+          if errorlevel 1 exit /b 1
       - name: Configure, build and test Windows
         if: runner.os == 'Windows'
         shell: cmd
@@ -149,4 +203,5 @@ jobs:
             build/native-ci/Testing/Temporary/LastTest.log
             build/native-ci/CMakeFiles/CMakeConfigureLog.yaml
             build/native-ci/sccache-stats.txt
+            build/dependencies/salts/build/**/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
