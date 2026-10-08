@@ -39,10 +39,23 @@ typedef struct flow_mtls_test_server_s {
   int status;
   int require_peer_certificate;
   int peer_verified;
+  int sent_fatal_alert;
   int abrupt_close;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
 } flow_mtls_test_server_t;
+
+/* Metadata only, written by the server thread and read after join. */
+static void flow_mtls_test_message(int writing, int version, int content_type,
+                                    const void *data, size_t size, SSL *ssl, void *arg) {
+  flow_mtls_test_server_t *server = (flow_mtls_test_server_t *)arg;
+  const uint8_t *bytes = (const uint8_t *)data;
+  (void)version;
+  (void)ssl;
+  if (content_type == SSL3_RT_ALERT && size == 2u && bytes[0] == SSL3_AL_FATAL) {
+    if (writing) server->sent_fatal_alert = bytes[1];
+  }
+}
 
 static SSL_CTX *flow_mtls_test_server_context(int require_peer_certificate) {
   SSL_CTX *ctx = NULL;
@@ -138,7 +151,10 @@ static void flow_mtls_test_server_main(void *arg) {
   client = accept(server->listener, NULL, NULL);
   if (client == FLOW_MTLS_TEST_INVALID_SOCKET) goto done;
   ssl = SSL_new(ctx);
-  if (!ssl || SSL_set_fd(ssl, (int)client) != 1 || SSL_accept(ssl) != 1) goto done;
+  if (!ssl) goto done;
+  SSL_set_msg_callback(ssl, flow_mtls_test_message);
+  SSL_set_msg_callback_arg(ssl, server);
+  if (SSL_set_fd(ssl, (int)client) != 1 || SSL_accept(ssl) != 1) goto done;
   peer = SSL_get_peer_certificate(ssl);
   server->peer_verified = peer != NULL && SSL_get_verify_result(ssl) == X509_V_OK;
   if (server->require_peer_certificate && !server->peer_verified) goto done;

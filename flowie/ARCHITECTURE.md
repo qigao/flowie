@@ -479,6 +479,68 @@ enter one endpoint owner-lane queue. After route and protocol validation they mo
 their aggregate reservation, into the target connection's TurboUtils deque. `send_hwm_bytes`
 bounds each connection's pending wire bytes; the endpoint aggregate byte capacity is the checked
 product of that limit and `max_connections`.
+
+TCP/TLS small-packet storage is lowered privately by `Flowie::Connection` after
+canonical slice and total-send-size validation. Each already-ready command keeps
+its FIFO position and original byte reservation. Adjacent ranges of at most 256
+bytes are copied in runs of at least two into one Salts pooled buffer, with at
+most 4096 copied payload bytes per command. Large ranges and isolated small
+ranges keep their original retained backing. Mixed runs share the same packed
+buffer while remaining on either side of their intervening large ranges. The
+metadata is bounded by `CNET_RETAINED_VECTOR_MAX`; planning is O(n), copying is
+O(copied bytes). These conservative internal bounds are not a measured optimum.
+
+This chooses bounded copying over always-retained SG for tiny fragments because
+CNet feeds TLS plaintext ranges separately: one logical SG write does not promise
+one TLS record. The tradeoff is an extra bounded allocation/copy, temporary
+overlap with the source storage, and an explicit `SALTS_ENOMEM` admission failure
+if that allocation fails. Failure before publication releases only local owned
+references; callers keep their original slices. Successful publication transfers
+immutable packed storage to the existing mailbox, then CNet retains it through
+native send settlement. Queue rejection, stale generation and shutdown use the
+existing command cleanup. No per-connection buffer, extra mailbox or timer is
+introduced; command capacity and payload-byte limits still bound retained work.
+
+MQTT batching remains on the endpoint owner: Receive Maximum, expiry, FIFO and
+terminal-packet boundaries are unchanged. A lone control reply is submitted
+immediately; there is no deliberate aggregation delay or control-packet reorder.
+TCP socket defaults, UDP/KCP and WS/WSS behavior are unchanged. The strategy
+changes neither public ABI nor protocol configuration and needs no data
+migration. It can be rolled back by removing the private coalescing call while
+retaining the same ownership/admission contract. Tests cover packed and mixed
+bytes, nonzero offsets, copy limits, caller lifetime, transport delivery and
+close/drain. Throughput and tail-latency improvements require separate measured
+qualification; fewer ranges alone are not a performance result.
+
+The formal `benchmark_flowie_send_batch` compares retained-vector preparation
+with the added small-packet lowering for 32 ranges of 2, 64, 256, 8192 bytes and
+mixed sizes. One operation is a whole vector. On the Windows Release development
+host, a 10,000-sample run measured 0.332 vs 0.457 microseconds for 2-byte ranges
+and 0.294 vs 0.534 microseconds for 64-byte ranges. The added preparation cost is
+expected: this benchmark excludes the downstream native/TLS work whose range
+count is reduced. It does not establish a throughput or p99 improvement.
+
+Reproduce from a VS developer shell using the versioned presets (restore the
+ordinary test configuration after the benchmark):
+
+```text
+cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=OFF -DFLOWIE_BUILD_BENCHMARKS=ON
+cmake --build --preset win-release-user
+ctest --preset win-release-user -LE "^$" -R benchmark_flowie_send_batch -V
+cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=ON -DFLOWIE_BUILD_BENCHMARKS=OFF
+cmake --build --preset win-release-user
+ctest --preset win-release-user --output-on-failure
+```
+
+Local qualification passed the new storage cases and the TCP/TLS burst cases
+with one and multiple owners. The full Release run passed 46/49 enabled tests;
+the MQTT client, external HTTPS authenticator and JWKS authenticator suites also
+failed on the unchanged `bd84cac` baseline with the same local SDKs during
+GmSSL handshakes. Debug/ASan configuration was blocked by the installed Debug
+SaltsUtils package requiring `unofficial-lua`, absent from the current manifest
+dependency set. Neither those failures nor ASan qualification are claimed fixed
+by this send-path change.
+
 Shared bounded stream primitives provide a
 demand-grown, single-owner framing accumulator. A private Flowie connection ingress handles
 fragmented/sticky MQTT packets on the connection lane, transfers each complete wire packet to
