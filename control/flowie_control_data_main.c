@@ -4,7 +4,7 @@
 #include "flowie_control_database_config_internal.h"
 #include "flowie_control_store_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -13,7 +13,7 @@
 
 static int data_report(const char *operation, int status) {
   (void)fprintf(stderr, "flowie-control-data: %s failed: status=%d (%s)\n", operation, status,
-                salts_strerror(status));
+                cmeta_strerror(status));
   return EXIT_FAILURE;
 }
 
@@ -42,9 +42,9 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
   }
   rc = flowie_control_data_options_parse(argc, argv, &options);
-  if (rc != SALTS_OK) return data_report("option parsing", rc);
+  if (rc != CMETA_OK) return data_report("option parsing", rc);
   rc = flowie_control_config_load(options.config_path, &config, &config_error);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr,
                   "flowie-control-data: configuration failed: status=%d path=%s message=%s\n", rc,
                   config_error.path[0] ? config_error.path : "$",
@@ -52,10 +52,10 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   rc = flowie_control_database_config_resolve(&config, &database, database_options);
-  if (rc != SALTS_OK) return data_report("database configuration", rc);
+  if (rc != CMETA_OK) return data_report("database configuration", rc);
   store_config.database = &database;
   rc = flowie_control_store_open(&store_config, &store);
-  if (rc != SALTS_OK) return data_report("database open", rc);
+  if (rc != CMETA_OK) return data_report("database open", rc);
   if (options.command == FLOWIE_CONTROL_DATA_EXPORT)
     rc = flowie_control_data_export(flowie_control_store_repository(store), options.domain_id,
                                     options.data_path, &result);
@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
     rc = flowie_control_data_import(flowie_control_store_repository(store), options.data_path,
                                     options.dry_run, &result);
   flowie_control_store_destroy(store);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     if (result.mutated)
       (void)fprintf(stderr,
                     "flowie-control-data: import stopped after partial replay; "

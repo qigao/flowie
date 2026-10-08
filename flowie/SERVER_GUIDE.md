@@ -80,6 +80,12 @@ binding；默认值为 SQLite 与 `{"filename":"flowie-protocol.sqlite3"}`。配
 应用仍需分别装配 endpoint-local repository 或
 `TurboRaft::Service`，不得同时维护两个协议事实源。
 
+TurboDB 2.3.1 的驱动需要显式加载。Flowie 默认使用构建时 SDK 中的对应模块；部署位置变化时，
+可在 `--protocol-store-options` JSON 中指定管理员控制的绝对路径，例如
+`{"filename":"flowie-protocol.sqlite3","flowie.driver_module":"/opt/turbodb/lib/turbodb/drivers/turbodb_driver_sqlite.so"}`。
+Windows 使用对应 `.dll` 路径。最多 16 个 options，`flowie.driver_module` 不会传给数据库驱动。
+加载失败、模块 ID 不匹配或连接失败均会终止打开过程，不更换后端。驱动 runtime 随连接保活和释放。
+
 ## 4. 启动与监管
 
 直接运行 worker：

@@ -1,7 +1,7 @@
 #include "flowie_cluster_publish_egress_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -19,7 +19,7 @@ static int flowie_publish_egress_enqueue(
       test->chunk_count >= 2u)
     return SALTS_EPROTO;
   test->chunks[test->chunk_count++] = payload->data.data_chunk;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static tr_raft_data_ack_t flowie_publish_egress_ack(
@@ -60,7 +60,7 @@ spec("flowie cluster publish egress transfer group") {
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){packet, sizeof(packet)}, 4096u,
                      &event),
-                 SALTS_OK);
+                 CMETA_OK);
     memset(&config, 0, sizeof(config));
     config.self_id = 1u;
     config.term = 7u;
@@ -77,11 +77,11 @@ spec("flowie cluster publish egress transfer group") {
     config.enqueue_ctx = &test;
     check_equal(flowie_cluster_publish_egress_create(&config, &event,
                                                        &egress),
-                 SALTS_OK);
+                 CMETA_OK);
     check_null(event);
     check_equal(flowie_cluster_publish_egress_mark_local_durable(egress),
-                 SALTS_OK);
-    check_equal(flowie_cluster_publish_egress_pump(egress), SALTS_OK);
+                 CMETA_OK);
+    check_equal(flowie_cluster_publish_egress_pump(egress), CMETA_OK);
     check_equal(test.chunk_count, 2u);
     check_not_equal(test.chunks[0].to, test.chunks[1].to);
     check_equal(flowie_cluster_publish_egress_make_proposal(
@@ -89,12 +89,12 @@ spec("flowie cluster publish egress transfer group") {
                  SALTS_EBUSY);
     ack = flowie_publish_egress_ack(&test.chunks[0]);
     check_equal(flowie_cluster_publish_egress_acknowledge(egress, &ack),
-                 SALTS_OK);
+                 CMETA_OK);
     /* The local durable copy plus one remote durable copy is the 2/3
      * TurboRaft data quorum for this FINAL configuration. */
     check_equal(flowie_cluster_publish_egress_make_proposal(
                      egress, 99u, descriptor, &proposal),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(proposal.command_id, 99u);
     check_equal(proposal.data_length,
                   TR_RAFT_DATA_DESCRIPTOR_ENCODED_SIZE);

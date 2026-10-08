@@ -4,7 +4,7 @@
 #include "flowie_execution.h"
 
 typedef struct tf_execution_s {
-  salts_coro_executor_t *executor;
+  coro_executor_t *executor;
   size_t shard;
   flowie_execution_kind_t kind;
   int owns_executor;

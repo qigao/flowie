@@ -1,7 +1,7 @@
 #include "flowie_control_service_credential_internal.h"
 
 #include "monocypher.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -45,14 +45,14 @@ int flowie_control_service_credential_resolver_create(
   if (!config || config->size < sizeof(*config) ||
       !flowie_control_service_credential_text_valid(config->listener_id,
                                                     FLOWIE_SECURITY_ID_MAX) ||
-      flowie_control_repository_validate(config->repository) != SALTS_OK || !out)
+      flowie_control_repository_validate(config->repository) != CMETA_OK || !out)
     return SALTS_EINVAL;
   resolver = (flowie_control_service_credential_resolver_t *)calloc(1u, sizeof(*resolver));
   if (!resolver) return SALTS_ENOMEM;
   resolver->repository = *config->repository;
   memcpy(resolver->listener_id, config->listener_id, strlen(config->listener_id) + 1u);
   *out = resolver;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_service_credential_resolver_destroy(
@@ -83,10 +83,10 @@ int flowie_control_service_credential_resolve(
     return SALTS_EINVAL;
   rc = resolver->repository.auth->credential_verify(
       resolver->repository.ctx, service_domain, service_id, token, token_size, &verified);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = resolver->repository.auth->principal_snapshot(
       resolver->repository.ctx, service_domain, service_id, &verified, &snapshot);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   permissions = flowie_control_service_permissions(&snapshot);
   if ((permissions & required_permission) != required_permission) return SALTS_EPERM;
   memcpy(caller_out->resolved_listener_id, resolver->listener_id,
@@ -98,5 +98,5 @@ int flowie_control_service_credential_resolve(
   caller_out->domain_id = caller_out->resolved_domain_id;
   caller_out->permissions = permissions;
   caller_out->authenticated = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }

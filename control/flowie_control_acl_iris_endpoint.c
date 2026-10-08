@@ -3,7 +3,7 @@
 #include "flowie_mqtt_security.h"
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <stdlib.h>
@@ -46,7 +46,7 @@ static int flowie_control_acl_header(const Req *req, const char *name, const cha
   }
   if (matches != 1u || !found) return SALTS_EPROTO;
   *value_out = found;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_control_acl_wipe_authorization(Req *req) {
@@ -69,9 +69,9 @@ static int flowie_control_acl_resolve_caller(
   const char *service_id = NULL;
   size_t authorization_size;
   if (!endpoint || !caller_out || caller_out->size < sizeof(*caller_out)) return SALTS_EINVAL;
-  if (flowie_control_acl_header(req, "Authorization", &authorization) != SALTS_OK ||
-      flowie_control_acl_header(req, "X-Flowie-Service-Domain", &service_domain) != SALTS_OK ||
-      flowie_control_acl_header(req, "X-Flowie-Service-Id", &service_id) != SALTS_OK)
+  if (flowie_control_acl_header(req, "Authorization", &authorization) != CMETA_OK ||
+      flowie_control_acl_header(req, "X-Flowie-Service-Domain", &service_domain) != CMETA_OK ||
+      flowie_control_acl_header(req, "X-Flowie-Service-Id", &service_id) != CMETA_OK)
     return SALTS_EPERM;
   authorization_size = strnlen(authorization, sizeof(prefix) + FLOWIE_CONTROL_ACL_TOKEN_MAX);
   if (authorization_size <= sizeof(prefix) - 1u ||
@@ -97,7 +97,7 @@ static int flowie_control_acl_json_fields_exact(const json_value_t *object,
       if (field && strcmp(field, allowed[allowed_index]) == 0) known = 1;
     if (!known) return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_json_u64(const json_value_t *value, uint64_t *out) {
@@ -115,7 +115,7 @@ static int flowie_control_acl_json_u64(const json_value_t *value, uint64_t *out)
   parsed = strtoull(buffer, &end, 10);
   if (!end || *end != '\0') return SALTS_EPROTO;
   *out = (uint64_t)parsed;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_copy_string(const json_value_t *object, const char *field,
@@ -130,7 +130,7 @@ static int flowie_control_acl_copy_string(const json_value_t *object, const char
   if (!text || size == 0u || size >= capacity || memchr(text, '\0', size)) return SALTS_EPROTO;
   memcpy(output, text, size);
   output[size] = '\0';
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_copy_array(const json_value_t *object, const char *field,
@@ -154,7 +154,7 @@ static int flowie_control_acl_copy_array(const json_value_t *object, const char 
     output[index * stride + size] = '\0';
   }
   *count_out = (uint32_t)count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_decode_principal(const json_value_t *value,
@@ -164,34 +164,34 @@ static int flowie_control_acl_decode_principal(const json_value_t *value,
   uint64_t expires_at = 0u;
   uint64_t policy_version = 0u;
   if (!principal || flowie_control_acl_json_fields_exact(
-                        value, fields, sizeof(fields) / sizeof(fields[0])) != SALTS_OK)
+                        value, fields, sizeof(fields) / sizeof(fields[0])) != CMETA_OK)
     return SALTS_EPROTO;
   *principal = (flowie_security_principal_t)FLOWIE_SECURITY_PRINCIPAL_INIT;
   if (flowie_control_acl_copy_string(value, "id", principal->principal_id,
-                                     sizeof(principal->principal_id)) != SALTS_OK ||
+                                     sizeof(principal->principal_id)) != CMETA_OK ||
       flowie_control_acl_copy_string(value, "type", principal->principal_type,
-                                     sizeof(principal->principal_type)) != SALTS_OK ||
+                                     sizeof(principal->principal_type)) != CMETA_OK ||
       flowie_control_acl_copy_string(value, "domain", principal->domain_id,
-                                     sizeof(principal->domain_id)) != SALTS_OK ||
+                                     sizeof(principal->domain_id)) != CMETA_OK ||
       flowie_control_acl_json_u64(json_object_get(value, "expires_at"), &expires_at) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_acl_json_u64(json_object_get(value, "policy_version"),
-                                  &policy_version) != SALTS_OK ||
+                                  &policy_version) != CMETA_OK ||
       policy_version == 0u ||
       flowie_control_acl_copy_array(value, "roles", (char *)principal->roles,
                                     sizeof(principal->roles[0]), FLOWIE_SECURITY_TYPE_MAX,
                                     FLOWIE_SECURITY_MAX_ROLES,
-                                    &principal->role_count) != SALTS_OK ||
+                                    &principal->role_count) != CMETA_OK ||
       flowie_control_acl_copy_array(value, "groups", (char *)principal->groups,
                                     sizeof(principal->groups[0]), FLOWIE_SECURITY_ID_MAX,
                                     FLOWIE_SECURITY_MAX_GROUPS,
-                                    &principal->group_count) != SALTS_OK)
+                                    &principal->group_count) != CMETA_OK)
     return SALTS_EPROTO;
   memcpy(principal->auth_method, "password", sizeof("password"));
   principal->scope = FLOWIE_SECURITY_SCOPE_DOMAIN;
   principal->expires_at = expires_at;
   principal->policy_version = policy_version;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_acl_decode_request(
@@ -218,9 +218,9 @@ static int flowie_control_acl_decode_request(
   username = json_object_get(document, "username");
   client_id = json_object_get(document, "client_id");
   if (flowie_control_acl_json_fields_exact(document, fields,
-                                           sizeof(fields) / sizeof(fields[0])) != SALTS_OK ||
+                                           sizeof(fields) / sizeof(fields[0])) != CMETA_OK ||
       flowie_control_acl_json_u64(json_object_get(document, "version"), &version) !=
-          SALTS_OK ||
+          CMETA_OK ||
       version != FLOWIE_CONTROL_ACL_HTTP_PROTOCOL_VERSION || !access ||
       json_type(access) != JSON_STRING || !topic ||
       json_type(topic) != JSON_STRING || json_string_len(topic) == 0u ||
@@ -230,7 +230,7 @@ static int flowie_control_acl_decode_request(
       json_type(client_id) != JSON_STRING ||
       json_string_len(client_id) > FLOWIE_SECURITY_ID_MAX ||
       flowie_control_acl_decode_principal(json_object_get(document, "principal"),
-                                          principal_out) != SALTS_OK)
+                                          principal_out) != CMETA_OK)
     goto done;
   *request_out = (flowie_security_request_t)FLOWIE_SECURITY_REQUEST_INIT;
   request_out->principal = principal_out;
@@ -259,7 +259,7 @@ static int flowie_control_acl_decode_request(
   } else {
     goto done;
   }
-  rc = SALTS_OK;
+  rc = CMETA_OK;
   *document_out = document;
   document = NULL;
 
@@ -285,7 +285,7 @@ static void flowie_control_acl_free_value(json_value_t *value) {
 }
 
 static int flowie_control_acl_add(json_value_t *object, const char *field, json_value_t *value) {
-  if (value && json_object_add_checked(object, field, value)) return SALTS_OK;
+  if (value && json_object_add_checked(object, field, value)) return CMETA_OK;
   flowie_control_acl_free_value(value);
   return SALTS_ENOMEM;
 }
@@ -303,19 +303,19 @@ static int flowie_control_acl_encode_decision(const flowie_security_decision_t *
   if (!document) return SALTS_ENOMEM;
   if (flowie_control_acl_add(document, "version",
                              json_create_uint64(FLOWIE_CONTROL_ACL_HTTP_PROTOCOL_VERSION)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_acl_add(document, "allowed",
                              json_create_bool(decision->effect ==
-                                                    FLOWIE_SECURITY_ALLOW)) != SALTS_OK ||
+                                                    FLOWIE_SECURITY_ALLOW)) != CMETA_OK ||
       flowie_control_acl_add(document, "reason",
                              json_create_string(flowie_control_acl_reason(decision->reason))) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_acl_add(document, "policy_version",
-                             json_create_uint64(decision->policy_version)) != SALTS_OK)
+                             json_create_uint64(decision->policy_version)) != CMETA_OK)
     goto done;
   *body_out = json_serialize(document, body_size_out);
   if (!*body_out) goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 done:
   json_free(document);
   return rc;
@@ -350,15 +350,15 @@ int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t 
   if (!endpoint || !req || !status_out || !body_out || !body_size_out) return SALTS_EINVAL;
   if (!req->method || strcmp(req->method, "POST") != 0 || req->body_stream || !req->body ||
       req->body_len == 0u || req->body_len > endpoint->max_response_size ||
-      flowie_control_acl_header(req, "Content-Type", &content_type) != SALTS_OK ||
+      flowie_control_acl_header(req, "Content-Type", &content_type) != CMETA_OK ||
       !flowie_control_acl_ascii_equal(content_type, "application/json"))
     goto done;
   rc = flowie_control_acl_resolve_caller(endpoint, req, &caller);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_acl_decode_request(req->body, req->body_len, &document, &principal, &request,
                                          &mqtt);
-  if (rc != SALTS_OK) goto done;
-  now = salts_realtime_ms() / 1000u;
+  if (rc != CMETA_OK) goto done;
+  now = cmeta_realtime_ms() / 1000u;
   if (now == 0u) {
     rc = SALTS_EIO;
     goto done;
@@ -371,7 +371,7 @@ int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t 
   }
   rc = endpoint->repository->policy->status(endpoint->repository->ctx, principal.domain_id,
                                             &policy);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (policy.policy_version != principal.policy_version ||
       (policy.expires_at != 0u && now >= policy.expires_at)) {
     decision.reason = FLOWIE_SECURITY_REASON_POLICY_VERSION_MISMATCH;
@@ -380,9 +380,9 @@ int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t 
   }
   rc = endpoint->repository->policy->bundle_load(endpoint->repository->ctx, principal.domain_id,
                                                  principal.policy_version, &bundle);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_mqtt_security_matcher_init(&matcher);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   realm_config.resource_uid = "flowie-control-acl-check";
   realm_config.owner_name = "flowie-control";
   realm_config.policy_version = bundle.policy_version;
@@ -390,9 +390,9 @@ int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t 
   realm_config.rule_count = bundle.rule_count;
   realm_config.matcher = matcher;
   rc = flowie_security_realm_create(&realm_config, &realm);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_security_realm_evaluate(realm, &request, now, &decision);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_acl_encode_decision(&decision, body_out, body_size_out);
 
 done:
@@ -401,8 +401,8 @@ done:
     endpoint->repository->policy->bundle_release(endpoint->repository->ctx, &bundle);
   json_free(document);
   flowie_control_acl_wipe_authorization(req);
-  *status_out = rc == SALTS_OK ? OK : flowie_control_acl_status(rc);
-  return SALTS_OK;
+  *status_out = rc == CMETA_OK ? OK : flowie_control_acl_status(rc);
+  return CMETA_OK;
 }
 
 static void flowie_control_acl_handle(flowie_control_acl_iris_endpoint_t *endpoint, Req *req,
@@ -414,7 +414,7 @@ static void flowie_control_acl_handle(flowie_control_acl_iris_endpoint_t *endpoi
   if (!res) return;
   set_header(res, "Cache-Control", "no-store");
   if (flowie_control_acl_iris_endpoint_process(endpoint, req, &status, &body, &body_size) !=
-      SALTS_OK || !body) {
+      CMETA_OK || !body) {
     reply(res, status, "application/json", unavailable, sizeof(unavailable) - 1u);
     return;
   }
@@ -435,7 +435,7 @@ int flowie_control_acl_iris_endpoint_create(const flowie_control_acl_iris_endpoi
   flowie_control_acl_iris_endpoint_t *endpoint;
   if (out) *out = NULL;
   if (!config || config->size < sizeof(*config) ||
-      flowie_control_repository_validate(config->repository) != SALTS_OK ||
+      flowie_control_repository_validate(config->repository) != CMETA_OK ||
       !config->service_credentials || config->max_response_size == 0u || !out)
     return SALTS_EINVAL;
   endpoint = (flowie_control_acl_iris_endpoint_t *)calloc(1u, sizeof(*endpoint));
@@ -444,7 +444,7 @@ int flowie_control_acl_iris_endpoint_create(const flowie_control_acl_iris_endpoi
   endpoint->service_credentials = config->service_credentials;
   endpoint->max_response_size = config->max_response_size;
   *out = endpoint;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_acl_iris_endpoint_destroy(flowie_control_acl_iris_endpoint_t *endpoint) {
@@ -462,14 +462,14 @@ void flowie_control_acl_iris_endpoint_destroy(flowie_control_acl_iris_endpoint_t
 int flowie_control_acl_iris_endpoint_register(flowie_control_acl_iris_endpoint_t *endpoint,
                                               flowie_control_http_app_t *app) {
   if (!endpoint || !app || endpoint->bound_app) return SALTS_EINVAL;
-  if (flowie_control_http_app_bind_context(app, FLOWIE_CONTROL_ACL_HTTP_PATH, endpoint) != SALTS_OK)
+  if (flowie_control_http_app_bind_context(app, FLOWIE_CONTROL_ACL_HTTP_PATH, endpoint) != CMETA_OK)
     return SALTS_EBUSY;
   endpoint->bound_app = app;
   if (flowie_control_http_app_post(app, FLOWIE_CONTROL_ACL_HTTP_PATH,
-                                   flowie_control_acl_registered_handler) != SALTS_OK) {
+                                   flowie_control_acl_registered_handler) != CMETA_OK) {
     endpoint->bound_app = NULL;
     (void)flowie_control_http_app_unbind_context(app, FLOWIE_CONTROL_ACL_HTTP_PATH, endpoint);
     return SALTS_EBUSY;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }

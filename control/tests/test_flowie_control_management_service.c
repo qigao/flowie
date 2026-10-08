@@ -3,7 +3,7 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -22,15 +22,15 @@ static flowie_control_management_service_t *management_open(char **path_out,
   check_not_null(*path_out);
   check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, store_out), SALTS_OK);
+  check_equal(flowie_control_store_open(&store_config, store_out), CMETA_OK);
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "request-root";
   root.expected_revision = 0u;
   root.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(*store_out, &root, &result), SALTS_OK);
+  check_equal(flowie_control_store_domain_create(*store_out, &root, &result), CMETA_OK);
   service_config.repository = flowie_control_store_repository(*store_out);
-  check_equal(flowie_control_management_service_create(&service_config, &service), SALTS_OK);
+  check_equal(flowie_control_management_service_create(&service_config, &service), CMETA_OK);
   return service;
 }
 
@@ -52,7 +52,7 @@ spec("Flowie ACL management service") {
     check_not_null(path);
     check_equal(flowie_control_test_turbodb_init(&test_database, path), 0);
     store_config.database = &test_database.config;
-    check_equal(flowie_control_store_open(&store_config, &store), SALTS_OK);
+    check_equal(flowie_control_store_open(&store_config, &store), CMETA_OK);
     flowie_control_management_repository_contract_run(flowie_control_store_repository(store));
     flowie_control_store_destroy(store);
     check_equal(tt_remove_file(path), 0);
@@ -82,7 +82,7 @@ spec("Flowie ACL management service") {
     security_admin.actor = "security-admin-1";
     security_admin.permissions = FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
 
-    check_equal(flowie_control_management_system_status(service, &viewer, &status), SALTS_OK);
+    check_equal(flowie_control_management_system_status(service, &viewer, &status), CMETA_OK);
     check_equal(status.store_revision, 1u);
 
     user.domain_id = "root-a";
@@ -95,7 +95,7 @@ spec("Flowie ACL management service") {
     check_equal(flowie_control_management_user_create(service, &viewer, &user, &result),
                 SALTS_EPERM);
     check_equal(flowie_control_management_user_create(service, &user_admin, &user, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(result.revision, 2u);
 
     user.principal_id = "device-2";
@@ -116,7 +116,7 @@ spec("Flowie ACL management service") {
     role.actor = "security-admin-1";
     role.request_id = "request-role-security-admin";
     check_equal(flowie_control_management_role_create(service, &security_admin, &role, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(result.revision, 3u);
 
     management_close(service, store, path);
@@ -145,30 +145,30 @@ spec("Flowie ACL management service") {
     user.occurred_at = 2000u;
     user.principal_id = "device-a";
     user.request_id = "request-user-a";
-    check_equal(flowie_control_management_user_create(service, &admin, &user, &result), SALTS_OK);
+    check_equal(flowie_control_management_user_create(service, &admin, &user, &result), CMETA_OK);
     user.expected_revision = 2u;
     user.occurred_at = 2001u;
     user.principal_id = "device-b";
     user.request_id = "request-user-b";
-    check_equal(flowie_control_management_user_create(service, &admin, &user, &result), SALTS_OK);
+    check_equal(flowie_control_management_user_create(service, &admin, &user, &result), CMETA_OK);
 
     check_equal(
         flowie_control_management_user_list(service, &admin, NULL, users, 1u, &count, &has_more),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(count, 1u);
     check_true(has_more);
     check_equal(users[0].principal_id, "device-a");
     users[0] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
     check_equal(flowie_control_management_user_list(service, &admin, "device-a", users, 1u, &count,
                                                     &has_more),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(count, 1u);
     check_false(has_more);
     check_equal(users[0].principal_id, "device-b");
 
     check_equal(
         flowie_control_management_audit_list(service, &admin, 0u, audits, 2u, &count, &has_more),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(count, 2u);
     check_true(has_more);
     check_equal(audits[0].revision, 1u);
@@ -207,7 +207,7 @@ spec("Flowie ACL management service") {
     user.expected_revision = 1u;
     user.occurred_at = 2000u;
     check_equal(flowie_control_management_user_create(service, &security_admin, &user, &result),
-                SALTS_OK);
+                CMETA_OK);
 
     issue.domain_id = user_admin.domain_id;
     issue.principal_id = user.principal_id;
@@ -223,7 +223,7 @@ spec("Flowie ACL management service") {
     issue.request_id = "request-credential-generate";
     check_equal(
         flowie_control_management_credential_generate(service, &security_admin, &issue, &generated),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(generated.revision, 3u);
     check_equal(generated.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_starts_with(generated.token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX);
@@ -239,7 +239,7 @@ spec("Flowie ACL management service") {
     issue.request_id = "request-credential-rotate";
     check_equal(
         flowie_control_management_credential_rotate(service, &security_admin, &issue, &generated),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(generated.revision, 4u);
     check_equal(generated.token_size, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE);
     check_starts_with(generated.token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX);
@@ -253,7 +253,7 @@ spec("Flowie ACL management service") {
     revoke.occurred_at = 4000u;
     check_equal(
         flowie_control_management_credential_revoke(service, &security_admin, &revoke, &result),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(result.revision, 5u);
 
     flowie_control_generated_credential_wipe(&generated);
@@ -292,7 +292,7 @@ spec("Flowie ACL management service") {
     root.expected_revision = 1u;
     root.occurred_at = 2000u;
     check_equal(flowie_control_management_domain_create(service, &system_admin, &root, &result),
-                SALTS_OK);
+                CMETA_OK);
     user.domain_id = "root-b";
     user.principal_id = "admin-b";
     user.principal_type = "human";
@@ -300,7 +300,7 @@ spec("Flowie ACL management service") {
     user.request_id = "admin-b-create";
     user.expected_revision = 2u;
     user.occurred_at = 2001u;
-    check_equal(flowie_control_store_user_create(store, &user, &result), SALTS_OK);
+    check_equal(flowie_control_store_user_create(store, &user, &result), CMETA_OK);
 
     password.domain_id = "root-b";
     password.principal_id = "admin-b";
@@ -316,11 +316,11 @@ spec("Flowie ACL management service") {
     check_equal(flowie_control_management_password_set(service, &system_admin, &password, &result),
                 SALTS_EPERM);
     check_equal(flowie_control_management_password_set(service, &domain_admin, &password, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(result.revision, 4u);
     check_equal(flowie_control_store_credential_verify(store, "root-b", "admin-b", initial_password,
                                                        sizeof(initial_password) - 1u, &verified),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(verified.credential_revision, 4u);
 
     password.new_password = replacement_password;
@@ -330,14 +330,14 @@ spec("Flowie ACL management service") {
     password.expected_revision = 4u;
     password.occurred_at = 2003u;
     check_equal(flowie_control_management_password_set(service, &domain_admin, &password, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(result.revision, 5u);
     verified =
         (flowie_control_credential_verify_result_t)FLOWIE_CONTROL_CREDENTIAL_VERIFY_RESULT_INIT;
     check_equal(
         flowie_control_store_credential_verify(store, "root-b", "admin-b", replacement_password,
                                                sizeof(replacement_password) - 1u, &verified),
-        SALTS_OK);
+        CMETA_OK);
     check_equal(verified.credential_revision, 5u);
 
     management_close(service, store, path);
@@ -370,14 +370,14 @@ spec("Flowie ACL management service") {
     root.request_id = "request-system-root";
     root.expected_revision = 1u;
     root.occurred_at = 2000u;
-    check_equal(flowie_control_store_domain_create(store, &root, &result), SALTS_OK);
+    check_equal(flowie_control_store_domain_create(store, &root, &result), CMETA_OK);
     root.domain_id = "root-b";
     root.actor = system_admin.actor;
     root.request_id = "request-root-b";
     root.expected_revision = 2u;
     root.occurred_at = 2001u;
     check_equal(flowie_control_management_domain_create(service, &system_admin, &root, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_management_scope_caller(service, &system_admin, "root-b", &scoped),
                 SALTS_EPERM);
     check_equal(flowie_control_management_scope_caller(service, &root_admin, "root-b", &scoped),
@@ -386,12 +386,12 @@ spec("Flowie ACL management service") {
                 SALTS_EPERM);
     check_equal(flowie_control_management_scope_caller(
                     service, &system_admin, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN, &scoped),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(scoped.domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN);
 
     check_equal(flowie_control_management_domain_list(service, &system_admin, NULL, roots, 3u,
                                                       &count, &has_more),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(count, 3u);
     check_equal(roots[0].domain_id, "root-a");
     check_equal(roots[1].domain_id, "root-b");
@@ -434,7 +434,7 @@ spec("Flowie ACL management service") {
     domain.expected_revision = 1u;
     domain.occurred_at = 3000u;
     check_equal(flowie_control_management_domain_create(service, &platform_admin, &domain, &result),
-                SALTS_OK);
+                CMETA_OK);
 
     initialize.domain_id = "root-b";
     initialize.principal_id = "admin-b";
@@ -448,14 +448,14 @@ spec("Flowie ACL management service") {
                 SALTS_EPERM);
     check_equal(flowie_control_management_domain_admin_initialize(service, &platform_admin,
                                                                   &initialize, &result),
-                SALTS_OK);
-    check_equal(flowie_control_store_user_get(store, "root-b", "admin-b", &user), SALTS_OK);
+                CMETA_OK);
+    check_equal(flowie_control_store_user_get(store, "root-b", "admin-b", &user), CMETA_OK);
     check_equal(user.principal_type, "human");
     check_true(user.enabled);
     check_equal(flowie_control_store_credential_verify(store, "root-b", "admin-b", password,
                                                        sizeof(password) - 1u, &verified),
-                SALTS_OK);
-    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles), SALTS_OK);
+                CMETA_OK);
+    check_equal(flowie_control_store_effective_roles(store, "root-b", "admin-b", &roles), CMETA_OK);
     for (uint32_t index = 0u; index < roles.role_count; ++index) {
       has_security_admin |=
           strcmp(roles.roles[index], FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN) == 0;
@@ -468,7 +468,7 @@ spec("Flowie ACL management service") {
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
     check_equal(flowie_control_management_domain_admin_initialize(service, &platform_admin,
                                                                   &initialize, &result),
-                SALTS_OK);
+                CMETA_OK);
     check_true(result.replayed);
 
     initialize.principal_id = "another-admin";

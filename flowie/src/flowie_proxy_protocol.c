@@ -7,7 +7,7 @@
 
 #include "flowie_proxy_protocol_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdio.h>
@@ -92,7 +92,7 @@ static int flowie_proxy_protocol_cidr_parse(
       return SALTS_EINVAL;
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_proxy_protocol_matches_prefix(const uint8_t *data, size_t data_size,
@@ -125,7 +125,7 @@ static int flowie_proxy_protocol_v1_tokenize(
     start = i + 1u;
   }
   *token_count = count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_proxy_protocol_v1_token_equal(
@@ -146,7 +146,7 @@ static int flowie_proxy_protocol_v1_address(
   if (inet_pton(family, text, binary) != 1 ||
       !inet_ntop(family, binary, output, FLOWIE_PROXY_PROTOCOL_ADDRESS_TEXT_SIZE))
     return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_proxy_protocol_v1_port(const flowie_proxy_protocol_v1_token_t *token,
@@ -161,7 +161,7 @@ static int flowie_proxy_protocol_v1_port(const flowie_proxy_protocol_v1_token_t 
     if (value > UINT16_MAX) return SALTS_EPROTO;
   }
   *out = (uint16_t)value;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_proxy_protocol_v1_parse(const void *data, size_t data_size, size_t max_header_size,
@@ -208,10 +208,10 @@ int flowie_proxy_protocol_v1_parse(const void *data, size_t data_size, size_t ma
     decoded.header_size = header_size;
     *out = decoded;
     *consumed = header_size;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   rc = flowie_proxy_protocol_v1_tokenize(bytes, header_size - 2u, tokens, &token_count);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (token_count != 6u || !flowie_proxy_protocol_v1_token_equal(&tokens[0], "PROXY"))
     return SALTS_EPROTO;
   if (flowie_proxy_protocol_v1_token_equal(&tokens[1], "TCP4")) {
@@ -224,16 +224,16 @@ int flowie_proxy_protocol_v1_parse(const void *data, size_t data_size, size_t ma
     return SALTS_EPROTO;
   }
   rc = flowie_proxy_protocol_v1_address(&tokens[2], family, decoded.source_address);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_proxy_protocol_v1_address(&tokens[3], family, decoded.destination_address);
-  if (rc == SALTS_OK) rc = flowie_proxy_protocol_v1_port(&tokens[4], &decoded.source_port);
-  if (rc == SALTS_OK) rc = flowie_proxy_protocol_v1_port(&tokens[5], &decoded.destination_port);
-  if (rc != SALTS_OK) return rc;
+  if (rc == CMETA_OK) rc = flowie_proxy_protocol_v1_port(&tokens[4], &decoded.source_port);
+  if (rc == CMETA_OK) rc = flowie_proxy_protocol_v1_port(&tokens[5], &decoded.destination_port);
+  if (rc != CMETA_OK) return rc;
   decoded.command = FLOWIE_PROXY_PROTOCOL_COMMAND_PROXY;
   decoded.header_size = header_size;
   *out = decoded;
   *consumed = header_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_proxy_protocol_tlv_decode(const uint8_t *data, size_t size, size_t offset,
@@ -252,7 +252,7 @@ static int flowie_proxy_protocol_tlv_decode(const uint8_t *data, size_t size, si
   decoded.value_size = value_size;
   *out = decoded;
   *next_offset = offset + FLOWIE_PROXY_PROTOCOL_V2_TLV_HEADER_SIZE + value_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_proxy_protocol_tlvs_validate(const uint8_t *data, size_t size) {
@@ -260,9 +260,9 @@ static int flowie_proxy_protocol_tlvs_validate(const uint8_t *data, size_t size)
   while (offset != size) {
     flowie_proxy_protocol_v2_tlv_t ignored = FLOWIE_PROXY_PROTOCOL_V2_TLV_INIT;
     int rc = flowie_proxy_protocol_tlv_decode(data, size, offset, &ignored, &offset);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_proxy_protocol_v2_tlv_cursor_init(
@@ -276,7 +276,7 @@ int flowie_proxy_protocol_v2_tlv_cursor_init(
   cursor->data = view->tlvs;
   cursor->data_size = view->tlvs_size;
   cursor->offset = 0u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_proxy_protocol_v2_tlv_next(flowie_proxy_protocol_v2_tlv_cursor_t *cursor,
@@ -288,7 +288,7 @@ int flowie_proxy_protocol_v2_tlv_next(flowie_proxy_protocol_v2_tlv_cursor_t *cur
     return SALTS_EINVAL;
   rc = flowie_proxy_protocol_tlv_decode(cursor->data, cursor->data_size, cursor->offset, out,
                                         &next_offset);
-  if (rc == SALTS_OK) cursor->offset = next_offset;
+  if (rc == CMETA_OK) cursor->offset = next_offset;
   return rc;
 }
 
@@ -334,7 +334,7 @@ int flowie_proxy_protocol_v2_parse(const void *data, size_t data_size, size_t ma
   if (command == FLOWIE_PROXY_PROTOCOL_COMMAND_LOCAL) {
     *out = decoded;
     *consumed = header_size;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (bytes[13] == FLOWIE_PROXY_PROTOCOL_V2_FAMILY_TCP4) {
     decoded.address_family = FLOWIE_PROXY_PROTOCOL_ADDRESS_IPV4;
@@ -357,10 +357,10 @@ int flowie_proxy_protocol_v2_parse(const void *data, size_t data_size, size_t ma
   decoded.tlvs = bytes + FLOWIE_PROXY_PROTOCOL_V2_FIXED_SIZE + address_block_size;
   decoded.tlvs_size = payload_size - address_block_size;
   rc = flowie_proxy_protocol_tlvs_validate(decoded.tlvs, decoded.tlvs_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out = decoded;
   *consumed = header_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_proxy_protocol_policy_create(
@@ -382,7 +382,7 @@ int flowie_proxy_protocol_policy_create(
   policy = (flowie_proxy_protocol_policy_t *)calloc(1, sizeof(*policy));
   if (!policy) return SALTS_ENOMEM;
   rc = flowie_stl_error(vec_init_bytes(&policy->trusted_networks, sizeof(flowie_proxy_trusted_network_t), _Alignof(flowie_proxy_trusted_network_t), SIZE_MAX));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     free(policy);
     return rc;
   }
@@ -393,14 +393,14 @@ int flowie_proxy_protocol_policy_create(
   for (size_t i = 0u; i < binding->trusted_peer_count; ++i) {
     flowie_proxy_trusted_network_t network;
     rc = flowie_proxy_protocol_cidr_parse(binding->trusted_peer_cidrs[i], &network);
-    if (rc == SALTS_OK) rc = flowie_stl_error(vec_push(&policy->trusted_networks, &network));
-    if (rc != SALTS_OK) {
+    if (rc == CMETA_OK) rc = flowie_stl_error(vec_push(&policy->trusted_networks, &network));
+    if (rc != CMETA_OK) {
       flowie_proxy_protocol_policy_destroy(policy);
       return rc;
     }
   }
   *out = policy;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_proxy_protocol_policy_destroy(flowie_proxy_protocol_policy_t *policy) {

@@ -38,7 +38,7 @@ static int flowie_cluster_peer_nonzero(const uint8_t *data, size_t size) {
 static int flowie_cluster_peer_text_validate(vstr value, size_t maximum, int required) {
   if ((value.len != 0u && !value.data) || (required && value.len == 0u)) return SALTS_EINVAL;
   if (value.len > maximum) return SALTS_EMSGSIZE;
-  return value.len != 0u && memchr(value.data, '\0', value.len) != NULL ? SALTS_EPROTO : SALTS_OK;
+  return value.len != 0u && memchr(value.data, '\0', value.len) != NULL ? SALTS_EPROTO : CMETA_OK;
 }
 
 static int flowie_cluster_peer_is_state_frame(flowie_cluster_peer_frame_kind_t kind) {
@@ -94,11 +94,11 @@ static int flowie_cluster_peer_frame_validate(const flowie_cluster_peer_frame_t 
                                                                                     : SALTS_EINVAL;
   }
   rc = flowie_cluster_peer_text_validate(frame->cluster_id, FLOWIE_CLUSTER_ID_MAX, 1);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_peer_text_validate(frame->source_node_id, FLOWIE_CLUSTER_NODE_ID_MAX, 1);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_peer_text_validate(frame->target_node_id, FLOWIE_CLUSTER_NODE_ID_MAX, 1);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (!flowie_cluster_peer_nonzero(frame->source_boot_id, sizeof(frame->source_boot_id)) ||
       !flowie_cluster_peer_nonzero(frame->target_boot_id, sizeof(frame->target_boot_id))) {
     return SALTS_EPROTO;
@@ -107,7 +107,7 @@ static int flowie_cluster_peer_frame_validate(const flowie_cluster_peer_frame_t 
   state_frame = flowie_cluster_peer_is_state_frame(frame->kind);
   rc = flowie_cluster_peer_text_validate(frame->listener_id, FLOWIE_CLUSTER_LISTENER_ID_MAX,
                                          state_frame);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (state_frame) {
     int requires_connection = flowie_cluster_peer_operation_requires_connection(frame->operation);
     if (frame->owner_epoch == 0u ||
@@ -131,7 +131,7 @@ static int flowie_cluster_peer_frame_validate(const flowie_cluster_peer_frame_t 
       frame->payload.len != 0u) {
     return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_frame_encoded_size(const flowie_cluster_peer_frame_t *frame,
@@ -141,7 +141,7 @@ int flowie_cluster_peer_frame_encoded_size(const flowie_cluster_peer_frame_t *fr
   if (!out_size) return SALTS_EINVAL;
   *out_size = 0u;
   rc = flowie_cluster_peer_frame_validate(frame, max_payload_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   body_size = frame->cluster_id.len + frame->listener_id.len + frame->source_node_id.len +
               frame->target_node_id.len;
   if (body_size > SIZE_MAX - frame->payload.len ||
@@ -149,7 +149,7 @@ int flowie_cluster_peer_frame_encoded_size(const flowie_cluster_peer_frame_t *fr
     return SALTS_ERANGE;
   }
   *out_size = FLOWIE_CLUSTER_PEER_HEADER_SIZE + body_size + frame->payload.len;
-  return *out_size > UINT32_MAX ? SALTS_ERANGE : SALTS_OK;
+  return *out_size > UINT32_MAX ? SALTS_ERANGE : CMETA_OK;
 }
 
 static void flowie_cluster_peer_frame_encode_header(const flowie_cluster_peer_frame_t *frame,
@@ -199,7 +199,7 @@ int flowie_cluster_peer_frame_encode(const flowie_cluster_peer_frame_t *frame,
   int rc;
   if (!out || *out) return SALTS_EINVAL;
   rc = flowie_cluster_peer_frame_encoded_size(frame, max_payload_size, &total_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out = tstr_new_len(NULL, total_size);
   if (!*out) return SALTS_ENOMEM;
   flowie_cluster_peer_frame_encode_header(frame, (uint8_t *)*out, total_size);
@@ -216,7 +216,7 @@ int flowie_cluster_peer_frame_encode(const flowie_cluster_peer_frame_t *frame,
   FLOWIE_CLUSTER_PEER_COPY_VIEW(frame->target_node_id);
   FLOWIE_CLUSTER_PEER_COPY_VIEW(frame->payload);
 #undef FLOWIE_CLUSTER_PEER_COPY_VIEW
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_peer_header_decode(const uint8_t *data, size_t max_payload_size,
@@ -279,7 +279,7 @@ static int flowie_cluster_peer_header_decode(const uint8_t *data, size_t max_pay
   frame->connection_generation =
       flowie_cluster_peer_wire_read_u64(data + FLOWIE_CLUSTER_PEER_OFFSET_CONNECTION_GENERATION);
   *total_size = wire_total_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_frame_decode(const void *data, size_t data_size, size_t max_payload_size,
@@ -296,7 +296,7 @@ int flowie_cluster_peer_frame_decode(const void *data, size_t data_size, size_t 
   *consumed = 0u;
   if (data_size < FLOWIE_CLUSTER_PEER_HEADER_SIZE) return FLOWIE_CLUSTER_PEER_INCOMPLETE;
   rc = flowie_cluster_peer_header_decode(bytes, max_payload_size, &parsed, &total_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (data_size < total_size) return FLOWIE_CLUSTER_PEER_INCOMPLETE;
   parsed.storage = tstr_new_len(data, total_size);
   if (!parsed.storage) return SALTS_ENOMEM;
@@ -314,13 +314,13 @@ int flowie_cluster_peer_frame_decode(const void *data, size_t data_size, size_t 
   FLOWIE_CLUSTER_PEER_ASSIGN_VIEW(parsed.payload);
 #undef FLOWIE_CLUSTER_PEER_ASSIGN_VIEW
   rc = flowie_cluster_peer_frame_validate(&parsed, max_payload_size);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     tstr_free(parsed.storage);
     return rc == SALTS_EINVAL ? SALTS_EPROTO : rc;
   }
   *out = parsed;
   *consumed = total_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_frame_require_target(
@@ -339,7 +339,7 @@ int flowie_cluster_peer_frame_require_target(
       memcmp(frame->target_boot_id, target_boot_id, FLOWIE_CLUSTER_BOOT_ID_SIZE) != 0) {
     return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_peer_frame_cleanup(flowie_cluster_peer_frame_t *frame) {

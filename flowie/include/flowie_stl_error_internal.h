@@ -1,14 +1,14 @@
 #ifndef FLOWIE_STL_ERROR_INTERNAL_H
 #define FLOWIE_STL_ERROR_INTERNAL_H
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <cstl.h>
 
 static inline int flowie_stl_error(stl_status status) {
   switch (status) {
   case STL_OK:
-    return SALTS_OK;
+    return CMETA_OK;
   case STL_INVALID_ARGUMENT:
     return SALTS_EINVAL;
   case STL_OUT_OF_MEMORY:

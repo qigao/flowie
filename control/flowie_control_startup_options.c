@@ -1,6 +1,6 @@
 #include "flowie_control_startup_options_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cmd_arger.h>
 #include <dotenv.h>
 
@@ -13,11 +13,11 @@ static int flowie_control_startup_copy(char *destination, size_t capacity, const
   size_t length;
   if (!destination || capacity == 0u) return SALTS_EINVAL;
   destination[0] = '\0';
-  if (!source || !source[0]) return required ? SALTS_EINVAL : SALTS_OK;
+  if (!source || !source[0]) return required ? SALTS_EINVAL : CMETA_OK;
   length = strnlen(source, capacity);
   if (length >= capacity) return SALTS_ENAMETOOLONG;
   memcpy(destination, source, length + 1u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_startup_env_file(int argc, char **argv, const char **env_file_out) {
@@ -42,7 +42,7 @@ static int flowie_control_startup_env_file(int argc, char **argv, const char **e
   if (selected && strnlen(selected, SALTS_FS_MAX_PATH) >= SALTS_FS_MAX_PATH)
     return SALTS_ENAMETOOLONG;
   *env_file_out = selected;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_startup_options_parse(int argc, char **argv,
@@ -57,7 +57,7 @@ int flowie_control_startup_options_parse(int argc, char **argv,
   if (!out || out->size < sizeof(*out)) return SALTS_EINVAL;
   *out = resolved;
   rc = flowie_control_startup_env_file(argc, argv, &selected_env_file);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (selected_env_file && dotenv_load(selected_env_file, false) != 0) return SALTS_EIO;
 
   options[0] = cmd_arger_with_env(
@@ -74,9 +74,9 @@ int flowie_control_startup_options_parse(int argc, char **argv,
 
   rc = flowie_control_startup_copy(resolved.config_path, sizeof(resolved.config_path), config_path,
                                    1);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_startup_copy(resolved.env_file, sizeof(resolved.env_file), env_file, 0);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     resolved.check_only = check_only == cmd_arger_true ? 1 : 0;
     *out = resolved;
   }

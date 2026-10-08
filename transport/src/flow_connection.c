@@ -1,6 +1,6 @@
 #include "flow_connection.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -15,7 +15,7 @@ int tf_connection_set_endpoint(tf_connection_state_t *connection, const char *en
   length = strlen(endpoint);
   if (length > FLOWIE_ENDPOINT_MAX) return SALTS_ENOSPC;
   memcpy(connection->endpoint, endpoint, length + 1u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int tf_connection_init(tf_connection_state_t *connection, const char *endpoint,
@@ -24,14 +24,14 @@ int tf_connection_init(tf_connection_state_t *connection, const char *endpoint,
   if (!connection) return SALTS_EINVAL;
   memset(connection, 0, sizeof(*connection));
   rc = tf_connection_set_endpoint(connection, endpoint ? endpoint : "");
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   atomic_init(&connection->state, FLOWIE_CONNECTION_STOPPED);
   atomic_init(&connection->last_status, SALTS_ENOTCONN);
   atomic_init(&connection->connections_current, 0u);
   atomic_init(&connection->connection_limit, connection_limit);
   atomic_init(&connection->in_flight_messages, 0u);
   atomic_init(&connection->in_flight_bytes, 0u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void tf_connection_transition(tf_connection_state_t *connection,
@@ -59,7 +59,7 @@ static int tf_connection_counter_add(atomic_uint_fast64_t *counter, uint64_t val
     if (value > UINT64_MAX - current) return SALTS_ERANGE;
     if (atomic_compare_exchange_weak_explicit(counter, &current, current + value,
                                               memory_order_relaxed, memory_order_relaxed)) {
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
 }
@@ -72,7 +72,7 @@ static int tf_connection_counter_sub(atomic_uint_fast64_t *counter, uint64_t val
     if (current < value) return SALTS_ERANGE;
     if (atomic_compare_exchange_weak_explicit(counter, &current, current - value,
                                               memory_order_relaxed, memory_order_relaxed)) {
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
 }
@@ -81,9 +81,9 @@ int tf_connection_request_begin(tf_connection_state_t *connection, uint64_t byte
   int rc;
   if (!connection) return SALTS_EINVAL;
   rc = tf_connection_counter_add(&connection->in_flight_messages, 1u);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = tf_connection_counter_add(&connection->in_flight_bytes, bytes);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)tf_connection_counter_sub(&connection->in_flight_messages, 1u);
   }
   return rc;
@@ -93,9 +93,9 @@ int tf_connection_request_end(tf_connection_state_t *connection, uint64_t bytes)
   int rc;
   if (!connection) return SALTS_EINVAL;
   rc = tf_connection_counter_sub(&connection->in_flight_bytes, bytes);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = tf_connection_counter_sub(&connection->in_flight_messages, 1u);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)tf_connection_counter_add(&connection->in_flight_bytes, bytes);
   }
   return rc;
@@ -116,5 +116,5 @@ int tf_connection_snapshot(const tf_connection_state_t *connection,
       atomic_load_explicit(&connection->in_flight_messages, memory_order_relaxed);
   out->in_flight_bytes =
       atomic_load_explicit(&connection->in_flight_bytes, memory_order_relaxed);
-  return SALTS_OK;
+  return CMETA_OK;
 }

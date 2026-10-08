@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -58,7 +58,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t frame =
           flowie_cluster_peer_test_command(vstr_from_buf((const char *)payload, sizeof(payload)));
       tstr encoded = NULL;
-      check_equal(flowie_cluster_peer_frame_encode(&frame, 1024u, &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&frame, 1024u, &encoded), CMETA_OK);
       check_equal(tstr_len(encoded), sizeof(expected));
       check_equal(encoded, expected, sizeof(expected));
       tstr_free(encoded);
@@ -73,10 +73,10 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), CMETA_OK);
       check_equal(flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), sizeof(payload),
                                                     &output, &consumed),
-                   SALTS_OK);
+                   CMETA_OK);
       check_equal(consumed, tstr_len(encoded));
       check_not_null(output.storage);
       check_equal(output.kind, FLOWIE_CLUSTER_PEER_FRAME_COMMAND);
@@ -98,7 +98,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 99u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), CMETA_OK);
       check_equal(flowie_cluster_peer_frame_decode(encoded, FLOWIE_CLUSTER_PEER_HEADER_SIZE - 1u,
                                                     64u, &output, &consumed),
                    FLOWIE_CLUSTER_PEER_INCOMPLETE);
@@ -117,13 +117,13 @@ spec("flowie cluster peer wire protocol") {
       tstr encoded = NULL;
       tstr pair = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), CMETA_OK);
       pair = tstr_new_len(NULL, tstr_len(encoded) * 2u);
       check_not_null(pair);
       memcpy(pair, encoded, tstr_len(encoded));
       memcpy(pair + tstr_len(encoded), encoded, tstr_len(encoded));
       check_equal(flowie_cluster_peer_frame_decode(pair, tstr_len(pair), 64u, &output, &consumed),
-                   SALTS_OK);
+                   CMETA_OK);
       check_equal(consumed, tstr_len(encoded));
       flowie_cluster_peer_frame_cleanup(&output);
       tstr_free(pair);
@@ -139,7 +139,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, sizeof(payload), &encoded), CMETA_OK);
       encoded[20] = 0u;
       encoded[21] = 0u;
       encoded[22] = 0u;
@@ -156,7 +156,7 @@ spec("flowie cluster peer wire protocol") {
       flowie_cluster_peer_frame_t output = FLOWIE_CLUSTER_PEER_FRAME_INIT;
       tstr encoded = NULL;
       size_t consumed = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&input, 64u, &encoded), CMETA_OK);
       encoded[5] = 2;
       check_equal(
           flowie_cluster_peer_frame_decode(encoded, tstr_len(encoded), 64u, &output, &consumed),
@@ -199,7 +199,7 @@ spec("flowie cluster peer wire protocol") {
       frame.operation = FLOWIE_CLUSTER_PEER_OPERATION_EVENT_DELIVER;
       frame.connection_id = 0u;
       frame.connection_generation = 0u;
-      check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded), SALTS_OK);
+      check_equal(flowie_cluster_peer_frame_encode(&frame, sizeof(payload), &encoded), CMETA_OK);
       tstr_free(encoded);
       encoded = NULL;
       frame.connection_id = 1u;
@@ -228,7 +228,7 @@ spec("flowie cluster peer wire protocol") {
       memcpy(boot_id, frame.target_boot_id, sizeof(boot_id));
       check_equal(flowie_cluster_peer_frame_require_target(&frame, vstr_from_cstr("cluster-a"),
                                                             vstr_from_cstr("node-b"), boot_id),
-                   SALTS_OK);
+                   CMETA_OK);
       boot_id[0] ^= 0xffu;
       check_equal(flowie_cluster_peer_frame_require_target(&frame, vstr_from_cstr("cluster-a"),
                                                             vstr_from_cstr("node-b"), boot_id),

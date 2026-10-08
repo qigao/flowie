@@ -70,7 +70,7 @@ static int flowie_client_transport_frame_size(const unsigned char *data, size_t 
     if ((byte & 0x80u) == 0u) {
       if (remaining > SIZE_MAX - index - 1u) return SALTS_EMSGSIZE;
       *out_size = remaining + index + 1u;
-      return *out_size <= size ? SALTS_OK : FLOWIE_CLIENT_TRANSPORT_NEED_MORE;
+      return *out_size <= size ? CMETA_OK : FLOWIE_CLIENT_TRANSPORT_NEED_MORE;
     }
     multiplier *= 128u;
   }
@@ -83,7 +83,7 @@ static int flowie_client_transport_open(void *user, flowie_connection connection
   (void)connection;
   if (broker == NULL || peer == NULL) return SALTS_EINVAL;
   atomic_fetch_add_explicit(&broker->opens, 1, memory_order_release);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_client_transport_receive(void *user, flowie_connection connection,
@@ -101,13 +101,13 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
     size_t frame_size = 0u;
     int status =
         flowie_client_transport_frame_size(broker->input, broker->input_size, &frame_size);
-    if (status == FLOWIE_CLIENT_TRANSPORT_NEED_MORE) return SALTS_OK;
-    if (status != SALTS_OK) return status;
+    if (status == FLOWIE_CLIENT_TRANSPORT_NEED_MORE) return CMETA_OK;
+    if (status != CMETA_OK) return status;
     switch (broker->input[0] >> 4u) {
     case FLOWIE_MQTT_PACKET_CONNECT:
       atomic_fetch_add_explicit(&broker->connects, 1, memory_order_release);
       if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT)
-        status = SALTS_OK;
+        status = CMETA_OK;
       else if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET)
         status = flowie_server_send(broker->server, connection, pingresp, sizeof(pingresp));
       else if (broker->connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE)
@@ -121,15 +121,15 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
       break;
     case FLOWIE_MQTT_PACKET_DISCONNECT:
       atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_release);
-      status = SALTS_OK;
+      status = CMETA_OK;
       break;
     default: status = SALTS_EPROTO; break;
     }
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
     memmove(broker->input, broker->input + frame_size, broker->input_size - frame_size);
     broker->input_size -= frame_size;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void flowie_client_transport_close(void *user, flowie_connection connection, int status) {
@@ -147,12 +147,12 @@ static void flowie_client_transport_connect_complete(
     const flowie_mqtt_control_packet_view_t *response, void *user) {
   flowie_client_transport_probe *probe = (flowie_client_transport_probe *)user;
   int submit_status = SALTS_EPROTO;
-  if (status == SALTS_OK && response != NULL && response->type == FLOWIE_MQTT_PACKET_CONNACK &&
+  if (status == CMETA_OK && response != NULL && response->type == FLOWIE_MQTT_PACKET_CONNACK &&
       response->reason_code == 0u)
     submit_status = flowie_mqtt_client_ping(client);
   atomic_store_explicit(&probe->connect_status, status, memory_order_relaxed);
   atomic_store_explicit(&probe->submit_status, submit_status, memory_order_relaxed);
-  if (status != SALTS_OK || submit_status != SALTS_OK)
+  if (status != CMETA_OK || submit_status != CMETA_OK)
     atomic_store_explicit(&probe->done, 1, memory_order_release);
 }
 
@@ -162,11 +162,11 @@ static void flowie_client_transport_ping_complete(
   flowie_client_transport_probe *probe = (flowie_client_transport_probe *)user;
   const flowie_mqtt_span_t empty = {NULL, 0u};
   const int submit_status =
-      status == SALTS_OK ? flowie_mqtt_client_disconnect(client, 0u, empty) : status;
+      status == CMETA_OK ? flowie_mqtt_client_disconnect(client, 0u, empty) : status;
   (void)response;
   atomic_store_explicit(&probe->ping_status, status, memory_order_relaxed);
   atomic_store_explicit(&probe->submit_status, submit_status, memory_order_relaxed);
-  if (status != SALTS_OK || submit_status != SALTS_OK)
+  if (status != CMETA_OK || submit_status != CMETA_OK)
     atomic_store_explicit(&probe->done, 1, memory_order_release);
 }
 
@@ -230,7 +230,7 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   atomic_init(&broker.pings, 0);
   atomic_init(&broker.disconnects, 0);
   atomic_init(&broker.closes, 0);
-  atomic_init(&broker.error, SALTS_OK);
+  atomic_init(&broker.error, CMETA_OK);
   atomic_init(&probe.done, 0);
   atomic_init(&probe.connect_status, SALTS_EBUSY);
   atomic_init(&probe.ping_status, SALTS_EBUSY);
@@ -242,7 +242,7 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   broker.expected_close_status =
       connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE
           ? SALTS_ECONNABORTED
-          : SALTS_OK;
+          : CMETA_OK;
 
   server_config.transport = server_transport;
   server_config.host = "127.0.0.1";
@@ -277,9 +277,9 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   server_config.observer = (flowie_observer){flowie_client_transport_open,
                                              flowie_client_transport_receive,
                                              flowie_client_transport_close, NULL, &broker};
-  check_equal(flowie_server_init(&server, &server_config), SALTS_OK);
-  check_equal(flowie_server_start(&server), SALTS_OK);
-  check_equal(flowie_server_port(&server, &port), SALTS_OK);
+  check_equal(flowie_server_init(&server, &server_config), CMETA_OK);
+  check_equal(flowie_server_start(&server), CMETA_OK);
+  check_equal(flowie_server_port(&server, &port), CMETA_OK);
 
   client_config.transport = client_transport;
   client_config.host = "127.0.0.1";
@@ -296,46 +296,46 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   client_config.on_disconnect = flowie_client_transport_disconnect_complete;
   client_config.on_error = flowie_client_transport_error;
   client_config.user_data = &probe;
-  check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
+  check_equal(flowie_mqtt_client_create(&client_config, &client), CMETA_OK);
 
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
-  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
-  deadline = salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  check_equal(flowie_mqtt_client_connect(client, &connect), CMETA_OK);
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
 
   check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
               expected_connect_status);
   if (connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE) {
     const uint64_t server_deadline =
-        salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+        cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
     while ((atomic_load_explicit(&broker.opens, memory_order_acquire) == 0 ||
             atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
             atomic_load_explicit(&broker.closes, memory_order_acquire) == 0) &&
-           salts_monotonic_ms() < server_deadline)
-      salts_sleep_ms(1u);
+           cmeta_monotonic_ms() < server_deadline)
+      cmeta_sleep_ms(1u);
   }
-  if (expected_connect_status == SALTS_OK) {
-    check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
-    check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
-    check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
+  if (expected_connect_status == CMETA_OK) {
+    check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), CMETA_OK);
+    check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), CMETA_OK);
+    check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), CMETA_OK);
   }
   check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
   check_equal(atomic_load_explicit(&broker.opens, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire),
-              expected_connect_status == SALTS_OK ? 1 : 0);
+              expected_connect_status == CMETA_OK ? 1 : 0);
   check_equal(atomic_load_explicit(&broker.disconnects, memory_order_acquire),
-              expected_connect_status == SALTS_OK ? 1 : 0);
-  check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), SALTS_OK);
+              expected_connect_status == CMETA_OK ? 1 : 0);
+  check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), CMETA_OK);
 
   flowie_mqtt_client_destroy(client);
-  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
-  check_equal(flowie_server_destroy(&server), SALTS_OK);
+  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), CMETA_OK);
+  check_equal(flowie_server_destroy(&server), CMETA_OK);
   tls_test_remove_file(ca_path);
   tls_test_remove_file(key_path);
   tls_test_remove_file(cert_path);
@@ -358,13 +358,13 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
   it("runs CONNECT, PING, and DISCONNECT over CNet TCP") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
-                                 FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK);
+                                 FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, CMETA_OK);
   }
 
   it("runs MQTT over a CHTTP WebSocket with the mqtt subprotocol") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_WS, TF_NET_TRANSPORT_WS,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
-                                 FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK);
+                                 FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, CMETA_OK);
   }
 
   it("reports a missing CONNACK as a timeout rather than a protocol error") {

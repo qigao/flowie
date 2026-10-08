@@ -39,6 +39,91 @@ authority.
 
 ## Layers and ownership
 
+### TCP/TLS network owners
+
+`network_workers` selects 1–64 fixed CNet progress owners for one endpoint; zero
+keeps the existing single-owner behavior. The CLI accepts `--network-workers` and
+YAML accepts `network_workers` in the endpoint adapter's `config`, alongside
+`network_command_bytes` (CLI: `--network-command-bytes`). For example, four owners with the default 16 MiB
+mailbox budget reserve 4 MiB per owner. The worker count cannot exceed the
+connection limit, and every byte partition must hold one maximum-sized packet.
+UDP/KCP and CHTTP WS/WSS reject multiple owners with `SALTS_ENOTSUP`.
+
+`network_policy` (`--network-policy`) selects `round-robin` (the default) or
+`least-connections`. The latter samples each owner's mutex-protected reservation
+count, including pending handoffs and live connections, with rotating ties. Only
+the listener increments reservations; concurrent closes may lower a sampled
+count. This is a load hint, not a globally atomic minimum or a byte/CPU load metric.
+Both policies skip full owners and preserve each connection's fixed owner.
+
+`network_cpus` (`--network-cpus 2,4`, YAML `[2,4]`) optionally supplies exactly one
+logical CPU per effective owner, in owner order. An empty YAML list or an omitted
+option preserves OS scheduling; duplicate CPUs deliberately allow sharing. The
+bounded list is copied into the endpoint and each connection configuration, with
+no caller-owned storage retained. Windows IDs are `group * 64 + processor` and
+Linux/Android IDs are OS logical CPU IDs below `CPU_SETSIZE`. Other platforms
+reject explicit binding with `SALTS_ENOTSUP`. Non-default policy or explicit CPU
+binding is supported only for TCP/TLS. The listener thread is not pinned.
+
+Each worker binds itself before polling or callbacks, then signals startup status
+under its mutex. Start waits for readiness before creating the multi-owner listener
+thread. A binding error fences and joins all started workers and returns the error;
+the failed instance can be destroyed, but must be recreated before retrying.
+The platform adapter uses [Windows thread group affinity](https://learn.microsoft.com/en-us/windows/win32/api/processtopologyapi/nf-processtopologyapi-setthreadgroupaffinity)
+and [Linux thread affinity](https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html).
+This keeps platform calls below the endpoint and adds no dependency. Dynamic
+migration and implicit automatic pinning were rejected because they complicate
+connection ownership and can conflict with deployment CPU restrictions. Rollback
+is to omit both options; the default remains round-robin with no binding. Consumers
+must rebuild for the expanded configuration structs, as with `network_workers`.
+
+With multiple owners, one dedicated listener thread reserves an owner slot using
+the selected policy and performs detached accept. It moves
+the accepted descriptor through that owner's bounded mutex-protected queue.
+Pending handoffs and live connections share the same connection reservation;
+the total never exceeds `max_connections`. If all owners are full, new arrivals
+remain in the listener backlog. Admission failure releases the reservation and
+closes the descriptor. After successful adoption, only the selected owner polls,
+advances TLS, receives, sends, and closes that connection. It never migrates.
+
+Handles keep the existing slot/generation layout. The global slot interleaves
+owner-local slots, so simultaneous local slot 1 connections on different owners
+remain distinct. Send, retained SG send, and close decode the owner before
+entering its bounded MPSC mailbox; generations remain CNet's stale-handle fence.
+Connection capacity and mailbox byte capacity are partitioned without increasing
+their aggregate bounds. Command-entry capacity and the remaining CNet request,
+event, and completion capacities apply per owner, so their total memory cost
+grows with the selected count. Saturated mailboxes still return `SALTS_ENOBUFS`.
+Scalar admission copies bytes; SG admission retains immutable slices. References
+survive until CNet completion or cancellation, and queued references are released
+at destruction after all workers have joined.
+
+Callbacks for different network owners may overlap. The endpoint marshals them
+to its existing serialized protocol executor, keeping session, subscription,
+retained-message, and repository state under one authority. Receive bytes remain
+borrowed until the synchronous executor call returns. This change parallelizes
+network/TLS progress, not MQTT state execution; it does not establish a throughput
+gain without measurement. Applications consuming `Flowie::Connection` directly
+must make their observers safe for concurrent connections before opting in.
+
+Shutdown fences command and connection admission on every owner first. The
+listener closes on its thread; each network owner closes pending handoffs and
+stops CNet through terminal callbacks. The caller joins all threads before
+destroying queues, TLS contexts, or clients. A timeout leaves resources owned and
+requires another stop call; destroy returns `SALTS_EBUSY` while workers remain.
+An owner failure stops the group and is returned by stop. Lifecycle operations
+remain exclusive and must run outside network callbacks.
+
+Alternatives were one shared client polled concurrently (violates CNet ownership),
+per-owner reuse-port listeners (platform-dependent distribution), and protocol
+state sharding (requires a separate repository/session ownership design). Detached
+handoff preserves one portable listening socket and the current MQTT authority.
+The appended endpoint config fields require SDK consumers to rebuild; existing
+source initializers keep single-owner defaults. Roll back configuration to zero
+or one to restore the existing direct-accept path. Regression coverage belongs to
+the connection and MQTT transport suites, including owner affinity, retained SG,
+global capacity, stale handles, and shutdown with active connections.
+
 Flowie endpoint Core owns its `Flowie::Connection` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph
 dispatch sink into that Core and exposes graph operations without duplicating state. Reusable code below this boundary is limited to the
@@ -394,6 +479,68 @@ enter one endpoint owner-lane queue. After route and protocol validation they mo
 their aggregate reservation, into the target connection's TurboUtils deque. `send_hwm_bytes`
 bounds each connection's pending wire bytes; the endpoint aggregate byte capacity is the checked
 product of that limit and `max_connections`.
+
+TCP/TLS small-packet storage is lowered privately by `Flowie::Connection` after
+canonical slice and total-send-size validation. Each already-ready command keeps
+its FIFO position and original byte reservation. Adjacent ranges of at most 256
+bytes are copied in runs of at least two into one Salts pooled buffer, with at
+most 4096 copied payload bytes per command. Large ranges and isolated small
+ranges keep their original retained backing. Mixed runs share the same packed
+buffer while remaining on either side of their intervening large ranges. The
+metadata is bounded by `CNET_RETAINED_VECTOR_MAX`; planning is O(n), copying is
+O(copied bytes). These conservative internal bounds are not a measured optimum.
+
+This chooses bounded copying over always-retained SG for tiny fragments because
+CNet feeds TLS plaintext ranges separately: one logical SG write does not promise
+one TLS record. The tradeoff is an extra bounded allocation/copy, temporary
+overlap with the source storage, and an explicit `SALTS_ENOMEM` admission failure
+if that allocation fails. Failure before publication releases only local owned
+references; callers keep their original slices. Successful publication transfers
+immutable packed storage to the existing mailbox, then CNet retains it through
+native send settlement. Queue rejection, stale generation and shutdown use the
+existing command cleanup. No per-connection buffer, extra mailbox or timer is
+introduced; command capacity and payload-byte limits still bound retained work.
+
+MQTT batching remains on the endpoint owner: Receive Maximum, expiry, FIFO and
+terminal-packet boundaries are unchanged. A lone control reply is submitted
+immediately; there is no deliberate aggregation delay or control-packet reorder.
+TCP socket defaults, UDP/KCP and WS/WSS behavior are unchanged. The strategy
+changes neither public ABI nor protocol configuration and needs no data
+migration. It can be rolled back by removing the private coalescing call while
+retaining the same ownership/admission contract. Tests cover packed and mixed
+bytes, nonzero offsets, copy limits, caller lifetime, transport delivery and
+close/drain. Throughput and tail-latency improvements require separate measured
+qualification; fewer ranges alone are not a performance result.
+
+The formal `benchmark_flowie_send_batch` compares retained-vector preparation
+with the added small-packet lowering for 32 ranges of 2, 64, 256, 8192 bytes and
+mixed sizes. One operation is a whole vector. On the Windows Release development
+host, a 10,000-sample run measured 0.332 vs 0.457 microseconds for 2-byte ranges
+and 0.294 vs 0.534 microseconds for 64-byte ranges. The added preparation cost is
+expected: this benchmark excludes the downstream native/TLS work whose range
+count is reduced. It does not establish a throughput or p99 improvement.
+
+Reproduce from a VS developer shell using the versioned presets (restore the
+ordinary test configuration after the benchmark):
+
+```text
+cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=OFF -DFLOWIE_BUILD_BENCHMARKS=ON
+cmake --build --preset win-release-user
+ctest --preset win-release-user -LE "^$" -R benchmark_flowie_send_batch -V
+cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=ON -DFLOWIE_BUILD_BENCHMARKS=OFF
+cmake --build --preset win-release-user
+ctest --preset win-release-user --output-on-failure
+```
+
+Local qualification passed the new storage cases and the TCP/TLS burst cases
+with one and multiple owners. The full Release run passed 46/49 enabled tests;
+the MQTT client, external HTTPS authenticator and JWKS authenticator suites also
+failed on the unchanged `bd84cac` baseline with the same local SDKs during
+GmSSL handshakes. Debug/ASan configuration was blocked by the installed Debug
+SaltsUtils package requiring `unofficial-lua`, absent from the current manifest
+dependency set. Neither those failures nor ASan qualification are claimed fixed
+by this send-path change.
+
 Shared bounded stream primitives provide a
 demand-grown, single-owner framing accumulator. A private Flowie connection ingress handles
 fragmented/sticky MQTT packets on the connection lane, transfers each complete wire packet to

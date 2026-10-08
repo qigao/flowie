@@ -2,8 +2,8 @@
 
 #include <http_server/http.h>
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -74,7 +74,7 @@ typedef struct flowie_control_http_job_s {
 
 struct flowie_control_http_app_s {
   chttp_server server;
-  salts_threadpool_t *workers;
+  cmeta_threadpool_t *workers;
   flowie_control_http_route_t routes[FLOWIE_CONTROL_HTTP_ROUTE_CAPACITY];
   flowie_control_http_context_binding_t contexts[FLOWIE_CONTROL_HTTP_CONTEXT_CAPACITY];
   size_t route_count;
@@ -256,12 +256,12 @@ static int flowie_control_http_query_decode(const char *begin, size_t size, char
   }
   value[write] = '\0';
   *out = value;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 char *flowie_control_http_url_decode(const char *value) {
   char *decoded = NULL;
-  if (!value || flowie_control_http_query_decode(value, strlen(value), &decoded) != SALTS_OK)
+  if (!value || flowie_control_http_query_decode(value, strlen(value), &decoded) != CMETA_OK)
     return NULL;
   return decoded;
 }
@@ -308,7 +308,7 @@ static int flowie_control_http_query_parse(const char *target, request_t *query)
   if (!target || !query) return SALTS_EINVAL;
   *query = (request_t){0};
   cursor = strchr(target, '?');
-  if (!cursor || !cursor[1]) return SALTS_OK;
+  if (!cursor || !cursor[1]) return CMETA_OK;
   ++cursor;
   for (const char *scan = cursor; *scan; ++scan)
     if (*scan == '&') ++count;
@@ -329,17 +329,17 @@ static int flowie_control_http_query_parse(const char *target, request_t *query)
     }
     rc = flowie_control_http_query_decode(cursor, (size_t)(equals - cursor),
                                           &query->items[query->count].key);
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_http_query_decode(equals + 1u, (size_t)(end - equals - 1u),
                                             &query->items[query->count].value);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_control_http_query_clear(query);
       return rc;
     }
     ++query->count;
     cursor = *end == '&' ? end + 1u : end;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_http_response_clear(Res *response) {
@@ -481,7 +481,7 @@ static void flowie_control_http_job_reply(flowie_control_http_job_t *job, Res *r
   chttp_server_deferred_response deferred = {0};
   int rc;
   if (!job || !response) return;
-  if (!response->completed || response->error != SALTS_OK) {
+  if (!response->completed || response->error != CMETA_OK) {
     flowie_control_http_response_clear(response);
     reply(response, INTERNAL_SERVER_ERROR, "text/plain; charset=utf-8", internal_error,
           sizeof(internal_error) - 1u);
@@ -507,7 +507,7 @@ static void flowie_control_http_job_reply(flowie_control_http_job_t *job, Res *r
   deferred.body = response->body;
   deferred.body_size = response->body_len;
   rc = chttp_server_deferred_reply(&job->deferred, &deferred);
-  if (rc != SALTS_OK && job->deferred.impl) {
+  if (rc != CMETA_OK && job->deferred.impl) {
     deferred.status_code = INTERNAL_SERVER_ERROR;
     deferred.content_type = "text/plain; charset=utf-8";
     deferred.headers = NULL;
@@ -548,14 +548,14 @@ static void flowie_control_http_job_run(void *arg) {
   request.security = &security;
   request.peer_certificate_sha256 = job->peer_certificate_sha256;
   request.remote_address = job->remote_address;
-  if (flowie_control_http_query_parse(job->target, &request.query) != SALTS_OK) {
+  if (flowie_control_http_query_parse(job->target, &request.query) != CMETA_OK) {
     reply(&response, BAD_REQUEST, "text/plain; charset=utf-8", "Invalid query", 13u);
   } else {
     chain = (Chain){job->route->handler, 0};
     if (job->app->middleware) (void)job->app->middleware(&request, &response, &chain);
     else (void)next(&chain, &request, &response);
   }
-  if (!response.completed && response.error == SALTS_OK)
+  if (!response.completed && response.error == CMETA_OK)
     reply(&response, NO_CONTENT, "text/plain; charset=utf-8", NULL, 0u);
   flowie_control_http_job_reply(job, &response);
 
@@ -584,18 +584,18 @@ static int flowie_control_http_chttp_handler(void *user, const chttp_server_requ
     return chttp_server_reply(response, SERVICE_UNAVAILABLE, "text/plain; charset=utf-8",
                               unavailable, sizeof(unavailable) - 1u);
   rc = chttp_server_response_defer(response, &job->deferred);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_http_job_destroy(job);
     return rc;
   }
-  rc = salts_threadpool_try_submit(app->workers, flowie_control_http_job_run, job);
-  if (rc == SALTS_OK) return SALTS_OK;
+  rc = cmeta_threadpool_try_submit(app->workers, flowie_control_http_job_run, job);
+  if (rc == CMETA_OK) return CMETA_OK;
   deferred = (chttp_server_deferred_response){
       sizeof(deferred), SERVICE_UNAVAILABLE,     "text/plain; charset=utf-8", NULL, 0u,
       unavailable,      sizeof(unavailable) - 1u};
   (void)chttp_server_deferred_reply(&job->deferred, &deferred);
   flowie_control_http_job_destroy(job);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 flowie_control_http_app_t *flowie_control_http_app_create(void) {
@@ -624,7 +624,7 @@ int flowie_control_http_app_configure(flowie_control_http_app_t *app,
   app->worker_count = worker_count;
   app->worker_queue_capacity = worker_queue_capacity;
   app->configured = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_http_app_bind_context(flowie_control_http_app_t *app, const char *path,
@@ -636,7 +636,7 @@ int flowie_control_http_app_bind_context(flowie_control_http_app_t *app, const c
   if (!app->contexts[app->context_count].path) return SALTS_ENOMEM;
   app->contexts[app->context_count].context = context;
   ++app->context_count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_http_app_unbind_context(flowie_control_http_app_t *app, const char *path,
@@ -648,7 +648,7 @@ int flowie_control_http_app_unbind_context(flowie_control_http_app_t *app, const
       app->contexts[index] = app->contexts[app->context_count - 1u];
       app->contexts[app->context_count - 1u] = (flowie_control_http_context_binding_t){0};
       --app->context_count;
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
   return SALTS_ENOENT;
@@ -674,7 +674,7 @@ static int flowie_control_http_app_route(flowie_control_http_app_t *app, chttp_m
   app->routes[app->route_count].method = method;
   app->routes[app->route_count].handler = handler;
   ++app->route_count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_http_app_get(flowie_control_http_app_t *app, const char *path,
@@ -698,7 +698,7 @@ static int flowie_control_http_app_unroute(flowie_control_http_app_t *app, chttp
       *route = app->routes[app->route_count - 1u];
       app->routes[app->route_count - 1u] = (flowie_control_http_route_t){0};
       --app->route_count;
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
   return SALTS_ENOENT;
@@ -718,7 +718,7 @@ int flowie_control_http_app_use(flowie_control_http_app_t *app,
                                 flowie_control_http_middleware_fn middleware) {
   if (!app || !middleware || app->middleware || app->initialized) return SALTS_EINVAL;
   app->middleware = middleware;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_http_tls_validate(const flowie_control_http_tls_config_t *tls) {
@@ -736,7 +736,7 @@ int flowie_control_http_tls_validate(const flowie_control_http_tls_config_t *tls
   config.client_auth =
       tls->client_auth_required ? CNET_TLS_CLIENT_AUTH_REQUIRED : CNET_TLS_CLIENT_AUTH_NONE;
   rc = cnet_tls_server_init(&server, &config);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   return cnet_tls_server_destroy(&server);
 }
 
@@ -744,7 +744,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
                                       uint16_t port, const flowie_control_http_tls_config_t *tls) {
   chttp_server_config config = {0};
   cnet_tls_server_config tls_config = {0};
-  salts_threadpool_config_t worker_config;
+  cmeta_threadpool_config_t worker_config;
   int rc;
   if (!app || !host || !host[0] || !tls || tls->size < sizeof(*tls) || !tls->cert_file ||
       !tls->cert_file[0] || !tls->key_file || !tls->key_file[0] || app->started ||
@@ -755,7 +755,7 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   }
   worker_config.num_threads = (int)app->worker_count;
   worker_config.queue_capacity = app->worker_queue_capacity;
-  app->workers = salts_threadpool_create_with_config(&worker_config);
+  app->workers = cmeta_threadpool_create_with_config(&worker_config);
   if (!app->workers) return SALTS_ENOMEM;
   tls_config.size = sizeof(tls_config);
   tls_config.cert_file = tls->cert_file;
@@ -808,24 +808,24 @@ int flowie_control_http_app_start_tls(flowie_control_http_app_t *app, const char
   config.max_buffered_response_body_bytes = FLOWIE_CONTROL_HTTP_RESPONSE_BODY_CAPACITY;
   config.buffer_capacity_bytes = FLOWIE_CONTROL_HTTP_PAYLOAD_BUFFER_CAPACITY;
   rc = chttp_server_init(&app->server, &config);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   app->initialized = 1;
   for (size_t index = 0u; index < app->route_count; ++index) {
     rc = chttp_server_route(&app->server, app->routes[index].method, app->routes[index].path,
                             flowie_control_http_chttp_handler, &app->routes[index]);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
   }
   rc = chttp_server_start(&app->server);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   app->started = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   if (app->initialized) {
     (void)chttp_server_destroy(&app->server);
     app->initialized = 0;
   }
-  salts_threadpool_destroy(app->workers);
+  cmeta_threadpool_destroy(app->workers);
   app->workers = NULL;
   return rc;
 }
@@ -838,13 +838,13 @@ int flowie_control_http_app_port(const flowie_control_http_app_t *app, uint16_t 
 int flowie_control_http_app_stop(flowie_control_http_app_t *app, uint32_t timeout_ms) {
   int rc;
   if (!app) return SALTS_EINVAL;
-  if (!app->started) return SALTS_OK;
+  if (!app->started) return CMETA_OK;
   rc = chttp_server_stop(&app->server,
                          timeout_ms ? timeout_ms : FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   app->started = 0;
-  salts_threadpool_shutdown(app->workers);
-  rc = salts_threadpool_wait_status(app->workers);
+  cmeta_threadpool_shutdown(app->workers);
+  rc = cmeta_threadpool_wait_status(app->workers);
   return rc;
 }
 
@@ -852,7 +852,7 @@ void flowie_control_http_app_destroy(flowie_control_http_app_t *app) {
   if (!app) return;
   if (app->started) (void)flowie_control_http_app_stop(app, FLOWIE_CONTROL_HTTP_STOP_TIMEOUT_MS);
   if (app->initialized) (void)chttp_server_destroy(&app->server);
-  salts_threadpool_destroy(app->workers);
+  cmeta_threadpool_destroy(app->workers);
   for (size_t index = 0u; index < app->route_count; ++index)
     free(app->routes[index].path);
   for (size_t index = 0u; index < app->context_count; ++index)

@@ -208,3 +208,9 @@ MQTT receive can be modeled as a Source and MQTT send as a Sink in an upper-laye
 ---
 
 **Salts provides the systems runtime. CHTTP provides HTTP/WebSocket infrastructure. Flowie provides MQTT semantics.**
+
+## Salts 3 development integration
+
+Source and installed SDK consumers require Salts 3. This draft preserves the main branch owner-lane architecture and uses canonical CMeta/platform/coroutine names. CI restores the released Salts SDK, rebuilds exact unfinished Utils and CHTTP revisions and TurboDB 2.3.1 source, then builds the complete configured Flowie graph and runs formal CTests on Linux and Windows. SDK and source identities are archived.
+
+Utils is unfinished. No new downstream package version or tag is assigned and publication is deferred. Cluster mode is outside this preset and needs a matching rebuilt FlowMQ/TurboRaft graph before qualification. macOS/Android and the installed consumer profile also remain separate acceptance. Rebuild all providers and consumers for Salts 3; rollback the matching SDK graph together.

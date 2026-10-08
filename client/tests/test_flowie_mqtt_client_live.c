@@ -3,8 +3,8 @@
 
 #include "platform.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -207,9 +207,9 @@ static void flowie_mqtt_live_finish(atomic_int *result, atomic_int *done, int st
 }
 
 static int flowie_mqtt_live_wait(atomic_int *result, atomic_int *done) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
-  while (!atomic_load_explicit(done, memory_order_acquire) && salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
+  while (!atomic_load_explicit(done, memory_order_acquire) && cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   return atomic_load_explicit(done, memory_order_acquire)
              ? atomic_load_explicit(result, memory_order_relaxed)
              : SALTS_ETIMEDOUT;
@@ -221,7 +221,7 @@ flowie_mqtt_live_disconnect_completion(flowie_mqtt_client_t *client, int status,
                                        void *user_data) {
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
@@ -230,15 +230,15 @@ flowie_mqtt_live_unsubscribe_completion(flowie_mqtt_client_t *client, int status
                                         const flowie_mqtt_control_packet_view_t *response,
                                         void *user_data) {
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_UNSUBACK ||
        (state->test_case->version == FLOWIE_MQTT_VERSION_5 &&
         (response->reason_codes.size != 1u || response->reason_codes.data[0] >= 0x80u))))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) state->stage = "disconnect";
-  if (status == SALTS_OK)
+  if (status == CMETA_OK) state->stage = "disconnect";
+  if (status == CMETA_OK)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_ping_completion(flowie_mqtt_client_t *client, int status,
@@ -247,15 +247,15 @@ static void flowie_mqtt_live_ping_completion(flowie_mqtt_client_t *client, int s
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   flowie_mqtt_unsubscribe_packet_t unsubscribe = FLOWIE_MQTT_UNSUBSCRIBE_PACKET_INIT;
   flowie_mqtt_span_t filter = {(const uint8_t *)state->topic, strlen(state->topic)};
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK) {
     state->stage = "unsubscribe";
     unsubscribe.version = state->test_case->version;
     unsubscribe.filters = &filter;
     unsubscribe.filter_count = 1u;
     status = flowie_mqtt_client_unsubscribe(client, &unsubscribe);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_maybe_shutdown(flowie_mqtt_live_state_t *state) {
@@ -266,7 +266,7 @@ static void flowie_mqtt_live_maybe_shutdown(flowie_mqtt_live_state_t *state) {
   state->shutdown_started = 1;
   state->stage = "ping";
   rc = flowie_mqtt_client_ping(state->client);
-  if (rc != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, rc);
+  if (rc != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, rc);
 }
 
 static int flowie_mqtt_live_submit_publish(flowie_mqtt_live_state_t *state);
@@ -277,21 +277,21 @@ static void flowie_mqtt_live_publish_completion(flowie_mqtt_client_t *client, in
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   unsigned int qos = state->publish_index;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       ((qos == 0u && response) ||
        (qos == 1u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK ||
                       response->reason_code >= 0x80u)) ||
        (qos == 2u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBCOMP ||
                       response->reason_code >= 0x80u))))
     status = SALTS_EPROTO;
-  if (status != SALTS_OK) {
+  if (status != CMETA_OK) {
     flowie_mqtt_live_finish(&state->result, &state->done, status);
     return;
   }
   ++state->publish_index;
   if (state->publish_index < FLOWIE_MQTT_LIVE_QOS_COUNT) {
     status = flowie_mqtt_live_submit_publish(state);
-    if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+    if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
     return;
   }
   state->publishes_done = 1;
@@ -317,12 +317,12 @@ static void flowie_mqtt_live_subscribe_completion(flowie_mqtt_client_t *client, 
                                                   void *user_data) {
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
        response->reason_codes.size != 1u || response->reason_codes.data[0] != 2u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_live_submit_publish(state);
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status == CMETA_OK) status = flowie_mqtt_live_submit_publish(state);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_connect_completion(flowie_mqtt_client_t *client, int status,
@@ -331,10 +331,10 @@ static void flowie_mqtt_live_connect_completion(flowie_mqtt_client_t *client, in
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   flowie_mqtt_subscription_t subscription = {0};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u))
     status = SALTS_ECONNREFUSED;
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK) {
     state->stage = "subscribe";
     subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     subscription.qos = 2u;
@@ -343,7 +343,7 @@ static void flowie_mqtt_live_connect_completion(flowie_mqtt_client_t *client, in
     subscribe.subscription_count = 1u;
     status = flowie_mqtt_client_subscribe(client, &subscribe);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static int flowie_mqtt_live_on_publish(flowie_mqtt_client_t *client,
@@ -355,7 +355,7 @@ static int flowie_mqtt_live_on_publish(flowie_mqtt_client_t *client,
     if (flowie_mqtt_live_span_equals(publish->payload, state->payloads[qos])) {
       state->received_mask |= 1u << qos;
       flowie_mqtt_live_maybe_shutdown(state);
-      return SALTS_OK;
+      return CMETA_OK;
     }
   }
   return SALTS_EPROTO;
@@ -372,7 +372,7 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t topic_handler = {0};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   memset(state, 0, sizeof(*state));
   state->test_case = test_case;
@@ -406,9 +406,9 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   config.on_error = flowie_mqtt_live_on_error;
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_client_set_version(state->client, test_case->version);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_client_destroy(state->client);
     state->client = NULL;
     return rc;
@@ -420,7 +420,7 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
       (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
   state->stage = "connect";
   rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
   flowie_mqtt_client_destroy(state->client);
   state->client = NULL;
   return rc;
@@ -431,7 +431,7 @@ static void flowie_mqtt_live_check(const flowie_mqtt_live_case_t *test_case) {
   int rc = flowie_mqtt_live_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d stage=%s", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version, state.stage ? state.stage : "create");
-  check_equal(rc, SALTS_OK);
+  check_equal(rc, CMETA_OK);
   check_equal(state.received_mask, FLOWIE_MQTT_LIVE_RECEIVED_ALL);
 }
 
@@ -448,7 +448,7 @@ static int flowie_mqtt_live_property_append(uint8_t identifier, const char *valu
   output[(*size)++] = (uint8_t)value_size;
   memcpy(output + *size, value, value_size);
   *size += value_size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int
@@ -477,7 +477,7 @@ flowie_mqtt_live_reqrep_properties_match(const flowie_mqtt_property_block_view_t
       found_correlation = 1;
     }
   }
-  return found_correlation && found_response_topic == (response_topic != NULL) ? SALTS_OK
+  return found_correlation && found_response_topic == (response_topic != NULL) ? CMETA_OK
                                                                                : SALTS_EPROTO;
 }
 
@@ -487,7 +487,7 @@ flowie_mqtt_live_reqrep_disconnect_completion(flowie_mqtt_client_t *client, int 
                                               void *user_data) {
   flowie_mqtt_live_reqrep_state_t *state = (flowie_mqtt_live_reqrep_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
@@ -496,14 +496,14 @@ flowie_mqtt_live_reqrep_unsubscribe_completion(flowie_mqtt_client_t *client, int
                                                const flowie_mqtt_control_packet_view_t *response,
                                                void *user_data) {
   flowie_mqtt_live_reqrep_state_t *state = (flowie_mqtt_live_reqrep_state_t *)user_data;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_UNSUBACK ||
        response->reason_codes.size != 2u || response->reason_codes.data[0] >= 0x80u ||
        response->reason_codes.data[1] >= 0x80u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK)
+  if (status == CMETA_OK)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_reqrep_maybe_unsubscribe(flowie_mqtt_live_reqrep_state_t *state) {
@@ -519,7 +519,7 @@ static void flowie_mqtt_live_reqrep_maybe_unsubscribe(flowie_mqtt_live_reqrep_st
   unsubscribe.filters = topics;
   unsubscribe.filter_count = 2u;
   rc = flowie_mqtt_client_unsubscribe(state->client, &unsubscribe);
-  if (rc != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, rc);
+  if (rc != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, rc);
 }
 
 static void
@@ -528,10 +528,10 @@ flowie_mqtt_live_reqrep_publish_completion(flowie_mqtt_client_t *client, int sta
                                            void *user_data) {
   flowie_mqtt_live_reqrep_state_t *state = (flowie_mqtt_live_reqrep_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK || response->reason_code >= 0x80u))
     status = SALTS_EPROTO;
-  if (status != SALTS_OK) {
+  if (status != CMETA_OK) {
     flowie_mqtt_live_finish(&state->result, &state->done, status);
     return;
   }
@@ -553,10 +553,10 @@ static int flowie_mqtt_live_reqrep_submit_request(flowie_mqtt_live_reqrep_state_
   int rc =
       flowie_mqtt_live_property_append(FLOWIE_MQTT_PROPERTY_RESPONSE_TOPIC, state->response_topic,
                                        properties, sizeof(properties), &properties_size);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_live_property_append(FLOWIE_MQTT_PROPERTY_CORRELATION_DATA, state->correlation,
                                           properties, sizeof(properties), &properties_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   publish.version = FLOWIE_MQTT_VERSION_5;
   publish.data = &topic;
   publish.count = 1u;
@@ -578,7 +578,7 @@ static int flowie_mqtt_live_reqrep_submit_response(flowie_mqtt_live_reqrep_state
   int rc =
       flowie_mqtt_live_property_append(FLOWIE_MQTT_PROPERTY_CORRELATION_DATA, state->correlation,
                                        properties, sizeof(properties), &properties_size);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   publish.version = FLOWIE_MQTT_VERSION_5;
   publish.data = &topic;
   publish.count = 1u;
@@ -605,7 +605,7 @@ static int flowie_mqtt_live_reqrep_on_publish(flowie_mqtt_client_t *client,
       return SALTS_EPROTO;
     rc = flowie_mqtt_live_reqrep_properties_match(&publish->properties, state->response_topic,
                                                   state->correlation);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     state->request_received = 1;
     return flowie_mqtt_live_reqrep_submit_response(state);
   }
@@ -614,10 +614,10 @@ static int flowie_mqtt_live_reqrep_on_publish(flowie_mqtt_client_t *client,
         !flowie_mqtt_live_span_equals(publish->payload, response_payload))
       return SALTS_EPROTO;
     rc = flowie_mqtt_live_reqrep_properties_match(&publish->properties, NULL, state->correlation);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     state->response_received = 1;
     flowie_mqtt_live_reqrep_maybe_unsubscribe(state);
-    return SALTS_OK;
+    return CMETA_OK;
   }
   return SALTS_EPROTO;
 }
@@ -628,13 +628,13 @@ flowie_mqtt_live_reqrep_subscribe_completion(flowie_mqtt_client_t *client, int s
                                              void *user_data) {
   flowie_mqtt_live_reqrep_state_t *state = (flowie_mqtt_live_reqrep_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
        response->reason_codes.size != 2u || response->reason_codes.data[0] != 1u ||
        response->reason_codes.data[1] != 1u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_live_reqrep_submit_request(state);
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status == CMETA_OK) status = flowie_mqtt_live_reqrep_submit_request(state);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void
@@ -644,10 +644,10 @@ flowie_mqtt_live_reqrep_connect_completion(flowie_mqtt_client_t *client, int sta
   flowie_mqtt_live_reqrep_state_t *state = (flowie_mqtt_live_reqrep_state_t *)user_data;
   flowie_mqtt_subscription_t subscriptions[2] = {{0}};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u))
     status = SALTS_ECONNREFUSED;
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK) {
     subscriptions[0].filter =
         (flowie_mqtt_span_t){(const uint8_t *)state->request_topic, strlen(state->request_topic)};
     subscriptions[0].qos = 1u;
@@ -659,7 +659,7 @@ flowie_mqtt_live_reqrep_connect_completion(flowie_mqtt_client_t *client, int sta
     subscribe.subscription_count = 2u;
     status = flowie_mqtt_client_subscribe(client, &subscribe);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_reqrep_on_error(flowie_mqtt_client_t *client, int status,
@@ -674,7 +674,7 @@ static int flowie_mqtt_live_reqrep_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t topic_handlers[2] = {{0}};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (!test_case || test_case->version != FLOWIE_MQTT_VERSION_5) return SALTS_EINVAL;
   memset(state, 0, sizeof(*state));
@@ -711,14 +711,14 @@ static int flowie_mqtt_live_reqrep_run(const flowie_mqtt_live_case_t *test_case,
   config.on_error = flowie_mqtt_live_reqrep_on_error;
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
   connect.client_id =
       (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
   rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
   flowie_mqtt_client_destroy(state->client);
   state->client = NULL;
   return rc;
@@ -729,7 +729,7 @@ static void flowie_mqtt_live_reqrep_check(const flowie_mqtt_live_case_t *test_ca
   int rc = flowie_mqtt_live_reqrep_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version);
-  check_equal(rc, SALTS_OK);
+  check_equal(rc, CMETA_OK);
   check_true(state.request_received);
   check_true(state.response_received);
 }
@@ -752,7 +752,7 @@ static int flowie_mqtt_live_subscription_identifier_matches(
       ++matches;
     }
   }
-  return matches == 1u ? SALTS_OK : SALTS_EPROTO;
+  return matches == 1u ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int flowie_mqtt_live_alias_submit(flowie_mqtt_live_alias_state_t *state, int reuse_alias) {
@@ -784,7 +784,7 @@ static int flowie_mqtt_live_alias_advance(flowie_mqtt_live_alias_state_t *state)
     state->disconnect_started = 1;
     return flowie_mqtt_client_disconnect(state->client, 0u, (flowie_mqtt_span_t){0});
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_mqtt_live_alias_on_publish(flowie_mqtt_client_t *client,
@@ -799,7 +799,7 @@ static int flowie_mqtt_live_alias_on_publish(flowie_mqtt_client_t *client,
       !flowie_mqtt_live_span_equals(publish->payload, payloads[state->received_count]))
     return SALTS_EPROTO;
   rc = flowie_mqtt_live_subscription_identifier_matches(&publish->properties, 42u);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   ++state->received_count;
   return flowie_mqtt_live_alias_advance(state);
 }
@@ -810,7 +810,7 @@ flowie_mqtt_live_alias_disconnect_completion(flowie_mqtt_client_t *client, int s
                                              void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
@@ -820,12 +820,12 @@ flowie_mqtt_live_alias_publish_completion(flowie_mqtt_client_t *client, int stat
                                           void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK || response->reason_code >= 0x80u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK && ++state->publish_completions > 2u) status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_live_alias_advance(state);
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status == CMETA_OK && ++state->publish_completions > 2u) status = SALTS_EPROTO;
+  if (status == CMETA_OK) status = flowie_mqtt_live_alias_advance(state);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void
@@ -834,12 +834,12 @@ flowie_mqtt_live_alias_subscribe_completion(flowie_mqtt_client_t *client, int st
                                             void *user_data) {
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   (void)client;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
        response->reason_codes.size != 1u || response->reason_codes.data[0] != 1u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_live_alias_submit(state, 0);
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status == CMETA_OK) status = flowie_mqtt_live_alias_submit(state, 0);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void
@@ -851,10 +851,10 @@ flowie_mqtt_live_alias_connect_completion(flowie_mqtt_client_t *client, int stat
   flowie_mqtt_live_alias_state_t *state = (flowie_mqtt_live_alias_state_t *)user_data;
   flowie_mqtt_subscription_t subscription = {0};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u))
     status = SALTS_ECONNREFUSED;
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK) {
     subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     subscription.qos = 1u;
     subscribe.version = FLOWIE_MQTT_VERSION_5;
@@ -864,7 +864,7 @@ flowie_mqtt_live_alias_connect_completion(flowie_mqtt_client_t *client, int stat
     subscribe.subscription_count = 1u;
     status = flowie_mqtt_client_subscribe(client, &subscribe);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_live_alias_on_error(flowie_mqtt_client_t *client, int status,
@@ -879,7 +879,7 @@ static int flowie_mqtt_live_alias_run(const flowie_mqtt_live_case_t *test_case,
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t handler = {0};
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (!test_case || !state || test_case->version != FLOWIE_MQTT_VERSION_5) return SALTS_EINVAL;
   memset(state, 0, sizeof(*state));
@@ -907,14 +907,14 @@ static int flowie_mqtt_live_alias_run(const flowie_mqtt_live_case_t *test_case,
   config.on_error = flowie_mqtt_live_alias_on_error;
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
   connect.client_id =
       (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
   rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
   flowie_mqtt_client_destroy(state->client);
   state->client = NULL;
   return rc;
@@ -925,7 +925,7 @@ static void flowie_mqtt_live_alias_check(const flowie_mqtt_live_case_t *test_cas
   int rc = flowie_mqtt_live_alias_run(test_case, &state);
   info("endpoint=%s:%d transport=%d version=%d", test_case->host, test_case->port,
        (int)test_case->transport, (int)test_case->version);
-  check_equal(rc, SALTS_OK);
+  check_equal(rc, CMETA_OK);
   check_equal(state.received_count, 2u);
   check_equal(state.publish_completions, 2u);
 }
@@ -992,13 +992,13 @@ static void flowie_mqtt_fixed_apply_config(const flowie_mqtt_live_case_t *test_c
 }
 
 static int flowie_mqtt_fixed_wait_ready(atomic_int *result, atomic_int *done, atomic_int *ready) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(ready, memory_order_acquire) &&
-         !atomic_load_explicit(done, memory_order_acquire) && salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         !atomic_load_explicit(done, memory_order_acquire) && cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   if (atomic_load_explicit(done, memory_order_acquire))
     return atomic_load_explicit(result, memory_order_relaxed);
-  return atomic_load_explicit(ready, memory_order_acquire) ? SALTS_OK : SALTS_ETIMEDOUT;
+  return atomic_load_explicit(ready, memory_order_acquire) ? CMETA_OK : SALTS_ETIMEDOUT;
 }
 
 static void flowie_mqtt_fixed_publisher_error(flowie_mqtt_client_t *client, int status,
@@ -1014,7 +1014,7 @@ flowie_mqtt_fixed_publisher_disconnect(flowie_mqtt_client_t *client, int status,
                                        void *user_data) {
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
   (void)client;
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
@@ -1022,14 +1022,14 @@ static void flowie_mqtt_fixed_publisher_publish(flowie_mqtt_client_t *client, in
                                                 const flowie_mqtt_control_packet_view_t *response,
                                                 void *user_data) {
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       ((state->qos == 0u && response) ||
        (state->qos == 1u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK ||
                              response->reason_code >= 0x80u))))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK)
+  if (status == CMETA_OK)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_fixed_publisher_connect(flowie_mqtt_client_t *client, int status,
@@ -1038,14 +1038,14 @@ static void flowie_mqtt_fixed_publisher_connect(flowie_mqtt_client_t *client, in
   flowie_mqtt_fixed_publisher_t *state = (flowie_mqtt_fixed_publisher_t *)user_data;
   flowie_mqtt_client_publish_topic_t topic = {0};
   flowie_mqtt_client_publish_topic_vec_t publish = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u))
     status = SALTS_ECONNREFUSED;
-  if (status == SALTS_OK && state->connect_only) {
+  if (status == CMETA_OK && state->connect_only) {
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     return;
   }
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK) {
     publish.version = FLOWIE_MQTT_VERSION_5;
     publish.data = &topic;
     publish.count = 1u;
@@ -1056,7 +1056,7 @@ static void flowie_mqtt_fixed_publisher_connect(flowie_mqtt_client_t *client, in
     topic.payload = (flowie_mqtt_span_t){(const uint8_t *)state->payload, strlen(state->payload)};
     status = flowie_mqtt_client_publish(client, &publish);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static int flowie_mqtt_fixed_publisher_start(flowie_mqtt_fixed_publisher_t *state) {
@@ -1076,7 +1076,7 @@ static int flowie_mqtt_fixed_publisher_start(flowie_mqtt_fixed_publisher_t *stat
   config.on_error = flowie_mqtt_fixed_publisher_error;
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
@@ -1092,7 +1092,7 @@ static int flowie_mqtt_fixed_publisher_start(flowie_mqtt_fixed_publisher_t *stat
         (flowie_mqtt_span_t){(const uint8_t *)state->will_payload, strlen(state->will_payload)};
   }
   rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_client_destroy(state->client);
     state->client = NULL;
   }
@@ -1101,7 +1101,7 @@ static int flowie_mqtt_fixed_publisher_start(flowie_mqtt_fixed_publisher_t *stat
 
 static int flowie_mqtt_fixed_publisher_run(flowie_mqtt_fixed_publisher_t *state) {
   int rc = flowie_mqtt_fixed_publisher_start(state);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
   if (state->client) flowie_mqtt_client_destroy(state->client);
   state->client = NULL;
   return rc;
@@ -1120,7 +1120,7 @@ flowie_mqtt_fixed_subscriber_disconnect(flowie_mqtt_client_t *client, int status
                                         void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   (void)client;
-  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  if (status == CMETA_OK && response) status = SALTS_EPROTO;
   flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
@@ -1129,16 +1129,16 @@ static int flowie_mqtt_fixed_subscriber_message(flowie_mqtt_client_t *client,
                                                 void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   unsigned int received;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
   if (!publish || !flowie_mqtt_live_span_equals(publish->topic, state->topic) ||
       !flowie_mqtt_live_span_equals(publish->payload, state->payload) || publish->qos != 1u ||
       (state->expected_retain >= 0 && publish->retain != (uint8_t)state->expected_retain))
     status = SALTS_EPROTO;
   received = atomic_fetch_add_explicit(&state->received, 1u, memory_order_relaxed) + 1u;
   if (received != 1u) status = SALTS_EPROTO;
-  if (status == SALTS_OK && state->disconnect_after_message)
+  if (status == CMETA_OK && state->disconnect_after_message)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
   return status;
 }
 
@@ -1147,14 +1147,14 @@ flowie_mqtt_fixed_subscriber_subscribe(flowie_mqtt_client_t *client, int status,
                                        const flowie_mqtt_control_packet_view_t *response,
                                        void *user_data) {
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
        response->reason_codes.size != 1u || response->reason_codes.data[0] != 1u))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK && state->disconnect_after_subscribe)
+  if (status == CMETA_OK && state->disconnect_after_subscribe)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  else if (status == SALTS_OK) atomic_store_explicit(&state->ready, 1, memory_order_release);
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  else if (status == CMETA_OK) atomic_store_explicit(&state->ready, 1, memory_order_release);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static void flowie_mqtt_fixed_subscriber_connect(flowie_mqtt_client_t *client, int status,
@@ -1163,22 +1163,22 @@ static void flowie_mqtt_fixed_subscriber_connect(flowie_mqtt_client_t *client, i
   flowie_mqtt_fixed_subscriber_t *state = (flowie_mqtt_fixed_subscriber_t *)user_data;
   flowie_mqtt_subscription_t subscription = {0};
   flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
-  if (status == SALTS_OK &&
+  if (status == CMETA_OK &&
       (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK || response->reason_code != 0u ||
        (state->expected_session_present >= 0 &&
         response->session_present != (uint8_t)state->expected_session_present)))
     status = SALTS_ECONNREFUSED;
-  if (status == SALTS_OK && state->subscribe) {
+  if (status == CMETA_OK && state->subscribe) {
     subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
     subscription.qos = 1u;
     subscribe.version = FLOWIE_MQTT_VERSION_5;
     subscribe.subscriptions = &subscription;
     subscribe.subscription_count = 1u;
     status = flowie_mqtt_client_subscribe(client, &subscribe);
-  } else if (status == SALTS_OK) {
+  } else if (status == CMETA_OK) {
     atomic_store_explicit(&state->ready, 1, memory_order_release);
   }
-  if (status != SALTS_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
+  if (status != CMETA_OK) flowie_mqtt_live_finish(&state->result, &state->done, status);
 }
 
 static int flowie_mqtt_fixed_subscriber_start(flowie_mqtt_fixed_subscriber_t *state) {
@@ -1202,7 +1202,7 @@ static int flowie_mqtt_fixed_subscriber_start(flowie_mqtt_fixed_subscriber_t *st
   config.on_error = flowie_mqtt_fixed_subscriber_error;
   config.user_data = state;
   rc = flowie_mqtt_client_create(&config, &state->client);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = state->clean_start;
   connect.keep_alive = 30u;
@@ -1210,7 +1210,7 @@ static int flowie_mqtt_fixed_subscriber_start(flowie_mqtt_fixed_subscriber_t *st
   connect.client_id =
       (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
   rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_client_destroy(state->client);
     state->client = NULL;
   }
@@ -1230,7 +1230,7 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char clear_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(publisher_id, sizeof(publisher_id), "flowie-fixed-retained-pub-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1247,7 +1247,7 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   publisher.qos = 1u;
   publisher.retain = 1u;
   rc = flowie_mqtt_fixed_publisher_run(&publisher);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
 
   subscriber.test_case = test_case;
   subscriber.client_id = subscriber_id;
@@ -1259,9 +1259,9 @@ static int flowie_mqtt_fixed_retained_run(const flowie_mqtt_live_case_t *test_ca
   subscriber.subscribe = 1u;
   subscriber.disconnect_after_message = 1u;
   rc = flowie_mqtt_fixed_subscriber_start(&subscriber);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 1u) return SALTS_EPROTO;
 
   memset(&publisher, 0, sizeof(publisher));
@@ -1291,7 +1291,7 @@ static int flowie_mqtt_fixed_create_offline_session(const flowie_mqtt_live_case_
   subscriber.subscribe = 1u;
   subscriber.disconnect_after_subscribe = 1u;
   rc = flowie_mqtt_fixed_subscriber_start(&subscriber);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
   return rc;
 }
@@ -1315,7 +1315,7 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char publisher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(subscriber_id, sizeof(subscriber_id), "flowie-fixed-session-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1324,10 +1324,10 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
       snprintf(topic, sizeof(topic), "flowie/fixed/offline/%llu", (unsigned long long)unique) < 0)
     return SALTS_EIO;
   rc = flowie_mqtt_fixed_create_offline_session(test_case, subscriber_id, topic, payload);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_fixed_publish_offline(test_case, publisher_id, topic, payload,
                                          (flowie_mqtt_span_t){0});
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
 
   subscriber.test_case = test_case;
   subscriber.client_id = subscriber_id;
@@ -1340,10 +1340,10 @@ static int flowie_mqtt_fixed_offline_replay_run(const flowie_mqtt_live_case_t *t
   subscriber.clean_start = 0u;
   subscriber.disconnect_after_message = 1u;
   rc = flowie_mqtt_fixed_subscriber_start(&subscriber);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&subscriber.result, &subscriber.done);
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
-  if (rc != SALTS_OK) return rc;
-  return atomic_load_explicit(&subscriber.received, memory_order_relaxed) == 1u ? SALTS_OK
+  if (rc != CMETA_OK) return rc;
+  return atomic_load_explicit(&subscriber.received, memory_order_relaxed) == 1u ? CMETA_OK
                                                                                 : SALTS_EPROTO;
 }
 
@@ -1353,7 +1353,7 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   char subscriber_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char publisher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(subscriber_id, sizeof(subscriber_id), "flowie-fixed-expiry-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1362,13 +1362,13 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
       snprintf(topic, sizeof(topic), "flowie/fixed/expiry/%llu", (unsigned long long)unique) < 0)
     return SALTS_EIO;
   rc = flowie_mqtt_fixed_create_offline_session(test_case, subscriber_id, topic, payload);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_mqtt_fixed_publish_offline(
       test_case, publisher_id, topic, payload,
       (flowie_mqtt_span_t){FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_PROPERTY,
                            sizeof(FLOWIE_MQTT_FIXED_MESSAGE_EXPIRY_PROPERTY)});
-  if (rc != SALTS_OK) return rc;
-  salts_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
+  if (rc != CMETA_OK) return rc;
+  cmeta_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
 
   subscriber.test_case = test_case;
   subscriber.client_id = subscriber_id;
@@ -1380,10 +1380,10 @@ static int flowie_mqtt_fixed_message_expiry_run(const flowie_mqtt_live_case_t *t
   subscriber.expected_retain = 0;
   subscriber.clean_start = 0u;
   rc = flowie_mqtt_fixed_subscriber_start(&subscriber);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_fixed_wait_ready(&subscriber.result, &subscriber.done, &subscriber.ready);
-  if (rc == SALTS_OK) salts_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
-  if (rc == SALTS_OK && atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 0u)
+  if (rc == CMETA_OK) cmeta_sleep_ms(FLOWIE_MQTT_FIXED_EXPIRY_OBSERVE_MS);
+  if (rc == CMETA_OK && atomic_load_explicit(&subscriber.received, memory_order_relaxed) != 0u)
     rc = SALTS_EPROTO;
   flowie_mqtt_fixed_subscriber_destroy(&subscriber);
   return rc;
@@ -1396,7 +1396,7 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
   char watcher_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char will_id[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
   char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
-  uint64_t unique = salts_hrtime();
+  uint64_t unique = cmeta_hrtime();
   int rc;
   if (snprintf(watcher_id, sizeof(watcher_id), "flowie-fixed-will-watch-%llu",
                (unsigned long long)unique) < 0 ||
@@ -1414,9 +1414,9 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
   watcher.subscribe = 1u;
   watcher.disconnect_after_message = 1u;
   rc = flowie_mqtt_fixed_subscriber_start(&watcher);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_fixed_wait_ready(&watcher.result, &watcher.done, &watcher.ready);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_mqtt_fixed_subscriber_destroy(&watcher);
     return rc;
   }
@@ -1429,14 +1429,14 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
   will_client.will_topic = topic;
   will_client.will_payload = payload;
   rc = flowie_mqtt_fixed_publisher_start(&will_client);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_mqtt_fixed_wait_ready(&will_client.result, &will_client.done, &will_client.ready);
   if (will_client.client) flowie_mqtt_client_destroy(will_client.client);
   will_client.client = NULL;
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&watcher.result, &watcher.done);
+  if (rc == CMETA_OK) rc = flowie_mqtt_live_wait(&watcher.result, &watcher.done);
   flowie_mqtt_fixed_subscriber_destroy(&watcher);
-  if (rc != SALTS_OK) return rc;
-  return atomic_load_explicit(&watcher.received, memory_order_relaxed) == 1u ? SALTS_OK
+  if (rc != CMETA_OK) return rc;
+  return atomic_load_explicit(&watcher.received, memory_order_relaxed) == 1u ? CMETA_OK
                                                                              : SALTS_EPROTO;
 }
 #endif
@@ -1506,21 +1506,21 @@ spec("Flowie MQTT fixed-version broker interoperability") {
   }
 
   it("MQTT-INTEROP-003 receives and clears retained state through the fixed broker") {
-    check_equal(flowie_mqtt_fixed_retained_run(&FLOWIE_MQTT_FIXED_TCP_5), SALTS_OK);
+    check_equal(flowie_mqtt_fixed_retained_run(&FLOWIE_MQTT_FIXED_TCP_5), CMETA_OK);
   }
 
   it("MQTT-INTEROP-003 resumes a fixed-broker session and replays its offline QoS1 message") {
-    check_equal(flowie_mqtt_fixed_offline_replay_run(&FLOWIE_MQTT_FIXED_TCP_5), SALTS_OK);
+    check_equal(flowie_mqtt_fixed_offline_replay_run(&FLOWIE_MQTT_FIXED_TCP_5), CMETA_OK);
   }
 
   it("MQTT-INTEROP-003 suppresses a fixed-broker offline message after its expiry interval") {
     int rc = flowie_mqtt_fixed_message_expiry_run(&FLOWIE_MQTT_FIXED_TCP_5);
     if (rc == SALTS_ETIMEDOUT) rc = flowie_mqtt_fixed_message_expiry_run(&FLOWIE_MQTT_FIXED_TCP_5);
-    check_equal(rc, SALTS_OK);
+    check_equal(rc, CMETA_OK);
   }
 
   it("MQTT-INTEROP-003 receives a fixed-broker Will after an ungraceful Flowie close") {
-    check_equal(flowie_mqtt_fixed_will_run(&FLOWIE_MQTT_FIXED_TCP_5), SALTS_OK);
+    check_equal(flowie_mqtt_fixed_will_run(&FLOWIE_MQTT_FIXED_TCP_5), CMETA_OK);
   }
 
   #if FLOWIE_MQTT_FIXED_SUPPORT_31

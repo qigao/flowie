@@ -46,7 +46,7 @@ int flowie_cluster_peer_takeover_close_encode(flowie_mqtt_version_t mqtt_version
   encoded[FLOWIE_CLUSTER_PEER_TAKEOVER_CLOSE_OFFSET_MQTT_VERSION] = (uint8_t)mqtt_version;
   encoded[FLOWIE_CLUSTER_PEER_TAKEOVER_CLOSE_OFFSET_RESERVED] = 0u;
   memcpy(encoded + FLOWIE_CLUSTER_PEER_TAKEOVER_CLOSE_HEADER_SIZE, client_id.data, client_id.size);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_takeover_close_decode(const void *data, size_t data_size,
@@ -85,5 +85,5 @@ int flowie_cluster_peer_takeover_close_decode(const void *data, size_t data_size
       !flowie_mqtt_utf8_validate(decoded.client_id))
     return SALTS_EPROTO;
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }

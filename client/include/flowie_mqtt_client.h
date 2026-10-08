@@ -95,7 +95,7 @@ typedef struct flowie_mqtt_client_topic_handler_s {
 
 /**
  * Caller-owned map view; duplicate filters are invalid. Every matching handler
- * is called in map order, stopping on the first non-SALTS_OK result.
+ * is called in map order, stopping on the first non-CMETA_OK result.
  */
 typedef struct flowie_mqtt_client_topic_handler_map_s {
   const flowie_mqtt_client_topic_handler_t *data;
@@ -148,7 +148,7 @@ typedef int (*flowie_mqtt_client_auth_challenge_fn)(
 
 /**
  * Replace the retained CONNECT after an authentication rejection. The current
- * packet and all of its spans are borrowed for this callback. On SALTS_OK,
+ * packet and all of its spans are borrowed for this callback. On CMETA_OK,
  * refreshed must be a complete valid CONNECT packet; the client deep-copies it
  * before the callback returns. This callback runs on the DLL worker thread
  * and must not perform blocking or heavyweight work.
@@ -301,7 +301,7 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_c
 /**
  * Read the MQTT 5 reason from the server DISCONNECT that caused the callback
  * currently in progress. This is intended for on_error and failed operation
- * completion callbacks on the client worker thread. Returns SALTS_OK and
+ * completion callbacks on the client worker thread. Returns CMETA_OK and
  * writes reason when present, SALTS_ENOENT when the failure did not originate
  * from an MQTT 5 DISCONNECT, SALTS_EBUSY outside a client callback, or
  * SALTS_EINVAL for invalid arguments. The reason is borrowed event state and
@@ -312,7 +312,7 @@ FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_server_disconnect_reason(const flowie_mqtt_client_t *client, uint8_t *reason);
 
 /**
- * Callback-driven operations. Returning SALTS_OK transfers a deep copy of the
+ * Callback-driven operations. Returning CMETA_OK transfers a deep copy of the
  * complete packet description to the client. Each command guarantees one
  * matching config.on_xxx callback, except publish, which guarantees one
  * on_publish callback per topic in input order. A missing matching callback

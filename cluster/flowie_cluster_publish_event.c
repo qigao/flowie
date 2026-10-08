@@ -24,7 +24,7 @@ static int flowie_cluster_publish_event_settlement_validate(
       flowie_mqtt_publish_parse(&publish_command->packet, &publish) != FLOWIE_MQTT_PARSE_OK)
     return SALTS_EPROTO;
   return publish.qos == 0u && requested != FLOWIE_PROTOCOL_SETTLE_RECEIVED ? SALTS_EPROTO
-                                                                               : SALTS_OK;
+                                                                               : CMETA_OK;
 }
 
 int flowie_cluster_publish_event_encode(
@@ -54,13 +54,13 @@ int flowie_cluster_publish_event_encode(
   rc = flowie_cluster_peer_mqtt_command_encode(FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
                                                mqtt_version, client_id, packet, packet_limit,
                                                &command);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_peer_mqtt_command_decode(
         FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH, command, tstr_len(command), packet_limit,
         &decoded);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_publish_event_settlement_validate(requested_settlement, &decoded);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     tstr_free(command);
     return rc;
   }
@@ -99,7 +99,7 @@ int flowie_cluster_publish_event_encode(
   memcpy(bytes + FLOWIE_CLUSTER_PUBLISH_EVENT_HEADER_SIZE + edge_node_id.len, command,
          tstr_len(command));
   tstr_free(command);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size_t max_payload_size,
@@ -157,10 +157,10 @@ int flowie_cluster_publish_event_decode(const void *data, size_t data_size, size
       FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH,
       bytes + header_size + edge_node_size, command_size,
       packet_limit, &decoded.publish);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_publish_event_settlement_validate(decoded.requested_settlement,
                                                           &decoded.publish);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }

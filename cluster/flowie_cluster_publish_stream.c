@@ -1,6 +1,6 @@
 #include "flowie_cluster_publish_stream_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -42,7 +42,7 @@ static int flowie_cluster_publish_stream_sink_begin(
   if (!receiver->event) return SALTS_ENOMEM;
   receiver->event_size = (size_t)stream_size;
   receiver->used = 0u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_publish_stream_sink_write(void *ctx, uint64_t offset,
@@ -55,7 +55,7 @@ static int flowie_cluster_publish_stream_sink_write(void *ctx, uint64_t offset,
     return SALTS_EPROTO;
   memcpy(receiver->event + receiver->used, data, size);
   receiver->used += size;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_publish_stream_sink_commit(void *ctx) {
@@ -67,7 +67,7 @@ static int flowie_cluster_publish_stream_sink_commit(void *ctx) {
     return SALTS_EPROTO;
   rc = flowie_cluster_publish_event_decode(receiver->event, receiver->event_size,
                                            receiver->max_event_bytes, &event);
-  if (rc == SALTS_OK) rc = receiver->commit(receiver->commit_ctx, &event);
+  if (rc == CMETA_OK) rc = receiver->commit(receiver->commit_ctx, &event);
   return rc;
 }
 
@@ -106,13 +106,13 @@ int flowie_cluster_publish_stream_sender_create(
           ? config->max_inflight_chunks
           : TR_RAFT_DATA_STREAM_RECOMMENDED_INFLIGHT_CHUNKS;
   rc = tr_raft_data_stream_sender_create(&stream_config, &sender->stream);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     free(sender);
     return rc;
   }
   sender->max_event_bytes = config->max_event_bytes;
   *out = sender;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_publish_stream_sender_destroy(
@@ -132,7 +132,7 @@ int flowie_cluster_publish_stream_sender_begin(
     return SALTS_EINVAL;
   rc = flowie_cluster_publish_event_decode(event, event_size,
                                            sender->max_event_bytes, &decoded);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? tr_raft_data_stream_sender_begin(sender->stream, term, stream_id,
                                                 (const uint8_t *)event, event_size)
              : rc;
@@ -189,12 +189,12 @@ int flowie_cluster_publish_stream_receiver_create(
   stream_config.sink.abort = flowie_cluster_publish_stream_sink_abort;
   stream_config.sink.context = receiver;
   rc = tr_raft_data_stream_receiver_create(&stream_config, &receiver->stream);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     free(receiver);
     return rc;
   }
   *out = receiver;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_publish_stream_receiver_destroy(
@@ -215,10 +215,10 @@ int flowie_cluster_publish_stream_receiver_handle(
   if (!receiver || !chunk || !out_ack || !out_committed) return SALTS_EINVAL;
   memset(&result, 0, sizeof(result));
   rc = tr_raft_data_stream_receiver_handle(receiver->stream, chunk, &result);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out_ack = result.ack;
   *out_committed = result.committed ? 1 : 0;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_publish_quorum_create(
@@ -245,12 +245,12 @@ int flowie_cluster_publish_quorum_create(
   memcpy(config.descriptor.stream_digest, first_chunk->stream_digest,
          sizeof(config.descriptor.stream_digest));
   rc = tr_raft_data_quorum_create(&config, &owner->quorum);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     free(owner);
     return rc;
   }
   *out = owner;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_publish_quorum_destroy(

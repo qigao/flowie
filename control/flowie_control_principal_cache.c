@@ -11,9 +11,9 @@
 
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -33,7 +33,7 @@ typedef struct flowie_control_principal_cache_entry_s {
 
 struct flowie_control_principal_cache_s {
   hash_map_t entries;
-  salts_mutex_t lock;
+  cmeta_mutex_t lock;
   uint8_t digest_key[FLOWIE_CONTROL_PRINCIPAL_CACHE_KEY_SIZE];
   size_t capacity;
   uint64_t ttl_ms;
@@ -44,7 +44,7 @@ struct flowie_control_principal_cache_s {
 
 static uint64_t flowie_control_principal_cache_default_clock(void *ctx) {
   (void)ctx;
-  return salts_monotonic_ms();
+  return cmeta_monotonic_ms();
 }
 
 static int flowie_control_principal_cache_text_valid(const char *value) {
@@ -109,7 +109,7 @@ static void flowie_control_principal_cache_remove_locked(
     const uint8_t digest[FLOWIE_CONTROL_PRINCIPAL_CACHE_DIGEST_SIZE]) {
   flowie_control_principal_cache_entry_t removed;
   memset(&removed, 0, sizeof(removed));
-  if (flowie_stl_error(hash_map_remove(&cache->entries, digest, &removed)) == SALTS_OK)
+  if (flowie_stl_error(hash_map_remove(&cache->entries, digest, &removed)) == CMETA_OK)
     flowie_control_credential_wipe(&removed, sizeof(removed));
 }
 
@@ -148,19 +148,19 @@ int flowie_control_principal_cache_create(const flowie_control_auth_cache_config
   cache->ttl_ms = config->ttl_ms;
   cache->clock_ms = config->clock_ms ? config->clock_ms : flowie_control_principal_cache_default_clock;
   cache->clock_ctx = config->clock_ctx;
-  rc = salts_secure_random(cache->digest_key, sizeof(cache->digest_key));
-  if (rc != SALTS_OK) goto fail;
+  rc = cmeta_secure_random(cache->digest_key, sizeof(cache->digest_key));
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_stl_error(hash_map_init_bytes(
       &cache->entries, FLOWIE_CONTROL_PRINCIPAL_CACHE_DIGEST_SIZE, _Alignof(unsigned char),
       sizeof(flowie_control_principal_cache_entry_t),
       _Alignof(flowie_control_principal_cache_entry_t), cache->capacity, hash_bytes,
       hash_key_equal, NULL));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_stl_error(hash_map_reserve(&cache->entries, cache->capacity));
-  if (rc != SALTS_OK) goto fail;
-  salts_mutex_init(&cache->lock);
+  if (rc != CMETA_OK) goto fail;
+  cmeta_mutex_init(&cache->lock);
   *out = cache;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   hash_map_destroy(&cache->entries);
@@ -172,7 +172,7 @@ fail:
 void flowie_control_principal_cache_destroy(flowie_control_principal_cache_t *cache) {
   size_t map_capacity;
   if (!cache) return;
-  salts_mutex_lock(&cache->lock);
+  cmeta_mutex_lock(&cache->lock);
   map_capacity = hash_map_capacity(&cache->entries);
   for (size_t slot = 0u; slot < map_capacity; ++slot) {
     flowie_control_principal_cache_entry_t *entry =
@@ -180,8 +180,8 @@ void flowie_control_principal_cache_destroy(flowie_control_principal_cache_t *ca
     if (entry) flowie_control_credential_wipe(entry, sizeof(*entry));
   }
   hash_map_clear(&cache->entries);
-  salts_mutex_unlock(&cache->lock);
-  salts_mutex_destroy(&cache->lock);
+  cmeta_mutex_unlock(&cache->lock);
+  cmeta_mutex_destroy(&cache->lock);
   hash_map_destroy(&cache->entries);
   flowie_control_credential_wipe(cache, sizeof(*cache));
   free(cache);
@@ -205,7 +205,7 @@ int flowie_control_principal_cache_get(
     return SALTS_EINVAL;
   flowie_control_principal_cache_digest(cache, domain_id, principal_id, digest);
   now_ms = cache->clock_ms(cache->clock_ctx);
-  salts_mutex_lock(&cache->lock);
+  cmeta_mutex_lock(&cache->lock);
   {
     flowie_control_principal_cache_entry_t *entry =
         (flowie_control_principal_cache_entry_t *)hash_map_get(&cache->entries, digest);
@@ -217,10 +217,10 @@ int flowie_control_principal_cache_get(
       *out = entry->snapshot;
       entry->last_used = flowie_control_principal_cache_next_sequence(cache);
       *cache_hit_out = 1;
-      rc = SALTS_OK;
+      rc = CMETA_OK;
     }
   }
-  salts_mutex_unlock(&cache->lock);
+  cmeta_mutex_unlock(&cache->lock);
   flowie_control_credential_wipe(digest, sizeof(digest));
   return rc;
 }
@@ -232,7 +232,7 @@ int flowie_control_principal_cache_put(flowie_control_principal_cache_t *cache,
   flowie_control_principal_cache_entry_t entry;
   flowie_control_principal_cache_entry_t *existing;
   uint64_t now_ms;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!cache || !snapshot || snapshot->size < sizeof(*snapshot) ||
       !flowie_control_principal_cache_text_valid(snapshot->domain_id) ||
       !flowie_control_principal_cache_text_valid(snapshot->principal_id) ||
@@ -247,7 +247,7 @@ int flowie_control_principal_cache_put(flowie_control_principal_cache_t *cache,
   entry.store_revision = store_revision;
   entry.policy_version = policy_version;
   entry.expires_at_ms = flowie_control_principal_cache_expiry(now_ms, cache->ttl_ms);
-  salts_mutex_lock(&cache->lock);
+  cmeta_mutex_lock(&cache->lock);
   existing = (flowie_control_principal_cache_entry_t *)hash_map_get(&cache->entries, digest);
   if (existing) {
     *existing = entry;
@@ -258,7 +258,7 @@ int flowie_control_principal_cache_put(flowie_control_principal_cache_t *cache,
     entry.last_used = flowie_control_principal_cache_next_sequence(cache);
     rc = flowie_stl_error(hash_map_put(&cache->entries, digest, &entry));
   }
-  salts_mutex_unlock(&cache->lock);
+  cmeta_mutex_unlock(&cache->lock);
   flowie_control_credential_wipe(&entry, sizeof(entry));
   flowie_control_credential_wipe(digest, sizeof(digest));
   return rc;
@@ -267,8 +267,8 @@ int flowie_control_principal_cache_put(flowie_control_principal_cache_t *cache,
 size_t flowie_control_principal_cache_size(flowie_control_principal_cache_t *cache) {
   size_t size;
   if (!cache) return 0u;
-  salts_mutex_lock(&cache->lock);
+  cmeta_mutex_lock(&cache->lock);
   size = hash_map_size(&cache->entries);
-  salts_mutex_unlock(&cache->lock);
+  cmeta_mutex_unlock(&cache->lock);
   return size;
 }

@@ -1,6 +1,6 @@
 #include "flowie_supervisor_runtime_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdlib.h>
@@ -11,7 +11,7 @@ struct flowie_supervisor_runtime_s {
   tstr config_path;
   tstr graph_path;
   tstr control_config_path;
-  salts_process_t *process;
+  cmeta_process_t *process;
   size_t max_output_bytes;
   int check_only;
   int require_security;
@@ -47,7 +47,7 @@ static int flowie_supervisor_copy_config(flowie_supervisor_runtime_t *runtime,
   runtime->require_security = config->require_security != 0;
   runtime->capture_output = config->capture_output != 0;
   runtime->max_output_bytes = config->max_output_bytes;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_supervisor_runtime_create(const flowie_supervisor_runtime_config_t *config,
@@ -72,20 +72,20 @@ int flowie_supervisor_runtime_create(const flowie_supervisor_runtime_config_t *c
     return SALTS_ENOMEM;
   }
   rc = flowie_supervisor_copy_config(runtime, config);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_supervisor_error_set(error, "copy supervisor configuration", rc);
     flowie_supervisor_runtime_destroy(runtime);
     return rc;
   }
   *out = runtime;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_supervisor_runtime_start(flowie_supervisor_runtime_t *runtime,
                                     flowie_supervisor_error_t *error) {
   const char *args[10];
   size_t count = 0;
-  salts_process_options_t options;
+  cmeta_process_options_t options;
   int rc;
   flowie_supervisor_error_reset(error);
   if (!runtime) {
@@ -108,24 +108,24 @@ int flowie_supervisor_runtime_start(flowie_supervisor_runtime_t *runtime,
   args[count++] = runtime->graph_path;
   args[count] = NULL;
 
-  salts_process_options_init(&options);
+  cmeta_process_options_init(&options);
   options.program = runtime->worker_program;
   options.args = args;
   options.flags =
       runtime->capture_output ? SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR : 0u;
   options.timeout_ms = 0;
   options.max_output_bytes = runtime->max_output_bytes;
-  rc = salts_process_spawn(&options, &runtime->process);
-  if (rc != SALTS_OK) {
+  rc = cmeta_process_spawn(&options, &runtime->process);
+  if (rc != CMETA_OK) {
     flowie_supervisor_error_set(error, "spawn worker", rc);
     return rc;
   }
   runtime->started = 1;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_supervisor_runtime_wait_for(flowie_supervisor_runtime_t *runtime, uint64_t timeout_ms,
-                                       salts_process_result_t *result,
+                                       cmeta_process_result_t *result,
                                        flowie_supervisor_error_t *error) {
   int rc;
   flowie_supervisor_error_reset(error);
@@ -133,56 +133,56 @@ int flowie_supervisor_runtime_wait_for(flowie_supervisor_runtime_t *runtime, uin
     flowie_supervisor_error_set(error, "wait for worker", SALTS_EINVAL);
     return SALTS_EINVAL;
   }
-  rc = salts_process_wait_for(runtime->process, timeout_ms, result);
-  if (rc != SALTS_OK && rc != SALTS_ETIMEDOUT)
+  rc = cmeta_process_wait_for(runtime->process, timeout_ms, result);
+  if (rc != CMETA_OK && rc != SALTS_ETIMEDOUT)
     flowie_supervisor_error_set(error, "wait for worker", rc);
   return rc;
 }
 
 int flowie_supervisor_runtime_stop(flowie_supervisor_runtime_t *runtime,
-                                   salts_process_result_t *result,
+                                   cmeta_process_result_t *result,
                                    flowie_supervisor_error_t *error) {
-  salts_process_result_t local_result;
+  cmeta_process_result_t local_result;
   int rc;
   flowie_supervisor_error_reset(error);
   if (!runtime || !runtime->started) {
     flowie_supervisor_error_set(error, "stop worker", SALTS_EINVAL);
     return SALTS_EINVAL;
   }
-  rc = salts_process_poll(runtime->process, &local_result);
+  rc = cmeta_process_poll(runtime->process, &local_result);
   if (rc == SALTS_EBUSY) {
-    rc = salts_process_terminate(runtime->process);
-    if (rc != SALTS_OK) {
+    rc = cmeta_process_terminate(runtime->process);
+    if (rc != CMETA_OK) {
       flowie_supervisor_error_set(error, "terminate worker", rc);
       return rc;
     }
-    rc = salts_process_wait(runtime->process, &local_result);
+    rc = cmeta_process_wait(runtime->process, &local_result);
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_supervisor_error_set(error, "reap worker", rc);
     return rc;
   }
   if (result) *result = local_result;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_supervisor_runtime_read_stdout(flowie_supervisor_runtime_t *runtime, void *buffer,
                                           size_t capacity, size_t *out_read) {
   if (out_read) *out_read = 0;
   if (!runtime || !runtime->started || !runtime->capture_output) return SALTS_ENOTSUP;
-  return salts_process_read_stdout(runtime->process, buffer, capacity, out_read);
+  return cmeta_process_read_stdout(runtime->process, buffer, capacity, out_read);
 }
 
 int flowie_supervisor_runtime_read_stderr(flowie_supervisor_runtime_t *runtime, void *buffer,
                                           size_t capacity, size_t *out_read) {
   if (out_read) *out_read = 0;
   if (!runtime || !runtime->started || !runtime->capture_output) return SALTS_ENOTSUP;
-  return salts_process_read_stderr(runtime->process, buffer, capacity, out_read);
+  return cmeta_process_read_stderr(runtime->process, buffer, capacity, out_read);
 }
 
 void flowie_supervisor_runtime_destroy(flowie_supervisor_runtime_t *runtime) {
   if (!runtime) return;
-  salts_process_destroy(runtime->process);
+  cmeta_process_destroy(runtime->process);
   tstr_free(runtime->control_config_path);
   tstr_free(runtime->graph_path);
   tstr_free(runtime->config_path);

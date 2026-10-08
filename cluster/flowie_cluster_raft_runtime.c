@@ -1,6 +1,6 @@
 #include "flowie_cluster_raft_runtime_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -84,15 +84,15 @@ int flowie_cluster_raft_runtime_create(
   peer_config.on_payload = flowie_cluster_raft_runtime_payload;
   peer_config.payload_context = runtime;
   rc = tr_raft_flowmq_peer_service_create(&peer_config, &runtime->peers);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   store_config = config->store;
   store_config.transport.context = runtime;
   store_config.transport.enqueue =
       flowie_cluster_raft_runtime_message_enqueue;
   rc = flowie_cluster_raft_store_open(&store_config, &runtime->store);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   *out = runtime;
-  return SALTS_OK;
+  return CMETA_OK;
 fail:
   if (runtime->store) (void)flowie_cluster_raft_store_close(runtime->store);
   if (runtime->peers) (void)tr_raft_flowmq_peer_service_destroy(runtime->peers);
@@ -109,7 +109,7 @@ int flowie_cluster_raft_runtime_bind_payload_handler(
     return SALTS_EBUSY;
   runtime->on_payload = on_payload;
   runtime->payload_ctx = payload_ctx;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_raft_runtime_unbind_payload_handler(
@@ -119,7 +119,7 @@ int flowie_cluster_raft_runtime_unbind_payload_handler(
     return SALTS_EINVAL;
   runtime->on_payload = NULL;
   runtime->payload_ctx = NULL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_raft_runtime_enqueue_adapter(
@@ -142,7 +142,7 @@ int flowie_cluster_raft_runtime_start(flowie_cluster_raft_runtime_t *runtime) {
   if (!runtime || runtime->started || !runtime->on_payload)
     return SALTS_EINVAL;
   rc = tr_raft_flowmq_peer_service_start(runtime->peers);
-  if (rc == SALTS_OK) runtime->started = 1;
+  if (rc == CMETA_OK) runtime->started = 1;
   return rc;
 }
 
@@ -156,9 +156,9 @@ int flowie_cluster_raft_runtime_drive(
     return SALTS_EINVAL;
   memset(out_step, 0, sizeof(*out_step));
   rc = tr_raft_flowmq_peer_service_step(runtime->peers, out_step);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (out_step->failed_peer_count != 0u)
-    return out_step->first_error == SALTS_OK ? SALTS_EIO
+    return out_step->first_error == CMETA_OK ? SALTS_EIO
                                              : out_step->first_error;
   return flowie_cluster_raft_store_tick(runtime->store, elapsed_ticks,
                                         next_election_timeout_ticks);
@@ -192,10 +192,10 @@ int flowie_cluster_raft_runtime_status(
   if (!runtime || !out_status) return SALTS_EINVAL;
   memset(out_status, 0, sizeof(*out_status));
   rc = flowie_cluster_raft_store_status(runtime->store, &out_status->raft);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = tr_raft_flowmq_peer_service_get_status(runtime->peers,
                                                 &out_status->peers);
-  if (rc == SALTS_OK) out_status->started = runtime->started;
+  if (rc == CMETA_OK) out_status->started = runtime->started;
   return rc;
 }
 
@@ -212,18 +212,18 @@ int flowie_cluster_raft_runtime_stop(flowie_cluster_raft_runtime_t *runtime) {
   int rc;
   if (!runtime || !runtime->started) return SALTS_EINVAL;
   rc = tr_raft_flowmq_peer_service_stop(runtime->peers);
-  if (rc == SALTS_OK) runtime->started = 0;
+  if (rc == CMETA_OK) runtime->started = 0;
   return rc;
 }
 
 int flowie_cluster_raft_runtime_destroy(flowie_cluster_raft_runtime_t *runtime) {
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   int close_rc;
   if (!runtime || runtime->started) return SALTS_EINVAL;
   close_rc = flowie_cluster_raft_store_close(runtime->store);
-  if (close_rc != SALTS_OK) rc = close_rc;
+  if (close_rc != CMETA_OK) rc = close_rc;
   close_rc = tr_raft_flowmq_peer_service_destroy(runtime->peers);
-  if (rc == SALTS_OK && close_rc != SALTS_OK) rc = close_rc;
+  if (rc == CMETA_OK && close_rc != CMETA_OK) rc = close_rc;
   free(runtime);
   return rc;
 }

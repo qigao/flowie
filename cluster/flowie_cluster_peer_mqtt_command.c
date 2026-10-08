@@ -56,25 +56,25 @@ flowie_cluster_peer_mqtt_command_typed_validate(flowie_cluster_peer_operation_t 
   switch (operation) {
   case FLOWIE_CLUSTER_PEER_OPERATION_MQTT_PUBLISH: {
     flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
-    return flowie_mqtt_publish_parse(packet, &publish) == FLOWIE_MQTT_PARSE_OK ? SALTS_OK
+    return flowie_mqtt_publish_parse(packet, &publish) == FLOWIE_MQTT_PARSE_OK ? CMETA_OK
                                                                                : SALTS_EPROTO;
   }
   case FLOWIE_CLUSTER_PEER_OPERATION_MQTT_SUBSCRIBE: {
     flowie_mqtt_subscribe_view_t subscribe = FLOWIE_MQTT_SUBSCRIBE_VIEW_INIT;
-    return flowie_mqtt_subscribe_parse(packet, &subscribe) == FLOWIE_MQTT_PARSE_OK ? SALTS_OK
+    return flowie_mqtt_subscribe_parse(packet, &subscribe) == FLOWIE_MQTT_PARSE_OK ? CMETA_OK
                                                                                    : SALTS_EPROTO;
   }
   case FLOWIE_CLUSTER_PEER_OPERATION_MQTT_UNSUBSCRIBE: {
     flowie_mqtt_unsubscribe_view_t unsubscribe = FLOWIE_MQTT_UNSUBSCRIBE_VIEW_INIT;
     return flowie_mqtt_unsubscribe_parse(packet, &unsubscribe) == FLOWIE_MQTT_PARSE_OK
-               ? SALTS_OK
+               ? CMETA_OK
                : SALTS_EPROTO;
   }
   case FLOWIE_CLUSTER_PEER_OPERATION_MQTT_ACK:
   case FLOWIE_CLUSTER_PEER_OPERATION_MQTT_DISCONNECT: {
     flowie_mqtt_control_packet_view_t control = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
     return flowie_mqtt_control_packet_parse(packet, &control) == FLOWIE_MQTT_PARSE_OK
-               ? SALTS_OK
+               ? CMETA_OK
                : SALTS_EPROTO;
   }
   default:
@@ -121,7 +121,7 @@ int flowie_cluster_peer_mqtt_command_encode(flowie_cluster_peer_operation_t oper
     return SALTS_EPROTO;
   rc = flowie_cluster_peer_mqtt_command_packet_parse(operation, mqtt_version, packet.data,
                                                      packet.size, max_packet_size, &parsed);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (client_id.size > SIZE_MAX - FLOWIE_CLUSTER_PEER_MQTT_COMMAND_HEADER_SIZE ||
       packet.size > SIZE_MAX - FLOWIE_CLUSTER_PEER_MQTT_COMMAND_HEADER_SIZE - client_id.size)
     return SALTS_ERANGE;
@@ -147,7 +147,7 @@ int flowie_cluster_peer_mqtt_command_encode(flowie_cluster_peer_operation_t oper
   memcpy(encoded + FLOWIE_CLUSTER_PEER_MQTT_COMMAND_HEADER_SIZE, client_id.data, client_id.size);
   memcpy(encoded + FLOWIE_CLUSTER_PEER_MQTT_COMMAND_HEADER_SIZE + client_id.size, packet.data,
          packet.size);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_mqtt_command_decode(flowie_cluster_peer_operation_t operation,
@@ -196,7 +196,7 @@ int flowie_cluster_peer_mqtt_command_decode(flowie_cluster_peer_operation_t oper
       operation, decoded.mqtt_version,
       bytes + FLOWIE_CLUSTER_PEER_MQTT_COMMAND_HEADER_SIZE + client_id_size, packet_size,
       max_packet_size, &decoded.packet);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   *out = decoded;
-  return SALTS_OK;
+  return CMETA_OK;
 }

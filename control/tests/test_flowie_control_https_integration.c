@@ -9,9 +9,9 @@
 #include "base64_utils.h"
 #include <http_client/http.h>
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_process.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_process.h"
+#include "cmeta_thread.h"
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -167,7 +167,7 @@ static http_client_t *http_client_create(const char *base_url) {
            authority_size + 1u);
   }
   config = control_test_http_client_config();
-  if (chttp_client_init(&client->client, &config) != SALTS_OK) goto fail;
+  if (chttp_client_init(&client->client, &config) != CMETA_OK) goto fail;
   client->client_initialized = 1;
   client->timeout_ms = CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS;
   return client;
@@ -203,7 +203,7 @@ static int http_client_set_tls_client_config(http_client_t *client,
   resolved = *config;
   if (!resolved.server_name) resolved.server_name = "localhost";
   rc = chttp_tls_profile_init(&client->tls, &resolved);
-  if (rc == SALTS_OK) client->tls_initialized = 1;
+  if (rc == CMETA_OK) client->tls_initialized = 1;
   return rc;
 }
 
@@ -314,7 +314,7 @@ static http_response_t *http_request(http_client_t *client, chttp_method method,
   rc = method == CHTTP_METHOD_GET
            ? chttp_get(&client->client, &options, &result->response, &error)
            : chttp_post(&client->client, &options, &result->response, &error);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     fprintf(stderr, "CHTTP integration request failed: target=%s status=%d native=%d stage=%s\n",
             target, rc, error.native_status, error.stage ? error.stage : "unknown");
     chttp_response_destroy(&result->response);
@@ -658,21 +658,21 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
   check_equal(flowie_control_test_turbodb_init(&test_database, database_path), 0);
   store_config.database = &test_database.config;
   rc = flowie_control_store_open(&store_config, &store);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc =
       flowie_control_bootstrap_apply(flowie_control_store_repository(store), &config.bootstrap,
                                      FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
                                      sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u, 1u);
-  if (rc == SALTS_OK) rc = flowie_control_store_current_revision(store, &revision);
+  if (rc == CMETA_OK) rc = flowie_control_store_current_revision(store, &revision);
 
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "integration-root";
   root.expected_revision = revision;
   root.occurred_at = 1u;
-  if (rc == SALTS_OK) rc = flowie_control_store_domain_create(store, &root, &result);
+  if (rc == CMETA_OK) rc = flowie_control_store_domain_create(store, &root, &result);
   revision = result.revision;
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     user.domain_id = "root-a";
     user.principal_id = "admin-a";
     user.principal_type = "operator";
@@ -684,7 +684,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_create(store, &user, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     issue.domain_id = "root-a";
     issue.principal_id = "admin-a";
     issue.actor = "bootstrap";
@@ -696,12 +696,12 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_credential_generate(store, &issue, &generated);
     revision = generated.revision;
   }
-  if (rc == SALTS_OK && tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
+  if (rc == CMETA_OK && tn_base64_encode_buf((const uint8_t *)CONTROL_INTEGRATION_ADMIN_PASSWORD,
                                              sizeof(CONTROL_INTEGRATION_ADMIN_PASSWORD) - 1u,
                                              secret_base64, secret_base64_capacity) != 0)
     rc = SALTS_ENOMEM;
   flowie_control_generated_credential_wipe(&generated);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN;
     role.actor = "bootstrap";
@@ -712,7 +712,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     assignment.domain_id = "root-a";
     assignment.principal_id = "admin-a";
     assignment.role_id = FLOWIE_CONTROL_MANAGEMENT_ROLE_SECURITY_ADMIN;
@@ -724,7 +724,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_role_add(store, &assignment, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     group.domain_id = "root-a";
     group.group_id = "operators";
     group.parent_group_id = NULL;
@@ -736,7 +736,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_group_create(store, &group, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     static const char rule_text[] = "user admin-a allow {\n"
                                     "  read topic root-a/groups/operators/devices/+/heartbeat\n"
                                     "}";
@@ -749,10 +749,10 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rule.expected_revision = revision;
     rule.occurred_at = 6u;
     result = (flowie_control_command_result_t)FLOWIE_CONTROL_COMMAND_RESULT_INIT;
-    if (rc == SALTS_OK) rc = flowie_control_store_policy_subject_rule_put(store, &rule, &result);
+    if (rc == CMETA_OK) rc = flowie_control_store_policy_subject_rule_put(store, &rule, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     publish.domain_id = "root-a";
     publish.actor = "bootstrap";
     publish.request_id = "integration-policy-publish";
@@ -762,7 +762,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_policy_publish(store, &publish, &published);
     revision = published.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     user = (flowie_control_user_create_command_t)FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     user.domain_id = "root-a";
     user.principal_id = "integration-broker";
@@ -775,7 +775,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_create(store, &user, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     issue = (flowie_control_credential_issue_command_t)FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
     issue.domain_id = "root-a";
     issue.principal_id = "integration-broker";
@@ -790,7 +790,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     revision = generated.revision;
     flowie_control_generated_credential_wipe(&generated);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     role = (flowie_control_role_create_command_t)FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_SERVICE_ROLE_AUTH_CLIENT;
@@ -802,7 +802,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     role = (flowie_control_role_create_command_t)FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
     role.domain_id = "root-a";
     role.role_id = FLOWIE_CONTROL_SERVICE_ROLE_ACL_CLIENT;
@@ -814,7 +814,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_role_create(store, &role, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     assignment = (flowie_control_user_role_add_command_t)FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     assignment.domain_id = "root-a";
     assignment.principal_id = "integration-broker";
@@ -827,7 +827,7 @@ static int control_test_seed_store(const char *database_path, char *secret_base6
     rc = flowie_control_store_user_role_add(store, &assignment, &result);
     revision = result.revision;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     assignment = (flowie_control_user_role_add_command_t)FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     assignment.domain_id = "root-a";
     assignment.principal_id = "integration-broker";
@@ -896,7 +896,7 @@ static http_response_t *control_test_request(const control_http_state_t *state,
   tls.ca_file = state->ca_path;
   tls.cert_file = cert_path;
   tls.key_file = key_path;
-  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != CMETA_OK) goto done;
   response = http_post_json(client, "/v2/control/rpc", body);
 done:
   http_client_destroy(client);
@@ -937,7 +937,7 @@ static http_response_t *control_test_acl_request(const control_http_state_t *sta
   tls.ca_file = state->ca_path;
   tls.cert_file = cert_path;
   tls.key_file = key_path;
-  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != CMETA_OK) goto done;
   response = http_request(client, HTTP_POST, "/v4/acl/check", headers, 4, body, (size_t)body_size);
 done:
   memset(body, 0, sizeof(body));
@@ -968,7 +968,7 @@ static http_response_t *control_test_auth_request(const control_http_state_t *st
   http_client_set_timeout(client, CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS);
   tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != CMETA_OK) goto done;
   response = http_request(client, HTTP_POST, "/v4/authenticate", headers,
                           (int)(sizeof(headers) / sizeof(headers[0])), body, (size_t)body_size);
 done:
@@ -1103,7 +1103,7 @@ static int control_test_management_workflow(control_http_state_t *state) {
   http_client_set_cookie_jar(client, jar);
   tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != CMETA_OK) goto done;
 
   if (!control_test_management_login(state, client, jar, first_token)) goto done;
   response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_STATUS_RPC_BODY);
@@ -1250,7 +1250,7 @@ static int control_test_bootstrap_password_rotation(control_http_state_t *state)
   http_client_set_cookie_jar(client, jar);
   tls.size = sizeof(tls);
   tls.ca_file = state->ca_path;
-  if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
+  if (http_client_set_tls_client_config(client, &tls) != CMETA_OK) goto done;
 
   response = control_test_management_login_request(
       state, client, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN,
@@ -1383,8 +1383,8 @@ static void control_test_http_task(void *arg) {
   uint64_t deadline;
   http_response_t *response = NULL;
   if (!state) return;
-  deadline = salts_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
-  while (salts_monotonic_ms() < deadline) {
+  deadline = cmeta_monotonic_ms() + CONTROL_INTEGRATION_TIMEOUT_MS;
+  while (cmeta_monotonic_ms() < deadline) {
     response = control_test_auth_request(state, state->secret_base64);
     if (response && response->status_code == 200 && response->error_code == HTTP_ERROR_NONE &&
         response->body && strstr(response->body, "\"authenticated\":true") != NULL) {
@@ -1397,7 +1397,7 @@ static void control_test_http_task(void *arg) {
     }
     http_response_free(response);
     response = NULL;
-    salts_sleep_ms(25u);
+    cmeta_sleep_ms(25u);
   }
   if (!state->ready) return;
 
@@ -1459,9 +1459,9 @@ static void control_test_http_task(void *arg) {
 static int control_test_run_network_gate(void) {
   control_tls_material_t material;
   control_http_state_t http_state;
-  salts_process_options_t process_options;
-  salts_process_result_t process_result;
-  salts_process_t *process = NULL;
+  cmeta_process_options_t process_options;
+  cmeta_process_result_t process_result;
+  cmeta_process_t *process = NULL;
   char *database_path = NULL;
   char *config_path = NULL;
   char base_url[128];
@@ -1484,19 +1484,19 @@ static int control_test_run_network_gate(void) {
   failure_stage = "generate TLS material";
   if (control_test_tls_material_open(&material) != 0) goto cleanup;
   failure_stage = "seed TurboDB store";
-  if (control_test_seed_store(database_path, secret_base64, sizeof(secret_base64)) != SALTS_OK)
+  if (control_test_seed_store(database_path, secret_base64, sizeof(secret_base64)) != CMETA_OK)
     goto cleanup;
   failure_stage = "write controller configuration";
   if (control_test_write_config(config_path, database_path, &material, port) != 0) goto cleanup;
   failure_stage = "spawn controller";
 
   process_args[1] = config_path;
-  salts_process_options_init(&process_options);
+  cmeta_process_options_init(&process_options);
   process_options.program = FLOWIE_CONTROL_EXECUTABLE;
   process_options.args = process_args;
   process_options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   process_options.max_output_bytes = 65536u;
-  if (salts_process_spawn(&process_options, &process) != SALTS_OK) goto cleanup;
+  if (cmeta_process_spawn(&process_options, &process) != CMETA_OK) goto cleanup;
 
   (void)snprintf(base_url, sizeof(base_url), "https://localhost:%u", (unsigned int)port);
   http_state.base_url = base_url;
@@ -1518,10 +1518,10 @@ static int control_test_run_network_gate(void) {
       http_state.local_auth_bad_secret_forbidden && http_state.acl_decision_allowed &&
       http_state.acl_subscription_filter_allowed && http_state.acl_version_mismatch_denied &&
       http_state.acl_bad_token_forbidden && http_state.client_certificate_does_not_authenticate_rpc)
-    rc = SALTS_OK;
+    rc = CMETA_OK;
 
 cleanup:
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr,
                   "flowie-control integration failed at %s: ready=%d rpc-denied=%d session=%d "
                   "dashboard-htmx=%d dashboard-csrf=%d dashboard-write=%d "
@@ -1544,11 +1544,11 @@ cleanup:
                   http_state.client_certificate_does_not_authenticate_rpc);
   }
   if (process) {
-    if (salts_process_poll(process, &process_result) == SALTS_EBUSY) {
-      (void)salts_process_terminate(process);
-      (void)salts_process_wait(process, &process_result);
+    if (cmeta_process_poll(process, &process_result) == SALTS_EBUSY) {
+      (void)cmeta_process_terminate(process);
+      (void)cmeta_process_wait(process, &process_result);
     }
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       char child_output[4096];
       size_t child_output_size = 0u;
       char child_error[4096];
@@ -1556,23 +1556,23 @@ cleanup:
       (void)fprintf(stderr,
                     "flowie-control integration child result: state=%s pid=%d exit=%d "
                     "signal=%d error=%d\n",
-                    salts_process_state_name(process_result.state), process_result.pid,
+                    cmeta_process_state_name(process_result.state), process_result.pid,
                     process_result.exit_code, process_result.term_signal,
                     process_result.error_code);
-      if (salts_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
-                                    &child_output_size) == SALTS_OK &&
+      if (cmeta_process_read_stdout(process, child_output, sizeof(child_output) - 1u,
+                                    &child_output_size) == CMETA_OK &&
           child_output_size > 0u) {
         child_output[child_output_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stdout: %s\n", child_output);
       }
-      if (salts_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
-                                    &child_error_size) == SALTS_OK &&
+      if (cmeta_process_read_stderr(process, child_error, sizeof(child_error) - 1u,
+                                    &child_error_size) == CMETA_OK &&
           child_error_size > 0u) {
         child_error[child_error_size] = '\0';
         (void)fprintf(stderr, "flowie-control integration child stderr: %s\n", child_error);
       }
     }
-    salts_process_destroy(process);
+    cmeta_process_destroy(process);
   }
   memset(secret_base64, 0, sizeof(secret_base64));
   control_test_tls_material_close(&material);
@@ -1589,6 +1589,6 @@ cleanup:
 
 spec("Flowie controller HTTPS integration") {
   it("serves scoped APIs and rotates the fixed bootstrap administrator password over TLS") {
-    check_equal(control_test_run_network_gate(), SALTS_OK);
+    check_equal(control_test_run_network_gate(), CMETA_OK);
   }
 }

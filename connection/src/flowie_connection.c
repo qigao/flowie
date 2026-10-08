@@ -72,8 +72,8 @@ struct flowie_stream_owner_lane {
   size_t command_head;
   size_t command_count;
   size_t command_payload_bytes_used;
-  salts_mutex_t mutex;
-  salts_thread_t thread;
+  cmeta_mutex_t mutex;
+  cmeta_thread_t thread;
   size_t index;
   int terminal_status;
   bool sync_initialized;
@@ -104,9 +104,9 @@ typedef struct flowie_server_impl {
   size_t command_byte_tail;
   size_t command_bytes_used;
   size_t command_payload_bytes_used;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
-  salts_thread_t thread;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
+  cmeta_thread_t thread;
   uint16_t port;
   int terminal_status;
   bool sync_initialized;
@@ -174,7 +174,7 @@ static int flowie_command_slice_clone(const mem_slice_t *source, mem_slice_t *ou
   offset = (size_t)(data_address - base_address);
   if (offset > used || source->length > used - offset) return SALTS_EINVAL;
   *out = mem_slice(source->buffer, offset, source->length);
-  return out->buffer != NULL ? SALTS_OK : SALTS_ENOMEM;
+  return out->buffer != NULL ? CMETA_OK : SALTS_ENOMEM;
 }
 
 int flowie_peer_format(const flowie_peer_info *peer, char *output, size_t capacity) {
@@ -202,7 +202,7 @@ int flowie_peer_format(const flowie_peer_info *peer, char *output, size_t capaci
   written = peer->peer.family == CNET_DATAGRAM_ADDRESS_IPV6
                 ? snprintf(output, capacity, "[%s]:%u", address, (unsigned int)peer->peer.port)
                 : snprintf(output, capacity, "%s:%u", address, (unsigned int)peer->peer.port);
-  return written < 0 || (size_t)written >= capacity ? SALTS_ERANGE : SALTS_OK;
+  return written < 0 || (size_t)written >= capacity ? SALTS_ERANGE : CMETA_OK;
 }
 
 static bool flowie_transport_valid(flowie_transport transport) {
@@ -311,7 +311,7 @@ static void flowie_stream_state(void *user, cnet_connection connection,
   flowie_stream_peer *peer = (flowie_stream_peer *)user;
   flowie_server_impl *server;
   cnet_client *stream;
-  int status = error == NULL ? SALTS_OK : error->status;
+  int status = error == NULL ? CMETA_OK : error->status;
   if (peer == NULL || (server = peer->owner) == NULL ||
       (stream = flowie_stream_peer_client(peer)) == NULL || !peer->used ||
       peer->connection.slot != connection.slot ||
@@ -322,7 +322,7 @@ static void flowie_stream_state(void *user, cnet_connection connection,
     if (server->config.transport == TF_NET_TRANSPORT_TLS) {
       const int certificate_status = cnet_tls_peer_certificate_sha256(
           stream, connection, info.peer_certificate_sha256);
-      if (certificate_status != SALTS_OK && certificate_status != SALTS_ENOENT) {
+      if (certificate_status != CMETA_OK && certificate_status != SALTS_ENOENT) {
         (void)cnet_close(stream, connection);
         return;
       }
@@ -330,8 +330,8 @@ static void flowie_stream_state(void *user, cnet_connection connection,
     peer->opened = true;
     status = server->config.observer.on_open(
         server->config.observer.user, flowie_stream_handle(peer), &info);
-    if (status == SALTS_OK) status = cnet_receive(stream, connection, 1u);
-    if (status != SALTS_OK) {
+    if (status == CMETA_OK) status = cnet_receive(stream, connection, 1u);
+    if (status != CMETA_OK) {
       peer->close_status = status;
       peer->close_status_set = true;
       (void)cnet_close(stream, connection);
@@ -364,8 +364,8 @@ static void flowie_stream_receive(void *user, cnet_connection connection,
   status = server->config.observer.on_receive(server->config.observer.user,
                                                flowie_stream_handle(peer), view->data,
                                                view->size);
-  if (status == SALTS_OK) status = cnet_receive(stream, connection, 1u);
-  if (status != SALTS_OK) {
+  if (status == CMETA_OK) status = cnet_receive(stream, connection, 1u);
+  if (status != CMETA_OK) {
     peer->close_status = status;
     peer->close_status_set = true;
     (void)cnet_close(stream, connection);
@@ -398,7 +398,7 @@ static int flowie_packet_admit(void *user, cnet_packet_endpoint *endpoint,
   (void)protocol;
   (void)peer;
   (void)conversation;
-  return server == NULL || server->stop_requested ? SALTS_ESHUTDOWN : SALTS_OK;
+  return server == NULL || server->stop_requested ? SALTS_ESHUTDOWN : CMETA_OK;
 }
 
 static void flowie_packet_state(void *user, cnet_packet_endpoint *endpoint,
@@ -423,7 +423,7 @@ static void flowie_packet_state(void *user, cnet_packet_endpoint *endpoint,
     *record = (flowie_packet_peer){.generation = session.generation, .opened = true};
     status = server->config.observer.on_open(server->config.observer.user,
                                               flowie_packet_handle(session), &info);
-    if (status != SALTS_OK) {
+    if (status != CMETA_OK) {
       record->close_status = status;
       record->close_status_set = true;
       (void)cnet_packet_session_close(&server->packet, session);
@@ -431,7 +431,7 @@ static void flowie_packet_state(void *user, cnet_packet_endpoint *endpoint,
   } else if (state == CNET_PACKET_SESSION_CLOSED) {
     flowie_packet_peer *record = flowie_packet_peer_find(server, session);
     if (record != NULL) {
-      const int close_status = record->close_status_set ? record->close_status : SALTS_OK;
+      const int close_status = record->close_status_set ? record->close_status : CMETA_OK;
       *record = (flowie_packet_peer){0};
       server->config.observer.on_close(server->config.observer.user,
                                        flowie_packet_handle(session), close_status);
@@ -448,7 +448,7 @@ static void flowie_packet_receive(void *user, cnet_packet_endpoint *endpoint,
   status = server->config.observer.on_receive(server->config.observer.user,
                                                flowie_packet_handle(session), view->data,
                                                view->size);
-  if (status != SALTS_OK) {
+  if (status != CMETA_OK) {
     flowie_packet_peer *peer = flowie_packet_peer_find(server, session);
     if (peer != NULL) {
       peer->close_status = status;
@@ -502,11 +502,11 @@ static int flowie_ws_open(void *user, chttp_websocket *websocket,
         response, request, server->websocket_subprotocol);
     if (status == SALTS_EPROTO || status == SALTS_EINVAL)
       return chttp_server_reply(response, 400u, NULL, NULL, 0u);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
   }
   status = chttp_server_websocket_session_capture(websocket, &session);
-  if (status != SALTS_OK) return status;
-  salts_mutex_lock(&server->mutex);
+  if (status != CMETA_OK) return status;
+  cmeta_mutex_lock(&server->mutex);
   for (index = 0u; index < server->config.stream.connection_capacity; ++index) {
     if (server->ws_peers[index].used) continue;
     peer = &server->ws_peers[index];
@@ -522,16 +522,16 @@ static int flowie_ws_open(void *user, chttp_websocket *websocket,
              CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY);
     break;
   }
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&server->mutex);
   if (peer == NULL) return SALTS_ENOBUFS;
   status = server->config.observer.on_open(
       server->config.observer.user, (flowie_connection){(uint32_t)(index + 1u), peer->generation},
       &peer->peer);
-  if (status != SALTS_OK) {
-    salts_mutex_lock(&server->mutex);
+  if (status != CMETA_OK) {
+    cmeta_mutex_lock(&server->mutex);
     peer->used = false;
     peer->opened = false;
-    salts_mutex_unlock(&server->mutex);
+    cmeta_mutex_unlock(&server->mutex);
   }
   return status;
 }
@@ -543,12 +543,12 @@ static void flowie_ws_event(void *user, chttp_websocket *websocket,
   flowie_connection handle;
   bool opened = false;
   bool close_status_set = false;
-  int close_status = SALTS_OK;
-  int status = SALTS_OK;
+  int close_status = CMETA_OK;
+  int status = CMETA_OK;
   if (server == NULL || event == NULL ||
-      chttp_server_websocket_session_capture(websocket, &session) != SALTS_OK)
+      chttp_server_websocket_session_capture(websocket, &session) != CMETA_OK)
     return;
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   {
     flowie_ws_peer *peer = flowie_ws_peer_find_session(server, session);
     if (peer != NULL) {
@@ -566,28 +566,28 @@ static void flowie_ws_event(void *user, chttp_websocket *websocket,
       handle = (flowie_connection){0};
     }
   }
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&server->mutex);
   if (!flowie_handle_valid(handle)) return;
   if (event->kind == CHTTP_WEBSOCKET_EVENT_MESSAGE) {
     status = event->message_type == CHTTP_WEBSOCKET_MESSAGE_BINARY
                  ? server->config.observer.on_receive(server->config.observer.user, handle,
                                                        event->data, event->size)
                  : SALTS_EPROTO;
-    if (status != SALTS_OK) {
+    if (status != CMETA_OK) {
       const size_t index = (size_t)handle.slot - 1u;
-      salts_mutex_lock(&server->mutex);
+      cmeta_mutex_lock(&server->mutex);
       if (index < server->config.stream.connection_capacity && server->ws_peers[index].used &&
           server->ws_peers[index].generation == handle.generation) {
         server->ws_peers[index].close_status = status;
         server->ws_peers[index].close_status_set = true;
       }
-      salts_mutex_unlock(&server->mutex);
+      cmeta_mutex_unlock(&server->mutex);
       (void)chttp_websocket_close(websocket, 1002u, NULL, 0u);
     }
   } else if (event->kind == CHTTP_WEBSOCKET_EVENT_CLOSE) {
     if (opened)
       server->config.observer.on_close(server->config.observer.user, handle,
-                                       close_status_set ? close_status : SALTS_OK);
+                                       close_status_set ? close_status : CMETA_OK);
   }
 }
 
@@ -598,13 +598,13 @@ static int flowie_stream_command_progress(flowie_stream_owner_lane *owner) {
     flowie_command command;
     flowie_stream_peer *peer;
     int status;
-    salts_mutex_lock(&owner->mutex);
+    cmeta_mutex_lock(&owner->mutex);
     if (owner->command_count == 0u) {
-      salts_mutex_unlock(&owner->mutex);
-      return SALTS_OK;
+      cmeta_mutex_unlock(&owner->mutex);
+      return CMETA_OK;
     }
     command = owner->commands[owner->command_head];
-    salts_mutex_unlock(&owner->mutex);
+    cmeta_mutex_unlock(&owner->mutex);
 
     peer = flowie_stream_peer_find(server, command.connection);
     if (peer == NULL || peer->runtime_owner != owner)
@@ -623,15 +623,15 @@ static int flowie_stream_command_progress(flowie_stream_owner_lane *owner) {
       status = cnet_close(&owner->stream, peer->connection);
     }
 
-    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
+    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return CMETA_OK;
 
-    salts_mutex_lock(&owner->mutex);
+    cmeta_mutex_lock(&owner->mutex);
     owner->commands[owner->command_head] = (flowie_command){0};
     owner->command_head =
         (owner->command_head + 1u) % server->config.command_capacity;
     --owner->command_count;
     owner->command_payload_bytes_used -= command.size;
-    salts_mutex_unlock(&owner->mutex);
+    cmeta_mutex_unlock(&owner->mutex);
     flowie_command_release(&command);
   }
 }
@@ -641,16 +641,16 @@ static int flowie_packet_command_progress(flowie_server_impl *server) {
     flowie_command command;
     const unsigned char *data;
     int status;
-    salts_mutex_lock(&server->mutex);
+    cmeta_mutex_lock(&server->mutex);
     if (server->command_count == 0u) {
-      salts_mutex_unlock(&server->mutex);
-      return SALTS_OK;
+      cmeta_mutex_unlock(&server->mutex);
+      return CMETA_OK;
     }
     command = server->commands[server->command_head];
     data = command.reserved_bytes != 0u
                ? server->command_storage + command.data_offset
                : NULL;
-    salts_mutex_unlock(&server->mutex);
+    cmeta_mutex_unlock(&server->mutex);
 
     if (command.kind == TF_NET_COMMAND_SEND) {
       status = cnet_packet_send(
@@ -669,9 +669,9 @@ static int flowie_packet_command_progress(flowie_server_impl *server) {
       status = cnet_packet_session_close(&server->packet, session);
     }
 
-    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
+    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return CMETA_OK;
 
-    salts_mutex_lock(&server->mutex);
+    cmeta_mutex_lock(&server->mutex);
     server->commands[server->command_head] = (flowie_command){0};
     server->command_head =
         (server->command_head + 1u) % server->config.command_capacity;
@@ -687,7 +687,7 @@ static int flowie_packet_command_progress(flowie_server_impl *server) {
       server->command_byte_head = 0u;
       server->command_byte_tail = 0u;
     }
-    salts_mutex_unlock(&server->mutex);
+    cmeta_mutex_unlock(&server->mutex);
     flowie_command_release(&command);
   }
 }
@@ -703,7 +703,7 @@ static int flowie_stream_accept(flowie_server_impl *server,
     cnet_connection connection = {0};
     cnet_stream_peer address = {0};
     int status;
-    if (peer == NULL) return SALTS_OK;
+    if (peer == NULL) return CMETA_OK;
     peer->runtime_owner = owner;
     observer = flowie_stream_observer(peer);
     status = server->config.transport == TF_NET_TRANSPORT_TLS
@@ -716,9 +716,9 @@ static int flowie_stream_accept(flowie_server_impl *server,
     if (status == SALTS_ETIMEDOUT) {
       peer->used = false;
       peer->runtime_owner = NULL;
-      return SALTS_OK;
+      return CMETA_OK;
     }
-    if (status != SALTS_OK) {
+    if (status != CMETA_OK) {
       peer->used = false;
       peer->runtime_owner = NULL;
       return status;
@@ -731,9 +731,9 @@ static int flowie_stream_accept(flowie_server_impl *server,
 
 static bool flowie_should_stop(flowie_server_impl *server) {
   bool stop;
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   stop = server->stop_requested;
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&server->mutex);
   return stop;
 }
 
@@ -741,29 +741,29 @@ static void flowie_stream_owner_finish(flowie_stream_owner_lane *owner,
                                        int status) {
   flowie_server_impl *server;
   if (owner == NULL || (server = owner->server) == NULL) return;
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   owner->terminal_status = status;
   owner->worker_done = true;
-  if (server->terminal_status == SALTS_OK && status != SALTS_OK)
+  if (server->terminal_status == CMETA_OK && status != CMETA_OK)
     server->terminal_status = status;
-  salts_cond_broadcast(&server->changed);
-  salts_mutex_unlock(&server->mutex);
+  cmeta_cond_broadcast(&server->changed);
+  cmeta_mutex_unlock(&server->mutex);
 }
 
 static void flowie_packet_worker_finish(flowie_server_impl *server,
                                         int status) {
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   server->terminal_status = status;
   server->worker_done = true;
-  salts_cond_broadcast(&server->changed);
-  salts_mutex_unlock(&server->mutex);
+  cmeta_cond_broadcast(&server->changed);
+  cmeta_mutex_unlock(&server->mutex);
 }
 
 static void flowie_stream_worker(void *user) {
   flowie_stream_owner_lane *owner = (flowie_stream_owner_lane *)user;
   flowie_server_impl *server =
       owner != NULL ? owner->server : NULL;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
   if (server == NULL || owner->index != 0u || !owner->stream_initialized) {
     flowie_stream_owner_finish(owner, SALTS_EINVAL);
     return;
@@ -773,14 +773,14 @@ static void flowie_stream_worker(void *user) {
     size_t events = 0u;
     int ready = 0;
     status = flowie_stream_command_progress(owner);
-    if (status != SALTS_OK) break;
+    if (status != CMETA_OK) break;
     status = cnet_listener_wait(&server->listener, 0u, &ready);
-    if (status == SALTS_OK && ready)
+    if (status == CMETA_OK && ready)
       status = flowie_stream_accept(server, owner);
-    if (status == SALTS_OK)
+    if (status == CMETA_OK)
       status = cnet_client_poll(&owner->stream,
                                 server->config.poll_slice_ms, &events);
-    if (status != SALTS_OK) break;
+    if (status != CMETA_OK) break;
   }
 
   if (server->listener_initialized)
@@ -791,7 +791,7 @@ static void flowie_stream_worker(void *user) {
       stop_status = cnet_client_stop(
           &owner->stream, server->config.poll_slice_ms);
     } while (stop_status == SALTS_ETIMEDOUT);
-    if (status == SALTS_OK && stop_status != SALTS_OK &&
+    if (status == CMETA_OK && stop_status != CMETA_OK &&
         stop_status != SALTS_EALREADY)
       status = stop_status;
   }
@@ -800,14 +800,14 @@ static void flowie_stream_worker(void *user) {
 
 static void flowie_packet_worker(void *user) {
   flowie_server_impl *server = (flowie_server_impl *)user;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
   while (!flowie_should_stop(server)) {
     size_t events = 0u;
     status = flowie_packet_command_progress(server);
-    if (status != SALTS_OK) break;
+    if (status != CMETA_OK) break;
     status = cnet_packet_poll(&server->packet,
                               server->config.poll_slice_ms, &events);
-    if (status != SALTS_OK) break;
+    if (status != CMETA_OK) break;
   }
   {
     int stop_status;
@@ -815,7 +815,7 @@ static void flowie_packet_worker(void *user) {
       stop_status = cnet_packet_endpoint_stop(
           &server->packet, server->config.poll_slice_ms);
     } while (stop_status == SALTS_ETIMEDOUT);
-    if (status == SALTS_OK && stop_status != SALTS_OK &&
+    if (status == CMETA_OK && stop_status != CMETA_OK &&
         stop_status != SALTS_EALREADY)
       status = stop_status;
   }
@@ -839,7 +839,7 @@ static void flowie_stream_owner_destroy(
   free(owner->commands);
   owner->commands = NULL;
   if (owner->sync_initialized) {
-    salts_mutex_destroy(&owner->mutex);
+    cmeta_mutex_destroy(&owner->mutex);
     owner->sync_initialized = false;
   }
 }
@@ -859,8 +859,8 @@ static void flowie_impl_free(flowie_server_impl *server) {
   if (server->listener_initialized) (void)cnet_listener_destroy(&server->listener);
   if (server->tls_initialized) (void)cnet_tls_server_destroy(&server->tls);
   if (server->sync_initialized) {
-    salts_cond_destroy(&server->changed);
-    salts_mutex_destroy(&server->mutex);
+    cmeta_cond_destroy(&server->changed);
+    cmeta_mutex_destroy(&server->mutex);
   }
   if (server->commands != NULL) {
     for (index = 0u; index < server->config.command_capacity; ++index)
@@ -897,24 +897,24 @@ static int flowie_init_stream(flowie_server_impl *server) {
       (flowie_command *)calloc(server->config.command_capacity,
                                sizeof(*owner->commands));
   if (owner->commands == NULL) return SALTS_ENOMEM;
-  salts_mutex_init(&owner->mutex);
+  cmeta_mutex_init(&owner->mutex);
   owner->sync_initialized = true;
 
   status = cnet_client_init(&owner->stream, &server->config.stream);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   owner->stream_initialized = true;
   status = cnet_client_set_stream_socket_options(
       &owner->stream, &server->config.stream_socket_options);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
 
   if (server->config.transport == TF_NET_TRANSPORT_TLS) {
     status = cnet_tls_server_init(&server->tls, server->config.tls);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
     server->tls_initialized = true;
   }
   status = cnet_listener_init_ex(&server->listener, &listener,
                                  &server->config.listener_options);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   server->listener_initialized = true;
   return cnet_listener_port(&server->listener, &server->port);
 }
@@ -936,7 +936,7 @@ static int flowie_init_packet(flowie_server_impl *server) {
   packet.kcp.observer = (cnet_kcp_observer){0};
   server->config.packet = packet;
   status = cnet_packet_endpoint_init(&server->packet, &packet);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   server->packet_initialized = true;
   return cnet_packet_endpoint_port(&server->packet, &server->port);
 }
@@ -970,10 +970,10 @@ static int flowie_init_websocket(flowie_server_impl *server) {
       .stream = server->config.stream_socket_options,
       .listener = server->config.listener_options};
   int status = chttp_server_init(&server->websocket, &config);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   server->websocket_initialized = true;
   status = chttp_server_set_socket_options(&server->websocket, &socket_options);
-  if (status != SALTS_OK) return status;
+  if (status != CMETA_OK) return status;
   return chttp_server_websocket_with(&server->websocket, &route);
 }
 
@@ -1002,11 +1002,11 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
     return SALTS_EMSGSIZE;
   if (config->stream_socket_options.size != 0u) {
     status = cnet_stream_socket_options_validate(&config->stream_socket_options);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
   }
   if (config->listener_options.size != 0u) {
     status = cnet_listener_options_validate(&config->listener_options);
-    if (status != SALTS_OK) return status;
+    if (status != CMETA_OK) return status;
   }
   impl = (flowie_server_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
@@ -1040,8 +1040,8 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
     flowie_impl_free(impl);
     return SALTS_ENOMEM;
   }
-  salts_mutex_init(&impl->mutex);
-  salts_cond_init(&impl->changed);
+  cmeta_mutex_init(&impl->mutex);
+  cmeta_cond_init(&impl->changed);
   impl->sync_initialized = true;
   impl->config.host = impl->host;
   impl->config.path = impl->path;
@@ -1052,12 +1052,12 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
     status = flowie_init_packet(impl);
   else
     status = flowie_init_websocket(impl);
-  if (status != SALTS_OK) {
+  if (status != CMETA_OK) {
     flowie_impl_free(impl);
     return status;
   }
   server->impl = impl;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_server_start(flowie_server *server) {
@@ -1068,7 +1068,7 @@ int flowie_server_start(flowie_server *server) {
   if (impl->started) return SALTS_EALREADY;
   if (flowie_transport_websocket(impl->config.transport)) {
     status = chttp_server_start(&impl->websocket);
-    if (status == SALTS_OK)
+    if (status == CMETA_OK)
       status = chttp_server_port(&impl->websocket, &impl->port);
   } else if (flowie_transport_stream(impl->config.transport)) {
     flowie_stream_owner_lane *owner = flowie_stream_primary_owner(impl);
@@ -1076,22 +1076,22 @@ int flowie_server_start(flowie_server *server) {
         owner->thread_started)
       return SALTS_EPROTO;
     owner->worker_done = false;
-    owner->terminal_status = SALTS_OK;
-    status = salts_thread_create(&owner->thread, flowie_stream_worker, owner);
-    if (status == SALTS_OK)
+    owner->terminal_status = CMETA_OK;
+    status = cmeta_thread_create(&owner->thread, flowie_stream_worker, owner);
+    if (status == CMETA_OK)
       owner->thread_started = true;
     else
       status = SALTS_EIO;
   } else {
     impl->worker_done = false;
-    impl->terminal_status = SALTS_OK;
-    status = salts_thread_create(&impl->thread, flowie_packet_worker, impl);
-    if (status == SALTS_OK)
+    impl->terminal_status = CMETA_OK;
+    status = cmeta_thread_create(&impl->thread, flowie_packet_worker, impl);
+    if (status == CMETA_OK)
       impl->thread_started = true;
     else
       status = SALTS_EIO;
   }
-  if (status == SALTS_OK) impl->started = true;
+  if (status == CMETA_OK) impl->started = true;
   return status;
 }
 
@@ -1100,7 +1100,7 @@ int flowie_server_port(const flowie_server *server, uint16_t *out_port) {
   if (server == NULL || server->impl == NULL || out_port == NULL) return SALTS_EINVAL;
   impl = (const flowie_server_impl *)server->impl;
   *out_port = impl->port;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_stream_command_submit(
@@ -1111,7 +1111,7 @@ static int flowie_stream_command_submit(
   flowie_command *command;
   mem_buffer_t *buffer = NULL;
   size_t tail;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
 
   if (server == NULL || !flowie_handle_valid(connection) ||
       (data == NULL && size != 0u) ||
@@ -1131,8 +1131,8 @@ static int flowie_stream_command_submit(
     mem_set_used(buffer, size);
   }
 
-  salts_mutex_lock(&server->mutex);
-  salts_mutex_lock(&owner->mutex);
+  cmeta_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&owner->mutex);
   if (!server->started || server->stop_requested || owner->worker_done) {
     status = SALTS_ESHUTDOWN;
   } else if (owner->command_count == server->config.command_capacity ||
@@ -1152,11 +1152,11 @@ static int flowie_stream_command_submit(
     ++owner->command_count;
     owner->command_payload_bytes_used += size;
   }
-  salts_mutex_unlock(&owner->mutex);
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&owner->mutex);
+  cmeta_mutex_unlock(&server->mutex);
 
   if (buffer != NULL) mem_buffer_release(buffer);
-  if (status == SALTS_OK) (void)cnet_client_wake(&owner->stream);
+  if (status == CMETA_OK) (void)cnet_client_wake(&owner->stream);
   return status;
 }
 
@@ -1169,7 +1169,7 @@ static int flowie_packet_command_submit(
   size_t data_offset = 0u;
   size_t reserved_bytes = 0u;
   size_t tail;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
 
   if (server == NULL || !flowie_handle_valid(connection) ||
       (data == NULL && size != 0u) ||
@@ -1177,7 +1177,7 @@ static int flowie_packet_command_submit(
       !flowie_transport_packet(server->config.transport))
     return SALTS_EINVAL;
 
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   if (!server->started || server->stop_requested || server->worker_done) {
     status = SALTS_ESHUTDOWN;
     goto unlock;
@@ -1239,8 +1239,8 @@ static int flowie_packet_command_submit(
   server->command_payload_bytes_used += size;
 
 unlock:
-  salts_mutex_unlock(&server->mutex);
-  if (status == SALTS_OK) (void)cnet_packet_wake(&server->packet);
+  cmeta_mutex_unlock(&server->mutex);
+  if (status == CMETA_OK) (void)cnet_packet_wake(&server->packet);
   return status;
 }
 
@@ -1268,7 +1268,7 @@ static int flowie_command_submit_slicev(
   size_t total_size = 0u;
   size_t tail;
   size_t index;
-  int status = SALTS_OK;
+  int status = CMETA_OK;
 
   if (server == NULL || !flowie_handle_valid(connection) || segments == NULL ||
       segment_count == 0u || segment_count > CNET_RETAINED_VECTOR_MAX ||
@@ -1281,7 +1281,7 @@ static int flowie_command_submit_slicev(
   if (owned == NULL) return SALTS_ENOMEM;
   for (index = 0u; index < segment_count; ++index) {
     status = flowie_command_slice_clone(&segments[index], &owned[index]);
-    if (status != SALTS_OK) goto fail;
+    if (status != CMETA_OK) goto fail;
     if (owned[index].length > SIZE_MAX - total_size) {
       status = SALTS_ERANGE;
       goto fail;
@@ -1294,8 +1294,8 @@ static int flowie_command_submit_slicev(
     goto fail;
   }
 
-  salts_mutex_lock(&server->mutex);
-  salts_mutex_lock(&owner->mutex);
+  cmeta_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&owner->mutex);
   if (!server->started || server->stop_requested || owner->worker_done) {
     status = SALTS_ESHUTDOWN;
   } else if (owner->command_count == server->config.command_capacity ||
@@ -1315,10 +1315,10 @@ static int flowie_command_submit_slicev(
     owner->command_payload_bytes_used += total_size;
     owned = NULL;
   }
-  salts_mutex_unlock(&owner->mutex);
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&owner->mutex);
+  cmeta_mutex_unlock(&server->mutex);
 
-  if (status == SALTS_OK) (void)cnet_client_wake(&owner->stream);
+  if (status == CMETA_OK) (void)cnet_client_wake(&owner->stream);
 fail:
   if (owned != NULL) {
     flowie_command cleanup = {.slices = owned, .slice_count = segment_count};
@@ -1333,12 +1333,12 @@ static bool flowie_ws_session_copy(flowie_server_impl *server, flowie_connection
   const size_t index = (size_t)connection.slot - 1u;
   bool found;
   if (connection.slot == 0u || index >= server->config.stream.connection_capacity) return false;
-  salts_mutex_lock(&server->mutex);
+  cmeta_mutex_lock(&server->mutex);
   peer = &server->ws_peers[index];
   if (!peer->used || peer->generation != connection.generation) peer = NULL;
   if (peer != NULL) *out_session = peer->session;
   found = peer != NULL;
-  salts_mutex_unlock(&server->mutex);
+  cmeta_mutex_unlock(&server->mutex);
   return found;
 }
 
@@ -1354,7 +1354,7 @@ int flowie_server_send(flowie_server *server, flowie_connection connection, cons
     if (!flowie_ws_session_copy(impl, connection, &session)) return SALTS_ENOENT;
     return chttp_server_websocket_send_binary(&session, data, size);
   }
-  return flowie_command_submit(impl, connection, TF_NET_COMMAND_SEND, data, size, SALTS_OK);
+  return flowie_command_submit(impl, connection, TF_NET_COMMAND_SEND, data, size, CMETA_OK);
 }
 
 int flowie_server_send_slicev(flowie_server *server, flowie_connection connection,
@@ -1376,22 +1376,22 @@ int flowie_server_close(flowie_server *server, flowie_connection connection, int
     const size_t index = (size_t)connection.slot - 1u;
     int close_result;
     if (!flowie_ws_session_copy(impl, connection, &session)) return SALTS_ENOENT;
-    salts_mutex_lock(&impl->mutex);
+    cmeta_mutex_lock(&impl->mutex);
     if (index < impl->config.stream.connection_capacity && impl->ws_peers[index].used &&
         impl->ws_peers[index].generation == connection.generation) {
       impl->ws_peers[index].close_status = status;
       impl->ws_peers[index].close_status_set = true;
     }
-    salts_mutex_unlock(&impl->mutex);
+    cmeta_mutex_unlock(&impl->mutex);
     close_result = chttp_server_websocket_close(&session, 1000u, NULL, 0u);
-    if (close_result != SALTS_OK) {
-      salts_mutex_lock(&impl->mutex);
+    if (close_result != CMETA_OK) {
+      cmeta_mutex_lock(&impl->mutex);
       if (index < impl->config.stream.connection_capacity && impl->ws_peers[index].used &&
           impl->ws_peers[index].generation == connection.generation &&
           impl->ws_peers[index].close_status_set &&
           impl->ws_peers[index].close_status == status)
         impl->ws_peers[index].close_status_set = false;
-      salts_mutex_unlock(&impl->mutex);
+      cmeta_mutex_unlock(&impl->mutex);
     }
     return close_result;
   }
@@ -1404,7 +1404,7 @@ int flowie_server_stop(flowie_server *server, uint32_t timeout_ms) {
   int status;
   if (server == NULL || server->impl == NULL) return SALTS_EINVAL;
   impl = (flowie_server_impl *)server->impl;
-  if (!impl->started) return SALTS_OK;
+  if (!impl->started) return CMETA_OK;
   if (flowie_transport_websocket(impl->config.transport)) {
     status = chttp_server_stop(&impl->websocket, timeout_ms);
     if (status != SALTS_ETIMEDOUT && status != SALTS_EBUSY)
@@ -1412,10 +1412,10 @@ int flowie_server_stop(flowie_server *server, uint32_t timeout_ms) {
     return status;
   }
 
-  started_ms = salts_monotonic_ms();
-  salts_mutex_lock(&impl->mutex);
+  started_ms = cmeta_monotonic_ms();
+  cmeta_mutex_lock(&impl->mutex);
   impl->stop_requested = true;
-  salts_mutex_unlock(&impl->mutex);
+  cmeta_mutex_unlock(&impl->mutex);
 
   if (flowie_transport_stream(impl->config.transport)) {
     flowie_stream_owner_lane *owner = flowie_stream_primary_owner(impl);
@@ -1423,56 +1423,56 @@ int flowie_server_stop(flowie_server *server, uint32_t timeout_ms) {
       return SALTS_EPROTO;
     (void)cnet_client_wake(&owner->stream);
 
-    salts_mutex_lock(&impl->mutex);
+    cmeta_mutex_lock(&impl->mutex);
     while (!owner->worker_done) {
-      const uint64_t elapsed = salts_monotonic_ms() - started_ms;
+      const uint64_t elapsed = cmeta_monotonic_ms() - started_ms;
       if (timeout_ms != 0u && elapsed >= timeout_ms) {
-        salts_mutex_unlock(&impl->mutex);
+        cmeta_mutex_unlock(&impl->mutex);
         return SALTS_ETIMEDOUT;
       }
       if (timeout_ms == 0u)
-        salts_cond_wait(&impl->changed, &impl->mutex);
-      else if (salts_cond_timedwait(
+        cmeta_cond_wait(&impl->changed, &impl->mutex);
+      else if (cmeta_cond_timedwait(
                    &impl->changed, &impl->mutex,
-                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != SALTS_OK &&
+                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != CMETA_OK &&
                !owner->worker_done) {
-        salts_mutex_unlock(&impl->mutex);
+        cmeta_mutex_unlock(&impl->mutex);
         return SALTS_ETIMEDOUT;
       }
     }
     status = owner->terminal_status;
-    salts_mutex_unlock(&impl->mutex);
+    cmeta_mutex_unlock(&impl->mutex);
 
     if (owner->thread_started) {
-      if (salts_thread_join(&owner->thread) != SALTS_OK) return SALTS_EIO;
-      salts_thread_destroy(&owner->thread);
+      if (cmeta_thread_join(&owner->thread) != CMETA_OK) return SALTS_EIO;
+      cmeta_thread_destroy(&owner->thread);
       owner->thread_started = false;
     }
   } else {
     (void)cnet_packet_wake(&impl->packet);
-    salts_mutex_lock(&impl->mutex);
+    cmeta_mutex_lock(&impl->mutex);
     while (!impl->worker_done) {
-      const uint64_t elapsed = salts_monotonic_ms() - started_ms;
+      const uint64_t elapsed = cmeta_monotonic_ms() - started_ms;
       if (timeout_ms != 0u && elapsed >= timeout_ms) {
-        salts_mutex_unlock(&impl->mutex);
+        cmeta_mutex_unlock(&impl->mutex);
         return SALTS_ETIMEDOUT;
       }
       if (timeout_ms == 0u)
-        salts_cond_wait(&impl->changed, &impl->mutex);
-      else if (salts_cond_timedwait(
+        cmeta_cond_wait(&impl->changed, &impl->mutex);
+      else if (cmeta_cond_timedwait(
                    &impl->changed, &impl->mutex,
-                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != SALTS_OK &&
+                   ((uint64_t)timeout_ms - elapsed) * 1000000u) != CMETA_OK &&
                !impl->worker_done) {
-        salts_mutex_unlock(&impl->mutex);
+        cmeta_mutex_unlock(&impl->mutex);
         return SALTS_ETIMEDOUT;
       }
     }
     status = impl->terminal_status;
-    salts_mutex_unlock(&impl->mutex);
+    cmeta_mutex_unlock(&impl->mutex);
 
     if (impl->thread_started) {
-      if (salts_thread_join(&impl->thread) != SALTS_OK) return SALTS_EIO;
-      salts_thread_destroy(&impl->thread);
+      if (cmeta_thread_join(&impl->thread) != CMETA_OK) return SALTS_EIO;
+      cmeta_thread_destroy(&impl->thread);
       impl->thread_started = false;
     }
   }
@@ -1485,7 +1485,7 @@ int flowie_server_destroy(flowie_server *server) {
   flowie_server_impl *impl;
   flowie_stream_owner_lane *owner;
   if (server == NULL) return SALTS_EINVAL;
-  if (server->impl == NULL) return SALTS_OK;
+  if (server->impl == NULL) return CMETA_OK;
   impl = (flowie_server_impl *)server->impl;
   if (impl->started || impl->thread_started) return SALTS_EBUSY;
   owner = flowie_transport_stream(impl->config.transport)
@@ -1494,5 +1494,5 @@ int flowie_server_destroy(flowie_server *server) {
   if (owner != NULL && owner->thread_started) return SALTS_EBUSY;
   flowie_impl_free(impl);
   server->impl = NULL;
-  return SALTS_OK;
+  return CMETA_OK;
 }

@@ -2,12 +2,12 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "platform.h"
-#include "salts_coro.h"
+#include "coro.h"
 #include "flowie_control_credential_internal.h"
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -47,9 +47,9 @@ static int management_rpc_policy_gate_wait(management_rpc_policy_operation_t ope
   if (!gate || gate->operation != operation) return SALTS_EINVAL;
   atomic_store_explicit(&gate->entered, 1, memory_order_release);
   while (!atomic_load_explicit(&gate->release, memory_order_acquire))
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   atomic_store_explicit(&gate->completed, 1, memory_order_release);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int management_rpc_policy_validate(void *ctx, const char *domain_id,
@@ -58,11 +58,11 @@ static int management_rpc_policy_validate(void *ctx, const char *domain_id,
   (void)ctx;
   if (!domain_id || !out || out->size < sizeof(*out)) return SALTS_EINVAL;
   rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_VALIDATE);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   out->store_revision = 2u;
   out->rule_count = 3u;
   out->deny_rule_count = 1u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int management_rpc_policy_publish(void *ctx,
@@ -73,11 +73,11 @@ static int management_rpc_policy_publish(void *ctx,
   if (!command || command->size < sizeof(*command) || !result || result->size < sizeof(*result))
     return SALTS_EINVAL;
   rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_PUBLISH);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   result->revision = 3u;
   result->policy_version = 2u;
   result->replayed = 0;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int management_rpc_policy_dry_run(void *ctx, const char *domain_id,
@@ -89,22 +89,22 @@ static int management_rpc_policy_dry_run(void *ctx, const char *domain_id,
   if (!domain_id || !changes || change_count == 0u || !result || result->size < sizeof(*result))
     return SALTS_EINVAL;
   rc = management_rpc_policy_gate_wait(MANAGEMENT_RPC_POLICY_DRY_RUN);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   result->valid = 1;
   result->store_revision = 2u;
   result->rule_count = 2u;
   result->deny_rule_count = 0u;
   result->diagnostic_count = 0u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int management_rpc_resolve(void *ctx, const Req *request,
                                   flowie_control_management_caller_t *caller_out) {
   management_rpc_fixture_t *fixture = (management_rpc_fixture_t *)ctx;
   (void)request;
-  if (fixture->resolver_rc != SALTS_OK) return fixture->resolver_rc;
+  if (fixture->resolver_rc != CMETA_OK) return fixture->resolver_rc;
   *caller_out = fixture->caller;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static uint64_t management_rpc_clock(void *ctx) { return ((management_rpc_fixture_t *)ctx)->now; }
@@ -116,7 +116,7 @@ static int management_rpc_external_https_stats(
   ++fixture->external_https_stats_calls;
   if (!fixture->external_https_enabled) return SALTS_ENOENT;
   *stats_out = fixture->external_https_stats;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static flowie_control_management_rpc_server_t *
@@ -138,12 +138,12 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
   check_not_null(*path_out);
   check_equal(flowie_control_test_turbodb_init(&test_database, *path_out), 0);
   store_config.database = &test_database.config;
-  check_equal(flowie_control_store_open(&store_config, store_out), SALTS_OK);
+  check_equal(flowie_control_store_open(&store_config, store_out), CMETA_OK);
   root.domain_id = "root-a";
   root.actor = "bootstrap";
   root.request_id = "request-root";
   root.occurred_at = 1000u;
-  check_equal(flowie_control_store_domain_create(*store_out, &root, &root_result), SALTS_OK);
+  check_equal(flowie_control_store_domain_create(*store_out, &root, &root_result), CMETA_OK);
   service_config.repository = flowie_control_store_repository(*store_out);
   if (fixture->policy_gate) {
     fixture->repository = *service_config.repository;
@@ -154,7 +154,7 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
     fixture->repository.policy = &fixture->policy_ops;
     service_config.repository = &fixture->repository;
   }
-  check_equal(flowie_control_management_service_create(&service_config, service_out), SALTS_OK);
+  check_equal(flowie_control_management_service_create(&service_config, service_out), CMETA_OK);
   rpc_config.endpoint = "/v2/control/rpc";
   rpc_config.enable_batch = 0;
   rpc_config.enable_introspection = 0;
@@ -170,10 +170,10 @@ management_rpc_open(char **path_out, flowie_control_store_t **store_out,
   server_config.clock_ctx = fixture;
   server_config.external_https_stats = management_rpc_external_https_stats;
   server_config.external_https_stats_ctx = fixture;
-  check_equal(flowie_control_management_rpc_server_create(&server_config, &server), SALTS_OK);
+  check_equal(flowie_control_management_rpc_server_create(&server_config, &server), CMETA_OK);
   *app_out = flowie_control_http_app_create();
   check_not_null(*app_out);
-  check_equal(flowie_control_management_rpc_server_bind(server, *app_out), SALTS_OK);
+  check_equal(flowie_control_management_rpc_server_bind(server, *app_out), CMETA_OK);
   return server;
 }
 
@@ -254,7 +254,7 @@ static void management_rpc_policy_task(coro_t *co, void *arg) {
   if (mem_init(&arena, 0u) != 0) return;
   document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
                                  scenario->policy_body, &status);
-  scenario->policy_ok = status == SALTS_OK && management_rpc_error_code(document) == 0;
+  scenario->policy_ok = status == CMETA_OK && management_rpc_error_code(document) == 0;
   json_free(document);
   mem_destroy(&arena);
 }
@@ -273,7 +273,7 @@ static void management_rpc_status_task(coro_t *co, void *arg) {
   if (mem_init(&arena, 0u) == 0) {
     document = management_rpc_call(scenario->server, scenario->app, &arena, &scenario->security,
                                    status_body, &status);
-    scenario->status_ok = status == SALTS_OK && management_rpc_error_code(document) == 0;
+    scenario->status_ok = status == CMETA_OK && management_rpc_error_code(document) == 0;
     json_free(document);
     mem_destroy(&arena);
   }
@@ -285,10 +285,10 @@ static void management_rpc_status_task(coro_t *co, void *arg) {
 
 static void management_rpc_watchdog(void *arg) {
   management_rpc_policy_gate_t *gate = (management_rpc_policy_gate_t *)arg;
-  uint64_t deadline = salts_monotonic_ms() + 750u;
+  uint64_t deadline = cmeta_monotonic_ms() + 750u;
   while (!atomic_load_explicit(&gate->status_completed, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   atomic_store_explicit(&gate->release, 1, memory_order_release);
 }
 
@@ -304,7 +304,7 @@ static void management_rpc_run_responsiveness_scenario(management_rpc_policy_ope
   management_rpc_policy_gate_t gate;
   management_rpc_responsiveness_scenario_t scenario;
   coro_scheduler_t *scheduler;
-  salts_thread_t watchdog = NULL;
+  cmeta_thread_t watchdog = NULL;
 
   memset(&fixture, 0, sizeof(fixture));
   memset(&gate, 0, sizeof(gate));
@@ -332,10 +332,10 @@ static void management_rpc_run_responsiveness_scenario(management_rpc_policy_ope
   scenario.policy_body = policy_body;
   check_not_null(coro_spawn(scheduler, management_rpc_policy_task, &scenario, NULL));
   check_not_null(coro_spawn(scheduler, management_rpc_status_task, &scenario, NULL));
-  check_equal(salts_thread_create(&watchdog, management_rpc_watchdog, &gate), SALTS_OK);
+  check_equal(cmeta_thread_create(&watchdog, management_rpc_watchdog, &gate), CMETA_OK);
   coro_scheduler_run(scheduler);
-  check_equal(salts_thread_join(&watchdog), SALTS_OK);
-  salts_thread_destroy(&watchdog);
+  check_equal(cmeta_thread_join(&watchdog), CMETA_OK);
+  cmeta_thread_destroy(&watchdog);
 
   check_true(scenario.policy_ok);
   check_true(scenario.status_ok);
@@ -373,7 +373,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     management_rpc_responsiveness_scenario_t scenario;
     flowie_control_http_security_context_t security = {0};
     json_value_t *document = NULL;
@@ -387,7 +387,7 @@ spec("Flowie management JSON-RPC") {
     security.authenticated = true;
     server = management_rpc_open(&path, &store, &service, &rpc, &app, &fixture);
     document = management_rpc_request(server, app, &security, create_user, &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
 
@@ -412,7 +412,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -516,7 +516,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -543,8 +543,8 @@ spec("Flowie management JSON-RPC") {
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
     fixture.caller.permissions = FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN;
-    check_equal(flowie_control_store_revision(store, &revision_before), SALTS_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_before), SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision_before), CMETA_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_before), CMETA_OK);
 
     document = management_rpc_call(
         server, app, &arena, &security,
@@ -554,7 +554,7 @@ spec("Flowie management JSON-RPC") {
         "\"entries\":[{\"effect\":\"allow\",\"access\":\"write\","
         "\"topic\":\"root-a/telemetry/%u/event\"}]}]},\"id\":2}",
         &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = json_object_get(document, "result");
     check_not_null(result);
@@ -584,7 +584,7 @@ spec("Flowie management JSON-RPC") {
         "\"entries\":[{\"effect\":\"allow\",\"access\":\"read\","
         "\"topic\":\"root-a/telemetry/%u/event\"}]}]},\"id\":4}",
         &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = json_object_get(document, "result");
     check_false(json_bool(json_object_get(result, "valid")));
@@ -603,8 +603,8 @@ spec("Flowie management JSON-RPC") {
     check_equal(management_rpc_error_code(document), RPC_ERROR_INVALID_PARAMS);
     json_free(document);
 
-    check_equal(flowie_control_store_revision(store, &revision_after), SALTS_OK);
-    check_equal(flowie_control_store_audit_count(store, &audit_after), SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision_after), CMETA_OK);
+    check_equal(flowie_control_store_audit_count(store, &audit_after), CMETA_OK);
     check_equal(revision_after, revision_before);
     check_equal(audit_after, audit_before);
 
@@ -642,7 +642,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -666,7 +666,7 @@ spec("Flowie management JSON-RPC") {
                                    "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\","
                                    "\"params\":{\"domain_id\":\"root-a\"},\"id\":2}",
                                    &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     check_equal(json_string(
                     json_object_get(json_object_get(document, "result"), "domain")),
@@ -710,7 +710,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -770,7 +770,7 @@ spec("Flowie management JSON-RPC") {
     document = management_rpc_call(
         server, app, &arena, &security,
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"id\":4}", &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = json_object_get(document, "result");
     check_not_null(result);
@@ -797,7 +797,7 @@ spec("Flowie management JSON-RPC") {
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.auth.external_https.stats\",\"params\":{},"
         "\"id\":5}",
         &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = json_object_get(document, "result");
     check_not_null(result);
@@ -817,7 +817,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -861,7 +861,7 @@ spec("Flowie management JSON-RPC") {
     check_not_null(result);
     check_null(json_object_get(result, "revision"));
     json_free(document);
-    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
+    check_equal(flowie_control_store_revision(store, &revision), CMETA_OK);
     check_equal(revision, 2u);
 
     management_rpc_close(server, rpc, app, service, store, path);
@@ -875,7 +875,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -976,7 +976,7 @@ spec("Flowie management JSON-RPC") {
     check_equal(flowie_control_store_credential_verify(store, "root-a", "device-1", rotated_token,
                                                        FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
                                                        &verified),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(verified.credential_revision, 4u);
 
     document = management_rpc_call(
@@ -1009,7 +1009,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     json_value_t *document = NULL;
     json_value_t *result = NULL;
@@ -1039,7 +1039,7 @@ spec("Flowie management JSON-RPC") {
                        principal_id);
     check_true(written > 0 && (size_t)written < sizeof(request));
     document = management_rpc_request(server, app, &security, request, &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
 
@@ -1048,7 +1048,7 @@ spec("Flowie management JSON-RPC") {
         "{\"jsonrpc\":\"2.0\",\"method\":\"control.role.create\",\"params\":{"
         "\"role_id\":\"tenant-admin\",\"request_id\":\"tenant-admin-create\"},\"id\":2}",
         &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
 
@@ -1059,7 +1059,7 @@ spec("Flowie management JSON-RPC") {
                        principal_id);
     check_true(written > 0 && (size_t)written < sizeof(request));
     document = management_rpc_request(server, app, &security, request, &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
 
@@ -1070,7 +1070,7 @@ spec("Flowie management JSON-RPC") {
                  principal_id);
     check_true(written > 0 && (size_t)written < sizeof(request));
     document = management_rpc_request(server, app, &security, request, &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     result = json_object_get(document, "result");
     check_not_null(result);
@@ -1080,17 +1080,17 @@ spec("Flowie management JSON-RPC") {
     memcpy(token, generated_token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE + 1u);
     json_free(document);
 
-    check_equal(flowie_control_store_user_get(store, "root-a", principal_id, &user), SALTS_OK);
+    check_equal(flowie_control_store_user_get(store, "root-a", principal_id, &user), CMETA_OK);
     check_equal(user.principal_id, principal_id);
     check_equal(user.principal_type, "service");
     check_equal(flowie_control_store_effective_roles(store, "root-a", principal_id, &roles),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(roles.role_count, 1u);
     check_equal(roles.roles[0], "tenant-admin");
     check_equal(flowie_control_store_credential_verify(store, "root-a", principal_id, token,
                                                        FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE,
                                                        &verified),
-                SALTS_OK);
+                CMETA_OK);
 
     flowie_control_credential_wipe(token, sizeof(token));
     management_rpc_close(server, rpc, app, service, store, path);
@@ -1103,7 +1103,7 @@ spec("Flowie management JSON-RPC") {
     flowie_control_management_rpc_server_t *server = NULL;
     rpc_context_t *rpc = NULL;
     flowie_control_http_app_t *app = NULL;
-    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, SALTS_OK};
+    management_rpc_fixture_t fixture = {FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT, 5000u, CMETA_OK};
     flowie_control_http_security_context_t security = {0};
     mem_pool_t arena;
     json_value_t *document = NULL;
@@ -1154,7 +1154,7 @@ spec("Flowie management JSON-RPC") {
         "\"initial_password\":\"Root-B-Admin-Password-2026\","
         "\"request_id\":\"root-b-admin-initialize\"},\"id\":4}",
         &status);
-    check_equal(status, SALTS_OK);
+    check_equal(status, CMETA_OK);
     check_equal(management_rpc_error_code(document), 0);
     json_free(document);
 

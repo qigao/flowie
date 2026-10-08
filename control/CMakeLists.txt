@@ -245,7 +245,7 @@ cmake_config_target(flowie_control_startup NO_INSTALL FOLDER "flowie/control/int
 target_include_directories(flowie_control_startup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                         ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(flowie_control_startup
-                      PRIVATE Orm::C Salts::Core Salts::CmdParser Salts::CYaml
+                      PRIVATE Orm::C Salts::Core Salts::CFlow Salts::CmdParser Salts::CYaml
                               Salts::CYamlJsonAdapter Salts::JsonParser)
 
   set(FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR

@@ -164,7 +164,7 @@ static int external_https_json_fields_exact(const json_value_t *object, const ch
       if (previous_field && field && strcmp(previous_field, field) == 0) return SALTS_EPROTO;
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int external_https_json_u64(const json_value_t *value, uint64_t *out) {
@@ -183,7 +183,7 @@ static int external_https_json_u64(const json_value_t *value, uint64_t *out) {
   parsed = strtoull(buffer, &end, 10);
   if (errno == ERANGE || !end || *end != '\0') return SALTS_EPROTO;
   *out = (uint64_t)parsed;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int external_https_copy_json_string(const json_value_t *object, const char *field, char *out,
@@ -199,7 +199,7 @@ static int external_https_copy_json_string(const json_value_t *object, const cha
   if (!text || size == 0u || size >= capacity || memchr(text, '\0', size)) return SALTS_EPROTO;
   memcpy(out, text, size);
   out[size] = '\0';
-  return external_https_text_valid(out, capacity - 1u, 1) ? SALTS_OK : SALTS_EPROTO;
+  return external_https_text_valid(out, capacity - 1u, 1) ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int external_https_copy_groups(const json_value_t *object,
@@ -227,7 +227,7 @@ static int external_https_copy_groups(const json_value_t *object,
         return SALTS_EPROTO;
   }
   assertion->external_group_count = (uint32_t)count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_external_https_decode_response(
@@ -256,57 +256,57 @@ int flowie_control_external_https_decode_response(
     return SALTS_EPROTO;
   authenticated = json_object_get(document, "authenticated");
   if (!authenticated || json_type(authenticated) != JSON_BOOL ||
-      external_https_json_u64(json_object_get(document, "version"), &version) != SALTS_OK ||
+      external_https_json_u64(json_object_get(document, "version"), &version) != CMETA_OK ||
       version != FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)
     goto done;
   if (!json_bool(authenticated)) {
     if (external_https_json_fields_exact(
-            document, denied_fields, sizeof(denied_fields) / sizeof(denied_fields[0])) != SALTS_OK)
+            document, denied_fields, sizeof(denied_fields) / sizeof(denied_fields[0])) != CMETA_OK)
       goto done;
     rc = SALTS_EPERM;
     goto done;
   }
   if (external_https_json_fields_exact(document, outer_fields,
-                                       sizeof(outer_fields) / sizeof(outer_fields[0])) != SALTS_OK)
+                                       sizeof(outer_fields) / sizeof(outer_fields[0])) != CMETA_OK)
     goto done;
   assertion_object = json_object_get(document, "assertion");
   if (external_https_json_fields_exact(assertion_object, assertion_fields,
                                        sizeof(assertion_fields) / sizeof(assertion_fields[0])) !=
-      SALTS_OK)
+      CMETA_OK)
     goto done;
   if (external_https_copy_json_string(assertion_object, "issuer", assertion.issuer,
-                                      sizeof(assertion.issuer)) != SALTS_OK ||
+                                      sizeof(assertion.issuer)) != CMETA_OK ||
       external_https_copy_json_string(assertion_object, "domain_id", assertion.domain_id,
-                                      sizeof(assertion.domain_id)) != SALTS_OK ||
+                                      sizeof(assertion.domain_id)) != CMETA_OK ||
       external_https_copy_json_string(assertion_object, "subject", assertion.subject,
-                                      sizeof(assertion.subject)) != SALTS_OK ||
+                                      sizeof(assertion.subject)) != CMETA_OK ||
       external_https_copy_json_string(assertion_object, "subject_type", assertion.subject_type,
-                                      sizeof(assertion.subject_type)) != SALTS_OK ||
+                                      sizeof(assertion.subject_type)) != CMETA_OK ||
       external_https_copy_json_string(assertion_object, "auth_method", assertion.auth_method,
-                                      sizeof(assertion.auth_method)) != SALTS_OK ||
+                                      sizeof(assertion.auth_method)) != CMETA_OK ||
       strcmp(assertion.auth_method, method) != 0 ||
       external_https_json_u64(json_object_get(assertion_object, "issued_at"),
-                              &assertion.issued_at) != SALTS_OK ||
+                              &assertion.issued_at) != CMETA_OK ||
       external_https_json_u64(json_object_get(assertion_object, "expires_at"),
-                              &assertion.expires_at) != SALTS_OK ||
+                              &assertion.expires_at) != CMETA_OK ||
       external_https_json_u64(json_object_get(assertion_object, "revision"),
-                              &assertion.revision) != SALTS_OK ||
+                              &assertion.revision) != CMETA_OK ||
       external_https_json_u64(json_object_get(assertion_object, "assurance_level"),
-                              &assurance) != SALTS_OK ||
+                              &assurance) != CMETA_OK ||
       assurance < FLOWIE_CONTROL_EXTERNAL_ASSURANCE_SINGLE_FACTOR ||
       assurance > FLOWIE_CONTROL_EXTERNAL_ASSURANCE_HARDWARE_BOUND || assertion.issued_at == 0u ||
       assertion.expires_at <= assertion.issued_at || assertion.revision == 0u ||
-      external_https_copy_groups(assertion_object, &assertion) != SALTS_OK)
+      external_https_copy_groups(assertion_object, &assertion) != CMETA_OK)
     goto done;
   account_enabled = json_object_get(assertion_object, "account_enabled");
   if (!account_enabled || json_type(account_enabled) != JSON_BOOL) goto done;
   assertion.assurance_level = (uint32_t)assurance;
   assertion.account_enabled = json_bool(account_enabled) ? 1 : 0;
   *assertion_out = assertion;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
-  if (rc != SALTS_OK)
+  if (rc != CMETA_OK)
     *assertion_out =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
   json_free(document);
@@ -314,7 +314,7 @@ done:
 }
 
 static int external_https_json_add(json_value_t *object, const char *field, json_value_t *value) {
-  if (value && json_object_add_checked(object, field, value)) return SALTS_OK;
+  if (value && json_object_add_checked(object, field, value)) return CMETA_OK;
   if (value) {
     json_value_t *owned = (json_value_t *)value;
     json_free(owned);
@@ -350,27 +350,27 @@ int flowie_control_external_https_encode_request(
   if (!document) goto done;
   if (external_https_json_add(
           document, "version",
-          json_create_uint64(FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)) != SALTS_OK ||
+          json_create_uint64(FLOWIE_CONTROL_EXTERNAL_HTTPS_PROTOCOL_VERSION)) != CMETA_OK ||
       external_https_json_add(document, "domain", json_create_string(request->domain_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       external_https_json_add(document, "identity",
-                              json_create_string(request->presented_identity)) != SALTS_OK ||
+                              json_create_string(request->presented_identity)) != CMETA_OK ||
       external_https_json_add(document, "method", json_create_string(request->method)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       external_https_json_add(document, "secret_base64", json_create_string(secret_base64)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       external_https_json_add(document, "protocol", json_create_string(request->protocol)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       external_https_json_add(document, "remote_address",
-                              json_create_string(request->remote_address)) != SALTS_OK ||
+                              json_create_string(request->remote_address)) != CMETA_OK ||
       external_https_json_add(document, "peer_certificate_sha256",
                               json_create_string(request->peer_certificate_sha256
                                                            ? request->peer_certificate_sha256
-                                                           : "")) != SALTS_OK)
+                                                           : "")) != CMETA_OK)
     goto done;
   *body_out = json_serialize(document, body_size_out);
   if (!*body_out) goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   if (secret_base64) {
@@ -410,7 +410,7 @@ static int external_https_endpoint_text(char *connection_uri, size_t connection_
   if (connection_size <= 0 || (size_t)connection_size >= connection_capacity ||
       authority_size <= 0 || (size_t)authority_size >= authority_capacity)
     return SALTS_ERANGE;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int external_https_validate_url(const char *url, tstr *host_out, uint16_t *port_out) {
@@ -435,7 +435,7 @@ static int external_https_validate_url(const char *url, tstr *host_out, uint16_t
     goto done;
   }
   *port_out = port == 0 ? 443u : (uint16_t)port;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   return rc;
@@ -468,7 +468,7 @@ static int external_https_tls_init(flowie_control_external_https_tls_t *tls,
   if (!tls || !external_https_tls_config_valid(config)) return SALTS_EINVAL;
   if (!config) {
     *tls = next;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   next.ca_file = config->ca_file ? tstr_dup(config->ca_file) : NULL;
   next.client_cert_file = config->client_cert_file ? tstr_dup(config->client_cert_file) : NULL;
@@ -482,7 +482,7 @@ static int external_https_tls_init(flowie_control_external_https_tls_t *tls,
     return SALTS_ENOMEM;
   }
   *tls = next;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int external_https_secret_valid(const flowie_security_secret_lease_t *lease) {
@@ -500,11 +500,11 @@ static int external_https_tls_apply(const flowie_control_external_https_tls_t *t
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
   cnet_tls_client_config config = {0};
   char *password = NULL;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!tls || !key_provider || !server_name || !server_name[0] || !profile) return SALTS_EINVAL;
   if (tls->client_key_password_ref) {
     rc = flowie_security_secret_acquire(key_provider, tls->client_key_password_ref, &lease);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     if (!external_https_secret_valid(&lease)) {
       rc = SALTS_EPERM;
       goto done;
@@ -577,17 +577,17 @@ static int external_https_tls_files_validate(const flowie_control_external_https
   char *password = NULL;
   int rc = SALTS_EIO;
   if (!tls || !key_provider) return SALTS_EINVAL;
-  if (!tls->ca_file && !tls->client_cert_file) return SALTS_OK;
+  if (!tls->ca_file && !tls->client_cert_file) return CMETA_OK;
   context = SSL_CTX_new(TLS_client_method());
   if (!context) goto done;
   if (tls->ca_file && SSL_CTX_load_verify_locations(context, tls->ca_file, NULL) != 1) goto done;
   if (!tls->client_cert_file) {
-    rc = SALTS_OK;
+    rc = CMETA_OK;
     goto done;
   }
   if (tls->client_key_password_ref) {
     rc = flowie_security_secret_acquire(key_provider, tls->client_key_password_ref, &lease);
-    if (rc != SALTS_OK) goto done;
+    if (rc != CMETA_OK) goto done;
     if (!external_https_secret_valid(&lease)) {
       rc = SALTS_EPERM;
       goto done;
@@ -606,7 +606,7 @@ static int external_https_tls_files_validate(const flowie_control_external_https
       SSL_CTX_use_PrivateKey_file(context, tls->client_key_file, SSL_FILETYPE_PEM) != 1 ||
       SSL_CTX_check_private_key(context) != 1)
     goto done;
-  rc = SALTS_OK;
+  rc = CMETA_OK;
 
 done:
   SSL_CTX_free(context);
@@ -661,7 +661,7 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
   admitted = 1;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
                                       authenticator->service_token_ref, &lease);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   token_size = lease.byte_count;
   if (!external_https_secret_valid(&lease)) {
     rc = SALTS_EPERM;
@@ -676,20 +676,20 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
   memcpy(authorization + sizeof("Bearer ") - 1u, lease.bytes, token_size);
   authorization[sizeof("Bearer ") - 1u + token_size] = '\0';
   rc = flowie_control_external_https_encode_request(request, &body, &body_size);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   if (!uri_parse(authenticator->url, &uri) || !uri.valid) {
     rc = SALTS_EINVAL;
     goto done;
   }
   rc = external_https_endpoint_text(connection_uri, sizeof(connection_uri), authority,
                                     sizeof(authority), authenticator->host, authenticator->port);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = external_https_tls_apply(&authenticator->tls, &authenticator->key_provider,
                                 authenticator->host, &tls_profile);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   client_config = external_https_client_config(authenticator);
   rc = chttp_client_init(&client, &client_config);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   headers[0] = (chttp_header){"Content-Type", "application/json"};
   headers[1] = (chttp_header){"Accept", "application/json"};
   headers[2] = (chttp_header){"Authorization", authorization};
@@ -704,7 +704,7 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
                             .tls = &tls_profile,
                             .protocol = CHTTP_HTTP_1_1};
   rc = chttp_post(&client, &options, &response, &error);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     outcome = EXTERNAL_HTTPS_OUTCOME_TRANSPORT_FAILURE;
     rc = SALTS_EIO;
     goto done;
@@ -737,7 +737,7 @@ static int external_https_verify(void *ctx, const flowie_control_external_auth_r
   rc = flowie_control_external_https_decode_response((const char *)response.body,
                                                      response.body_size,
                                                      authenticator->method, assertion_out);
-  if (rc == SALTS_OK) outcome = EXTERNAL_HTTPS_OUTCOME_SUCCEEDED;
+  if (rc == CMETA_OK) outcome = EXTERNAL_HTTPS_OUTCOME_SUCCEEDED;
   else if (rc == SALTS_EPERM) outcome = EXTERNAL_HTTPS_OUTCOME_DENIED;
   else outcome = EXTERNAL_HTTPS_OUTCOME_PROTOCOL_FAILURE;
 
@@ -807,19 +807,19 @@ int flowie_control_external_https_authenticator_create(
     goto fail;
   }
   rc = external_https_tls_init(&authenticator->tls, &config->tls);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = external_https_validate_url(authenticator->url, &authenticator->host, &authenticator->port);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   rc = flowie_security_secret_acquire(&authenticator->key_provider,
                                       authenticator->service_token_ref, &lease);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (!external_https_secret_valid(&lease)) {
     rc = SALTS_EPERM;
     goto fail;
   }
   flowie_security_secret_release(&authenticator->key_provider, &lease);
   rc = external_https_tls_files_validate(&authenticator->tls, &authenticator->key_provider);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   authenticator->interface =
       (flowie_control_external_authenticator_t)FLOWIE_CONTROL_EXTERNAL_AUTHENTICATOR_INIT;
   authenticator->interface.capabilities = FLOWIE_CONTROL_EXTERNAL_AUTH_REQUIRED_CAPABILITIES |
@@ -828,7 +828,7 @@ int flowie_control_external_https_authenticator_create(
   authenticator->interface.method = authenticator->method;
   authenticator->interface.verify = external_https_verify;
   *out = authenticator;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   flowie_security_secret_release(&authenticator->key_provider, &lease);
@@ -880,5 +880,5 @@ int flowie_control_external_https_authenticator_get_stats(
   stats.local_failures =
       (uint64_t)atomic_load_explicit(&authenticator->local_failures, memory_order_relaxed);
   *stats_out = stats;
-  return SALTS_OK;
+  return CMETA_OK;
 }

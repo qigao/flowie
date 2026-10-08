@@ -1,7 +1,7 @@
 #include "flowie_security.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 
@@ -35,7 +35,7 @@ static int flowie_test_authorize(void *ctx, const flowie_security_request_t *req
                              ? FLOWIE_SECURITY_REASON_ALLOW_RULE
                              : FLOWIE_SECURITY_REASON_DENY_RULE;
   decision_out->policy_version = request->principal->policy_version;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_test_remote_authorize(flowie_security_effect_t effect,
@@ -51,9 +51,9 @@ static int flowie_test_remote_authorize(flowie_security_effect_t effect,
 
   config.policy_source = "acl.remote";
   rc = flowie_security_realm_create(&config, &realm);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   rc = flowie_security_realm_bind_authorization_provider(realm, &provider);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     request.principal = &principal;
     request.domain_id = principal.domain_id;
     request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
@@ -79,7 +79,7 @@ spec("Flowie security authorization boundary") {
   it("preserves a remote allow decision") {
     flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
 
-    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_ALLOW, &decision), SALTS_OK);
+    check_equal(flowie_test_remote_authorize(FLOWIE_SECURITY_ALLOW, &decision), CMETA_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
     check_equal(decision.reason, FLOWIE_SECURITY_REASON_ALLOW_RULE);
   }
@@ -92,7 +92,7 @@ spec("Flowie security authorization boundary") {
     flowie_security_realm_t *realm = NULL;
 
     config.policy_version = 11u;
-    check_equal(flowie_security_realm_create(&config, &realm), SALTS_OK);
+    check_equal(flowie_security_realm_create(&config, &realm), CMETA_OK);
     request.principal = &principal;
     request.domain_id = principal.domain_id;
     request.action = FLOWIE_SECURITY_ACTION_PUBLISH;

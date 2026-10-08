@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -17,7 +17,7 @@ static flowie_protocol_settlement_request_t flowie_publish_settlement(void) {
   settlement.message.duplicate = 1u;
   settlement.message.retain = 1u;
   settlement.point = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
-  settlement.status = SALTS_OK;
+  settlement.status = CMETA_OK;
   settlement.message_id = 71u;
   settlement.attempt = 2u;
   return settlement;
@@ -34,13 +34,13 @@ spec("flowie cluster peer PUBLISH_SETTLE codec") {
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(tstr_len(encoded),
                   FLOWIE_CLUSTER_PEER_PUBLISH_SETTLE_HEADER_SIZE + sizeof(client_id) - 1u);
     check_equal(encoded, "TFPS", 4u);
     check_equal(flowie_cluster_peer_publish_settle_decode(encoded, tstr_len(encoded), 256u,
                                                            &decoded),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(decoded.client_id.data, client_id, decoded.client_id.size);
     check_equal(decoded.settlement.message.protocol, FLOWIE_PROTOCOL_MQTT);
     check_equal(decoded.settlement.message.protocol_version, FLOWIE_MQTT_VERSION_5);
@@ -77,7 +77,7 @@ spec("flowie cluster peer PUBLISH_SETTLE codec") {
     check_equal(flowie_cluster_peer_publish_settle_encode(
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u}, &settlement, 256u,
                      &encoded),
-                 SALTS_OK);
+                 CMETA_OK);
     encoded[59] = (char)0x80u;
     check_equal(flowie_cluster_peer_publish_settle_decode(encoded, tstr_len(encoded), 256u,
                                                            &decoded),

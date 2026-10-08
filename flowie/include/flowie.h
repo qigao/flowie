@@ -248,7 +248,7 @@ typedef struct flowie_endpoint_cluster_socket_port_s {
  * External MQTT session-owner boundary for one managed endpoint.
  *
  * Request inputs are borrowed only for the call; an implementation returning
- * SALTS_OK must copy them and, after the request callback returns, invoke
+ * CMETA_OK must copy them and, after the request callback returns, invoke
  * completion exactly once on the endpoint's Salts executor owner shard. A non-OK return
  * must not invoke completion. `detach()` is
  * synchronous: after it returns, the adapter must never invoke a completion or
@@ -288,7 +288,7 @@ typedef struct flowie_endpoint_cluster_binding_s {
                 flowie_mqtt_version_t mqtt_version, flowie_mqtt_span_t client_id,
                 const flowie_protocol_settlement_request_t *settlement,
                 flowie_endpoint_cluster_complete_fn complete, void *complete_ctx);
-  /** Fire-and-forget abnormal loss; inputs must be copied before returning SALTS_OK. */
+  /** Fire-and-forget abnormal loss; inputs must be copied before returning CMETA_OK. */
   int (*connection_lost)(void *ctx, uint64_t connection_id, uint64_t connection_generation,
                          flowie_mqtt_version_t mqtt_version, flowie_mqtt_span_t client_id);
   void (*detach)(void *ctx, uint64_t connection_id, uint64_t connection_generation);
@@ -408,7 +408,7 @@ typedef struct flowie_publish_message_view_s {
 /**
  * Build the MQTT PUBLISH protocol/data bridge value without allocation.
  * The caller supplies the protocol-owner route and current session generation.
- * Returns SALTS_OK, SALTS_EINVAL for ABI/route errors, or SALTS_EPROTO for an
+ * Returns CMETA_OK, SALTS_EINVAL for ABI/route errors, or SALTS_EPROTO for an
  * invalid MQTT publish contract. Output is modified only on success.
  */
 FLOWIE_C_API int flowie_publish_message_map(const flowie_mqtt_publish_view_t *publish,

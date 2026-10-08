@@ -3,7 +3,7 @@
 #include "flowie.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -16,7 +16,7 @@ spec("Flowie standalone YAML configuration") {
     const flowie_server_http_provider_config_t *acl;
 
     check_equal(flowie_server_config_load(FLOWIE_TEST_EU_CONFIG, "flowie", 1, &config, &error),
-                SALTS_OK);
+                CMETA_OK);
     check_not_null(config);
     endpoint = flowie_server_config_endpoint(config);
     auth = flowie_server_config_auth(config);

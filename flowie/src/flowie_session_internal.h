@@ -199,7 +199,7 @@ FLOWIE_C_API int flowie_session_owner_open(flowie_session_owner_t *owner,
 
 /**
  * Apply one parsed CONNECT and produce the only CONNACK policy decision.
- * A protocol-level rejection returns SALTS_OK with accepted=0 and
+ * A protocol-level rejection returns CMETA_OK with accepted=0 and
  * close_after_reply=1; internal/state-owner failures are returned directly.
  */
 FLOWIE_C_API int flowie_session_owner_connect(flowie_session_owner_t *owner,

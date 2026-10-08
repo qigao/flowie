@@ -1,7 +1,7 @@
 #include "flowie_cluster_topology_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -52,7 +52,7 @@ static void flowie_cluster_topology_test_check_operation(
   flowie_cluster_topology_operation_t operation = FLOWIE_CLUSTER_TOPOLOGY_OPERATION_INIT;
   uint8_t expected_boot[FLOWIE_CLUSTER_BOOT_ID_SIZE];
   flowie_cluster_topology_test_boot(expected_boot, boot_seed);
-  check_equal(flowie_cluster_topology_plan_operation_at(plan, index, &operation), SALTS_OK);
+  check_equal(flowie_cluster_topology_plan_operation_at(plan, index, &operation), CMETA_OK);
   check_equal(operation.kind, kind);
   check_equal(operation.peer.node_id.len, strlen(node_id));
   check_equal(operation.peer.node_id.data, node_id, operation.peer.node_id.len);
@@ -87,7 +87,7 @@ spec("flowie cluster membership topology") {
     membership.member_count = sizeof(members) / sizeof(members[0]);
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, NULL, 0u, &plan),
-                 SALTS_OK);
+                 CMETA_OK);
     check_not_null(plan);
     check_equal(flowie_cluster_topology_plan_revision(plan), 10u);
     check_equal(flowie_cluster_topology_plan_operation_count(plan), 3u);
@@ -124,7 +124,7 @@ spec("flowie cluster membership topology") {
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, current,
                                                     sizeof(current) / sizeof(current[0]), &plan),
-                 SALTS_OK);
+                 CMETA_OK);
     node_c[0] = 'x';
     desired_c[0] = 'x';
     current_c[0] = 'x';
@@ -157,7 +157,7 @@ spec("flowie cluster membership topology") {
     membership.member_count = sizeof(members) / sizeof(members[0]);
 
     check_equal(flowie_cluster_topology_plan_build(&config, &membership, &current, 1u, &plan),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_topology_plan_operation_count(plan), 0u);
     flowie_cluster_topology_plan_destroy(plan);
 

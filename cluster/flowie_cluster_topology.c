@@ -7,7 +7,7 @@
 
 #include "flowie_cluster_topology_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -70,7 +70,7 @@ int flowie_cluster_topology_plan_config_validate(
       config->max_endpoint_size == 0u ||
       config->max_endpoint_size > FLOWIE_CLUSTER_ADVERTISED_ENDPOINT_MAX)
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_topology_membership_validate(
@@ -104,7 +104,7 @@ static int flowie_cluster_topology_membership_validate(
       return SALTS_EBUSY;
     if (local_compare == 0) local_seen = 1;
   }
-  return local_seen ? SALTS_OK : SALTS_EBUSY;
+  return local_seen ? CMETA_OK : SALTS_EBUSY;
 }
 
 static int
@@ -126,7 +126,7 @@ flowie_cluster_topology_current_validate(const flowie_cluster_topology_plan_conf
       return SALTS_EPROTO;
     previous = peer->node_id;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int
@@ -173,7 +173,7 @@ static int flowie_cluster_topology_plan_append(flowie_cluster_topology_plan_t *p
   }
   memcpy(operation.boot_id, boot_id, sizeof(operation.boot_id));
   rc = flowie_stl_error(vec_push(&plan->operations, &operation));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     tstr_free(operation.node_id);
     tstr_free(operation.advertised_endpoint);
   }
@@ -196,7 +196,7 @@ static int flowie_cluster_topology_plan_removals(
       int rc = flowie_cluster_topology_plan_append(plan, FLOWIE_CLUSTER_TOPOLOGY_REMOVE,
                                                    current->node_id, current->boot_id,
                                                    current->advertised_endpoint);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
       ++current_index;
     } else if (compared > 0) {
       desired = flowie_cluster_topology_next_desired(config, membership, &member_index);
@@ -205,13 +205,13 @@ static int flowie_cluster_topology_plan_removals(
         int rc = flowie_cluster_topology_plan_append(plan, FLOWIE_CLUSTER_TOPOLOGY_REMOVE,
                                                      current->node_id, current->boot_id,
                                                      current->advertised_endpoint);
-        if (rc != SALTS_OK) return rc;
+        if (rc != CMETA_OK) return rc;
       }
       ++current_index;
       desired = flowie_cluster_topology_next_desired(config, membership, &member_index);
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_topology_plan_additions(
@@ -237,11 +237,11 @@ static int flowie_cluster_topology_plan_additions(
       int rc =
           flowie_cluster_topology_plan_append(plan, FLOWIE_CLUSTER_TOPOLOGY_ADD, desired->node_id,
                                               desired->boot_id, desired->advertised_endpoint);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
     }
     if (compared == 0) ++current_index;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_topology_plan_build(const flowie_cluster_topology_plan_config_t *config,
@@ -254,35 +254,35 @@ int flowie_cluster_topology_plan_build(const flowie_cluster_topology_plan_config
   int rc;
   if (out) *out = NULL;
   rc = flowie_cluster_topology_plan_config_validate(config);
-  if (rc == SALTS_OK) rc = flowie_cluster_topology_membership_validate(config, membership);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_cluster_topology_membership_validate(config, membership);
+  if (rc == CMETA_OK)
     rc = flowie_cluster_topology_current_validate(config, current_peers, current_peer_count);
-  if (rc != SALTS_OK || !out) return rc == SALTS_OK ? SALTS_EINVAL : rc;
+  if (rc != CMETA_OK || !out) return rc == CMETA_OK ? SALTS_EINVAL : rc;
   if (membership->member_count > SIZE_MAX - current_peer_count) return SALTS_ERANGE;
   maximum_operations = membership->member_count + current_peer_count;
   plan = (flowie_cluster_topology_plan_t *)calloc(1u, sizeof(*plan));
   if (!plan) return SALTS_ENOMEM;
   rc = flowie_stl_error(vec_init_bytes(&plan->operations, sizeof(flowie_cluster_topology_owned_operation_t), _Alignof(flowie_cluster_topology_owned_operation_t), SIZE_MAX));
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   plan->operations_initialized = 1;
   if (maximum_operations != 0u) {
     rc = flowie_stl_error(vec_reserve(&plan->operations, maximum_operations));
-    if (rc != SALTS_OK) goto fail;
+    if (rc != CMETA_OK) goto fail;
   }
   plan->membership_revision = membership->membership_revision;
   rc = flowie_cluster_topology_plan_removals(plan, config, membership, current_peers,
                                              current_peer_count);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_cluster_topology_plan_additions(plan, config, membership, current_peers,
                                                 current_peer_count);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != CMETA_OK) goto fail;
   if (membership->membership_revision == config->last_applied_revision &&
       vec_size(&plan->operations) != 0u) {
     rc = SALTS_EPROTO;
     goto fail;
   }
   *out = plan;
-  return SALTS_OK;
+  return CMETA_OK;
 
 fail:
   flowie_cluster_topology_plan_destroy(plan);
@@ -313,7 +313,7 @@ int flowie_cluster_topology_plan_operation_at(const flowie_cluster_topology_plan
   memcpy(operation.peer.boot_id, owned->boot_id, sizeof(operation.peer.boot_id));
   operation.peer.advertised_endpoint = tstr_to_v(owned->advertised_endpoint);
   *out = operation;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_topology_plan_destroy(flowie_cluster_topology_plan_t *plan) {

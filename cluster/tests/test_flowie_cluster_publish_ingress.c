@@ -1,7 +1,7 @@
 #include "flowie_cluster_publish_ingress_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -18,7 +18,7 @@ static int flowie_publish_ingress_commit(
       (flowie_publish_ingress_test_t *)ctx;
   if (!test || !event || event->connection_id != 7u) return SALTS_EPROTO;
   ++test->commit_count;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_publish_ingress_enqueue(
@@ -31,7 +31,7 @@ static int flowie_publish_ingress_enqueue(
   if (test->fail_first_enqueue && test->enqueue_count == 1u)
     return SALTS_ENOSPC;
   test->ack = payload->data.data_ack;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 spec("flowie cluster publish ingress registry") {
@@ -55,21 +55,21 @@ spec("flowie cluster publish ingress registry") {
                      (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u},
                      (flowie_mqtt_span_t){packet, sizeof(packet)}, 4096u,
                      &event),
-                 SALTS_OK);
+                 CMETA_OK);
     sender_config.self_id = 1u;
     sender_config.peer_id = 2u;
     sender_config.max_event_bytes = 4096u;
     check_equal(flowie_cluster_publish_stream_sender_create(&sender_config,
                                                               &sender),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_stream_sender_begin(
                      sender, 3u, 44u, event, tstr_len(event)),
-                 SALTS_OK);
+                 CMETA_OK);
     memset(&payload, 0, sizeof(payload));
     payload.kind = TR_RAFT_WIRE_PAYLOAD_DATA_CHUNK;
     check_equal(flowie_cluster_publish_stream_sender_next(
                      sender, &payload.data.data_chunk),
-                 SALTS_OK);
+                 CMETA_OK);
 
     test.fail_first_enqueue = 1;
     ingress_config.self_id = 2u;
@@ -81,13 +81,13 @@ spec("flowie cluster publish ingress registry") {
     ingress_config.enqueue_ctx = &test;
     check_equal(flowie_cluster_publish_ingress_create(&ingress_config,
                                                         &ingress),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(flowie_cluster_publish_ingress_handle(ingress, &payload),
                  SALTS_ENOSPC);
     check_equal(test.commit_count, 1u);
     check_equal(flowie_cluster_publish_ingress_active_count(ingress), 1u);
     check_equal(flowie_cluster_publish_ingress_handle(ingress, &payload),
-                 SALTS_OK);
+                 CMETA_OK);
     check_equal(test.commit_count, 1u);
     check_equal(test.enqueue_count, 2u);
     check_true(test.ack.durable);

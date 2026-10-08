@@ -3,7 +3,7 @@
 #include "base64_utils.h"
 #include "platform.h"
 #include "monocypher.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,7 +48,7 @@ static int flowie_control_credential_derive(const void *secret, size_t secret_si
   crypto_argon2_inputs inputs;
   void *work_area = NULL;
   size_t work_size;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if ((!secret && secret_size != 0u) || !salt || !out ||
       !flowie_control_credential_params_valid(params) || secret_size > UINT32_MAX)
     return SALTS_EINVAL;
@@ -86,13 +86,13 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
   memset(token, 0, FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY);
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = salts_secure_random(entropy, sizeof(entropy));
-  if (rc == SALTS_OK &&
+  rc = cmeta_secure_random(entropy, sizeof(entropy));
+  if (rc == CMETA_OK &&
       (tn_base64_encode_buf(entropy, sizeof(entropy), encoded, sizeof(encoded)) != 0 ||
        strlen(encoded) != FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE + 1u ||
        encoded[FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE] != '='))
     rc = SALTS_EIO;
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     memcpy(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX,
            FLOWIE_CONTROL_CREDENTIAL_TOKEN_PREFIX_SIZE);
     for (index = 0u; index < FLOWIE_CONTROL_CREDENTIAL_TOKEN_PAYLOAD_SIZE; ++index) {
@@ -102,11 +102,11 @@ int flowie_control_credential_generate(char token[FLOWIE_CONTROL_CREDENTIAL_TOKE
     }
     token[FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE] = '\0';
   }
-  if (rc == SALTS_OK) rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = cmeta_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  if (rc == CMETA_OK)
     rc = flowie_control_credential_derive(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_SIZE, salt, params,
                                           verifier);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     crypto_wipe(token, FLOWIE_CONTROL_CREDENTIAL_TOKEN_CAPACITY);
     crypto_wipe(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
     crypto_wipe(verifier, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
@@ -126,10 +126,10 @@ int flowie_control_credential_hash(const void *secret, size_t secret_size,
     return SALTS_EINVAL;
   memset(salt, 0, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
   memset(verifier, 0, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
-  rc = salts_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
-  if (rc == SALTS_OK)
+  rc = cmeta_secure_random(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
+  if (rc == CMETA_OK)
     rc = flowie_control_credential_derive(secret, secret_size, salt, params, verifier);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     crypto_wipe(salt, FLOWIE_CONTROL_CREDENTIAL_SALT_SIZE);
     crypto_wipe(verifier, FLOWIE_CONTROL_CREDENTIAL_VERIFIER_SIZE);
   }
@@ -144,7 +144,7 @@ int flowie_control_credential_verify(
   int rc;
   if ((!secret && secret_size != 0u) || !salt || !verifier) return SALTS_EINVAL;
   rc = flowie_control_credential_derive(secret, secret_size, salt, params, actual);
-  if (rc == SALTS_OK && crypto_verify32(actual, verifier) != 0) rc = SALTS_EPERM;
+  if (rc == CMETA_OK && crypto_verify32(actual, verifier) != 0) rc = SALTS_EPERM;
   crypto_wipe(actual, sizeof(actual));
   return rc;
 }

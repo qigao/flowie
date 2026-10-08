@@ -7,7 +7,7 @@
 
 #include "flowie_cluster_publish_ingress_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -53,7 +53,7 @@ flowie_cluster_publish_ingress_find(flowie_cluster_publish_ingress_t *ingress,
 static void flowie_cluster_publish_ingress_remove(
     flowie_cluster_publish_ingress_t *ingress, size_t index) {
   flowie_cluster_publish_ingress_entry_t removed;
-  if (flowie_stl_error(vec_swap_remove(&ingress->entries, index, &removed)) == SALTS_OK)
+  if (flowie_stl_error(vec_swap_remove(&ingress->entries, index, &removed)) == CMETA_OK)
     flowie_cluster_publish_stream_receiver_destroy(removed.receiver);
 }
 
@@ -66,7 +66,7 @@ static int flowie_cluster_publish_ingress_send_ack(
   payload.kind = TR_RAFT_WIRE_PAYLOAD_DATA_ACK;
   payload.data.data_ack = entry->pending_ack;
   rc = ingress->enqueue(ingress->enqueue_ctx, &payload);
-  if (rc == SALTS_OK) entry->ack_pending = 0;
+  if (rc == CMETA_OK) entry->ack_pending = 0;
   return rc;
 }
 
@@ -91,15 +91,15 @@ int flowie_cluster_publish_ingress_create(
   ingress->enqueue = config->enqueue;
   ingress->enqueue_ctx = config->enqueue_ctx;
   rc = flowie_stl_error(vec_init_bytes(&ingress->entries, sizeof(flowie_cluster_publish_ingress_entry_t), _Alignof(flowie_cluster_publish_ingress_entry_t), SIZE_MAX));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_stl_error(vec_reserve(&ingress->entries, config->max_active_streams));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     vec_destroy(&ingress->entries);
     free(ingress);
     return rc;
   }
   *out = ingress;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_cluster_publish_ingress_destroy(
@@ -132,12 +132,12 @@ int flowie_cluster_publish_ingress_handle(
   if (entry && entry->ack_pending) {
     uint64_t acknowledged_offset = entry->pending_ack.next_offset;
     rc = flowie_cluster_publish_ingress_send_ack(ingress, entry);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     if (entry->committed) {
       flowie_cluster_publish_ingress_remove(ingress, entry_index);
-      return SALTS_OK;
+      return CMETA_OK;
     }
-    if (chunk->stream_offset < acknowledged_offset) return SALTS_OK;
+    if (chunk->stream_offset < acknowledged_offset) return CMETA_OK;
   }
   if (!entry) {
     flowie_cluster_publish_stream_receiver_config_t receiver_config;
@@ -153,11 +153,11 @@ int flowie_cluster_publish_ingress_handle(
     receiver_config.commit_ctx = ingress->commit_ctx;
     rc = flowie_cluster_publish_stream_receiver_create(
         &receiver_config, &created.receiver);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
     created.from = chunk->from;
     created.stream_id = chunk->stream_id;
     rc = flowie_stl_error(vec_push(&ingress->entries, &created));
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       flowie_cluster_publish_stream_receiver_destroy(created.receiver);
       return rc;
     }
@@ -167,14 +167,14 @@ int flowie_cluster_publish_ingress_handle(
   }
   rc = flowie_cluster_publish_stream_receiver_handle(
       entry->receiver, chunk, &entry->pending_ack, &committed);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   entry->ack_pending = 1;
   entry->committed = committed;
   rc = flowie_cluster_publish_ingress_send_ack(ingress, entry);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (entry->committed)
     flowie_cluster_publish_ingress_remove(ingress, entry_index);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 size_t flowie_cluster_publish_ingress_active_count(

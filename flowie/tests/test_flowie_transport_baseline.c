@@ -4,8 +4,8 @@
 #include "tls_test_support.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -39,9 +39,9 @@ static int flowie_transport_baseline_on_message(flowie_endpoint_core_t *endpoint
   (void)message;
   (void)ctx;
   if (!result || result->size < sizeof(*result)) return SALTS_EINVAL;
-  result->status = SALTS_OK;
+  result->status = CMETA_OK;
   result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_transport_auth_failure_authenticate(
@@ -59,7 +59,7 @@ static int flowie_transport_expect_connack(flowie_test_cnet_client_t * client,
   int rc;
   if (!expected || expected_size > sizeof(received)) return SALTS_EINVAL;
   rc = flowie_test_cnet_recv_exact(client, received, expected_size);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr, "CONNACK receive failed: %d\n", rc);
     return SALTS_EPROTO;
   }
@@ -69,15 +69,15 @@ static int flowie_transport_expect_connack(flowie_test_cnet_client_t * client,
     (void)fprintf(stderr, "\n");
     return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_transport_expect_close(flowie_test_cnet_client_t * client) {
   uint8_t first_byte = 0u;
   int rc;
-  if (!flowie_test_cnet_readable(client, 1500u)) return SALTS_OK;
+  if (!flowie_test_cnet_readable(client, 1500u)) return CMETA_OK;
   rc = flowie_test_cnet_recv_exact(client, &first_byte, 1u);
-  return rc != SALTS_OK || first_byte == UINT8_C(0xe0) ? SALTS_OK : SALTS_EPROTO;
+  return rc != CMETA_OK || first_byte == UINT8_C(0xe0) ? CMETA_OK : SALTS_EPROTO;
 }
 
 static int flowie_transport_auth_unavailable_case(void) {
@@ -110,12 +110,12 @@ static int flowie_transport_auth_unavailable_case(void) {
       sizeof(provider), &auth, flowie_transport_auth_failure_authenticate};
   flowie_endpoint_core_t *endpoint = NULL;
   unsigned short port = flowie_test_cnet_port();
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
 
   if (port == 0u) return SALTS_EIO;
   realm_config.policy_version = 1u;
   rc = flowie_security_realm_create(&realm_config, &realm);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
   security.realm_channel = "security.transport-auth";
   security.auth_method = "password";
@@ -133,9 +133,9 @@ static int flowie_transport_auth_unavailable_case(void) {
   options.on_message = flowie_transport_baseline_on_message;
   rc = flowie_endpoint_core_create_ex("transport-auth-unavailable", &config, &options,
                                       &execution, &bindings, &endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_endpoint_core_start(endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
   for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
     flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
@@ -164,22 +164,22 @@ static int flowie_transport_auth_unavailable_case(void) {
       break;
     }
     rc = flowie_test_cnet_send(client, connect_packet, connect_size);
-    if (rc == SALTS_OK && cases[i].connack)
+    if (rc == CMETA_OK && cases[i].connack)
       rc = flowie_transport_expect_connack(client, cases[i].connack, cases[i].connack_size);
-    else if (rc == SALTS_OK)
+    else if (rc == CMETA_OK)
       rc = flowie_transport_expect_close(client);
     flowie_test_cnet_close(client);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       (void)fprintf(stderr, "authentication unavailable case %zu failed\n", i);
       break;
     }
   }
-  if (rc == SALTS_OK && auth.calls != sizeof(cases) / sizeof(cases[0])) rc = SALTS_EPROTO;
+  if (rc == CMETA_OK && auth.calls != sizeof(cases) / sizeof(cases[0])) rc = SALTS_EPROTO;
 
 done:
   if (endpoint) {
     int stop_rc = flowie_endpoint_core_stop(endpoint);
-    if (rc == SALTS_OK && stop_rc != SALTS_OK) rc = stop_rc;
+    if (rc == CMETA_OK && stop_rc != CMETA_OK) rc = stop_rc;
   }
   flowie_endpoint_core_destroy(endpoint);
   flowie_security_realm_destroy(realm);
@@ -200,7 +200,7 @@ static int flowie_transport_tcp_sg_burst_case(void) {
   size_t connect_size = 0u;
   size_t pingreq_size = 0u;
   unsigned short port = flowie_test_cnet_port();
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
 
   if (port == 0u) return SALTS_EIO;
   config.transport = FLOWIE_TRANSPORT_TCP;
@@ -216,9 +216,9 @@ static int flowie_transport_tcp_sg_burst_case(void) {
   options.on_message = flowie_transport_baseline_on_message;
 
   rc = flowie_endpoint_core_create("transport-sg-burst", &config, &options, &endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_endpoint_core_start(endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
@@ -236,13 +236,13 @@ static int flowie_transport_tcp_sg_burst_case(void) {
     goto done;
   }
   rc = flowie_test_cnet_send(client, connect_packet, connect_size);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr, "SG burst CONNECT send failed: %d\n", rc);
     goto done;
   }
   rc = flowie_test_cnet_recv_mqtt5_connack(
       client, 0u, (uint16_t)FLOWIE_TRANSPORT_SG_BURST_ITEMS, 4096u);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr,
                   "SG burst CONNACK failed: rc=%d received=%zu connected=%d closed=%d failed=%d status=%d\n",
                   rc, client->received_size, client->connected, client->closed, client->failed,
@@ -267,12 +267,12 @@ static int flowie_transport_tcp_sg_burst_case(void) {
    * as two retained SG logical writes without changing stream order.
    */
   rc = flowie_test_cnet_send(client, burst, sizeof(burst));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr, "SG burst PINGREQ send failed: %d\n", rc);
     goto done;
   }
   rc = flowie_test_cnet_recv_exact(client, replies, sizeof(replies));
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)fprintf(stderr,
                   "SG burst PINGRESP receive failed: rc=%d received=%zu expected=%zu connected=%d closed=%d failed=%d status=%d\n",
                   rc, client->received_size, sizeof(replies), client->connected, client->closed,
@@ -291,7 +291,7 @@ done:
   flowie_test_cnet_close(client);
   if (endpoint) {
     int stop_rc = flowie_endpoint_core_stop(endpoint);
-    if (rc == SALTS_OK && stop_rc != SALTS_OK) rc = stop_rc;
+    if (rc == CMETA_OK && stop_rc != CMETA_OK) rc = stop_rc;
   }
   flowie_endpoint_core_destroy(endpoint);
   return rc;
@@ -299,7 +299,7 @@ done:
 
 static void flowie_transport_baseline_complete(flowie_transport_baseline_state_t *state,
                                                int status) {
-  if (status != SALTS_OK) atomic_store_explicit(&state->status, status, memory_order_relaxed);
+  if (status != CMETA_OK) atomic_store_explicit(&state->status, status, memory_order_relaxed);
   atomic_store_explicit(&state->done, 1, memory_order_release);
 }
 
@@ -307,10 +307,10 @@ static void flowie_transport_baseline_on_connect(flowie_mqtt_client_t *client, i
                                                  const flowie_mqtt_control_packet_view_t *response,
                                                  void *user_data) {
   flowie_transport_baseline_state_t *state = (flowie_transport_baseline_state_t *)user_data;
-  if (status == SALTS_OK && (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK))
+  if (status == CMETA_OK && (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_client_subscribe(client, &state->subscribe);
-  if (status != SALTS_OK) flowie_transport_baseline_complete(state, status);
+  if (status == CMETA_OK) status = flowie_mqtt_client_subscribe(client, &state->subscribe);
+  if (status != CMETA_OK) flowie_transport_baseline_complete(state, status);
 }
 
 static void
@@ -318,24 +318,24 @@ flowie_transport_baseline_on_subscribe(flowie_mqtt_client_t *client, int status,
                                        const flowie_mqtt_control_packet_view_t *response,
                                        void *user_data) {
   flowie_transport_baseline_state_t *state = (flowie_transport_baseline_state_t *)user_data;
-  if (status == SALTS_OK && (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK))
+  if (status == CMETA_OK && (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_client_publish(client, &state->publish);
-  if (status != SALTS_OK) flowie_transport_baseline_complete(state, status);
+  if (status == CMETA_OK) status = flowie_mqtt_client_publish(client, &state->publish);
+  if (status != CMETA_OK) flowie_transport_baseline_complete(state, status);
 }
 
 static void flowie_transport_baseline_on_publish(flowie_mqtt_client_t *client, int status,
                                                  const flowie_mqtt_control_packet_view_t *response,
                                                  void *user_data) {
   flowie_transport_baseline_state_t *state = (flowie_transport_baseline_state_t *)user_data;
-  if (status == SALTS_OK) {
+  if (status == CMETA_OK) {
     if ((state->publish_qos == 0u && response) ||
         (state->publish_qos == 1u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK)) ||
         (state->publish_qos == 2u && (!response || response->type != FLOWIE_MQTT_PACKET_PUBCOMP)))
       status = SALTS_EPROTO;
   }
-  if (status == SALTS_OK) status = flowie_mqtt_client_unsubscribe(client, &state->unsubscribe);
-  if (status != SALTS_OK) flowie_transport_baseline_complete(state, status);
+  if (status == CMETA_OK) status = flowie_mqtt_client_unsubscribe(client, &state->unsubscribe);
+  if (status != CMETA_OK) flowie_transport_baseline_complete(state, status);
 }
 
 static void
@@ -343,10 +343,10 @@ flowie_transport_baseline_on_unsubscribe(flowie_mqtt_client_t *client, int statu
                                          const flowie_mqtt_control_packet_view_t *response,
                                          void *user_data) {
   flowie_transport_baseline_state_t *state = (flowie_transport_baseline_state_t *)user_data;
-  if (status == SALTS_OK && (!response || response->type != FLOWIE_MQTT_PACKET_UNSUBACK))
+  if (status == CMETA_OK && (!response || response->type != FLOWIE_MQTT_PACKET_UNSUBACK))
     status = SALTS_EPROTO;
-  if (status == SALTS_OK) status = flowie_mqtt_client_ping(client);
-  if (status != SALTS_OK) flowie_transport_baseline_complete(state, status);
+  if (status == CMETA_OK) status = flowie_mqtt_client_ping(client);
+  if (status != CMETA_OK) flowie_transport_baseline_complete(state, status);
 }
 
 static void flowie_transport_baseline_on_ping(flowie_mqtt_client_t *client, int status,
@@ -354,9 +354,9 @@ static void flowie_transport_baseline_on_ping(flowie_mqtt_client_t *client, int 
                                               void *user_data) {
   flowie_transport_baseline_state_t *state = (flowie_transport_baseline_state_t *)user_data;
   (void)response;
-  if (status == SALTS_OK)
+  if (status == CMETA_OK)
     status = flowie_mqtt_client_disconnect(client, 0u, (flowie_mqtt_span_t){0});
-  if (status != SALTS_OK) flowie_transport_baseline_complete(state, status);
+  if (status != CMETA_OK) flowie_transport_baseline_complete(state, status);
 }
 
 static void
@@ -426,12 +426,12 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
 
   rc = flowie_endpoint_core_create("transport-baseline", &endpoint_config, &endpoint_options,
                                    &endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_endpoint_core_start(endpoint);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
   atomic_init(&state.done, 0);
-  atomic_init(&state.status, SALTS_OK);
+  atomic_init(&state.status, CMETA_OK);
   state.subscription.filter = (flowie_mqtt_span_t){filter, sizeof(filter) - 1u};
   state.subscription.qos = qos;
   state.subscribe = (flowie_mqtt_subscribe_packet_t)FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
@@ -477,9 +477,9 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
     }
   }
   rc = flowie_mqtt_client_create(&client_config, &client);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_mqtt_client_set_version(client, version);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
   (void)snprintf(client_id, sizeof(client_id), "flowie-baseline-%u", client_number);
   connect.version = version;
@@ -487,12 +487,12 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
   connect.keep_alive = 30u;
   connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)client_id, strlen(client_id)};
   rc = flowie_mqtt_client_connect(client, &connect);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
 
-  deadline = salts_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
   while (!atomic_load_explicit(&state.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   rc = atomic_load_explicit(&state.done, memory_order_acquire)
            ? atomic_load_explicit(&state.status, memory_order_relaxed)
            : SALTS_ETIMEDOUT;
@@ -501,7 +501,7 @@ done:
   flowie_mqtt_client_destroy(client);
   if (endpoint) {
     int stop_rc = flowie_endpoint_core_stop(endpoint);
-    if (rc == SALTS_OK && stop_rc != SALTS_OK) rc = stop_rc;
+    if (rc == CMETA_OK && stop_rc != CMETA_OK) rc = stop_rc;
   }
   flowie_endpoint_core_destroy(endpoint);
   return rc;
@@ -516,10 +516,10 @@ static int flowie_transport_baseline_versions(flowie_transport_t transport,
       int rc = flowie_transport_baseline_case(transport, versions[i], qos,
                                               client_number_base + (unsigned int)(i * 3u) +
                                                   (unsigned int)qos);
-      if (rc != SALTS_OK) return rc;
+      if (rc != CMETA_OK) return rc;
     }
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_transport_baseline_secure_versions(flowie_transport_t transport,
@@ -544,26 +544,26 @@ done:
 
 spec("Flowie TCP/TLS/WS/WSS release baseline") {
   it("reports authentication provider unavailability in CONNACK") {
-    check_equal(flowie_transport_auth_unavailable_case(), SALTS_OK);
+    check_equal(flowie_transport_auth_unavailable_case(), CMETA_OK);
   }
 
   it("chunks one 64-reply TCP batch across the retained CNet SG vector limit") {
-    check_equal(flowie_transport_tcp_sg_burst_case(), SALTS_OK);
+    check_equal(flowie_transport_tcp_sg_burst_case(), CMETA_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TCP") {
-    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_TCP, 100u), SALTS_OK);
+    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_TCP, 100u), CMETA_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over TLS") {
-    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_TLS, 200u), SALTS_OK);
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_TLS, 200u), CMETA_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over WS") {
-    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_WS, 300u), SALTS_OK);
+    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_WS, 300u), CMETA_OK);
   }
 
   it("serves MQTT 3.1, 3.1.1, and 5 over WSS") {
-    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 400u), SALTS_OK);
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 400u), CMETA_OK);
   }
 }

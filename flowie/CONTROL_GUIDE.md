@@ -106,8 +106,8 @@ principal 映射；ACL 始终只来自 control Repository。其请求 `domain` �
 | `listener.tls.client_auth` | `none`（默认）或 `required`；Dashboard 启用时只能为 `none` |
 | `listener.tls.client_ca_file` | 仅 `client_auth: required` 时必填；`none` 时禁止配置 |
 | `listener.limits.*` | Iris header、URL、JSON、body 与 header count 的有界配额 |
-| `storage.turbodb.driver` | 必填的 TurboDB driver 名称；运行时按该值选择已构建的 TurboDB provider，缺少对应 component 时启动失败且不回退 |
-| `storage.turbodb.options` | 最多 16 个字符串键值；`conninfo`、`password`、`sslpassword`、`uri`、`url` 必须使用 `env://UPPER_CASE_NAME`，其他值原样交给 TurboDB |
+| `storage.turbodb.driver` | 必填的 TurboDB driver 名称；SDK 默认模块支持 `sqlite`、`postgresql`（兼容 `postgres`）、`mysql`、`tidesdb`，加载或连接失败时不回退 |
+| `storage.turbodb.options` | 最多 16 个字符串键值；`flowie.driver_module` 指定驱动模块绝对路径，由 Flowie 消费；`conninfo`、`password`、`sslpassword`、`uri`、`url` 必须使用 `env://UPPER_CASE_NAME`，其余值交给 TurboDB |
 | `management.rpc_path` | 静态绝对 path，默认 `/v2/control/rpc` |
 | `management.session.capacity` | 同一 Repository 中的有界登录会话数，默认 `1024`，最大 `65536`；超过容量时按持久化 LRU 撤销 |
 | `management.session.max_sessions_per_principal` | 每个 `(domain, principal)` 最多保留的会话数，默认 `5`，最大 `65536`；新登录撤销该主体最早签发的会话 |
@@ -166,6 +166,12 @@ storage:
 
 旧 `storage.control_store`、`storage.sqlite` 与 `storage.postgresql` 会作为未知字段拒绝；没有兼容 parser、
 provider fallback 或双写路径。driver 与 option 的具体契约由所安装的 TurboDB package 定义。
+
+TurboDB 2.3.1 使用运行时驱动插件。默认模块位置固定为构建时所选 SDK 的
+`TurboDB_DRIVER_DIR/turbodb_driver_<id>`（加平台模块扩展名）。迁移部署目录时，在
+`options` 中添加 `flowie.driver_module: /opt/turbodb/lib/turbodb/drivers/turbodb_driver_sqlite.so`
+（Windows 使用 `.dll` 的绝对路径）。该路径加载原生代码，只应由部署管理员配置；不会搜索目录
+或在指定模块不可用时改用默认路径。模块声明的 driver ID 必须与配置一致，数据库格式不变。
 
 Control 当前 Repository schema 为 V7。V7 新增持久化 management session、签发序列与过期/LRU 索引；
 session 原始 Bearer token 不入库，只保存 32-byte digest、CSRF、主体、过期时间和访问顺序。进程重启后，

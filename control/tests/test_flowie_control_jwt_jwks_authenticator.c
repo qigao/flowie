@@ -4,7 +4,7 @@
 #include "mtls_test_server.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <stdio.h>
@@ -47,7 +47,7 @@ static flowie_control_jwt_jwks_authenticator_t *jwt_test_authenticator(void) {
   config.audience = "flowie";
   config.subject_type = "device";
   config.algorithm = "EdDSA";
-  check_equal(flowie_control_jwt_jwks_authenticator_create(&config, &authenticator), SALTS_OK);
+  check_equal(flowie_control_jwt_jwks_authenticator_create(&config, &authenticator), CMETA_OK);
   check_not_null(authenticator);
   return authenticator;
 }
@@ -170,7 +170,7 @@ static int jwt_test_network_verify(const char *content_type, uint8_t *request_ou
   config.clock_seconds = jwt_test_clock;
   config.clock_ctx = &now;
   rc = flowie_control_jwt_jwks_authenticator_create(&config, &authenticator);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   interface = flowie_control_jwt_jwks_authenticator_interface(authenticator);
   request = jwt_test_request(token);
   rc = interface->verify(interface->ctx, &request, &assertion);
@@ -189,7 +189,7 @@ done:
 spec("Flowie control JWT/JWKS authenticator") {
   it("fetches its first JWKS over CHTTP and rejects a wrong media type") {
     uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY] = {0};
-    check_equal(jwt_test_network_verify("Application/JSON", request, sizeof(request)), SALTS_OK);
+    check_equal(jwt_test_network_verify("Application/JSON", request, sizeof(request)), CMETA_OK);
     check_not_null(strstr((const char *)request, "GET /.well-known/jwks.json HTTP/1.1"));
     check_equal(jwt_test_network_verify("text/plain", NULL, 0u), SALTS_EPROTO);
   }
@@ -204,10 +204,10 @@ spec("Flowie control JWT/JWKS authenticator") {
 
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(assertion.issuer, "https://idp.example");
     check_equal(assertion.domain_id, "root-a");
     check_equal(assertion.subject, "device-a");
@@ -218,7 +218,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     request.domain_id = "";
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(assertion.domain_id, "root-a");
 
     free(token);
@@ -234,7 +234,7 @@ spec("Flowie control JWT/JWKS authenticator") {
     flowie_control_external_auth_request_t request;
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                SALTS_OK);
+                CMETA_OK);
 
     claims.issuer = "https://other.example";
     token = jwt_test_encode(&claims);
@@ -338,13 +338,13 @@ spec("Flowie control JWT/JWKS authenticator") {
 
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1000u),
-                SALTS_OK);
+                CMETA_OK);
     check_equal(flowie_control_jwt_jwks_authenticator_verify_token(authenticator, &request, 1000u,
                                                                    &assertion),
                 SALTS_EBUSY);
     check_equal(flowie_control_jwt_jwks_authenticator_install(authenticator, JWT_TEST_JWKS,
                                                               sizeof(JWT_TEST_JWKS) - 1u, 1200u),
-                SALTS_OK);
+                CMETA_OK);
     free(token);
     claims.kid = "key-2";
     token = jwt_test_encode(&claims);

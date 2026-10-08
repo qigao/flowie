@@ -4,7 +4,7 @@
 
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +26,7 @@ struct flowie_control_management_session_store_s {
 
 static uint64_t flowie_control_management_session_default_clock(void *ctx) {
   (void)ctx;
-  return salts_realtime_ms() / 1000u;
+  return cmeta_realtime_ms() / 1000u;
 }
 
 static int flowie_control_management_session_text_valid(const char *value, size_t maximum) {
@@ -77,7 +77,7 @@ int flowie_control_management_session_store_create(
   flowie_control_management_session_store_t *store = NULL;
   if (out) *out = NULL;
   if (!config || config->size < sizeof(*config) ||
-      flowie_control_repository_validate(config->repository) != SALTS_OK ||
+      flowie_control_repository_validate(config->repository) != CMETA_OK ||
       !config->auth_service ||
       !flowie_control_management_session_text_valid(config->method,
                                                      FLOWIE_SECURITY_TYPE_MAX) ||
@@ -100,7 +100,7 @@ int flowie_control_management_session_store_create(
   store->clock_ctx = config->clock_ctx;
   memcpy(store->method, config->method, strlen(config->method) + 1u);
   *out = store;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_management_session_store_destroy(
@@ -145,10 +145,10 @@ static int flowie_control_management_session_authenticate(
   rc = flowie_control_auth_service_authenticate_root(
       store->auth_service, domain_id, FLOWIE_CONTROL_MANAGEMENT_SESSION_SCOPE, &request, 0,
       NULL, &principal, NULL);
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_management_identity_resolve_principal(
       &store->repository, principal.domain_id, principal.principal_id, &caller);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     memcpy(caller_domain_out, caller.domain_id, strlen(caller.domain_id) + 1u);
     memcpy(caller_actor_out, caller.actor, strlen(caller.actor) + 1u);
     caller_out->domain_id = caller_domain_out;
@@ -188,9 +188,9 @@ static int flowie_control_management_session_issue(
     rc = SALTS_EPERM;
     goto done;
   }
-  rc = salts_secure_random(token_random, sizeof(token_random));
-  if (rc == SALTS_OK) rc = salts_secure_random(csrf_random, sizeof(csrf_random));
-  if (rc != SALTS_OK) goto done;
+  rc = cmeta_secure_random(token_random, sizeof(token_random));
+  if (rc == CMETA_OK) rc = cmeta_secure_random(csrf_random, sizeof(csrf_random));
+  if (rc != CMETA_OK) goto done;
   flowie_control_management_session_hex(token_random, token_out);
   flowie_control_management_session_hex(csrf_random, record.csrf);
   memcpy(record.domain_id, caller->domain_id, strlen(caller->domain_id) + 1u);
@@ -202,7 +202,7 @@ static int flowie_control_management_session_issue(
                                         store->max_sessions_per_principal, now);
 
 done:
-  if (rc != SALTS_OK && token_out) token_out[0] = '\0';
+  if (rc != CMETA_OK && token_out) token_out[0] = '\0';
   flowie_control_credential_wipe(&record, sizeof(record));
   flowie_control_credential_wipe(token_random, sizeof(token_random));
   flowie_control_credential_wipe(csrf_random, sizeof(csrf_random));
@@ -232,7 +232,7 @@ int flowie_control_management_session_login(
   rc = flowie_control_management_session_authenticate(
       store, domain_id, presented_identity, secret, secret_size, remote_address, &caller,
       caller_domain, caller_actor, &principal_expires_at);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_session_issue(store, &caller, principal_expires_at, token_out);
   flowie_control_credential_wipe(&caller, sizeof(caller));
   flowie_control_credential_wipe(caller_domain, sizeof(caller_domain));
@@ -260,10 +260,10 @@ int flowie_control_management_session_resolve(
   flowie_control_management_session_digest(token, digest);
   rc = store->repository.session->resolve(store->repository.ctx, digest, now, &record);
   if (rc == SALTS_ENOENT) rc = SALTS_EPERM;
-  if (rc != SALTS_OK) goto done;
+  if (rc != CMETA_OK) goto done;
   rc = flowie_control_management_identity_resolve_principal(
       &store->repository, record.domain_id, record.principal_id, &caller);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     (void)flowie_control_management_session_revoke(store, token);
     goto done;
   }

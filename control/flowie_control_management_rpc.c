@@ -2,8 +2,8 @@
 
 #include "flowie_control_async_internal.h"
 #include "flowie_control_credential_internal.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <json_parser.h>
 
 #include <limits.h>
@@ -71,7 +71,7 @@ struct flowie_control_management_rpc_server_s {
   void *clock_ctx;
   flowie_control_management_rpc_external_https_stats_fn external_https_stats;
   void *external_https_stats_ctx;
-  salts_threadpool_t *policy_executor;
+  cmeta_threadpool_t *policy_executor;
   uint32_t policy_executor_deadline_ms;
   flowie_control_http_app_t *bound_app;
   size_t registered_method_count;
@@ -159,7 +159,7 @@ static int flowie_control_rpc_policy_copy_text(char *destination, size_t capacit
   size = strnlen(source, capacity);
   if (size == 0u || size >= capacity) return SALTS_EINVAL;
   memcpy(destination, source, size + 1u);
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static void
@@ -225,20 +225,20 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
   job->result = SALTS_EIO;
   rc = flowie_control_rpc_policy_copy_text(job->caller_domain_id, sizeof(job->caller_domain_id),
                                            caller->domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_copy_text(job->actor, sizeof(job->actor), caller->actor);
-  if (rc == SALTS_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
+  if (rc == CMETA_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
     rc = flowie_control_rpc_policy_copy_text(job->command_domain_id, sizeof(job->command_domain_id),
                                              command->domain_id);
-  if (rc == SALTS_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
+  if (rc == CMETA_OK && operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH)
     rc = flowie_control_rpc_policy_copy_text(job->request_id, sizeof(job->request_id),
                                              command->request_id);
-  if (rc == SALTS_OK && operation == FLOWIE_CONTROL_RPC_POLICY_DRY_RUN) {
+  if (rc == CMETA_OK && operation == FLOWIE_CONTROL_RPC_POLICY_DRY_RUN) {
     job->dry_run_changes = (flowie_control_policy_dry_run_change_t *)calloc(
         dry_run_change_count, sizeof(*job->dry_run_changes));
     if (!job->dry_run_changes) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && operation == FLOWIE_CONTROL_RPC_POLICY_DRY_RUN &&
+  for (size_t index = 0u; rc == CMETA_OK && operation == FLOWIE_CONTROL_RPC_POLICY_DRY_RUN &&
                           index < dry_run_change_count;
        ++index) {
     const flowie_control_policy_dry_run_change_t *source = &dry_run_changes[index];
@@ -272,7 +272,7 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
     destination->document = document;
     ++job->dry_run_change_count;
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     atomic_init(&job->references, 1u);
     flowie_control_rpc_policy_job_release(job);
     return rc;
@@ -287,8 +287,8 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
   }
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(server->policy_executor, flowie_control_rpc_policy_job_run,
-                                  job) != SALTS_OK) {
+  if (cmeta_threadpool_try_submit(server->policy_executor, flowie_control_rpc_policy_job_run,
+                                  job) != CMETA_OK) {
     flowie_control_rpc_policy_job_release(job);
     flowie_control_rpc_policy_job_release(job);
     return SALTS_EBUSY;
@@ -297,7 +297,7 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
   completed = atomic_load_explicit(&job->completed, memory_order_acquire);
   if (completed) {
     rc = job->result;
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       if (operation == FLOWIE_CONTROL_RPC_POLICY_VALIDATE) *validation_out = job->validation;
       else if (operation == FLOWIE_CONTROL_RPC_POLICY_PUBLISH) *publish_out = job->publish_result;
       else {
@@ -315,7 +315,7 @@ flowie_control_rpc_policy_execute(flowie_control_management_rpc_server_t *server
     }
   } else {
     /* Accepted publish work may already commit; request_id keeps retries convergent. */
-    rc = wait_rc == SALTS_OK ? SALTS_ETIMEDOUT : wait_rc;
+    rc = wait_rc == CMETA_OK ? SALTS_ETIMEDOUT : wait_rc;
   }
   flowie_control_rpc_policy_job_release(job);
   return rc;
@@ -344,20 +344,20 @@ static int flowie_control_rpc_domain_admin_execute(
   job->result = SALTS_EIO;
   rc = flowie_control_rpc_policy_copy_text(job->caller_domain_id, sizeof(job->caller_domain_id),
                                            caller->domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_copy_text(job->actor, sizeof(job->actor), caller->actor);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_copy_text(job->command_domain_id, sizeof(job->command_domain_id),
                                              command->domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_copy_text(job->principal_id, sizeof(job->principal_id),
                                              command->principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_copy_text(job->request_id, sizeof(job->request_id),
                                              command->request_id);
-  if (rc == SALTS_OK && command->initial_password_size > 0u)
+  if (rc == CMETA_OK && command->initial_password_size > 0u)
     memcpy(job->initial_password, command->initial_password, command->initial_password_size);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_credential_wipe(job, sizeof(*job));
     free(job);
     return rc;
@@ -371,8 +371,8 @@ static int flowie_control_rpc_domain_admin_execute(
   job->command.request_id = job->request_id;
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(server->policy_executor, flowie_control_rpc_domain_admin_job_run,
-                                  job) != SALTS_OK) {
+  if (cmeta_threadpool_try_submit(server->policy_executor, flowie_control_rpc_domain_admin_job_run,
+                                  job) != CMETA_OK) {
     flowie_control_rpc_domain_admin_job_release(job);
     flowie_control_rpc_domain_admin_job_release(job);
     return SALTS_EBUSY;
@@ -381,10 +381,10 @@ static int flowie_control_rpc_domain_admin_execute(
   completed = atomic_load_explicit(&job->completed, memory_order_acquire);
   if (completed) {
     rc = job->result;
-    if (rc == SALTS_OK) *result = job->command_result;
+    if (rc == CMETA_OK) *result = job->command_result;
   } else {
     /* The resumable command converges through derived request IDs after a timeout. */
-    rc = wait_rc == SALTS_OK ? SALTS_ETIMEDOUT : wait_rc;
+    rc = wait_rc == CMETA_OK ? SALTS_ETIMEDOUT : wait_rc;
   }
   flowie_control_rpc_domain_admin_job_release(job);
   return rc;
@@ -396,13 +396,13 @@ static void flowie_control_rpc_free_json_value(json_value_t *value) {
 }
 
 static int flowie_control_rpc_add(json_value_t *object, const char *key, json_value_t *value) {
-  if (value && json_object_add_checked(object, key, value)) return SALTS_OK;
+  if (value && json_object_add_checked(object, key, value)) return CMETA_OK;
   flowie_control_rpc_free_json_value(value);
   return SALTS_ENOMEM;
 }
 
 static int flowie_control_rpc_array_add(json_value_t *array, json_value_t *value) {
-  if (value && json_array_add_checked(array, value)) return SALTS_OK;
+  if (value && json_array_add_checked(array, value)) return CMETA_OK;
   flowie_control_rpc_free_json_value(value);
   return SALTS_ENOMEM;
 }
@@ -419,7 +419,7 @@ static int flowie_control_rpc_result(rpc_response_t *response, json_value_t *val
   }
   rpc_set_result(response, json);
   json_serialize_free(json);
-  return response->result ? SALTS_OK : SALTS_ENOMEM;
+  return response->result ? CMETA_OK : SALTS_ENOMEM;
 }
 
 static int flowie_control_rpc_params(const rpc_request_t *request, const char *const *allowed,
@@ -450,7 +450,7 @@ static int flowie_control_rpc_params(const rpc_request_t *request, const char *c
     }
   }
   *document_out = document;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_object_allowed(const json_value_t *object, const char *const *allowed,
@@ -467,7 +467,7 @@ static int flowie_control_rpc_object_allowed(const json_value_t *object, const c
     }
     if (!known) return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_string(const json_value_t *object, const char *key, size_t maximum,
@@ -478,13 +478,13 @@ static int flowie_control_rpc_string(const json_value_t *object, const char *key
   if (out) *out = NULL;
   if (!object || !key || maximum == 0u || !out) return SALTS_EINVAL;
   value = json_object_get(object, key);
-  if (!value) return required ? SALTS_EPROTO : SALTS_OK;
+  if (!value) return required ? SALTS_EPROTO : CMETA_OK;
   if (json_type(value) != JSON_STRING) return SALTS_EPROTO;
   text = json_string(value);
   size = json_string_len(value);
   if (!text || size == 0u || size > maximum || memchr(text, '\0', size)) return SALTS_EPROTO;
   *out = text;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_u64(const json_value_t *object, const char *key, int required,
@@ -497,7 +497,7 @@ static int flowie_control_rpc_u64(const json_value_t *object, const char *key, i
   unsigned long long parsed;
   if (!object || !key || !out) return SALTS_EINVAL;
   value = json_object_get(object, key);
-  if (!value) return required ? SALTS_EPROTO : SALTS_OK;
+  if (!value) return required ? SALTS_EPROTO : CMETA_OK;
   if (json_type(value) != JSON_NUMBER) return SALTS_EPROTO;
   text = json_number_text(value, &size);
   if (!text || size == 0u || size >= sizeof(buffer)) return SALTS_EPROTO;
@@ -507,15 +507,15 @@ static int flowie_control_rpc_u64(const json_value_t *object, const char *key, i
   parsed = strtoull(buffer, &end, 10);
   if (!end || *end != '\0') return SALTS_EPROTO;
   *out = (uint64_t)parsed;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_page_limit(const json_value_t *params, size_t *limit_out) {
   uint64_t limit = FLOWIE_CONTROL_RPC_DEFAULT_PAGE;
   int rc = flowie_control_rpc_u64(params, "limit", 0, &limit);
-  if (rc != SALTS_OK || limit == 0u || limit > FLOWIE_CONTROL_PAGE_MAX) return SALTS_EPROTO;
+  if (rc != CMETA_OK || limit == 0u || limit > FLOWIE_CONTROL_PAGE_MAX) return SALTS_EPROTO;
   *limit_out = (size_t)limit;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_target_root(const json_value_t *params,
@@ -526,11 +526,11 @@ static int flowie_control_rpc_target_root(const json_value_t *params,
   if (domain_id_out) *domain_id_out = NULL;
   if (!params || !caller || !caller->domain_id || !domain_id_out) return SALTS_EINVAL;
   rc = flowie_control_rpc_string(params, "domain_id", FLOWIE_SECURITY_ID_MAX, 0, &domain_id);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (!domain_id) domain_id = caller->domain_id;
   if (strcmp(domain_id, caller->domain_id) != 0) return SALTS_EPERM;
   *domain_id_out = domain_id;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_scope(flowie_control_management_rpc_server_t *server,
@@ -541,7 +541,7 @@ static int flowie_control_rpc_scope(flowie_control_management_rpc_server_t *serv
   int rc;
   if (!server || !params || !caller || !scoped_out) return SALTS_EINVAL;
   rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   return flowie_control_management_scope_caller(server->service, caller, domain_id, scoped_out);
 }
 
@@ -556,12 +556,12 @@ static int flowie_control_rpc_domain_create(flowie_control_management_rpc_server
   const char *domain_id = NULL;
   const char *request_id = NULL;
   int rc = flowie_control_rpc_params(request, allowed, 2u, &params);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "domain_id", FLOWIE_SECURITY_ID_MAX, 1, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command.domain_id = domain_id;
     command.actor = caller->actor;
     command.request_id = request_id;
@@ -570,7 +570,7 @@ static int flowie_control_rpc_domain_create(flowie_control_management_rpc_server
     else rc = flowie_control_management_domain_create(server->service, caller, &command, &result);
   }
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -591,22 +591,22 @@ flowie_control_rpc_domain_admin_initialize(flowie_control_management_rpc_server_
   const char *request_id = NULL;
   size_t password_size = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 4u, &params);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "domain_id", FLOWIE_SECURITY_ID_MAX, 1, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "initial_password", FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX,
                                    1, &initial_password);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     password_size = json_string_len(json_object_get(params, "initial_password"));
     if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE) rc = SALTS_EINVAL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command.domain_id = domain_id;
     command.principal_id = principal_id;
     command.initial_password = initial_password;
@@ -619,7 +619,7 @@ flowie_control_rpc_domain_admin_initialize(flowie_control_management_rpc_server_
   }
   if (initial_password) flowie_control_credential_wipe((void *)initial_password, password_size);
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -636,17 +636,17 @@ static int flowie_control_rpc_password_change(flowie_control_management_rpc_serv
   const char *request_id = NULL;
   size_t password_size = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "new_password", FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX, 1,
                                    &new_password);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     password_size = strlen(new_password);
     if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE) rc = SALTS_ERANGE;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command.new_password = new_password;
     command.new_password_size = password_size;
     command.request_id = request_id;
@@ -656,7 +656,7 @@ static int flowie_control_rpc_password_change(flowie_control_management_rpc_serv
   }
   if (new_password) flowie_control_credential_wipe((void *)new_password, password_size);
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -676,28 +676,28 @@ static int flowie_control_rpc_password_set(flowie_control_management_rpc_server_
   const char *request_id = NULL;
   size_t password_size = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 5u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "new_password", FLOWIE_CONTROL_CREDENTIAL_SECRET_MAX, 1,
                                    &new_password);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     password_size = json_string_len(json_object_get(params, "new_password"));
     if (password_size < FLOWIE_CONTROL_HUMAN_PASSWORD_MIN_SIZE) rc = SALTS_EINVAL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "mode", sizeof("replace") - 1u, 1, &mode);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     if (strcmp(mode, "create") == 0) command.mode = FLOWIE_CONTROL_PASSWORD_CREATE;
     else if (strcmp(mode, "replace") == 0) command.mode = FLOWIE_CONTROL_PASSWORD_REPLACE;
     else rc = SALTS_EPROTO;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command.domain_id = domain_id;
     command.principal_id = principal_id;
     command.new_password = new_password;
@@ -711,7 +711,7 @@ static int flowie_control_rpc_password_set(flowie_control_management_rpc_server_
   if (rc == SALTS_EALREADY) rc = SALTS_EBUSY;
   if (new_password) flowie_control_credential_wipe((void *)new_password, password_size);
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -721,7 +721,7 @@ flowie_control_rpc_command_result(const flowie_control_command_result_t *result)
   json_value_t *object = json_create_object();
   if (!object ||
       flowie_control_rpc_add(object, "replayed", json_create_bool(result->replayed != 0)) !=
-          SALTS_OK) {
+          CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return NULL;
   }
@@ -756,15 +756,15 @@ static json_value_t *flowie_control_rpc_user(const flowie_control_user_view_t *u
   json_value_t *object = json_create_object();
   if (!object ||
       flowie_control_rpc_add(object, "id", json_create_string(user->principal_id)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "type", json_create_string(user->principal_type)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "enabled", json_create_bool(user->enabled != 0)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "created_at", json_create_uint64(user->created_at)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "updated_at", json_create_uint64(user->updated_at)) !=
-          SALTS_OK) {
+          CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return NULL;
   }
@@ -774,14 +774,14 @@ static json_value_t *flowie_control_rpc_user(const flowie_control_user_view_t *u
 static json_value_t *flowie_control_rpc_group(const flowie_control_group_view_t *group) {
   json_value_t *object = json_create_object();
   if (!object ||
-      flowie_control_rpc_add(object, "id", json_create_string(group->group_id)) != SALTS_OK ||
+      flowie_control_rpc_add(object, "id", json_create_string(group->group_id)) != CMETA_OK ||
       flowie_control_rpc_add(object, "parent_id",
                              group->parent_group_id[0]
                                  ? json_create_string(group->parent_group_id)
-                                 : json_create_null()) != SALTS_OK ||
-      flowie_control_rpc_add(object, "depth", json_create_uint64(group->depth)) != SALTS_OK ||
+                                 : json_create_null()) != CMETA_OK ||
+      flowie_control_rpc_add(object, "depth", json_create_uint64(group->depth)) != CMETA_OK ||
       flowie_control_rpc_add(object, "enabled", json_create_bool(group->enabled != 0)) !=
-          SALTS_OK) {
+          CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return NULL;
   }
@@ -791,9 +791,9 @@ static json_value_t *flowie_control_rpc_group(const flowie_control_group_view_t 
 static json_value_t *flowie_control_rpc_role(const flowie_control_role_view_t *role) {
   json_value_t *object = json_create_object();
   if (!object ||
-      flowie_control_rpc_add(object, "id", json_create_string(role->role_id)) != SALTS_OK ||
+      flowie_control_rpc_add(object, "id", json_create_string(role->role_id)) != CMETA_OK ||
       flowie_control_rpc_add(object, "enabled", json_create_bool(role->enabled != 0)) !=
-          SALTS_OK) {
+          CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return NULL;
   }
@@ -813,44 +813,44 @@ static int flowie_control_rpc_domain_list(flowie_control_management_rpc_server_t
   size_t count = 0u;
   int has_more = 0;
   int rc = flowie_control_rpc_params(request, allowed, 2u, &params);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "after", FLOWIE_SECURITY_ID_MAX, 0, &after);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
+  if (rc == CMETA_OK) {
     items = (flowie_control_domain_view_t *)calloc(capacity, sizeof(*items));
     if (!items) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < capacity; ++index)
+  for (size_t index = 0u; rc == CMETA_OK && index < capacity; ++index)
     items[index] = (flowie_control_domain_view_t)FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_domain_list(server->service, caller, after, items, capacity,
                                                &count, &has_more);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result = json_create_object();
     array = json_create_array();
     if (!result || !array) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < count; ++index) {
     json_value_t *item = json_create_object();
     if (!item ||
         flowie_control_rpc_add(item, "domain_id",
-                               json_create_string(items[index].domain_id)) != SALTS_OK) {
+                               json_create_string(items[index].domain_id)) != CMETA_OK) {
       flowie_control_rpc_free_json_value(item);
       rc = SALTS_ENOMEM;
     } else {
       rc = flowie_control_rpc_array_add(array, item);
     }
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
-    if (rc == SALTS_OK) array = NULL;
+    if (rc == CMETA_OK) array = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(result, "has_more", json_create_bool(has_more != 0));
   free(items);
   json_free(params);
   flowie_control_rpc_free_json_value(array);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(result);
     return flowie_control_rpc_error(response, rc);
   }
@@ -868,23 +868,23 @@ static int flowie_control_rpc_system_status(flowie_control_management_rpc_server
   json_value_t *params = NULL;
   json_value_t *object = NULL;
   int rc = flowie_control_rpc_params(request, allowed, 1u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc = flowie_control_management_system_status(server->service, &scoped, &status);
-  if (rc == SALTS_OK) memcpy(domain_id, scoped.domain_id, strlen(scoped.domain_id) + 1u);
+  if (rc == CMETA_OK) memcpy(domain_id, scoped.domain_id, strlen(scoped.domain_id) + 1u);
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   object = json_create_object();
   if (!object ||
-      flowie_control_rpc_add(object, "domain", json_create_string(domain_id)) != SALTS_OK ||
+      flowie_control_rpc_add(object, "domain", json_create_string(domain_id)) != CMETA_OK ||
       flowie_control_rpc_add(object, "policy_version",
-                             json_create_uint64(status.policy.policy_version)) != SALTS_OK ||
+                             json_create_uint64(status.policy.policy_version)) != CMETA_OK ||
       flowie_control_rpc_add(object, "draft_rules",
                              json_create_uint64(status.policy.draft_rule_count)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "published_rules",
                              json_create_uint64(status.policy.published_rule_count)) !=
-          SALTS_OK) {
+          CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, SALTS_ENOMEM);
   }
@@ -900,41 +900,41 @@ static int flowie_control_rpc_external_https_stats(flowie_control_management_rpc
   json_value_t *params = NULL;
   json_value_t *object = NULL;
   int rc = flowie_control_rpc_params(request, NULL, 0u, &params);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_authorize(server->service, caller,
                                              FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN);
-  if (rc == SALTS_OK && strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0)
+  if (rc == CMETA_OK && strcmp(caller->domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) != 0)
     rc = SALTS_EPERM;
-  if (rc == SALTS_OK) rc = server->external_https_stats(server->external_https_stats_ctx, &stats);
+  if (rc == CMETA_OK) rc = server->external_https_stats(server->external_https_stats_ctx, &stats);
   json_free(params);
-  if (rc != SALTS_OK && rc != SALTS_ENOENT) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK && rc != SALTS_ENOENT) return flowie_control_rpc_error(response, rc);
   object = json_create_object();
   if (!object || flowie_control_rpc_add(object, "enabled",
-                                        json_create_bool(rc == SALTS_OK)) != SALTS_OK) {
+                                        json_create_bool(rc == CMETA_OK)) != CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, SALTS_ENOMEM);
   }
   if (rc == SALTS_ENOENT) return flowie_control_rpc_result(response, object);
   if (flowie_control_rpc_add(object, "started_requests",
-                             json_create_uint64(stats.started_requests)) != SALTS_OK ||
+                             json_create_uint64(stats.started_requests)) != CMETA_OK ||
       flowie_control_rpc_add(object, "in_flight", json_create_uint64(stats.in_flight)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "succeeded", json_create_uint64(stats.succeeded)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "denied", json_create_uint64(stats.denied)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "local_overload",
-                             json_create_uint64(stats.local_overload)) != SALTS_OK ||
+                             json_create_uint64(stats.local_overload)) != CMETA_OK ||
       flowie_control_rpc_add(object, "remote_overload",
-                             json_create_uint64(stats.remote_overload)) != SALTS_OK ||
+                             json_create_uint64(stats.remote_overload)) != CMETA_OK ||
       flowie_control_rpc_add(object, "remote_server_failures",
-                             json_create_uint64(stats.remote_server_failures)) != SALTS_OK ||
+                             json_create_uint64(stats.remote_server_failures)) != CMETA_OK ||
       flowie_control_rpc_add(object, "transport_failures",
-                             json_create_uint64(stats.transport_failures)) != SALTS_OK ||
+                             json_create_uint64(stats.transport_failures)) != CMETA_OK ||
       flowie_control_rpc_add(object, "protocol_failures",
-                             json_create_uint64(stats.protocol_failures)) != SALTS_OK ||
+                             json_create_uint64(stats.protocol_failures)) != CMETA_OK ||
       flowie_control_rpc_add(object, "local_failures",
-                             json_create_uint64(stats.local_failures)) != SALTS_OK) {
+                             json_create_uint64(stats.local_failures)) != CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, SALTS_ENOMEM);
   }
@@ -950,14 +950,14 @@ static int flowie_control_rpc_user_get(flowie_control_management_rpc_server_t *s
   json_value_t *params = NULL;
   const char *principal_id = NULL;
   int rc = flowie_control_rpc_params(request, allowed, 2u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_user_get(server->service, &scoped, principal_id, &user);
   json_free(params);
-  return rc == SALTS_OK ? flowie_control_rpc_result(response, flowie_control_rpc_user(&user))
+  return rc == CMETA_OK ? flowie_control_rpc_result(response, flowie_control_rpc_user(&user))
                         : flowie_control_rpc_error(response, rc);
 }
 
@@ -975,36 +975,36 @@ static int flowie_control_rpc_user_list(flowie_control_management_rpc_server_t *
   size_t count = 0u;
   int has_more = 0;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "after", FLOWIE_SECURITY_ID_MAX, 0, &after);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
+  if (rc == CMETA_OK) {
     items = (flowie_control_user_view_t *)calloc(capacity, sizeof(*items));
     if (!items) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < capacity; ++index)
+  for (size_t index = 0u; rc == CMETA_OK && index < capacity; ++index)
     items[index] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_user_list(server->service, &scoped, after, items, capacity,
                                              &count, &has_more);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result = json_create_object();
     array = json_create_array();
     if (!result || !array) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < count; ++index)
+  for (size_t index = 0u; rc == CMETA_OK && index < count; ++index)
     rc = flowie_control_rpc_array_add(array, flowie_control_rpc_user(&items[index]));
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
-    if (rc == SALTS_OK) array = NULL;
+    if (rc == CMETA_OK) array = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(result, "has_more", json_create_bool(has_more != 0));
   free(items);
   json_free(params);
   flowie_control_rpc_free_json_value(array);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(result);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1027,19 +1027,19 @@ static int flowie_control_rpc_user_write(flowie_control_management_rpc_server_t 
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, disable ? disable_allowed : create_allowed,
                                      disable ? 3u : 4u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK && !disable)
+  if (rc == CMETA_OK && !disable)
     rc = flowie_control_rpc_string(params, "principal_type", FLOWIE_SECURITY_TYPE_MAX, 1,
                                    &principal_type);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) occurred_at = server->clock(server->clock_ctx);
-  if (rc == SALTS_OK && occurred_at == 0u) rc = SALTS_EIO;
-  if (rc == SALTS_OK && disable) {
+  if (rc == CMETA_OK) occurred_at = server->clock(server->clock_ctx);
+  if (rc == CMETA_OK && occurred_at == 0u) rc = SALTS_EIO;
+  if (rc == CMETA_OK && disable) {
     flowie_control_user_disable_command_t command = FLOWIE_CONTROL_USER_DISABLE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.principal_id = principal_id;
@@ -1047,7 +1047,7 @@ static int flowie_control_rpc_user_write(flowie_control_management_rpc_server_t 
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_disable(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK) {
+  } else if (rc == CMETA_OK) {
     flowie_control_user_create_command_t command = FLOWIE_CONTROL_USER_CREATE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.principal_id = principal_id;
@@ -1058,7 +1058,7 @@ static int flowie_control_rpc_user_write(flowie_control_management_rpc_server_t 
     rc = flowie_control_management_user_create(server->service, caller, &command, &result);
   }
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -1076,18 +1076,18 @@ static int flowie_control_rpc_credential_issue(flowie_control_management_rpc_ser
   const char *domain_id = NULL;
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     occurred_at = server->clock(server->clock_ctx);
     if (occurred_at == 0u) rc = SALTS_EIO;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     flowie_control_credential_issue_command_t command =
         FLOWIE_CONTROL_CREDENTIAL_ISSUE_COMMAND_INIT;
     command.domain_id = domain_id;
@@ -1107,7 +1107,7 @@ static int flowie_control_rpc_credential_issue(flowie_control_management_rpc_ser
                   "Credential token is unavailable; use a new request_id");
     return rc;
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_generated_credential_wipe(&generated);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1118,7 +1118,7 @@ static int flowie_control_rpc_credential_issue(flowie_control_management_rpc_ser
   }
   object = json_create_object();
   if (!object || flowie_control_rpc_add(object, "token",
-                                        json_create_string(generated.token)) != SALTS_OK) {
+                                        json_create_string(generated.token)) != CMETA_OK) {
     rc = SALTS_ENOMEM;
     goto done;
   }
@@ -1128,8 +1128,8 @@ static int flowie_control_rpc_credential_issue(flowie_control_management_rpc_ser
 done:
   flowie_control_rpc_free_json_value(object);
   flowie_control_generated_credential_wipe(&generated);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
-  return SALTS_OK;
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
+  return CMETA_OK;
 }
 
 static int flowie_control_rpc_credential_revoke(flowie_control_management_rpc_server_t *server,
@@ -1146,18 +1146,18 @@ static int flowie_control_rpc_credential_revoke(flowie_control_management_rpc_se
   const char *domain_id = NULL;
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     occurred_at = server->clock(server->clock_ctx);
     if (occurred_at == 0u) rc = SALTS_EIO;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     command.domain_id = domain_id;
     command.principal_id = principal_id;
     command.actor = caller->actor;
@@ -1166,7 +1166,7 @@ static int flowie_control_rpc_credential_revoke(flowie_control_management_rpc_se
     rc = flowie_control_management_credential_revoke(server->service, caller, &command, &result);
   }
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   return flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result));
 }
 
@@ -1185,16 +1185,16 @@ static int flowie_control_rpc_named_list(flowie_control_management_rpc_server_t 
   size_t count = 0u;
   int has_more = 0;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "after", FLOWIE_SECURITY_ID_MAX, 0, &after);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
+  if (rc == CMETA_OK) {
     items = calloc(capacity, groups ? sizeof(flowie_control_group_view_t)
                                     : sizeof(flowie_control_role_view_t));
     if (!items) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < capacity; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < capacity; ++index) {
     if (groups)
       ((flowie_control_group_view_t *)items)[index] =
           (flowie_control_group_view_t)FLOWIE_CONTROL_GROUP_VIEW_INIT;
@@ -1202,33 +1202,33 @@ static int flowie_control_rpc_named_list(flowie_control_management_rpc_server_t 
       ((flowie_control_role_view_t *)items)[index] =
           (flowie_control_role_view_t)FLOWIE_CONTROL_ROLE_VIEW_INIT;
   }
-  if (rc == SALTS_OK && groups)
+  if (rc == CMETA_OK && groups)
     rc = flowie_control_management_group_list(server->service, &scoped, after, items, capacity,
                                               &count, &has_more);
-  else if (rc == SALTS_OK)
+  else if (rc == CMETA_OK)
     rc = flowie_control_management_role_list(server->service, &scoped, after, items, capacity,
                                              &count, &has_more);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result = json_create_object();
     array = json_create_array();
     if (!result || !array) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < count; ++index) {
     json_value_t *item =
         groups ? flowie_control_rpc_group(&((flowie_control_group_view_t *)items)[index])
                : flowie_control_rpc_role(&((flowie_control_role_view_t *)items)[index]);
     rc = flowie_control_rpc_array_add(array, item);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
-    if (rc == SALTS_OK) array = NULL;
+    if (rc == CMETA_OK) array = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(result, "has_more", json_create_bool(has_more != 0));
   free(items);
   json_free(params);
   flowie_control_rpc_free_json_value(array);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(result);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1257,21 +1257,21 @@ static int flowie_control_rpc_group_write(flowie_control_management_rpc_server_t
   const char *domain_id = NULL;
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, allowed, allowed_count, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "group_id", FLOWIE_SECURITY_ID_MAX, 1, &group_id);
-  if (rc == SALTS_OK && operation == 0)
+  if (rc == CMETA_OK && operation == 0)
     rc = flowie_control_rpc_string(params, "parent_group_id", FLOWIE_SECURITY_ID_MAX, 0,
                                    &parent_group_id);
-  if (rc == SALTS_OK && operation >= 2)
+  if (rc == CMETA_OK && operation >= 2)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) occurred_at = server->clock(server->clock_ctx);
-  if (rc == SALTS_OK && occurred_at == 0u) rc = SALTS_EIO;
-  if (rc == SALTS_OK && operation == 0) {
+  if (rc == CMETA_OK) occurred_at = server->clock(server->clock_ctx);
+  if (rc == CMETA_OK && occurred_at == 0u) rc = SALTS_EIO;
+  if (rc == CMETA_OK && operation == 0) {
     flowie_control_group_create_command_t command = FLOWIE_CONTROL_GROUP_CREATE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.group_id = group_id;
@@ -1280,7 +1280,7 @@ static int flowie_control_rpc_group_write(flowie_control_management_rpc_server_t
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_group_create(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK && operation == 1) {
+  } else if (rc == CMETA_OK && operation == 1) {
     flowie_control_group_delete_command_t command = FLOWIE_CONTROL_GROUP_DELETE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.group_id = group_id;
@@ -1288,7 +1288,7 @@ static int flowie_control_rpc_group_write(flowie_control_management_rpc_server_t
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_group_delete(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK && operation == 2) {
+  } else if (rc == CMETA_OK && operation == 2) {
     flowie_control_membership_add_command_t command = FLOWIE_CONTROL_MEMBERSHIP_ADD_COMMAND_INIT;
     command.domain_id = domain_id;
     command.principal_id = principal_id;
@@ -1297,7 +1297,7 @@ static int flowie_control_rpc_group_write(flowie_control_management_rpc_server_t
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_membership_add(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK) {
+  } else if (rc == CMETA_OK) {
     flowie_control_membership_remove_command_t command =
         FLOWIE_CONTROL_MEMBERSHIP_REMOVE_COMMAND_INIT;
     command.domain_id = domain_id;
@@ -1309,7 +1309,7 @@ static int flowie_control_rpc_group_write(flowie_control_management_rpc_server_t
     rc = flowie_control_management_membership_remove(server->service, caller, &command, &result);
   }
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -1330,18 +1330,18 @@ static int flowie_control_rpc_role_write(flowie_control_management_rpc_server_t 
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, operation < 2 ? role_allowed : assignment_allowed,
                                      operation < 2 ? 3u : 4u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "role_id", FLOWIE_SECURITY_TYPE_MAX, 1, &role_id);
-  if (rc == SALTS_OK && operation >= 2)
+  if (rc == CMETA_OK && operation >= 2)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) occurred_at = server->clock(server->clock_ctx);
-  if (rc == SALTS_OK && occurred_at == 0u) rc = SALTS_EIO;
-  if (rc == SALTS_OK && operation == 0) {
+  if (rc == CMETA_OK) occurred_at = server->clock(server->clock_ctx);
+  if (rc == CMETA_OK && occurred_at == 0u) rc = SALTS_EIO;
+  if (rc == CMETA_OK && operation == 0) {
     flowie_control_role_create_command_t command = FLOWIE_CONTROL_ROLE_CREATE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.role_id = role_id;
@@ -1349,7 +1349,7 @@ static int flowie_control_rpc_role_write(flowie_control_management_rpc_server_t 
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_role_create(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK && operation == 1) {
+  } else if (rc == CMETA_OK && operation == 1) {
     flowie_control_role_disable_command_t command = FLOWIE_CONTROL_ROLE_DISABLE_COMMAND_INIT;
     command.domain_id = domain_id;
     command.role_id = role_id;
@@ -1357,7 +1357,7 @@ static int flowie_control_rpc_role_write(flowie_control_management_rpc_server_t 
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_role_disable(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK && operation == 2) {
+  } else if (rc == CMETA_OK && operation == 2) {
     flowie_control_user_role_add_command_t command = FLOWIE_CONTROL_USER_ROLE_ADD_COMMAND_INIT;
     command.domain_id = domain_id;
     command.principal_id = principal_id;
@@ -1366,7 +1366,7 @@ static int flowie_control_rpc_role_write(flowie_control_management_rpc_server_t 
     command.request_id = request_id;
     command.occurred_at = occurred_at;
     rc = flowie_control_management_user_role_add(server->service, caller, &command, &result);
-  } else if (rc == SALTS_OK) {
+  } else if (rc == CMETA_OK) {
     flowie_control_user_role_remove_command_t command =
         FLOWIE_CONTROL_USER_ROLE_REMOVE_COMMAND_INIT;
     command.domain_id = domain_id;
@@ -1378,7 +1378,7 @@ static int flowie_control_rpc_role_write(flowie_control_management_rpc_server_t 
     rc = flowie_control_management_user_role_remove(server->service, caller, &command, &result);
   }
   json_free(params);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -1395,27 +1395,27 @@ static int flowie_control_rpc_effective(flowie_control_management_rpc_server_t *
   flowie_control_effective_groups_view_t group_view = FLOWIE_CONTROL_EFFECTIVE_GROUPS_VIEW_INIT;
   flowie_control_effective_roles_view_t role_view = FLOWIE_CONTROL_EFFECTIVE_ROLES_VIEW_INIT;
   int rc = flowie_control_rpc_params(request, allowed, 2u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc =
         flowie_control_rpc_string(params, "principal_id", FLOWIE_SECURITY_ID_MAX, 1, &principal_id);
-  if (rc == SALTS_OK && groups)
+  if (rc == CMETA_OK && groups)
     rc = flowie_control_management_effective_groups(server->service, &scoped, principal_id,
                                                     &group_view);
-  else if (rc == SALTS_OK)
+  else if (rc == CMETA_OK)
     rc = flowie_control_management_effective_roles(server->service, &scoped, principal_id,
                                                    &role_view);
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   array = json_create_array();
   if (!array) return flowie_control_rpc_error(response, SALTS_ENOMEM);
   for (uint32_t index = 0u;
-       rc == SALTS_OK && index < (groups ? group_view.group_count : role_view.role_count);
+       rc == CMETA_OK && index < (groups ? group_view.group_count : role_view.role_count);
        ++index) {
     const char *value = groups ? group_view.groups[index] : role_view.roles[index];
     rc = flowie_control_rpc_array_add(array, json_create_string(value));
   }
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(array);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1432,21 +1432,21 @@ static int flowie_control_rpc_policy_status(flowie_control_management_rpc_server
   json_value_t *params = NULL;
   json_value_t *object = NULL;
   int rc = flowie_control_rpc_params(request, allowed, 1u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc = flowie_control_management_policy_status(server->service, &scoped, &status);
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   object = json_create_object();
   if (!object ||
       flowie_control_rpc_add(object, "policy_version",
-                             json_create_uint64(status.policy_version)) != SALTS_OK ||
+                             json_create_uint64(status.policy_version)) != CMETA_OK ||
       flowie_control_rpc_add(object, "expires_at", json_create_uint64(status.expires_at)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "draft_rules",
-                             json_create_uint64(status.draft_rule_count)) != SALTS_OK ||
+                             json_create_uint64(status.draft_rule_count)) != CMETA_OK ||
       flowie_control_rpc_add(object, "published_rules",
-                             json_create_uint64(status.published_rule_count)) != SALTS_OK) {
+                             json_create_uint64(status.published_rule_count)) != CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, SALTS_ENOMEM);
   }
@@ -1460,7 +1460,7 @@ static int flowie_control_rpc_subject_kind_parse(const char *text,
   else if (strcmp(text, "role") == 0) *out = FLOWIE_SECURITY_SUBJECT_ROLE;
   else if (strcmp(text, "group") == 0) *out = FLOWIE_SECURITY_SUBJECT_GROUP;
   else return SALTS_EPROTO;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static const char *
@@ -1563,13 +1563,13 @@ static int flowie_control_rpc_subject_document(const json_value_t *params,
   int rc;
   if (!params || !out) return SALTS_EINVAL;
   rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &subject_kind);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1, &subject_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "connection", sizeof("allow") - 1u, 1, &connection);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_subject_kind_parse(subject_kind, &document.subject_kind);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     size_t subject_size = strlen(subject_id);
     memcpy(document.subject, subject_id, subject_size + 1u);
     if (strcmp(connection, "allow") == 0) document.connection_effect = FLOWIE_SECURITY_ALLOW;
@@ -1577,10 +1577,10 @@ static int flowie_control_rpc_subject_document(const json_value_t *params,
     else rc = SALTS_EPROTO;
   }
   entries = json_object_get(params, "entries");
-  if (rc == SALTS_OK && (!entries || json_type(entries) != JSON_ARRAY ||
+  if (rc == CMETA_OK && (!entries || json_type(entries) != JSON_ARRAY ||
                          json_array_size(entries) > FLOWIE_CONTROL_ACL_MAX_ENTRIES))
     rc = SALTS_EPROTO;
-  for (size_t index = 0u; rc == SALTS_OK && index < json_array_size(entries); ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < json_array_size(entries); ++index) {
     flowie_control_acl_entry_t *entry = &document.entries[index];
     json_value_t *item = json_array_get(entries, index);
     const char *effect = NULL;
@@ -1605,34 +1605,34 @@ static int flowie_control_rpc_subject_document(const json_value_t *params,
         break;
       }
     }
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_rpc_string(item, "effect", sizeof("allow") - 1u, 1, &effect);
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_rpc_string(item, "access", sizeof("readwrite") - 1u, 1, &access);
-    if (rc == SALTS_OK)
+    if (rc == CMETA_OK)
       rc = flowie_control_rpc_string(item, "topic", FLOWIE_SECURITY_PATTERN_MAX, 1, &topic);
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       if (strcmp(effect, "allow") == 0) entry->effect = FLOWIE_SECURITY_ALLOW;
       else if (strcmp(effect, "deny") == 0) entry->effect = FLOWIE_SECURITY_DENY;
       else rc = SALTS_EPROTO;
     }
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       if (strcmp(access, "read") == 0) entry->action_mask = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
       else if (strcmp(access, "write") == 0) entry->action_mask = FLOWIE_SECURITY_ACTION_PUBLISH;
       else if (strcmp(access, "readwrite") == 0)
         entry->action_mask = FLOWIE_SECURITY_ACTION_SUBSCRIBE | FLOWIE_SECURITY_ACTION_PUBLISH;
       else rc = SALTS_EPROTO;
     }
-    if (rc == SALTS_OK) {
+    if (rc == CMETA_OK) {
       memcpy(entry->topic, topic, strlen(topic) + 1u);
       entry->alternative_count = 1u;
       ++document.entry_count;
     }
   }
-  if (rc == SALTS_OK && document.connection_effect == FLOWIE_SECURITY_DENY &&
+  if (rc == CMETA_OK && document.connection_effect == FLOWIE_SECURITY_DENY &&
       document.entry_count != 0u)
     rc = SALTS_EPROTO;
-  if (rc == SALTS_OK) *out = document;
+  if (rc == CMETA_OK) *out = document;
   return rc;
 }
 
@@ -1642,7 +1642,7 @@ flowie_control_rpc_subject_rule_json(const flowie_control_policy_subject_rule_vi
   json_value_t *entries = NULL;
   const char *subject_kind;
   const char *connection;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!view || view->size < sizeof(*view) ||
       !(subject_kind = flowie_control_rpc_subject_kind_name(view->document.subject_kind)) ||
       !(connection = flowie_control_rpc_effect_name(view->document.connection_effect)))
@@ -1650,40 +1650,40 @@ flowie_control_rpc_subject_rule_json(const flowie_control_policy_subject_rule_vi
   object = json_create_object();
   entries = json_create_array();
   if (!object || !entries) rc = SALTS_ENOMEM;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "subject_kind", json_create_string(subject_kind));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "subject_id",
                                 json_create_string(view->document.subject));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "ordinal", json_create_uint64(view->ordinal));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "connection", json_create_string(connection));
-  for (size_t index = 0u; rc == SALTS_OK && index < view->document.entry_count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < view->document.entry_count; ++index) {
     const flowie_control_acl_entry_t *entry = &view->document.entries[index];
     const char *effect = flowie_control_rpc_effect_name(entry->effect);
     const char *access = flowie_control_rpc_access_name(entry->action_mask);
     json_value_t *item = json_create_object();
     if (!effect || !access || !item ||
-        flowie_control_rpc_add(item, "effect", json_create_string(effect)) != SALTS_OK ||
-        flowie_control_rpc_add(item, "access", json_create_string(access)) != SALTS_OK ||
-        flowie_control_rpc_add(item, "topic", json_create_string(entry->topic)) != SALTS_OK) {
+        flowie_control_rpc_add(item, "effect", json_create_string(effect)) != CMETA_OK ||
+        flowie_control_rpc_add(item, "access", json_create_string(access)) != CMETA_OK ||
+        flowie_control_rpc_add(item, "topic", json_create_string(entry->topic)) != CMETA_OK) {
       flowie_control_rpc_free_json_value(item);
       rc = SALTS_ENOMEM;
     } else {
       rc = flowie_control_rpc_array_add(entries, item);
     }
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(object, "entries", entries);
-    if (rc == SALTS_OK) entries = NULL;
+    if (rc == CMETA_OK) entries = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "revision", json_create_uint64(view->revision));
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(object, "updated_at", json_create_uint64(view->updated_at));
   flowie_control_rpc_free_json_value(entries);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return NULL;
   }
@@ -1703,16 +1703,16 @@ flowie_control_rpc_policy_subject_rule_get(flowie_control_management_rpc_server_
   flowie_security_subject_kind_t subject_kind = FLOWIE_SECURITY_SUBJECT_ANY;
   json_value_t *object;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK) rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
+  if (rc == CMETA_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1, &subject_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_policy_subject_rule_get(server->service, &scoped, subject_kind,
                                                            subject_id, &view);
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   object = flowie_control_rpc_subject_rule_json(&view);
   return object ? flowie_control_rpc_result(response, object)
                 : flowie_control_rpc_error(response, SALTS_ENOMEM);
@@ -1737,47 +1737,47 @@ flowie_control_rpc_policy_subject_rule_list(flowie_control_management_rpc_server
   int has_after = 0;
   int has_more = 0;
   int rc = flowie_control_rpc_params(request, allowed, 4u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK && json_object_get(params, "subject_kind")) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK && json_object_get(params, "subject_kind")) {
     rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
-    if (rc == SALTS_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
+    if (rc == CMETA_OK) rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
   }
-  if (rc == SALTS_OK && json_object_get(params, "after_ordinal")) {
+  if (rc == CMETA_OK && json_object_get(params, "after_ordinal")) {
     has_after = 1;
     rc = flowie_control_rpc_u64(params, "after_ordinal", 1, &after);
-    if (rc == SALTS_OK && after >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_ERANGE;
+    if (rc == CMETA_OK && after >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_ERANGE;
   }
-  if (rc == SALTS_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
+  if (rc == CMETA_OK) {
     items = (flowie_control_policy_subject_rule_view_t *)calloc(capacity, sizeof(*items));
     if (!items) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < capacity; ++index)
+  for (size_t index = 0u; rc == CMETA_OK && index < capacity; ++index)
     items[index] =
         (flowie_control_policy_subject_rule_view_t)FLOWIE_CONTROL_POLICY_SUBJECT_RULE_VIEW_INIT;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_policy_subject_rule_list(server->service, &scoped, subject_kind,
                                                             (uint32_t)after, has_after, items,
                                                             capacity, &count, &has_more);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result = json_create_object();
     array = json_create_array();
     if (!result || !array) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < count; ++index) {
     json_value_t *item = flowie_control_rpc_subject_rule_json(&items[index]);
     rc = item ? flowie_control_rpc_array_add(array, item) : SALTS_ENOMEM;
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
-    if (rc == SALTS_OK) array = NULL;
+    if (rc == CMETA_OK) array = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(result, "has_more", json_create_bool(has_more != 0));
   free(items);
   json_free(params);
   flowie_control_rpc_free_json_value(array);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(result);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1805,17 +1805,17 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, remove ? delete_allowed : put_allowed,
                                      remove ? 4u : 7u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK && remove)
+  if (rc == CMETA_OK && remove)
     rc = flowie_control_rpc_string(params, "subject_kind", 5u, 1, &kind_text);
-  if (rc == SALTS_OK && remove)
+  if (rc == CMETA_OK && remove)
     rc = flowie_control_rpc_subject_kind_parse(kind_text, &subject_kind);
-  if (rc == SALTS_OK && remove)
+  if (rc == CMETA_OK && remove)
     rc = flowie_control_rpc_string(params, "subject_id", FLOWIE_SECURITY_ID_MAX, 1, &subject_id);
-  if (rc == SALTS_OK && !remove) {
+  if (rc == CMETA_OK && !remove) {
     document = (flowie_control_acl_document_t *)malloc(sizeof(*document));
     if (!document) rc = SALTS_ENOMEM;
     else {
@@ -1823,13 +1823,13 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
       rc = flowie_control_rpc_subject_document(params, document);
     }
   }
-  if (rc == SALTS_OK && !remove) {
+  if (rc == CMETA_OK && !remove) {
     rc = flowie_control_rpc_u64(params, "ordinal", 1, &ordinal);
-    if (rc == SALTS_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_ERANGE;
+    if (rc == CMETA_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_ERANGE;
   }
-  if (rc == SALTS_OK) occurred_at = server->clock(server->clock_ctx);
-  if (rc == SALTS_OK && occurred_at == 0u) rc = SALTS_EIO;
-  if (rc == SALTS_OK && remove) {
+  if (rc == CMETA_OK) occurred_at = server->clock(server->clock_ctx);
+  if (rc == CMETA_OK && occurred_at == 0u) rc = SALTS_EIO;
+  if (rc == CMETA_OK && remove) {
     flowie_control_policy_subject_rule_delete_command_t command =
         FLOWIE_CONTROL_POLICY_SUBJECT_RULE_DELETE_COMMAND_INIT;
     command.domain_id = domain_id;
@@ -1840,7 +1840,7 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
     command.occurred_at = occurred_at;
     rc = flowie_control_management_policy_subject_rule_delete(server->service, caller, &command,
                                                               &result);
-  } else if (rc == SALTS_OK) {
+  } else if (rc == CMETA_OK) {
     flowie_control_policy_subject_rule_put_command_t command =
         FLOWIE_CONTROL_POLICY_SUBJECT_RULE_PUT_COMMAND_INIT;
     command.domain_id = domain_id;
@@ -1854,7 +1854,7 @@ flowie_control_rpc_policy_subject_rule_write(flowie_control_management_rpc_serve
   }
   json_free(params);
   free(document);
-  return rc == SALTS_OK
+  return rc == CMETA_OK
              ? flowie_control_rpc_result(response, flowie_control_rpc_command_result(&result))
              : flowie_control_rpc_error(response, rc);
 }
@@ -1869,18 +1869,18 @@ static int flowie_control_rpc_policy_validate(flowie_control_management_rpc_serv
   json_value_t *params = NULL;
   json_value_t *object = NULL;
   int rc = flowie_control_rpc_params(request, allowed, 1u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_policy_execute(server, FLOWIE_CONTROL_RPC_POLICY_VALIDATE, &scoped,
                                            NULL, NULL, 0u, NULL, &validation, NULL);
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   object = json_create_object();
   if (!object ||
       flowie_control_rpc_add(object, "rule_count",
-                             json_create_uint64(validation.rule_count)) != SALTS_OK ||
+                             json_create_uint64(validation.rule_count)) != CMETA_OK ||
       flowie_control_rpc_add(object, "deny_rule_count",
-                             json_create_uint64(validation.deny_rule_count)) != SALTS_OK) {
+                             json_create_uint64(validation.deny_rule_count)) != CMETA_OK) {
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, SALTS_ENOMEM);
   }
@@ -1906,8 +1906,8 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
   size_t change_count = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 2u, &params);
 
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK) {
     change_values = json_object_get(params, "changes");
     if (!change_values || json_type(change_values) != JSON_ARRAY) rc = SALTS_EPROTO;
     else {
@@ -1916,13 +1916,13 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
         rc = SALTS_EPROTO;
     }
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     changes = (flowie_control_policy_dry_run_change_t *)calloc(change_count, sizeof(*changes));
     diagnostics = (flowie_control_policy_diagnostic_t *)calloc(
         FLOWIE_CONTROL_POLICY_DRY_RUN_MAX_CHANGES, sizeof(*diagnostics));
     if (!changes || !diagnostics) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < change_count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < change_count; ++index) {
     json_value_t *item = json_array_get(change_values, index);
     flowie_control_policy_dry_run_change_t *change = &changes[index];
     const char *operation = NULL;
@@ -1935,23 +1935,23 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
       break;
     }
     rc = flowie_control_rpc_string(item, "operation", sizeof("delete") - 1u, 1, &operation);
-    if (rc == SALTS_OK && strcmp(operation, "put") == 0) {
+    if (rc == CMETA_OK && strcmp(operation, "put") == 0) {
       flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
       char *text = NULL;
       size_t text_size = 0u;
       rc = flowie_control_rpc_object_allowed(item, put_allowed,
                                              sizeof(put_allowed) / sizeof(put_allowed[0]));
-      if (rc == SALTS_OK) rc = flowie_control_rpc_subject_document(item, &document);
-      if (rc == SALTS_OK) rc = flowie_control_rpc_u64(item, "ordinal", 1, &ordinal);
-      if (rc == SALTS_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_EPROTO;
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) rc = flowie_control_rpc_subject_document(item, &document);
+      if (rc == CMETA_OK) rc = flowie_control_rpc_u64(item, "ordinal", 1, &ordinal);
+      if (rc == CMETA_OK && ordinal >= FLOWIE_SECURITY_MAX_RULES) rc = SALTS_EPROTO;
+      if (rc == CMETA_OK) {
         text = (char *)malloc(FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u);
         if (!text) rc = SALTS_ENOMEM;
         else
           rc = flowie_control_acl_format(&document, text, FLOWIE_CONTROL_ACL_DOCUMENT_MAX + 1u,
                                          &text_size);
       }
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         free(text);
         break;
       }
@@ -1961,23 +1961,23 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
       change->subject_id = json_string(json_object_get(item, "subject_id"));
       change->document = text;
       change->document_size = text_size;
-    } else if (rc == SALTS_OK && strcmp(operation, "delete") == 0) {
+    } else if (rc == CMETA_OK && strcmp(operation, "delete") == 0) {
       rc = flowie_control_rpc_object_allowed(item, delete_allowed,
                                              sizeof(delete_allowed) / sizeof(delete_allowed[0]));
-      if (rc == SALTS_OK) rc = flowie_control_rpc_string(item, "subject_kind", 5u, 1, &kind_text);
-      if (rc == SALTS_OK)
+      if (rc == CMETA_OK) rc = flowie_control_rpc_string(item, "subject_kind", 5u, 1, &kind_text);
+      if (rc == CMETA_OK)
         rc = flowie_control_rpc_subject_kind_parse(kind_text, &change->subject_kind);
-      if (rc == SALTS_OK)
+      if (rc == CMETA_OK)
         rc = flowie_control_rpc_string(item, "subject_id", FLOWIE_SECURITY_ID_MAX, 1, &subject_id);
-      if (rc == SALTS_OK) {
+      if (rc == CMETA_OK) {
         change->operation = FLOWIE_CONTROL_POLICY_DRY_RUN_DELETE;
         change->subject_id = subject_id;
       }
-    } else if (rc == SALTS_OK) {
+    } else if (rc == CMETA_OK) {
       rc = SALTS_EPROTO;
     }
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result.diagnostics = diagnostics;
     result.diagnostic_capacity = FLOWIE_CONTROL_POLICY_DRY_RUN_MAX_CHANGES;
     rc = flowie_control_rpc_policy_execute(server, FLOWIE_CONTROL_RPC_POLICY_DRY_RUN, &scoped, NULL,
@@ -1987,7 +1987,7 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
     free((void *)changes[index].document);
   free(changes);
   json_free(params);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     free(diagnostics);
     return flowie_control_rpc_error(response, rc);
   }
@@ -1996,15 +1996,15 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
   diagnostic_values = json_create_array();
   if (!object || !diagnostic_values ||
       flowie_control_rpc_add(object, "valid", json_create_bool(result.valid != 0)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "store_revision",
-                             json_create_uint64(result.store_revision)) != SALTS_OK ||
+                             json_create_uint64(result.store_revision)) != CMETA_OK ||
       flowie_control_rpc_add(object, "rule_count", json_create_uint64(result.rule_count)) !=
-          SALTS_OK ||
+          CMETA_OK ||
       flowie_control_rpc_add(object, "deny_rule_count",
-                             json_create_uint64(result.deny_rule_count)) != SALTS_OK)
+                             json_create_uint64(result.deny_rule_count)) != CMETA_OK)
     rc = SALTS_ENOMEM;
-  for (size_t index = 0u; rc == SALTS_OK && index < result.diagnostic_count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < result.diagnostic_count; ++index) {
     const flowie_control_policy_diagnostic_t *diagnostic = &diagnostics[index];
     const char *subject_kind = flowie_control_rpc_subject_kind_name(diagnostic->subject_kind);
     const char *field = flowie_control_rpc_policy_diagnostic_field(diagnostic->field);
@@ -2012,31 +2012,31 @@ static int flowie_control_rpc_policy_dry_run(flowie_control_management_rpc_serve
     if (!item ||
         flowie_control_rpc_add(item, "code",
                                json_create_string(flowie_control_rpc_policy_diagnostic_code(
-                                   diagnostic->code))) != SALTS_OK ||
+                                   diagnostic->code))) != CMETA_OK ||
         flowie_control_rpc_add(
             item, "message",
             json_create_string(
-                flowie_control_rpc_policy_diagnostic_message(diagnostic->code))) != SALTS_OK)
+                flowie_control_rpc_policy_diagnostic_message(diagnostic->code))) != CMETA_OK)
       rc = SALTS_ENOMEM;
-    if (rc == SALTS_OK && diagnostic->has_change_index)
+    if (rc == CMETA_OK && diagnostic->has_change_index)
       rc = flowie_control_rpc_add(item, "change_index",
                                   json_create_uint64(diagnostic->change_index));
-    if (rc == SALTS_OK && subject_kind)
+    if (rc == CMETA_OK && subject_kind)
       rc = flowie_control_rpc_add(item, "subject_kind", json_create_string(subject_kind));
-    if (rc == SALTS_OK && diagnostic->subject_id[0])
+    if (rc == CMETA_OK && diagnostic->subject_id[0])
       rc = flowie_control_rpc_add(item, "subject_id",
                                   json_create_string(diagnostic->subject_id));
-    if (rc == SALTS_OK && field)
+    if (rc == CMETA_OK && field)
       rc = flowie_control_rpc_add(item, "field", json_create_string(field));
-    if (rc == SALTS_OK) rc = flowie_control_rpc_array_add(diagnostic_values, item);
+    if (rc == CMETA_OK) rc = flowie_control_rpc_array_add(diagnostic_values, item);
     else flowie_control_rpc_free_json_value(item);
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(object, "diagnostics", diagnostic_values);
-    if (rc == SALTS_OK) diagnostic_values = NULL;
+    if (rc == CMETA_OK) diagnostic_values = NULL;
   }
   free(diagnostics);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(diagnostic_values);
     flowie_control_rpc_free_json_value(object);
     return flowie_control_rpc_error(response, rc);
@@ -2056,14 +2056,14 @@ static int flowie_control_rpc_policy_publish(flowie_control_management_rpc_serve
   uint64_t expires_at = 0u;
   uint64_t occurred_at = 0u;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK) rc = flowie_control_rpc_target_root(params, caller, &domain_id);
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_string(params, "request_id", FLOWIE_CONTROL_REQUEST_ID_MAX, 1,
                                    &request_id);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_u64(params, "expires_at", 0, &expires_at);
+  if (rc == CMETA_OK) rc = flowie_control_rpc_u64(params, "expires_at", 0, &expires_at);
   occurred_at = server->clock(server->clock_ctx);
-  if (rc == SALTS_OK && occurred_at == 0u) rc = SALTS_EIO;
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK && occurred_at == 0u) rc = SALTS_EIO;
+  if (rc == CMETA_OK) {
     flowie_control_policy_publish_command_t command = FLOWIE_CONTROL_POLICY_PUBLISH_COMMAND_INIT;
     command.domain_id = domain_id;
     command.actor = caller->actor;
@@ -2074,14 +2074,14 @@ static int flowie_control_rpc_policy_publish(flowie_control_management_rpc_serve
                                            &command, NULL, 0u, NULL, NULL, &result);
   }
   json_free(params);
-  if (rc != SALTS_OK) return flowie_control_rpc_error(response, rc);
+  if (rc != CMETA_OK) return flowie_control_rpc_error(response, rc);
   {
     json_value_t *object = json_create_object();
     if (!object ||
         flowie_control_rpc_add(object, "policy_version",
-                               json_create_uint64(result.policy_version)) != SALTS_OK ||
+                               json_create_uint64(result.policy_version)) != CMETA_OK ||
         flowie_control_rpc_add(object, "replayed", json_create_bool(result.replayed != 0)) !=
-            SALTS_OK) {
+            CMETA_OK) {
       flowie_control_rpc_free_json_value(object);
       return flowie_control_rpc_error(response, SALTS_ENOMEM);
     }
@@ -2103,54 +2103,54 @@ static int flowie_control_rpc_audit_list(flowie_control_management_rpc_server_t 
   size_t count = 0u;
   int has_more = 0;
   int rc = flowie_control_rpc_params(request, allowed, 3u, &params);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_u64(params, "after", 0, &after);
-  if (rc == SALTS_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) rc = flowie_control_rpc_scope(server, params, caller, &scoped);
+  if (rc == CMETA_OK) rc = flowie_control_rpc_u64(params, "after", 0, &after);
+  if (rc == CMETA_OK) rc = flowie_control_rpc_page_limit(params, &capacity);
+  if (rc == CMETA_OK) {
     items = (flowie_control_audit_view_t *)calloc(capacity, sizeof(*items));
     if (!items) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < capacity; ++index)
+  for (size_t index = 0u; rc == CMETA_OK && index < capacity; ++index)
     items[index] = (flowie_control_audit_view_t)FLOWIE_CONTROL_AUDIT_VIEW_INIT;
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_management_audit_list(server->service, &scoped, after, items, capacity,
                                               &count, &has_more);
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     result = json_create_object();
     array = json_create_array();
     if (!result || !array) rc = SALTS_ENOMEM;
   }
-  for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
+  for (size_t index = 0u; rc == CMETA_OK && index < count; ++index) {
     json_value_t *item = json_create_object();
     if (!item ||
         flowie_control_rpc_add(item, "request_id",
-                               json_create_string(items[index].request_id)) != SALTS_OK ||
+                               json_create_string(items[index].request_id)) != CMETA_OK ||
         flowie_control_rpc_add(item, "actor", json_create_string(items[index].actor)) !=
-            SALTS_OK ||
+            CMETA_OK ||
         flowie_control_rpc_add(item, "operation",
-                               json_create_string(items[index].operation)) != SALTS_OK ||
+                               json_create_string(items[index].operation)) != CMETA_OK ||
         flowie_control_rpc_add(item, "target", json_create_string(items[index].target_id)) !=
-            SALTS_OK ||
+            CMETA_OK ||
         flowie_control_rpc_add(item, "cursor", json_create_uint64(items[index].revision)) !=
-            SALTS_OK ||
+            CMETA_OK ||
         flowie_control_rpc_add(item, "occurred_at",
-                               json_create_uint64(items[index].occurred_at)) != SALTS_OK) {
+                               json_create_uint64(items[index].occurred_at)) != CMETA_OK) {
       flowie_control_rpc_free_json_value(item);
       rc = SALTS_ENOMEM;
     } else {
       rc = flowie_control_rpc_array_add(array, item);
     }
   }
-  if (rc == SALTS_OK) {
+  if (rc == CMETA_OK) {
     rc = flowie_control_rpc_add(result, "items", array);
-    if (rc == SALTS_OK) array = NULL;
+    if (rc == CMETA_OK) array = NULL;
   }
-  if (rc == SALTS_OK)
+  if (rc == CMETA_OK)
     rc = flowie_control_rpc_add(result, "has_more", json_create_bool(has_more != 0));
   free(items);
   json_free(params);
   flowie_control_rpc_free_json_value(array);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     flowie_control_rpc_free_json_value(result);
     return flowie_control_rpc_error(response, rc);
   }
@@ -2308,7 +2308,7 @@ int flowie_control_management_rpc_server_execute(flowie_control_management_rpc_s
     return SALTS_ENOENT;
   }
   rc = handler(request, NULL, &rpc_request, response_out);
-  if (rc != SALTS_OK && response_out->error_code == 0)
+  if (rc != CMETA_OK && response_out->error_code == 0)
     rpc_set_error(response_out, RPC_ERROR_INTERNAL, "Internal error");
   return rc;
 }
@@ -2331,7 +2331,7 @@ static int flowie_control_rpc_registered_method(Req *request, Res *response,
     return SALTS_EINVAL;
   }
   rc = server->resolve_caller(server->resolve_caller_ctx, request, &caller);
-  if (rc != SALTS_OK) {
+  if (rc != CMETA_OK) {
     rpc_set_error(rpc_response,
                   rc == SALTS_EPERM ? FLOWIE_CONTROL_RPC_FORBIDDEN : RPC_ERROR_INTERNAL,
                   rc == SALTS_EPERM ? "Forbidden" : "Caller resolution failed");
@@ -2383,9 +2383,9 @@ int flowie_control_management_rpc_server_create(
   server->external_https_stats_ctx = config->external_https_stats_ctx;
   server->policy_executor_deadline_ms = config->policy_executor_deadline_ms;
   {
-    salts_threadpool_config_t executor_config = {(int)config->policy_executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->policy_executor_workers,
                                                  config->policy_executor_queue_capacity};
-    server->policy_executor = salts_threadpool_create_with_config(&executor_config);
+    server->policy_executor = cmeta_threadpool_create_with_config(&executor_config);
     if (!server->policy_executor) {
       free(server);
       return SALTS_ENOMEM;
@@ -2406,7 +2406,7 @@ int flowie_control_management_rpc_server_create(
     ++server->registered_method_count;
   }
   *out = server;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_control_management_rpc_server_bind(flowie_control_management_rpc_server_t *server,
@@ -2415,15 +2415,15 @@ int flowie_control_management_rpc_server_bind(flowie_control_management_rpc_serv
   if (!server || !app || server->bound_app) return SALTS_EINVAL;
   endpoint = server->rpc_context->config.endpoint;
   if (flowie_control_http_app_lookup_context(app, endpoint) ||
-      flowie_control_http_app_bind_context(app, endpoint, server) != SALTS_OK)
+      flowie_control_http_app_bind_context(app, endpoint, server) != CMETA_OK)
     return SALTS_EBUSY;
   server->bound_app = app;
-  if (flowie_control_http_app_post(app, endpoint, flowie_control_rpc_method) != SALTS_OK) {
+  if (flowie_control_http_app_post(app, endpoint, flowie_control_rpc_method) != CMETA_OK) {
     server->bound_app = NULL;
     (void)flowie_control_http_app_unbind_context(app, endpoint, server);
     return SALTS_EBUSY;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_control_management_rpc_server_unbind(flowie_control_management_rpc_server_t *server) {
@@ -2443,7 +2443,7 @@ void flowie_control_management_rpc_server_destroy(flowie_control_management_rpc_
     (void)rpc_unregister_method(server->rpc_context,
                                 FLOWIE_CONTROL_RPC_METHODS[server->registered_method_count]);
   }
-  salts_threadpool_destroy(server->policy_executor);
+  cmeta_threadpool_destroy(server->policy_executor);
   server->policy_executor = NULL;
   memset(server, 0, sizeof(*server));
   free(server);

@@ -25,6 +25,7 @@ on:
       - "deploy/**"
       - "interop/**"
       - "packaging/**"
+      - ".github/workflows/native-tests.yml"
       - ".github/workflows/native-sdk-pipeline.yml"
       - ".github/workflows/native-sdk-qualification.yml"
       - ".github/workflows/native-sdk-release.yml"
@@ -39,8 +40,8 @@ concurrency:
 
 jobs:
   qualify:
-    name: Qualify Flowie.Native
-    uses: ./.github/workflows/native-sdk-pipeline.yml
+    name: Qualify Salts 3 development integration
+    uses: ./.github/workflows/native-tests.yml
     with:
       source_sha: ${{ github.event.pull_request.head.sha }}
     secrets: inherit

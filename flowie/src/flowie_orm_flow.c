@@ -4,8 +4,8 @@
 #include "orm_postgresql.h"
 #endif
 
-#include "salts_cmeta_data.h"
-#include "salts_error.h"
+#include "cmeta_cmeta_data.h"
+#include "cmeta_error.h"
 #include <salts/thread.h>
 
 #include <cmeta/data.h>
@@ -39,14 +39,14 @@ static const cmeta_type_desc flowie_orm_row_type = {
 };
 static cmeta_data_desc flowie_orm_text_data;
 static cmeta_data_desc flowie_orm_blob_data;
-static salts_once_t flowie_orm_data_once = SALTS_ONCE_INIT;
+static cmeta_once_t flowie_orm_data_once = SALTS_ONCE_INIT;
 
 static void flowie_orm_data_init(void) {
-  flowie_orm_text_data = salts_tstr_cmeta_data;
+  flowie_orm_text_data = cmeta_tstr_cmeta_data;
   flowie_orm_text_data.stable_id = "flowie.orm.Text";
   flowie_orm_text_data.display_name = "Flowie ORM text";
   flowie_orm_text_data.kind = CMETA_DATA_STRING;
-  flowie_orm_blob_data = salts_tstr_cmeta_data;
+  flowie_orm_blob_data = cmeta_tstr_cmeta_data;
   flowie_orm_blob_data.stable_id = "flowie.orm.Blob";
   flowie_orm_blob_data.display_name = "Flowie ORM blob";
   flowie_orm_blob_data.kind = CMETA_DATA_BYTES;
@@ -72,7 +72,7 @@ orm_status_t flowie_orm_connect(const orm_config_t *config,
 
 int flowie_orm_status_to_salts(orm_status_t status) {
   switch (status) {
-    case ORM_STATUS_OK: return SALTS_OK;
+    case ORM_STATUS_OK: return CMETA_OK;
     case ORM_STATUS_INVALID_ARGUMENT:
     case ORM_STATUS_ABI_MISMATCH:
     case ORM_STATUS_TYPE_ERROR:
@@ -98,7 +98,7 @@ static int flowie_orm_column_metadata(const flowie_orm_column_t *column, size_t 
   size_t offset = 0u;
   if (!column || !column->name || !column->name[0] || !layout || !field)
     return SALTS_EINVAL;
-  salts_once(&flowie_orm_data_once, flowie_orm_data_init);
+  cmeta_once(&flowie_orm_data_once, flowie_orm_data_init);
   switch (column->kind) {
     case FLOWIE_ORM_COLUMN_UINT64:
       data = &cmeta_data_uint64;
@@ -129,7 +129,7 @@ static int flowie_orm_column_metadata(const flowie_orm_column_t *column, size_t 
   field->name = column->name;
   field->offset = offset;
   field->value = data;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
@@ -149,7 +149,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
   orm_status_t status;
   size_t rows = 0u;
   size_t index;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (row_count) *row_count = 0u;
   if (!query || !columns || column_count == 0u ||
       column_count > FLOWIE_ORM_MAX_COLUMNS || max_rows == 0u || !visit)
@@ -159,7 +159,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
   for (index = 0u; index < column_count; ++index) {
     rc = flowie_orm_column_metadata(&columns[index], index, &layout_fields[index],
                                     &data_fields[index]);
-    if (rc != SALTS_OK) return rc;
+    if (rc != CMETA_OK) return rc;
   }
   layout.name = "flowie_orm_row_t";
   layout.size = sizeof(flowie_orm_row_t);
@@ -184,7 +184,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
                              query, transaction, &flow_config, &publisher, &error)
                        : orm_query_open_flow(query, &flow_config, &publisher, &error);
   rc = flowie_orm_status_to_salts(status);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   memset(&row, 0, sizeof(row));
   for (;;) {
     cflow_step step = cflow_publisher_resume(&publisher, NULL, &row);
@@ -194,7 +194,7 @@ int flowie_orm_query_visit(orm_query_t *query, orm_transaction_t *transaction,
       else
         rc = visit(visit_ctx, &row, rows);
       flowie_orm_row_destroy(&row);
-      if (rc != SALTS_OK) break;
+      if (rc != CMETA_OK) break;
       ++rows;
       if (step.kind == CFLOW_STEP_VALUE_AND_DONE) break;
       continue;
@@ -223,7 +223,7 @@ int flowie_orm_command_execute(orm_query_t *query, orm_transaction_t *transactio
                              query, transaction, &publisher, &error)
                        : orm_query_open_command_flow(query, &publisher, &error);
   rc = flowie_orm_status_to_salts(status);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   step = cflow_publisher_resume(&publisher, NULL, &result);
   if (step.kind != CFLOW_STEP_VALUE_AND_DONE)
     rc = step.kind == CFLOW_STEP_WAIT ? SALTS_ENOTSUP : SALTS_EIO;

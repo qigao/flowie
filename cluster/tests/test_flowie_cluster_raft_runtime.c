@@ -1,7 +1,7 @@
 #include "flowie_cluster_raft_runtime_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -9,13 +9,13 @@ static int flowie_raft_runtime_apply(void *ctx,
                                      const tr_raft_entry_t *entries,
                                      size_t entry_count) {
   (void)ctx;
-  return entries && entry_count != 0u ? SALTS_OK : SALTS_EINVAL;
+  return entries && entry_count != 0u ? CMETA_OK : SALTS_EINVAL;
 }
 
 static int flowie_raft_runtime_payload(
     void *ctx, const tr_raft_transport_payload_t *payload) {
   (void)ctx;
-  return payload ? SALTS_OK : SALTS_EINVAL;
+  return payload ? CMETA_OK : SALTS_EINVAL;
 }
 
 spec("flowie cluster TurboRaft FlowMQ runtime") {

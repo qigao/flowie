@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -35,8 +35,8 @@ struct flowie_cluster_peer_registry_s {
   size_t inflight_sends;
   int closing;
   int drained;
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
 };
 
 static int flowie_cluster_peer_registry_nonzero(const uint8_t *value, size_t size) {
@@ -53,7 +53,7 @@ static int flowie_cluster_peer_registry_identity_validate(
       memchr(remote_node_id.data, '\0', remote_node_id.len) || !remote_boot_id ||
       !flowie_cluster_peer_registry_nonzero(remote_boot_id, FLOWIE_CLUSTER_BOOT_ID_SIZE))
     return SALTS_EINVAL;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_cluster_peer_registry_identity_equal(
@@ -104,10 +104,10 @@ int flowie_cluster_peer_registry_create(const flowie_cluster_peer_registry_confi
   }
   registry->max_links = config->max_links;
   registry->max_inflight_sends = config->max_inflight_sends;
-  salts_mutex_init(&registry->mutex);
-  salts_cond_init(&registry->changed);
+  cmeta_mutex_init(&registry->mutex);
+  cmeta_cond_init(&registry->changed);
   *out = registry;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *registry,
@@ -119,10 +119,10 @@ int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *regist
   int rc;
   if (!registry || !link) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(remote_node_id, remote_boot_id);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   owned_node_id = tstr_from_v(remote_node_id);
   if (!owned_node_id) return SALTS_ENOMEM;
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, remote_node_id, remote_boot_id);
   if (registry->closing) rc = SALTS_ESHUTDOWN;
   else if (entry) rc = entry->link == link ? SALTS_EALREADY : SALTS_EBUSY;
@@ -137,9 +137,9 @@ int flowie_cluster_peer_registry_register(flowie_cluster_peer_registry_t *regist
     entry->state = FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_ACTIVE;
     ++registry->registered_links;
     registry->drained = 0;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   }
-  salts_mutex_unlock(&registry->mutex);
+  cmeta_mutex_unlock(&registry->mutex);
   tstr_free(owned_node_id);
   return rc;
 }
@@ -152,8 +152,8 @@ int flowie_cluster_peer_registry_unregister(
   int rc;
   if (!registry || !link) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(remote_node_id, remote_boot_id);
-  if (rc != SALTS_OK) return rc;
-  salts_mutex_lock(&registry->mutex);
+  if (rc != CMETA_OK) return rc;
+  cmeta_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, remote_node_id, remote_boot_id);
   if (!entry) rc = SALTS_ENOENT;
   else if (entry->link != link) rc = SALTS_EBUSY;
@@ -164,10 +164,10 @@ int flowie_cluster_peer_registry_unregister(
     owned_node_id = entry->remote_node_id;
     memset(entry, 0, sizeof(*entry));
     --registry->registered_links;
-    salts_cond_broadcast(&registry->changed);
-    rc = SALTS_OK;
+    cmeta_cond_broadcast(&registry->changed);
+    rc = CMETA_OK;
   }
-  salts_mutex_unlock(&registry->mutex);
+  cmeta_mutex_unlock(&registry->mutex);
   tstr_free(owned_node_id);
   return rc;
 }
@@ -179,12 +179,12 @@ static void flowie_cluster_peer_registry_complete(void *ctx, int status) {
   void *complete_ctx = completion->complete_ctx;
   flowie_cluster_peer_registry_t *registry = completion->registry;
   if (complete) complete(complete_ctx, status);
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   if (completion->entry->inflight_sends != 0u) --completion->entry->inflight_sends;
   if (registry->inflight_sends != 0u) --registry->inflight_sends;
   if (registry->closing && registry->inflight_sends == 0u) registry->drained = 1;
-  salts_cond_broadcast(&registry->changed);
-  salts_mutex_unlock(&registry->mutex);
+  cmeta_cond_broadcast(&registry->changed);
+  cmeta_mutex_unlock(&registry->mutex);
   free(completion);
 }
 
@@ -197,8 +197,8 @@ int flowie_cluster_peer_registry_send(void *ctx, const flowie_cluster_peer_frame
   int rc;
   if (!registry || !frame) return SALTS_EINVAL;
   rc = flowie_cluster_peer_registry_identity_validate(frame->target_node_id, frame->target_boot_id);
-  if (rc != SALTS_OK) return rc;
-  salts_mutex_lock(&registry->mutex);
+  if (rc != CMETA_OK) return rc;
+  cmeta_mutex_lock(&registry->mutex);
   entry = flowie_cluster_peer_registry_find(registry, frame->target_node_id, frame->target_boot_id);
   if (registry->closing) rc = SALTS_ESHUTDOWN;
   else if (!entry || entry->state != FLOWIE_CLUSTER_PEER_REGISTRY_ENTRY_ACTIVE) rc = SALTS_ENOENT;
@@ -207,17 +207,17 @@ int flowie_cluster_peer_registry_send(void *ctx, const flowie_cluster_peer_frame
     ++entry->inflight_sends;
     ++registry->inflight_sends;
     registry->drained = 0;
-    rc = SALTS_OK;
+    rc = CMETA_OK;
   }
-  salts_mutex_unlock(&registry->mutex);
-  if (rc != SALTS_OK) return rc;
+  cmeta_mutex_unlock(&registry->mutex);
+  if (rc != CMETA_OK) return rc;
   completion = (flowie_cluster_peer_registry_completion_t *)calloc(1u, sizeof(*completion));
   if (!completion) {
-    salts_mutex_lock(&registry->mutex);
+    cmeta_mutex_lock(&registry->mutex);
     --entry->inflight_sends;
     --registry->inflight_sends;
-    salts_cond_broadcast(&registry->changed);
-    salts_mutex_unlock(&registry->mutex);
+    cmeta_cond_broadcast(&registry->changed);
+    cmeta_mutex_unlock(&registry->mutex);
     return SALTS_ENOMEM;
   }
   completion->registry = registry;
@@ -226,12 +226,12 @@ int flowie_cluster_peer_registry_send(void *ctx, const flowie_cluster_peer_frame
   completion->complete_ctx = complete_ctx;
   rc = flowie_cluster_peer_link_send(entry->link, frame, flowie_cluster_peer_registry_complete,
                                      completion);
-  if (rc != SALTS_OK) {
-    salts_mutex_lock(&registry->mutex);
+  if (rc != CMETA_OK) {
+    cmeta_mutex_lock(&registry->mutex);
     --entry->inflight_sends;
     --registry->inflight_sends;
-    salts_cond_broadcast(&registry->changed);
-    salts_mutex_unlock(&registry->mutex);
+    cmeta_cond_broadcast(&registry->changed);
+    cmeta_mutex_unlock(&registry->mutex);
     free(completion);
   }
   return rc;
@@ -243,7 +243,7 @@ int flowie_cluster_peer_registry_snapshot(flowie_cluster_peer_registry_t *regist
   if (!registry || !out || out->size != sizeof(*out) ||
       out->abi_version != FLOWIE_CLUSTER_PEER_REGISTRY_ABI_V1)
     return SALTS_EINVAL;
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   out->registered_links = registry->registered_links;
   out->draining_links = 0u;
   for (index = 0u; index < registry->max_links; ++index)
@@ -251,21 +251,21 @@ int flowie_cluster_peer_registry_snapshot(flowie_cluster_peer_registry_t *regist
       ++out->draining_links;
   out->inflight_sends = registry->inflight_sends;
   out->closing = registry->closing;
-  salts_mutex_unlock(&registry->mutex);
-  return SALTS_OK;
+  cmeta_mutex_unlock(&registry->mutex);
+  return CMETA_OK;
 }
 
 int flowie_cluster_peer_registry_close(flowie_cluster_peer_registry_t *registry) {
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!registry) return SALTS_EINVAL;
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   if (registry->closing) rc = SALTS_EALREADY;
   else {
     registry->closing = 1;
     registry->drained = registry->inflight_sends == 0u;
-    salts_cond_broadcast(&registry->changed);
+    cmeta_cond_broadcast(&registry->changed);
   }
-  salts_mutex_unlock(&registry->mutex);
+  cmeta_mutex_unlock(&registry->mutex);
   return rc;
 }
 
@@ -273,43 +273,43 @@ int flowie_cluster_peer_registry_drain(flowie_cluster_peer_registry_t *registry,
                                        uint64_t timeout_ns) {
   uint64_t start_ns;
   uint64_t deadline_ns;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!registry) return SALTS_EINVAL;
-  start_ns = salts_hrtime();
+  start_ns = cmeta_hrtime();
   deadline_ns = timeout_ns == UINT64_MAX || timeout_ns > UINT64_MAX - start_ns
                     ? UINT64_MAX
                     : start_ns + timeout_ns;
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   if (!registry->closing) rc = SALTS_EBUSY;
-  while (rc == SALTS_OK && registry->inflight_sends != 0u) {
+  while (rc == CMETA_OK && registry->inflight_sends != 0u) {
     uint64_t now_ns;
     if (deadline_ns == UINT64_MAX) {
-      salts_cond_wait(&registry->changed, &registry->mutex);
+      cmeta_cond_wait(&registry->changed, &registry->mutex);
       continue;
     }
-    now_ns = salts_hrtime();
+    now_ns = cmeta_hrtime();
     if (now_ns >= deadline_ns) {
       rc = timeout_ns == 0u ? SALTS_EBUSY : SALTS_ETIMEDOUT;
       break;
     }
-    (void)salts_cond_timedwait(&registry->changed, &registry->mutex, deadline_ns - now_ns);
+    (void)cmeta_cond_timedwait(&registry->changed, &registry->mutex, deadline_ns - now_ns);
   }
-  if (rc == SALTS_OK) registry->drained = 1;
-  salts_mutex_unlock(&registry->mutex);
+  if (rc == CMETA_OK) registry->drained = 1;
+  cmeta_mutex_unlock(&registry->mutex);
   return rc;
 }
 
 int flowie_cluster_peer_registry_destroy(flowie_cluster_peer_registry_t *registry) {
   int ready;
   if (!registry) return SALTS_EINVAL;
-  salts_mutex_lock(&registry->mutex);
+  cmeta_mutex_lock(&registry->mutex);
   ready = registry->closing && registry->drained && registry->inflight_sends == 0u &&
           registry->registered_links == 0u;
-  salts_mutex_unlock(&registry->mutex);
+  cmeta_mutex_unlock(&registry->mutex);
   if (!ready) return SALTS_EBUSY;
-  salts_cond_destroy(&registry->changed);
-  salts_mutex_destroy(&registry->mutex);
+  cmeta_cond_destroy(&registry->changed);
+  cmeta_mutex_destroy(&registry->mutex);
   free(registry->entries);
   free(registry);
-  return SALTS_OK;
+  return CMETA_OK;
 }

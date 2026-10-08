@@ -1,6 +1,6 @@
 #include "flowie_control_database_config_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -31,5 +31,5 @@ int flowie_control_database_config_resolve(
     options[index].keyword = orm_view(input->keyword);
     options[index].value = orm_view(value);
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }

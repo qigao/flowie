@@ -1,7 +1,7 @@
 #ifndef FLOWIE_CONTROL_HTTP_SERVER_INTERNAL_H
 #define FLOWIE_CONTROL_HTTP_SERVER_INTERNAL_H
 
-#include "salts_buffer.h"
+#include "cmeta_buffer.h"
 
 #include <stdbool.h>
 #include <stddef.h>

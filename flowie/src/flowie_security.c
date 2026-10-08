@@ -1,6 +1,6 @@
 #include "flowie_security.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -13,13 +13,13 @@ int flowie_security_secret_acquire(const flowie_security_key_provider_t *provide
       !reference[0] || !lease_out || lease_out->size < sizeof(*lease_out))
     return SALTS_EINVAL;
   rc = provider->acquire(provider->ctx, reference, lease_out);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (lease_out->size < sizeof(*lease_out) || !lease_out->bytes || lease_out->byte_count == 0u) {
     if (provider->release) provider->release(provider->ctx, lease_out);
     *lease_out = (flowie_security_secret_lease_t)FLOWIE_SECURITY_SECRET_LEASE_INIT;
     return SALTS_EINVAL;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_security_secret_release(const flowie_security_key_provider_t *provider,
@@ -71,10 +71,10 @@ int flowie_security_authenticate(const flowie_security_auth_provider_t *provider
       request->size < FLOWIE_SECURITY_AUTH_REQUEST_BASE_SIZE || !principal_out)
     return SALTS_EINVAL;
   rc = provider->authenticate(provider->ctx, request, &principal);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (!flowie_security_principal_valid(&principal)) return SALTS_EPROTO;
   *principal_out = principal;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 static int flowie_security_enhanced_result_valid(
@@ -97,13 +97,13 @@ int flowie_security_enhanced_auth_begin(
       !result_out)
     return SALTS_EINVAL;
   rc = provider->begin(provider->ctx, request, exchange_out, result_out);
-  if (rc != SALTS_OK) return rc;
+  if (rc != CMETA_OK) return rc;
   if (!*exchange_out || !flowie_security_enhanced_result_valid(result_out)) {
     if (*exchange_out) provider->cancel(provider->ctx, *exchange_out);
     *exchange_out = NULL;
     return SALTS_EPROTO;
   }
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_security_enhanced_auth_continue(
@@ -116,7 +116,7 @@ int flowie_security_enhanced_auth_continue(
       request->size < FLOWIE_SECURITY_ENHANCED_AUTH_REQUEST_BASE_SIZE || !result_out)
     return SALTS_EINVAL;
   rc = provider->continue_exchange(provider->ctx, exchange, request, result_out);
-  return rc != SALTS_OK || flowie_security_enhanced_result_valid(result_out) ? rc : SALTS_EPROTO;
+  return rc != CMETA_OK || flowie_security_enhanced_result_valid(result_out) ? rc : SALTS_EPROTO;
 }
 
 void flowie_security_enhanced_auth_cancel(
@@ -155,7 +155,7 @@ static int flowie_security_emit_match(void *ctx, size_t position) {
   rule_index = state->candidate_rule_indices[position];
   if (rule_index >= state->rule_count) return SALTS_EPROTO;
   state->matches[rule_index] = 1u;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_security_realm_create(const flowie_security_realm_config_t *config,
@@ -198,7 +198,7 @@ int flowie_security_realm_create(const flowie_security_realm_config_t *config,
       leaf.candidate_rule_indices = indices;
       leaf.candidate_count = realm->matcher_rule_count;
       rc = realm->matcher.compile_leaf(realm->matcher.ctx, &leaf, &realm->compiled_leaf);
-      if (rc != SALTS_OK) {
+      if (rc != CMETA_OK) {
         free(indices);
         flowie_security_realm_destroy(realm);
         return rc;
@@ -213,7 +213,7 @@ int flowie_security_realm_create(const flowie_security_realm_config_t *config,
     return SALTS_ENOMEM;
   }
   *out = realm;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 void flowie_security_realm_destroy(flowie_security_realm_t *realm) {
@@ -236,7 +236,7 @@ int flowie_security_realm_bind_policy_provider(
       !provider->release)
     return SALTS_EINVAL;
   realm->policy = *provider;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_security_realm_bind_authorization_provider(
@@ -245,7 +245,7 @@ int flowie_security_realm_bind_authorization_provider(
   if (!realm || !provider || provider->size < sizeof(*provider) || !provider->authorize)
     return SALTS_EINVAL;
   realm->authorization = *provider;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
@@ -254,7 +254,7 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
                                    flowie_security_decision_t *decision_out) {
   flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
   uint8_t *adapter_matches = NULL;
-  int rc = SALTS_OK;
+  int rc = CMETA_OK;
   if (!flowie_security_request_valid(realm, request, decision_out))
     return SALTS_EINVAL;
   decision.policy_version = realm->policy_version;
@@ -262,17 +262,17 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
       request->principal->scope != FLOWIE_SECURITY_SCOPE_SYSTEM) {
     decision.reason = FLOWIE_SECURITY_REASON_DOMAIN_MISMATCH;
     *decision_out = decision;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (request->principal->expires_at != 0u && request->principal->expires_at <= now_epoch_seconds) {
     decision.reason = FLOWIE_SECURITY_REASON_PRINCIPAL_EXPIRED;
     *decision_out = decision;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (request->principal->policy_version != realm->policy_version) {
     decision.reason = FLOWIE_SECURITY_REASON_POLICY_VERSION_MISMATCH;
     *decision_out = decision;
-    return SALTS_OK;
+    return CMETA_OK;
   }
   if (realm->compiled_leaf && realm->matcher.evaluate_leaf) {
     flowie_security_match_state_t state;
@@ -283,7 +283,7 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
                                             realm->matcher_rule_count};
     rc = realm->matcher.evaluate_leaf(realm->matcher.ctx, realm->compiled_leaf, request,
                                       flowie_security_emit_match, &state);
-    if (rc != SALTS_OK) {
+    if (rc != CMETA_OK) {
       free(adapter_matches);
       return rc;
     }
@@ -310,7 +310,7 @@ int flowie_security_realm_evaluate(flowie_security_realm_t *realm,
   }
   free(adapter_matches);
   *decision_out = decision;
-  return SALTS_OK;
+  return CMETA_OK;
 }
 
 int flowie_security_realm_authorize(flowie_security_realm_t *realm,
@@ -323,7 +323,7 @@ int flowie_security_realm_authorize(flowie_security_realm_t *realm,
     flowie_security_decision_t remote = FLOWIE_SECURITY_DECISION_INIT;
     rc = realm->authorization.authorize(realm->authorization.ctx, request, now_epoch_seconds,
                                         &remote);
-    if (rc == SALTS_OK &&
+    if (rc == CMETA_OK &&
         ((remote.effect != FLOWIE_SECURITY_ALLOW && remote.effect != FLOWIE_SECURITY_DENY) ||
          remote.policy_version != request->principal->policy_version ||
          (remote.reason != FLOWIE_SECURITY_REASON_ALLOW_RULE &&
@@ -333,10 +333,10 @@ int flowie_security_realm_authorize(flowie_security_realm_t *realm,
           remote.reason != FLOWIE_SECURITY_REASON_PRINCIPAL_EXPIRED &&
           remote.reason != FLOWIE_SECURITY_REASON_POLICY_VERSION_MISMATCH)))
       rc = SALTS_EPROTO;
-    if (rc != SALTS_OK) remote = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    if (rc != CMETA_OK) remote = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
     *decision_out = remote;
   } else {
     rc = flowie_security_realm_evaluate(realm, request, now_epoch_seconds, decision_out);
   }
-  return rc == SALTS_OK && decision_out->effect == FLOWIE_SECURITY_DENY ? SALTS_EPERM : rc;
+  return rc == CMETA_OK && decision_out->effect == FLOWIE_SECURITY_DENY ? SALTS_EPERM : rc;
 }
