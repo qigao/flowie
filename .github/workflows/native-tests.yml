@@ -18,6 +18,10 @@ concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
 
+# Temporary source pin until the #1001 SDK is published.
+env:
+  SALTS_SOURCE_REF: ${{ inputs.salts_ref || 'd6f5fb7db1ae1aa7d746dbe5cafb2c3f0c3d6ec0' }}
+
 jobs:
   test:
     name: ${{ matrix.rid }} Release
@@ -47,17 +51,16 @@ jobs:
         with:
           version: '4.6.3'
       - uses: actions/checkout@v4
-        if: inputs.salts_ref != ''
+        if: env.SALTS_SOURCE_REF != ''
         with:
           repository: qigao/salts
-          ref: ${{ inputs.salts_ref }}
+          ref: ${{ env.SALTS_SOURCE_REF }}
           path: build/dependencies/salts
           persist-credentials: false
       - name: Restore published SDKs
         shell: pwsh
         env:
           SDK_RID: ${{ matrix.rid }}
-          SALTS_SOURCE_REF: ${{ inputs.salts_ref }}
         run: |
           $ErrorActionPreference = 'Stop'
           $downloads = Join-Path $env:RUNNER_TEMP 'flowie-downloads'
@@ -102,7 +105,7 @@ jobs:
           # NuGet stores this host tool as 0644; restore execution permission after extraction.
           chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Qualify candidate Salts on Linux
-        if: runner.os == 'Linux' && inputs.salts_ref != ''
+        if: runner.os == 'Linux' && env.SALTS_SOURCE_REF != ''
         shell: bash
         working-directory: build/dependencies/salts
         run: |
@@ -133,7 +136,7 @@ jobs:
           if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
       - name: Qualify candidate Salts on Windows
-        if: runner.os == 'Windows' && inputs.salts_ref != ''
+        if: runner.os == 'Windows' && env.SALTS_SOURCE_REF != ''
         shell: cmd
         working-directory: build/dependencies/salts
         run: |

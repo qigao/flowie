@@ -211,6 +211,32 @@ Explicit CPU binding occurs at `flowie_endpoint_core_start`; check its result
 before accepting the endpoint as running. Rebuild C API consumers for the expanded
 configuration struct; existing zero-initialized settings preserve the defaults.
 
+## Connection management candidate (#1001)
+
+TCP/TLS owners use `Salts::CNetManager` for bounded attachment reservation,
+adoption and retirement. Each owner initializes, advances and destroys its
+manager on its worker thread. CNet owns transport terminal callbacks; peer
+storage is reused only by the manager recycle callback after callbacks return.
+MQTT context and retained send ownership remain with their existing owners.
+
+The multi-owner listener reserves a generation-checked `cnet_handoff` ticket
+before accepting. Publication moves the socket to its final owner's bounded
+inbox. On failure the listener closes the socket and releases the ticket;
+on success ownership transfers even if wake fails. Tickets remain charged
+through peer recycling. Round-robin and least-connections placement use the
+handoff snapshot as the single source of pending plus active occupancy.
+
+Shutdown seals inboxes before owners drain queued sockets and stop CNet.
+Managers recycle records and are destroyed on their worker threads. Stop joins
+owners and the listener (including final wake) before destroy frees inboxes and
+clients. Timeout ownership, stale public handles, MQTT semantics, UDP/KCP and
+CHTTP WebSocket protocol ownership are preserved.
+
+This branch requires the unpublished Salts #1001 SDK with the GmSSL fixes.
+CI pins the candidate and runs formal CNet/Flowie CTest suites. Reverting this
+integration restores private admission bookkeeping without a configuration or
+wire-format migration. No performance gain is claimed.
+
 ## CMake consumption
 
 ```cmake
