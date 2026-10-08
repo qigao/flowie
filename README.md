@@ -101,6 +101,23 @@ ctest --test-dir build/Msvc --output-on-failure
 
 All feature switches are declared centrally in `CMakeOptions.cmake`.
 
+The `native-tests.yml` workflow uses [sccache](https://github.com/mozilla/sccache)
+v0.16.0 through the CI presets' C/C++ compiler launchers. The pinned
+[Mozilla action](https://github.com/Mozilla-Actions/sccache-action) verifies the downloaded
+tool's checksum and supplies GitHub Actions cache credentials. Cache namespaces separate
+the runner platform, architecture, compiler family and build preset, and remain stable
+across commits. Compiler identity, flags, source and included headers participate in
+sccache's own cache keys; the build directory is not restored. SDK resolution, CMake
+configuration, the complete build graph and all enabled CTest tests still run each time.
+
+Cache statistics are recorded in the job summary and the `native-tests-<rid>` artifact,
+including when tests fail. Compare compile requests, hits, misses and non-cacheable calls
+between runs; dependency installation, code generation, linking and testing are outside
+this compiler cache. The current matrix exercises GCC and MSVC Release. The launcher
+interface also supports Clang, but no Clang job is currently registered. Developer presets
+remain independent of sccache. To discard the remote compiler cache namespace, increment
+the workflow's `SCCACHE_GHA_VERSION` prefix; do not add a commit SHA to it.
+
 Common options include:
 
 - `FLOWIE_BUILD_SERVER` — build the standalone MQTT server.
