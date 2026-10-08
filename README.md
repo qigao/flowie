@@ -117,6 +117,10 @@ this compiler cache. The current matrix exercises GCC and MSVC Release. The laun
 interface also supports Clang, but no Clang job is currently registered. Developer presets
 remain independent of sccache. To discard the remote compiler cache namespace, increment
 the workflow's `SCCACHE_GHA_VERSION` prefix; do not add a commit SHA to it.
+MSVC's C11 atomics option uses the equivalent `-experimental:c11atomics` spelling,
+including the Salts/TidesDB imported target usage requirements: sccache 0.16 treats the
+unrecognized `/experimental:c11atomics` spelling as an input file and cannot cache it.
+The option and its language guards remain enabled; installed SDK files are not changed.
 
 Common options include:
 

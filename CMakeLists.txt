@@ -24,7 +24,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "cmake")
 
 if(MSVC)
-  add_compile_options(/experimental:c11atomics)
+  # The equivalent '-' spelling lets sccache pass through this newer MSVC flag;
+  # an unrecognized '/' flag is otherwise parsed as another input file.
+  add_compile_options(-experimental:c11atomics)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -90,6 +92,23 @@ if(NOT IS_DIRECTORY "${FLOWIE_TURBODB_ROOT_PATH}")
 endif()
 find_package(TurboDB 2.3.1 CONFIG REQUIRED
              PATHS "${FLOWIE_TURBODB_ROOT_PATH}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+if(MSVC)
+  # These SDK usage requirements carry the same atomics flag. Keep the requirement
+  # and its language guard, using the spelling sccache can pass through and hash.
+  foreach(_flowie_atomic_target IN ITEMS Salts::Core Salts::Platform TidesDB::tidesdb)
+    if(TARGET ${_flowie_atomic_target})
+      get_target_property(_flowie_atomic_options ${_flowie_atomic_target} INTERFACE_COMPILE_OPTIONS)
+      if(_flowie_atomic_options)
+        string(REPLACE "/experimental:c11atomics" "-experimental:c11atomics"
+               _flowie_atomic_options "${_flowie_atomic_options}")
+        set_property(TARGET ${_flowie_atomic_target} PROPERTY
+                     INTERFACE_COMPILE_OPTIONS "${_flowie_atomic_options}")
+      endif()
+    endif()
+  endforeach()
+  unset(_flowie_atomic_options)
+  unset(_flowie_atomic_target)
+endif()
 if(FLOWIE_BUILD_CLUSTER)
   if(NOT DEFINED ENV{FLOWMQ_ROOT} OR "$ENV{FLOWMQ_ROOT}" STREQUAL "")
     message(FATAL_ERROR "FLOWMQ_ROOT must name the installed FlowMQ profile")
