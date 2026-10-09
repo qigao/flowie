@@ -156,6 +156,8 @@ struct flowie_mqtt_client_s {
   int command_queue_initialized;
   int sync_initialized;
   int worker_started;
+  int worker_ready;
+  int worker_start_status;
   int stopping;
   int version_locked;
   size_t command_queue_capacity;
@@ -1551,10 +1553,44 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
   }
 }
 
+/* NativeIO backends (notably io_uring SINGLE_ISSUER) must be constructed on
+ * their final network Owner. The worker exclusively owns CNet create/poll/stop
+ * and destruction; callers only perform thread-safe command/wake admission. */
+static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) {
+  cnet_client_config network_config;
+  cnet_stream_socket_options socket_options;
+  int rc;
+  if (flowie_mqtt_client_is_websocket(client)) return SALTS_OK;
+  network_config = flowie_mqtt_client_network_config(client);
+  socket_options = flowie_mqtt_client_socket_options(client);
+  rc = cnet_client_init(&client->network, &network_config);
+  if (rc != SALTS_OK) return rc;
+  client->network_initialized = 1;
+  return cnet_client_set_stream_socket_options(&client->network, &socket_options);
+}
+
+static void flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client) {
+  if (!client->network_initialized) return;
+  (void)cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
+  (void)cnet_client_destroy(&client->network);
+  client->network_initialized = 0;
+}
+
 static void flowie_mqtt_client_worker(void *arg) {
   flowie_mqtt_client_t *client = (flowie_mqtt_client_t *)arg;
+  int status;
   flowie_mqtt_client_current = client;
-  flowie_mqtt_client_worker_pump(client);
+  status = flowie_mqtt_client_worker_network_init(client);
+  if (status != SALTS_OK) flowie_mqtt_client_worker_network_destroy(client);
+  cmeta_mutex_lock(&client->command_mutex);
+  client->worker_start_status = status;
+  client->worker_ready = 1;
+  cmeta_cond_broadcast(&client->command_changed);
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (status == SALTS_OK) {
+    flowie_mqtt_client_worker_pump(client);
+    flowie_mqtt_client_worker_network_destroy(client);
+  }
   flowie_mqtt_client_current = NULL;
 }
 
@@ -1788,16 +1824,6 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   rc =
       flowie_stl_error(deque_reserve(&client->commands, client->command_queue_capacity));
   if (rc != SALTS_OK) goto fail;
-  if (!flowie_mqtt_client_is_websocket(client)) {
-    const cnet_client_config network_config = flowie_mqtt_client_network_config(client);
-    const cnet_stream_socket_options socket_options =
-        flowie_mqtt_client_socket_options(client);
-    rc = cnet_client_init(&client->network, &network_config);
-    if (rc != SALTS_OK) goto fail;
-    client->network_initialized = 1;
-    rc = cnet_client_set_stream_socket_options(&client->network, &socket_options);
-    if (rc != SALTS_OK) goto fail;
-  }
   if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS && client->tls_configured) {
     const cnet_tls_client_config tls_config = {.size = sizeof(tls_config),
                                                .ca_file = client->tls_ca_file,
@@ -1812,6 +1838,12 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   rc = cmeta_thread_create(&client->worker, flowie_mqtt_client_worker, client);
   if (rc != SALTS_OK) goto fail;
   client->worker_started = 1;
+  cmeta_mutex_lock(&client->command_mutex);
+  while (!client->worker_ready)
+    cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+  rc = client->worker_start_status;
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (rc != SALTS_OK) goto fail;
   *out = client;
   return SALTS_OK;
 
@@ -1839,8 +1871,10 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     cmeta_mutex_lock(&client->command_mutex);
     client->stopping = 1;
     cmeta_cond_signal(&client->command_changed);
-    cmeta_mutex_unlock(&client->command_mutex);
+    /* The worker cannot finish its stop path until it observes stopping.
+     * Wake before dropping this mutex, while the CNet object remains live. */
     if (client->network_initialized) (void)cnet_client_wake(&client->network);
+    cmeta_mutex_unlock(&client->command_mutex);
     if (cmeta_thread_join(&client->worker) != SALTS_OK) return;
     cmeta_thread_destroy(&client->worker);
     client->worker_started = 0;
@@ -1853,11 +1887,6 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   }
   flowie_mqtt_client_command_destroy(client->reconnect_connect);
   client->reconnect_connect = NULL;
-  if (client->network_initialized) {
-    (void)cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
-    (void)cnet_client_destroy(&client->network);
-    client->network_initialized = 0;
-  }
   if (client->websocket_tls_initialized) {
     (void)chttp_tls_profile_destroy(&client->websocket_tls);
     client->websocket_tls_initialized = 0;

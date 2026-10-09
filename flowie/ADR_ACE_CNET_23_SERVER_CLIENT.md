@@ -88,12 +88,16 @@ and WS/WSS policy selection returns ENOTSUP until an appropriate CHttp
 authority contract is available. This does not implement general failover,
 a physical connection pool or generic PUBLISH retry.
 
-The existing Client has a dedicated, synchronous-polling worker and creates
-its CNet client before that worker starts. Before Manager/Managed Dial or
-mixed Server+Client SG cohosting, it must construct I/O on the **final Owner**,
-adopt nonblocking incremental MQTT progress, and preserve a single backend
-observer. In particular io_uring SINGLE_ISSUER is not transferable between
-threads. This branch does **not** implement that migration.
+The Client now constructs and tears down its TCP/TLS CNet client **on
+the final worker Owner** (including a startup-ready barrier so create_ex()
+still fails synchronously on native backend admission errors). This fixes
+io_uring SINGLE_ISSUER construction/owner affinity, without moving live
+endpoints between threads. Caller threads only submit bounded commands and
+wake the worker. The Client still performs synchronous CNet polling **inside**
+its dedicated worker. Before Manager/Managed Dial or mixed Server+Client SG
+cohosting, it must adopt nonblocking incremental MQTT progression and retain
+one authoritative backend observer. This branch does **not** implement those
+remaining operations.
 
 ## ACE Component Configurator / YAML contract (not yet implemented)
 
