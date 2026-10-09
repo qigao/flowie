@@ -58,7 +58,7 @@ jobs:
           - rid: android-arm64-v8a
             os: ubuntu-24.04
     env:
-      CCACHE_DIR: ${{ runner.temp }}/flowie-ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 750M
       CCACHE_COMPILERCHECK: content
       CCACHE_BASEDIR: ${{ github.workspace }}
