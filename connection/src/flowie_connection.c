@@ -5,6 +5,7 @@
 #include <cnet/websocket.h>
 #include <cnet/manager.h>
 #include <cnet/handoff.h>
+#include <cnet/owner_placement.h>
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 
@@ -697,30 +698,45 @@ static void flowie_group_request_stop(flowie_server_impl *root) {
     if (root->owners[index] != NULL) flowie_request_stop(root->owners[index]);
 }
 
-/* Placement stays with Flowie; the handoff owns the admission count. The
- * listener is the only producer and owners only release credits during sampling. */
+/* The CNet chooser makes an advisory decision; only a successful Handoff
+ * reservation admits this stream. Neither the Owner nor the MQTT session
+ * migrates after adoption. */
 static int flowie_owner_reserve(flowie_server_impl *root, uint32_t *next,
                                 flowie_server_impl **out, cnet_handoff_ticket *ticket) {
-  flowie_server_impl *selected = NULL;
-  size_t least = SIZE_MAX;
+  cnet_owner_placement_hint hints[FLOWIE_NETWORK_WORKERS_MAX] = {{0}};
+  cnet_owner_placement_input placement = {0};
+  size_t selected_index = SIZE_MAX;
+  int status;
+  if (root == NULL || next == NULL || out == NULL || ticket == NULL ||
+      root->owner_count < 2u || root->owner_count > FLOWIE_NETWORK_WORKERS_MAX)
+    return SALTS_EINVAL;
   *out = NULL;
-  for (uint32_t index = 0u; index < root->owner_count; ++index) {
-    flowie_server_impl *candidate = root->owners[(*next + index) % root->owner_count];
-    cnet_handoff_snapshot snapshot;
-    int status = cnet_handoff_get_snapshot(&candidate->handoff, &snapshot);
+  for (size_t index = 0u; index < root->owner_count; ++index) {
+    flowie_server_impl *candidate = root->owners[index];
+    cnet_handoff_snapshot snapshot = {0};
+    uint64_t occupied;
+    if (candidate == NULL) return SALTS_EINVAL;
+    status = cnet_handoff_get_snapshot(&candidate->handoff, &snapshot);
     if (status != SALTS_OK) return status;
-    const size_t occupied = snapshot.reserved + snapshot.queued + snapshot.taken;
-    if (!snapshot.sealed && occupied < snapshot.connection_capacity && occupied < least) {
-      least = occupied;
-      selected = candidate;
-    }
-    if (selected != NULL && root->config.network_policy == TF_NET_OWNER_ROUND_ROBIN) break;
+    occupied = (uint64_t)snapshot.reserved + snapshot.queued + snapshot.taken;
+    hints[index].eligible = !snapshot.sealed && occupied < snapshot.connection_capacity;
+    hints[index].pressure = occupied;
   }
-  if (selected == NULL) return SALTS_ENOBUFS;
-  const int status = cnet_handoff_reserve(&selected->handoff, ticket);
+  placement.size = sizeof(placement);
+  placement.version = CNET_OWNER_PLACEMENT_VERSION;
+  placement.kind = root->config.network_policy == TF_NET_OWNER_ROUND_ROBIN
+                       ? CNET_OWNER_PLACE_ROUND_ROBIN
+                       : CNET_OWNER_PLACE_LOWEST_PRESSURE;
+  placement.owners = hints;
+  placement.owner_count = root->owner_count;
+  placement.sequence = *next;
+  status = cnet_owner_placement_choose(&placement, &selected_index);
+  if (status != SALTS_OK) return status;
+  flowie_server_impl *selected = root->owners[selected_index];
+  status = cnet_handoff_reserve(&selected->handoff, ticket);
   if (status != SALTS_OK) return status;
   *out = selected;
-  *next = (selected->owner_index + 1u) % root->owner_count;
+  *next = (uint32_t)((selected_index + 1u) % root->owner_count);
   return SALTS_OK;
 }
 

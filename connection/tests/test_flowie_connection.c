@@ -4,6 +4,7 @@
 #include "flowie_connection.h"
 
 #include <http_client/http.h>
+#include <cnet/owner_placement.h>
 
 #include "../../flowie/tests/flowie_test_cnet.h"
 #include "tinytest.h"
@@ -543,7 +544,9 @@ spec("Flowie multiple network owners") {
     config.network_cpu_count = FLOWIE_NETWORK_WORKERS_MAX + 1u;
     check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
     config.network_cpu_count = 0u;
-    config.network_policy = (flowie_owner_policy)2;
+    config.network_policy = (flowie_owner_policy)CNET_OWNER_PLACE_ROUND_ROBIN;
+    check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
+    config.network_policy = (flowie_owner_policy)CNET_OWNER_PLACE_STRICT_KEY;
     check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
     config.network_workers = 1u;
     config.transport = TF_NET_TRANSPORT_UDP;

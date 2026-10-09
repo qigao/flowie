@@ -18,9 +18,9 @@ concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
 
-# Temporary source pin until the #1001 SDK is published.
+# Immutable unified ACE + CNet 2.3 candidate for installed-source qualification (#1081).
 env:
-  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '99c8c45fb85fc5f9e126e9b0a23e5a8c13a0ad2e' }}
+  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '58ff08fc95b4aa1dc493c0b7080426b2c11d4959' }}
 
 jobs:
   test:
@@ -42,19 +42,21 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       GH_TOKEN: ${{ github.token }}
-      SCCACHE_GHA_ENABLED: 'true'
-      # Stable across commits; sccache hashes compiler, flags, source and headers.
-      SCCACHE_GHA_VERSION: flowie-v1-${{ matrix.os }}-${{ matrix.rid }}-${{ matrix.compiler }}-${{ matrix.preset }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 750M
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Set up compiler cache
-        id: sccache
-        uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: Restore ccache (independent of vcpkg binary cache)
+        uses: actions/cache@v4
         with:
-          version: v0.16.0
-          disable_annotations: true
+          path: ${{ env.CCACHE_DIR }}
+          key: flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
+          restore-keys: |
+            flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
@@ -112,7 +114,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          ccache --version
           # NuGet stores this host tool as 0644; restore execution permission after extraction.
           chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Qualify candidate Salts on Linux
@@ -124,7 +127,7 @@ jobs:
           # The candidate's registry lock owns its provider version.
           unset VCPKG_OVERLAY_PORTS
           export PROJECT_ROOT="$GITHUB_WORKSPACE"
-          cmake --preset linux-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset linux-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset linux-release-ci --parallel 2
           ctest --preset linux-release-ci -R '^cnet_.*test$' --no-tests=error --timeout 180 --output-on-failure
           cmake --build --preset install-linux-release-ci --parallel 2
@@ -135,13 +138,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset ci-linux-release-user
+          cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
-      - name: Locate Windows compiler
+      - name: Locate Windows compiler and install ccache
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          choco install ccache -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot install ccache' }
+          ccache --version
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot run ccache' }
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
@@ -158,7 +165,7 @@ jobs:
           set "VCPKG_OVERLAY_PORTS="
           set "VCPKG_WINDOWS_TRIPLET=x64-windows"
           set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
-          cmake --preset win-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+          cmake --preset win-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-ci --parallel 2
           if errorlevel 1 exit /b 1
@@ -174,21 +181,21 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          cmake --preset ci-win-release-user
+          cmake --preset ci-win-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
           ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
           if errorlevel 1 exit /b 1
       - name: Report compiler cache statistics
-        if: always() && steps.sccache.outcome == 'success'
+        if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path build/native-ci -Force | Out-Null
-          $statistics = & sccache --show-stats
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot read sccache statistics' }
-          $statistics | Set-Content -Path build/native-ci/sccache-stats.txt
+          $statistics = & ccache --show-stats
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read ccache statistics' }
+          $statistics | Set-Content -Path build/native-ci/ccache-stats.txt
           $statistics | Write-Output
           "### Compiler cache: ${{ matrix.rid }} / ${{ matrix.compiler }} / ${{ matrix.preset }}" >> $env:GITHUB_STEP_SUMMARY
           '```text' >> $env:GITHUB_STEP_SUMMARY
@@ -202,6 +209,6 @@ jobs:
             build/native-ci/results.xml
             build/native-ci/Testing/Temporary/LastTest.log
             build/native-ci/CMakeFiles/CMakeConfigureLog.yaml
-            build/native-ci/sccache-stats.txt
+            build/native-ci/ccache-stats.txt
             build/dependencies/salts/build/**/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

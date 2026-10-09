@@ -24,8 +24,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "cmake")
 
 if(MSVC)
-  # The equivalent '-' spelling lets sccache pass through this newer MSVC flag;
-  # an unrecognized '/' flag is otherwise parsed as another input file.
+  # MSVC accepts this spelling; it is preserved by the ccache launcher.
   add_compile_options(-experimental:c11atomics)
 endif()
 
