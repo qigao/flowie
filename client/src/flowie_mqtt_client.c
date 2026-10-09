@@ -9,6 +9,7 @@
 
 #include <http_client/http.h>
 #include <cnet/cnet.h>
+#include <cnet/destination_policy.h>
 #include <cnet/websocket.h>
 #include "flowie_mqtt_protocol.h"
 #include "monocypher.h"
@@ -66,6 +67,15 @@ typedef struct flowie_mqtt_client_command_s {
   } packet;
 } flowie_mqtt_client_command_t;
 
+typedef struct flowie_mqtt_owned_endpoint_s {
+  tstr host;
+  uint64_t endpoint_id;
+  uint64_t inflight;
+  uint32_t weight;
+  uint16_t port;
+  uint8_t eligible;
+} flowie_mqtt_owned_endpoint_t;
+
 struct flowie_mqtt_client_s {
   cnet_client network;
   cnet_connection network_connection;
@@ -76,6 +86,16 @@ struct flowie_mqtt_client_s {
   flowie_mqtt_version_t selected_version;
   flowie_mqtt_version_t version;
   tstr host;
+  flowie_mqtt_owned_endpoint_t *destinations;
+  size_t destination_count;
+  size_t selected_destination_index;
+  flowie_mqtt_client_destination_kind_t destination_kind;
+  uint64_t destination_generation;
+  uint64_t destination_expires_at_ms;
+  uint64_t destination_sequence;
+  uint64_t destination_explicit_id;
+  uint64_t destination_key_hash;
+  uint8_t destination_key_known;
   tstr path;
   tstr tls_ca_file;
   tstr tls_cert_file;
@@ -1679,6 +1699,7 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   if (!client) return SALTS_ENOMEM;
   atomic_init(&client->public_connected, 0);
   client->selected_version = FLOWIE_MQTT_VERSION_5;
+  client->selected_destination_index = SIZE_MAX;
   client->transport = config->transport;
   client->port = config->port;
   client->timeout_ms =
@@ -1857,8 +1878,150 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     crypto_wipe(client->tls_key_password, tstr_len(client->tls_key_password));
     tstr_freep(&client->tls_key_password);
   }
+  for (size_t index = 0u; index < client->destination_count; ++index)
+    tstr_freep(&client->destinations[index].host);
+  free(client->destinations);
   free(client->topic_handlers);
   free(client);
+}
+
+
+static int flowie_mqtt_client_remote_host_valid(const char *host) {
+  size_t length;
+  if (host == NULL || host[0] == '\0') return 0;
+  length = strlen(host);
+  if (length > 255u) return 0;
+  for (size_t index = 0u; index < length; ++index) {
+    const unsigned char c = (unsigned char)host[index];
+    if (c <= 32u || c == 127u || c == '/' || c == '\\' ||
+        c == '@' || c == '?' || c == '#')
+      return 0;
+  }
+  return 1;
+}
+
+static cnet_destination_policy_kind flowie_mqtt_client_destination_map(
+    flowie_mqtt_client_destination_kind_t kind) {
+  switch (kind) {
+  case FLOWIE_MQTT_DESTINATION_EXPLICIT: return CNET_DESTINATION_EXPLICIT;
+  case FLOWIE_MQTT_DESTINATION_ROUND_ROBIN: return CNET_DESTINATION_ROUND_ROBIN;
+  case FLOWIE_MQTT_DESTINATION_WEIGHTED_ROUND_ROBIN: return CNET_DESTINATION_WEIGHTED_RR;
+  case FLOWIE_MQTT_DESTINATION_LEAST_INFLIGHT: return CNET_DESTINATION_LEAST_INFLIGHT;
+  case FLOWIE_MQTT_DESTINATION_STRICT_KEY: return CNET_DESTINATION_STRICT_KEY;
+  default: return (cnet_destination_policy_kind)0;
+  }
+}
+
+/* Destination selection is an advisory CNet decision, not a transport or
+ * MQTT protocol action. Pin the first winner for all reconnect episodes. */
+static int flowie_mqtt_client_choose_destination(flowie_mqtt_client_t *client) {
+  cnet_destination_hint hints[FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS] = {{0}};
+  cnet_destination_selection selection = {0};
+  cnet_destination_result result = {0};
+  int rc;
+  if (client == NULL) return SALTS_EINVAL;
+  if (client->destination_count == 0u) return SALTS_OK;
+  for (size_t index = 0u; index < client->destination_count; ++index) {
+    const flowie_mqtt_owned_endpoint_t *endpoint = &client->destinations[index];
+    hints[index] = (cnet_destination_hint){
+        .endpoint_id = endpoint->endpoint_id,
+        .weight = endpoint->weight,
+        .inflight = endpoint->inflight,
+        .eligible = endpoint->eligible != 0u};
+  }
+  selection.size = sizeof(selection);
+  selection.version = CNET_DESTINATION_POLICY_VERSION;
+  selection.kind = client->selected_destination_index == SIZE_MAX
+                       ? flowie_mqtt_client_destination_map(client->destination_kind)
+                       : CNET_DESTINATION_EXPLICIT;
+  selection.endpoints = hints;
+  selection.endpoint_count = client->destination_count;
+  selection.snapshot_generation = client->destination_generation;
+  selection.expires_at_ms = client->destination_expires_at_ms;
+  selection.now_ms = cmeta_monotonic_ms();
+  selection.sequence = client->destination_sequence;
+  selection.explicit_endpoint_id =
+      client->selected_destination_index == SIZE_MAX
+          ? client->destination_explicit_id
+          : client->destinations[client->selected_destination_index].endpoint_id;
+  selection.key_hash = client->destination_key_hash;
+  selection.key_known = client->destination_key_known != 0u;
+  rc = cnet_destination_choose(&selection, &result);
+  if (rc != SALTS_OK) return rc;
+  if (result.index >= client->destination_count ||
+      (client->selected_destination_index != SIZE_MAX &&
+       result.index != client->selected_destination_index))
+    return SALTS_EPROTO;
+  client->selected_destination_index = result.index;
+  return SALTS_OK;
+}
+
+int flowie_mqtt_client_set_destination_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_destination_policy_t *policy) {
+  cnet_destination_hint hints[FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS] = {{0}};
+  flowie_mqtt_owned_endpoint_t *owned;
+  int rc;
+  if (client == NULL || policy == NULL) return SALTS_EINVAL;
+  if (flowie_mqtt_client_is_websocket(client)) return SALTS_ENOTSUP;
+  if (policy->size != sizeof(*policy) ||
+      policy->version != FLOWIE_MQTT_CLIENT_DESTINATION_VERSION ||
+      policy->endpoints == NULL || policy->endpoint_count == 0u ||
+      policy->endpoint_count > FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS ||
+      policy->snapshot_generation == 0u || policy->expires_at_ms == 0u ||
+      flowie_mqtt_client_destination_map(policy->kind) == 0 ||
+      (policy->kind == FLOWIE_MQTT_DESTINATION_EXPLICIT &&
+       policy->explicit_endpoint_id == 0u) ||
+      (policy->kind == FLOWIE_MQTT_DESTINATION_STRICT_KEY && !policy->key_known))
+    return SALTS_EINVAL;
+  for (size_t index = 0u; index < policy->endpoint_count; ++index) {
+    const flowie_mqtt_client_remote_endpoint_t *endpoint = &policy->endpoints[index];
+    if (!flowie_mqtt_client_remote_host_valid(endpoint->host) || endpoint->port == 0u)
+      return SALTS_EINVAL;
+    hints[index] = (cnet_destination_hint){
+        .endpoint_id = endpoint->endpoint_id, .weight = endpoint->weight,
+        .inflight = endpoint->inflight, .eligible = endpoint->eligible != 0u};
+  }
+  rc = cnet_destination_validate(hints, policy->endpoint_count);
+  if (rc != SALTS_OK) return rc;
+  owned = (flowie_mqtt_owned_endpoint_t *)calloc(policy->endpoint_count, sizeof(*owned));
+  if (owned == NULL) return SALTS_ENOMEM;
+  for (size_t index = 0u; index < policy->endpoint_count; ++index) {
+    const flowie_mqtt_client_remote_endpoint_t *endpoint = &policy->endpoints[index];
+    owned[index] = (flowie_mqtt_owned_endpoint_t){
+        .host = tstr_dup(endpoint->host), .endpoint_id = endpoint->endpoint_id,
+        .port = endpoint->port, .weight = endpoint->weight,
+        .inflight = endpoint->inflight, .eligible = endpoint->eligible};
+    if (owned[index].host == NULL) {
+      rc = SALTS_ENOMEM;
+      goto reject;
+    }
+  }
+  cmeta_mutex_lock(&client->command_mutex);
+  if (client->stopping) {
+    rc = SALTS_ESHUTDOWN;
+  } else if (client->version_locked || client->destinations != NULL ||
+             !deque_empty(&client->commands)) {
+    rc = SALTS_EBUSY;
+  } else {
+    client->destinations = owned;
+    client->destination_count = policy->endpoint_count;
+    client->destination_kind = policy->kind;
+    client->destination_generation = policy->snapshot_generation;
+    client->destination_expires_at_ms = policy->expires_at_ms;
+    client->destination_sequence = policy->sequence;
+    client->destination_explicit_id = policy->explicit_endpoint_id;
+    client->destination_key_hash = policy->key_hash;
+    client->destination_key_known = policy->key_known;
+    rc = SALTS_OK;
+  }
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (rc == SALTS_OK) return SALTS_OK;
+reject:
+  for (size_t index = 0u; index < policy->endpoint_count; ++index)
+    tstr_freep(&owned[index].host);
+  free(owned);
+  return rc;
 }
 
 static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *scheme,
@@ -1869,10 +2032,21 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   size_t path_size;
   size_t capacity;
   int written;
+  const char *dial_host;
+  int dial_port;
   if (!client || !scheme || !out) return SALTS_EINVAL;
-  bracket_host = strchr(client->host, ':') != NULL && client->host[0] != '[';
+  dial_host = client->host;
+  dial_port = client->port;
+  if (client->destination_count != 0u) {
+    if (client->selected_destination_index >= client->destination_count) return SALTS_EINVAL;
+    const flowie_mqtt_owned_endpoint_t *endpoint =
+        &client->destinations[client->selected_destination_index];
+    dial_host = endpoint->host;
+    dial_port = endpoint->port;
+  }
+  bracket_host = strchr(dial_host, ':') != NULL && dial_host[0] != '[';
   scheme_size = strlen(scheme);
-  host_size = tstr_len(client->host);
+  host_size = strlen(dial_host);
   path_size = path ? strlen(path) : 0u;
   *out = NULL;
   if (scheme_size > SIZE_MAX - host_size - path_size - 32u) return SALTS_EMSGSIZE;
@@ -1880,10 +2054,10 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   *out = (char *)malloc(capacity);
   if (!*out) return SALTS_ENOMEM;
   written = bracket_host
-                ? snprintf(*out, capacity, "%s://[%s]:%d%s", scheme, client->host,
-                           client->port, path ? path : "")
-                : snprintf(*out, capacity, "%s://%s:%d%s", scheme, client->host,
-                           client->port, path ? path : "");
+                ? snprintf(*out, capacity, "%s://[%s]:%d%s", scheme, dial_host,
+                           dial_port, path ? path : "")
+                : snprintf(*out, capacity, "%s://%s:%d%s", scheme, dial_host,
+                           dial_port, path ? path : "");
   if (written < 0 || (size_t)written >= capacity) {
     free(*out);
     *out = NULL;
@@ -1928,6 +2102,8 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     return rc;
   }
   if (!client->network_initialized) return SALTS_EINVAL;
+  rc = flowie_mqtt_client_choose_destination(client);
+  if (rc != SALTS_OK) return rc;
   {
     cnet_tls_client_config tls = {.size = sizeof(tls),
                                   .ca_file = client->tls_ca_file,

@@ -200,10 +200,11 @@ static cnet_client_config flowie_client_transport_network(void) {
   return config;
 }
 
-static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_transport,
+static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t client_transport,
                                          flowie_transport server_transport,
                                          flowie_client_transport_connack_mode connack_mode,
-                                         uint64_t client_timeout_ms, int expected_connect_status) {
+                                         uint64_t client_timeout_ms, int expected_connect_status,
+                                         int with_destination_policy) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -251,7 +252,7 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
 
   client_config.transport = client_transport;
   client_config.host = "127.0.0.1";
-  client_config.port = (int)port;
+  client_config.port = with_destination_policy ? 1 : (int)port;
   client_config.path = "/mqtt";
   client_config.timeout_ms = client_timeout_ms;
   client_config.socket_recv_buffer_bytes = 32768u;
@@ -262,11 +263,32 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   client_config.on_error = flowie_client_transport_error;
   client_config.user_data = &probe;
   check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
+  if (with_destination_policy) {
+    char authorized_host[] = "127.0.0.1";
+    const flowie_mqtt_client_remote_endpoint_t endpoints[] = {
+        {10u, "127.0.0.1", 1u, 1u, 0u, 1u},
+        {20u, authorized_host, port, 1u, 0u, 1u}};
+    const flowie_mqtt_client_destination_policy_t policy = {
+        sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+        FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 2u,
+        1u, UINT64_MAX, 0u, 20u, 0u, 0u};
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_OK);
+    strcpy(authorized_host, "invalid"); /* Proves Client owns its dial host. */
+  }
 
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
   check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+  if (with_destination_policy) {
+    const flowie_mqtt_client_remote_endpoint_t endpoints[] = {
+        {20u, "127.0.0.1", port, 1u, 0u, 1u}};
+    const flowie_mqtt_client_destination_policy_t policy = {
+        sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+        FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 1u,
+        1u, UINT64_MAX, 0u, 20u, 0u, 0u};
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EBUSY);
+  }
   deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
          cmeta_monotonic_ms() < deadline)
@@ -292,6 +314,14 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   flowie_mqtt_client_destroy(client);
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
   check_equal(flowie_server_destroy(&server), SALTS_OK);
+}
+
+static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_transport,
+                                         flowie_transport server_transport,
+                                         flowie_client_transport_connack_mode connack_mode,
+                                         uint64_t client_timeout_ms, int expected_connect_status) {
+  flowie_client_transport_case_ex(client_transport, server_transport, connack_mode,
+                                  client_timeout_ms, expected_connect_status, 0);
 }
 
 static void flowie_client_transport_abrupt_tls_close(void) {
@@ -351,6 +381,43 @@ static void flowie_client_transport_abrupt_tls_close(void) {
 }
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
+  it("selects an authorized physical MQTT broker through CNet Destination Policy") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 1);
+  }
+
+  it("rejects invalid and unsupported remote policy profiles before CONNECT") {
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_t *client = NULL;
+    flowie_mqtt_client_remote_endpoint_t endpoints[] = {
+        {10u, "127.0.0.1", 1883u, 1u, 0u, 1u},
+        {10u, "127.0.0.1", 1884u, 1u, 0u, 1u}};
+    flowie_mqtt_client_destination_policy_t policy = {
+        sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+        FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 2u,
+        1u, UINT64_MAX, 0u, 10u, 0u, 0u};
+    config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TCP;
+    config.host = "127.0.0.1";
+    config.port = 1883;
+    check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EINVAL);
+    endpoints[1].endpoint_id = 20u;
+    policy.kind = FLOWIE_MQTT_DESTINATION_STRICT_KEY;
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EINVAL);
+    policy.key_known = 1u;
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_OK);
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EBUSY);
+    flowie_mqtt_client_destroy(client);
+
+    client = NULL;
+    config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_WS;
+    check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_ENOTSUP);
+    flowie_mqtt_client_destroy(client);
+  }
+
+
   it("runs CONNECT, PING, and DISCONNECT over CNet TCP") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,

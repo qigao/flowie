@@ -51,7 +51,7 @@ connection tests cover RR/least occupied placement, owner affinity, stale
 handle/generation, bounded credits, TLS/retained sends and shutdown; rerun
 against the **exact** unified installed candidate before merge.
 
-## Client contract (still to implement under #61)
+## Client Destination policy slice (implemented); Manager/Recovery/SG remain #61
 
 ```text
 typed host-configured Client / ACE Component provider
@@ -78,6 +78,16 @@ CNet reconnect only restores physical connectivity; MQTT CONNACK is the
 protocol-ready boundary. PacketID, Receive Maximum, SUBSCRIBE restoration,
 QoS1/2 settlement and PUBREL/PUBCOMP remain Flowie-owned. No automatic
 retry/replay for an outcome-unknown PUBLISH or TLS security downgrade.
+This branch implements additive `flowie_mqtt_client_set_destination_policy()`
+for TCP/TLS. The host supplies an ID-sorted, authorized endpoint snapshot;
+Flowie deep-copies the dial hosts, CNet `cnet_destination_choose()` chooses
+the first physical dial target, and all reconnects revalidate the exact
+selected endpoint as EXPLICIT. `config.host` remains the original logical
+TLS authority/SNI. Unknown/expired/strict-key-incomplete policies fail closed,
+and WS/WSS policy selection returns ENOTSUP until an appropriate CHttp
+authority contract is available. This does not implement general failover,
+a physical connection pool or generic PUBLISH retry.
+
 The existing Client has a dedicated, synchronous-polling worker and creates
 its CNet client before that worker starts. Before Manager/Managed Dial or
 mixed Server+Client SG cohosting, it must construct I/O on the **final Owner**,
@@ -115,5 +125,5 @@ YAML or create an implicit Configurator.
 - Exact-HEAD CI, installed SDK consumers, real benchmark CPU/op, p99,
   copied/retained bytes, cross-owner hops and queue occupancy.
 
-Do not mark the client migration or Configurator complete based on this
-server-only transport slice. Stable release and master merge are separate gates.
+Do not mark Client Manager/Managed Dial/nonblocking cohosting or Component
+Configurator complete based on these Server + Client Destination slices. Stable release and master merge are separate gates.
