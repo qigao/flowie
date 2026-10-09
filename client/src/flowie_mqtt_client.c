@@ -158,6 +158,7 @@ struct flowie_mqtt_client_s {
   int worker_started;
   int worker_ready;
   int worker_start_status;
+  int network_closing;
   int stopping;
   int version_locked;
   size_t command_queue_capacity;
@@ -1589,6 +1590,11 @@ static void flowie_mqtt_client_worker(void *arg) {
   cmeta_mutex_unlock(&client->command_mutex);
   if (status == SALTS_OK) {
     flowie_mqtt_client_worker_pump(client);
+    cmeta_mutex_lock(&client->command_mutex);
+    /* Public destroy must not wake a CNet object concurrently being torn
+     * down after an in-worker callback requested shutdown. */
+    client->network_closing = 1;
+    cmeta_mutex_unlock(&client->command_mutex);
     flowie_mqtt_client_worker_network_destroy(client);
   }
   flowie_mqtt_client_current = NULL;
@@ -1873,7 +1879,8 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     cmeta_cond_signal(&client->command_changed);
     /* The worker cannot finish its stop path until it observes stopping.
      * Wake before dropping this mutex, while the CNet object remains live. */
-    if (client->network_initialized) (void)cnet_client_wake(&client->network);
+    if (!client->network_closing && client->network_initialized)
+      (void)cnet_client_wake(&client->network);
     cmeta_mutex_unlock(&client->command_mutex);
     if (cmeta_thread_join(&client->worker) != SALTS_OK) return;
     cmeta_thread_destroy(&client->worker);
