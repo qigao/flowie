@@ -42,11 +42,26 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-  linux:
-    name: Linux x64 SDK
+  build:
+    name: Build Flowie SDK (${{ matrix.rid }})
     needs: metadata
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-24.04
+          - rid: windows-x64
+            os: windows-2022
+          - rid: android-arm64-v8a
+            os: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 750M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,35 +80,49 @@ jobs:
         with:
           version: "4.6.3"
 
+      - name: Restore ccache (separate from vcpkg binary cache)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: flowie-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ inputs.source_sha }}
+          restore-keys: |
+            flowie-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
+
       - name: Prepare build host
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          ccache --version
           test -n "$VCPKG_ROOT"
           test -n "$QIGAO_VCPKG_TOOLCHAIN_FILE"
           test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
 
       - name: Verify endpoint owner-lane boundary
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/verify_endpoint_owner_lane.py
 
       - name: Verify Flowie-global stream handle boundary
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/verify_connection_handle_boundary.py
 
       - name: Verify owner-local stream runtime boundary
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/verify_stream_owner_runtime.py
 
       - name: Restore released producer SDKs
+        if: matrix.rid == 'linux-x64'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -144,6 +173,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Restore Flowie third-party graph from shared cache only
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
@@ -163,12 +193,14 @@ jobs:
           echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
 
       - name: Configure complete release graph
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euxo pipefail
-          cmake -S . -B build/release-sdk -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF             -DFLOWIE_BUILD_TESTS=ON             -DFLOWIE_BUILD_CONTROL=ON             -DFLOWIE_BUILD_CLUSTER=ON             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF             -DFLOWIE_TURBODB_LIVE_TESTS=OFF             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF             -DFLOWIE_MQTT_SOAK_TESTS=OFF             -DENABLE_SANITIZER_ADDRESS=OFF             -DENABLE_SANITIZER_UNDEFINED=OFF
+          cmake -S . -B build/release-sdk -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_C_COMPILER_LAUNCHER=ccache             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF             -DFLOWIE_BUILD_TESTS=ON             -DFLOWIE_BUILD_CONTROL=ON             -DFLOWIE_BUILD_CLUSTER=ON             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF             -DFLOWIE_TURBODB_LIVE_TESTS=OFF             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF             -DFLOWIE_MQTT_SOAK_TESTS=OFF             -DENABLE_SANITIZER_ADDRESS=OFF             -DENABLE_SANITIZER_UNDEFINED=OFF
 
       - name: Build and qualify complete release graph
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euxo pipefail
@@ -177,6 +209,7 @@ jobs:
           ctest --test-dir build/release-sdk             -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster.*|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$'             --no-tests=error --output-on-failure --timeout 180
 
       - name: Install release SDK
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euxo pipefail
@@ -208,6 +241,7 @@ jobs:
           EOF
 
       - uses: actions/upload-artifact@v4
+        if: matrix.rid == 'linux-x64'
         with:
           name: flowie-sdk-linux-x64
           path: stage/sdk/linux-x64
@@ -215,41 +249,22 @@ jobs:
           compression-level: 9
 
       - name: Verify exact source revision and clean tracked source
-        if: always()
+        if: always() && matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
           test -z "$(git status --porcelain --untracked-files=no)"
 
-  windows:
-    name: Windows x64 SDK
-    needs: metadata
-    runs-on: windows-2022
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-        with:
-          version: "4.6.3"
-
       - name: Prepare Windows build host
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install ninja -y --no-progress
+          choco install ninja ccache -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Installing Ninja/ccache failed" }
+          & ccache --version
+          if ($LASTEXITCODE -ne 0) { throw "ccache executable is unavailable" }
           $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
           $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -261,6 +276,7 @@ jobs:
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
 
       - name: Restore released Windows producer SDKs
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -302,6 +318,7 @@ jobs:
           "TURBODB_ROOT=$turbodb" >> $env:GITHUB_ENV
 
       - name: Restore Windows third-party graph from shared cache only
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -312,6 +329,7 @@ jobs:
           "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
 
       - name: Configure, build and install Windows SDK
+        if: matrix.rid == 'windows-x64'
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -319,6 +337,8 @@ jobs:
           set "PATH=%SALTS_UTILS_ROOT%\bin;%SALTS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%VCPKG_INSTALLED_DIR%\x64-windows\bin;%PATH%"
           cmake -S . -B build\windows-sdk -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ^
             -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
             -DVCPKG_TARGET_TRIPLET=x64-windows ^
             -DVCPKG_INSTALLED_DIR="%VCPKG_INSTALLED_DIR%" ^
@@ -334,6 +354,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
       - name: Verify Windows SDK
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -369,41 +390,21 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $prefix "flowie-sdk-manifest.txt") -Encoding ascii
 
       - uses: actions/upload-artifact@v4
+        if: matrix.rid == 'windows-x64'
         with:
           name: flowie-sdk-windows-x64
           path: stage/sdk/windows-x64
           if-no-files-found: error
           compression-level: 9
 
-  android:
-    name: Android arm64-v8a SDK
-    needs: metadata
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-        with:
-          version: "4.6.3"
-
       - name: Prepare Android build host and Lemon
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          ccache --version
           test -n "${ANDROID_NDK_HOME:-}"
           test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
           test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
@@ -414,6 +415,7 @@ jobs:
           echo "$host_tools" >> "$GITHUB_PATH"
 
       - name: Restore released Android producer SDKs
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -454,6 +456,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Restore Android third-party graph from shared cache only
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euo pipefail
@@ -467,11 +470,14 @@ jobs:
           echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
 
       - name: Configure, build and install Android SDK
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euxo pipefail
           cmake -S . -B build/android-sdk -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_SYSTEM_NAME=Android \
             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
@@ -511,15 +517,28 @@ jobs:
           EOF
 
       - uses: actions/upload-artifact@v4
+        if: matrix.rid == 'android-arm64-v8a'
         with:
           name: flowie-sdk-android-arm64-v8a
           path: stage/sdk/android-arm64-v8a
           if-no-files-found: error
           compression-level: 9
 
+      - name: C/C++ ccache statistics (Linux or Android)
+        if: always() && matrix.rid != 'windows-x64'
+        shell: bash
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+
+      - name: C/C++ ccache statistics (Windows)
+        if: always() && matrix.rid == 'windows-x64'
+        shell: pwsh
+        run: |
+          if (Get-Command ccache -ErrorAction SilentlyContinue) { ccache --show-stats }
+
   pack:
     name: Pack Flowie.Native
-    needs: [metadata, linux, windows, android]
+    needs: [metadata, build]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -602,9 +621,23 @@ jobs:
           if-no-files-found: error
 
   qualify:
-    name: Qualify packed Flowie.Native (Linux x64)
+    name: Qualify packed Flowie.Native (${{ matrix.label }})
     needs: [metadata, pack]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            label: Linux x64
+            os: ubuntu-24.04
+          - rid: windows-x64
+            label: Windows x64
+            os: windows-2022
+          - rid: android-arm64-v8a
+            label: Android arm64-v8a
+            os: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -625,6 +658,7 @@ jobs:
           path: dist
 
       - name: Prepare qualification host
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
@@ -632,6 +666,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config
 
       - name: Restore packed SDK and dependencies
+        if: matrix.rid == 'linux-x64'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -659,6 +694,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Restore consumer vcpkg graph from shared cache only
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euo pipefail
@@ -668,6 +704,7 @@ jobs:
           echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
 
       - name: Configure, build and run external consumer
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
           set -euxo pipefail
@@ -697,31 +734,8 @@ jobs:
           export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           "$consumer/build/flowie_release_consumer"
 
-  qualify_windows:
-    name: Qualify packed Flowie.Native (Windows x64)
-    needs: [metadata, pack]
-    runs-on: windows-2022
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist
-
       - name: Prepare Windows qualification host
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -733,6 +747,7 @@ jobs:
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
 
       - name: Restore packed Windows SDK and dependencies
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -759,6 +774,7 @@ jobs:
           "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
 
       - name: Restore Windows consumer graph from shared cache only
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -769,6 +785,7 @@ jobs:
           "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
 
       - name: Configure, build and run Windows external consumer
+        if: matrix.rid == 'windows-x64'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -805,31 +822,8 @@ jobs:
           cmd.exe /d /s /c $cmd
           if ($LASTEXITCODE -ne 0) { throw "Windows packed consumer qualification failed" }
 
-  qualify_android:
-    name: Qualify packed Flowie.Native (Android arm64-v8a)
-    needs: [metadata, pack]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist
-
       - name: Prepare Android qualification host
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euo pipefail
@@ -839,6 +833,7 @@ jobs:
           test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
 
       - name: Restore packed Android SDK and dependencies
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -868,6 +863,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Restore Android consumer graph from shared cache only
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euo pipefail
@@ -881,6 +877,7 @@ jobs:
           echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
 
       - name: Configure and link Android external consumer
+        if: matrix.rid == 'android-arm64-v8a'
         shell: bash
         run: |
           set -euxo pipefail
