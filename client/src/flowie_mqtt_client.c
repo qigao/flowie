@@ -201,6 +201,7 @@ struct flowie_mqtt_client_s {
 };
 
 static SALTS_THREAD_LOCAL flowie_mqtt_client_t *flowie_mqtt_client_current;
+static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client);
 
 static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
                                                 const flowie_mqtt_connect_packet_t *packet,
@@ -550,7 +551,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
                                   ? UINT64_MAX : now + client->timeout_ms;
     int close_status = SALTS_OK;
     if (client->network_dial_initialized)
-      close_status = cnet_managed_dial_seal(&client->network_dial);
+      close_status = flowie_mqtt_client_seal_managed_dial(client);
     else if (client->network_connection.slot != 0u && !client->network_terminal)
       close_status = cnet_close(&client->network, client->network_connection);
     while (cmeta_monotonic_ms() < deadline &&
@@ -559,7 +560,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
       size_t events = 0u;
       const uint32_t slice = flowie_mqtt_client_poll_slice(deadline);
       if (client->network_dial_initialized && close_status != SALTS_OK)
-        close_status = cnet_managed_dial_seal(&client->network_dial);
+        close_status = flowie_mqtt_client_seal_managed_dial(client);
       if (flowie_mqtt_client_poll_managed(client, slice, &events) != SALTS_OK)
         break;
     }
@@ -1642,9 +1643,9 @@ static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) 
   return rc;
 }
 
-/* This seam is compiled only into the isolated fault-test DLL, never into
- * Flowie::Client or its installed SDK. It simulates close-command admission
- * returning FULL, without forging a CNet terminal or modifying Manager state. */
+/* This seam exists only in the separate fault-test DLL, never in the installed
+ * SDK. Managed Dial seal() (not Manager request_close()) can report ENOBUFS
+ * when a CNet CLOSE command cannot be admitted. Never forge a terminal. */
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
 FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_test_force_close_full(flowie_mqtt_client_t *client, int enabled) {
@@ -1671,7 +1672,7 @@ flowie_mqtt_client_test_close_full_wrong_owner(const flowie_mqtt_client_t *clien
 }
 #endif
 
-static int flowie_mqtt_client_request_manager_close(flowie_mqtt_client_t *client) {
+static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client) {
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
   if (atomic_load_explicit(&client->test_close_full_enabled, memory_order_acquire)) {
     if (flowie_mqtt_client_current != client)
@@ -1680,7 +1681,7 @@ static int flowie_mqtt_client_request_manager_close(flowie_mqtt_client_t *client
     return SALTS_ENOBUFS;
   }
 #endif
-  return cnet_manager_request_close(&client->network_manager);
+  return cnet_managed_dial_seal(&client->network_dial);
 }
 
 /* Strictly Owner-local and retryable. Never let the Client allocation die while
@@ -1701,54 +1702,43 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
     return client->network_manager.impl == NULL && client->network_dial.impl == NULL
                ? SALTS_OK : SALTS_EBUSY;
   if (client->network_dial.impl != NULL) {
-    status = cnet_managed_dial_seal(&client->network_dial);
+    status = flowie_mqtt_client_seal_managed_dial(client);
     if (status != SALTS_OK && status != SALTS_EALREADY &&
         status != SALTS_ENOBUFS && status != SALTS_EBUSY)
       return status;
   }
   if (client->network_manager.impl != NULL) {
-    /* A FULL close-command queue needs Owner-local forward progress before
-     * admission can be retried. Merely returning ENOBUFS to try_destroy would
-     * spin over a queue that no thread is draining. Keep one bounded deadline
-     * and retain all native observers when that deadline is exhausted. */
+    /* Manager request_close seals state; actual CNet CLOSE admission occurs
+     * in Managed Dial seal / Manager advance. Both can report ENOBUFS. */
+    status = cnet_manager_request_close(&client->network_manager);
+    if (status != SALTS_OK) return status;
     for (;;) {
+      cnet_manager_snapshot snapshot = {0};
       size_t work = 0u, events = 0u;
-      uint64_t now, remaining;
-      uint32_t slice;
-      status = flowie_mqtt_client_request_manager_close(client);
-      if (status == SALTS_OK) break;
-      if (status != SALTS_ENOBUFS && status != SALTS_EBUSY) return status;
-      if (budget_ms == 0u) return SALTS_EBUSY;
-      now = cmeta_monotonic_ms();
-      if (now >= deadline) return SALTS_ETIMEDOUT;
+      int seal_pending = 0;
       status = cnet_manager_advance(&client->network_manager, 1u, &work);
       if (status != SALTS_OK && status != SALTS_ENOBUFS && status != SALTS_EBUSY)
         return status;
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
-      atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
+      if (atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) != 0u)
+        atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
 #endif
-      now = cmeta_monotonic_ms();
-      if (now >= deadline) return SALTS_ETIMEDOUT;
-      remaining = deadline - now;
-      slice = (uint32_t)(remaining < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
-                             ? remaining : FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS);
-      status = cnet_client_poll(&client->network, slice, &events);
-      if (status != SALTS_OK) return status;
-    }
-    for (;;) {
-      cnet_manager_snapshot snapshot = {0};
-      size_t work = 0u, events = 0u;
-      status = cnet_manager_advance(&client->network_manager, 1u, &work);
-      if (status != SALTS_OK && status != SALTS_ENOBUFS && status != SALTS_EBUSY)
-        return status;
       status = cnet_manager_get_snapshot(&client->network_manager, &snapshot);
       if (status != SALTS_OK) return status;
-      if (snapshot.drained) break;
+      /* A drained Manager is not proof that an earlier FULL Dial seal
+       * admitted its close. Retry that independent obligation before stop. */
+      if (client->network_dial.impl != NULL) {
+        const int seal_status = flowie_mqtt_client_seal_managed_dial(client);
+        if (seal_status == SALTS_ENOBUFS || seal_status == SALTS_EBUSY) {
+          seal_pending = 1;
+        } else if (seal_status != SALTS_OK && seal_status != SALTS_EALREADY) {
+          return seal_status;
+        }
+      }
+      if (snapshot.drained && !seal_pending) break;
       if (budget_ms == 0u) return SALTS_EBUSY;
       const uint64_t now = cmeta_monotonic_ms();
       if (now >= deadline) return SALTS_ETIMEDOUT;
-      if (client->network_dial.impl != NULL)
-        (void)cnet_managed_dial_seal(&client->network_dial);
       const uint32_t slice = (uint32_t)(deadline - now < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
                                           ? deadline - now : FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS);
       status = cnet_client_poll(&client->network, slice, &events);

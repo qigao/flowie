@@ -655,21 +655,33 @@ static void flowie_client_transport_self_stop_case(
 }
 
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
-/* Connect a real TCP broker but withhold CONNACK. Simulate native Manager
- * CLOSE admission FULL, prove the original Owner makes forward progress and
+static void flowie_client_transport_fault_connect_complete(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  atomic_int *callbacks = (atomic_int *)user;
+  (void)client;
+  (void)status;
+  (void)response;
+  atomic_fetch_add_explicit(callbacks, 1, memory_order_relaxed);
+}
+
+/* Connect a real TCP broker but withhold CONNACK. Force the Managed Dial
+ * seal() CLOSE admission FULL, prove the original Owner makes progress and
  * a bounded failure never frees the still-borrowed Client. */
 static void flowie_client_transport_injected_full_close(void) {
-  static const unsigned char id[] = "manager-close-full-lifetime";
+  static const unsigned char id[] = "dial-seal-full-lifetime";
   flowie_client_transport_broker broker = {0};
   flowie_server server = {0};
   flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_t *client = NULL;
+  atomic_int connect_callbacks;
   uint16_t port = 0u;
   uint64_t deadline;
   int status;
 
+  atomic_init(&connect_callbacks, 0);
   atomic_init(&broker.opens, 0);
   atomic_init(&broker.connects, 0);
   atomic_init(&broker.pings, 0);
@@ -698,6 +710,8 @@ static void flowie_client_transport_injected_full_close(void) {
   config.host = "127.0.0.1";
   config.port = (int)port;
   config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  config.on_connect = flowie_client_transport_fault_connect_complete;
+  config.user_data = &connect_callbacks;
   check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
@@ -721,6 +735,7 @@ static void flowie_client_transport_injected_full_close(void) {
   check_equal(flowie_mqtt_client_test_force_close_full(client, 0), SALTS_OK);
   check_equal(flowie_mqtt_client_try_destroy(
       client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(atomic_load_explicit(&connect_callbacks, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire), 0);
   check_equal(atomic_load_explicit(&broker.error, memory_order_acquire), SALTS_OK);
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
