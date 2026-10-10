@@ -1697,7 +1697,8 @@ static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client) {
  * completed native stop; 2 = synthetic timeout before native stop. Neither
  * mode changes the installed SDK or fabricates a native terminal. */
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
-static atomic_uint flowie_mqtt_client_test_native_stop_error_count = ATOMIC_VAR_INIT(0u);
+/* Static-storage atomics are zero-initialized by C; MSVC C11 rejects ATOMIC_VAR_INIT here. */
+static atomic_uint flowie_mqtt_client_test_native_stop_error_count;
 
 FLOWIE_MQTT_CLIENT_C_API int
 flowie_mqtt_client_test_set_native_stop_mode(flowie_mqtt_client_t *client, int mode) {
