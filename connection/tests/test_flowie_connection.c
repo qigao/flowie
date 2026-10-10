@@ -670,6 +670,44 @@ spec("Flowie multiple network owners") {
   }
 }
 
+
+typedef struct flowie_ws_multi_owner_probe {
+  flowie_server *server;
+  atomic_int opened;
+  atomic_int closed;
+  atomic_int errors;
+  atomic_uintptr_t callback_threads[2];
+} flowie_ws_multi_owner_probe;
+
+static int flowie_ws_multi_open(void *user, flowie_connection connection,
+                                const flowie_peer_info *peer) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  int index;
+  (void)connection;
+  if (peer == NULL) return SALTS_EINVAL;
+  index = atomic_fetch_add(&probe->opened, 1);
+  if (index >= 2) return SALTS_ENOBUFS;
+  atomic_store(&probe->callback_threads[index],
+               (uintptr_t)cmeta_thread_current_token());
+  return SALTS_OK;
+}
+
+static int flowie_ws_multi_receive(void *user, flowie_connection connection,
+                                   const void *data, size_t size) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  const int status = flowie_server_send(probe->server, connection, data, size);
+  if (status != SALTS_OK) atomic_store(&probe->errors, status);
+  return status;
+}
+
+static void flowie_ws_multi_close(void *user, flowie_connection connection,
+                                  int status) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  (void)connection;
+  (void)status;
+  atomic_fetch_add(&probe->closed, 1);
+}
+
 spec("Flowie CNet and CHTTP transport connection") {
   it("formats copied IPv4 peer metadata without transport-owned pointers") {
     flowie_peer_info peer = {0};
@@ -808,6 +846,59 @@ spec("Flowie CNet and CHTTP transport connection") {
   it("uses the same Flowie connection contract for KCP") {
     flowie_connection_test_packet_round_trip(TF_NET_TRANSPORT_KCP, CNET_PACKET_KCP,
                                        UINT32_C(0x12345678));
+  }
+
+
+  it("uses CHttp 2.1 fixed Owners and CNet placement for WS connections") {
+    flowie_server server = {0};
+    flowie_ws_multi_owner_probe probe = {0};
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_WS);
+    chttp_websocket_client clients[2] = {{0}};
+    chttp_websocket_client_config client_config =
+        flowie_connection_test_websocket_client_config();
+    chttp_websocket_connect_options options = {.size = sizeof(options),
+        .timeout_ms = FLOWIE_CONNECTION_TEST_TIMEOUT_MS, .subprotocol = "mqtt"};
+    chttp_websocket_event event = {0};
+    uint16_t port = 0u;
+    char uri[128];
+    static const unsigned char payload[] = "two-owner-websocket";
+    probe.server = &server;
+    config.network_workers = 2u;
+    config.network_policy = TF_NET_OWNER_LEAST_CONNECTIONS;
+    config.stream.connection_capacity = 2u;
+    config.websocket_subprotocol = "mqtt";
+    config.observer = (flowie_observer){flowie_ws_multi_open, flowie_ws_multi_receive,
+                                        flowie_ws_multi_close, NULL, &probe};
+    check_equal(flowie_server_init(&server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&server), SALTS_OK);
+    check_equal(flowie_server_port(&server, &port), SALTS_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/mqtt",
+                        (unsigned int)port) > 0);
+    options.uri = uri;
+    for (size_t i = 0u; i < 2u; ++i) {
+      unsigned int http_status = 0u;
+      check_equal(chttp_websocket_client_init(&clients[i], &client_config), SALTS_OK);
+      check_equal(chttp_websocket_client_connect(&clients[i], &options, &http_status), SALTS_OK);
+      check_equal(http_status, 101u);
+      check_equal(chttp_websocket_client_send_binary(
+          &clients[i], payload, sizeof(payload), FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+      check_equal(chttp_websocket_client_receive(
+          &clients[i], FLOWIE_CONNECTION_TEST_TIMEOUT_MS, &event), SALTS_OK);
+      check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+      check_equal(event.size, sizeof(payload));
+      check_equal(memcmp(event.data, payload, sizeof(payload)), 0);
+    }
+    check_equal(atomic_load(&probe.opened), 2);
+    check_not_equal(atomic_load(&probe.callback_threads[0]), (uintptr_t)0u);
+    check_not_equal(atomic_load(&probe.callback_threads[1]), (uintptr_t)0u);
+    check_not_equal(atomic_load(&probe.callback_threads[0]),
+                    atomic_load(&probe.callback_threads[1]));
+    for (size_t i = 0u; i < 2u; ++i)
+      check_equal(chttp_websocket_client_destroy(
+          &clients[i], FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_stop(&server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_destroy(&server), SALTS_OK);
+    check_equal(atomic_load(&probe.errors), SALTS_OK);
   }
 
   it("routes WS through CHTTP WebSocket with the same Flowie connection contract") {

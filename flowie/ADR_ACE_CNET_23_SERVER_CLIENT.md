@@ -17,7 +17,7 @@ a migrated MQTT Client or an implemented Component Configurator. Follow
 | Physical client connection and reconnect | Salts::CNet | owner-local Manager/Managed Dial/Recovery |
 | MQTT CONNECT/AUTH/CONNACK, QoS and session | Flowie | protocol FSM/ACK truth, generation fencing |
 | MQTT fanout and retained/session index | Flowie endpoint | owner-local delivery, bounded cross-Owner descriptors |
-| WS/WSS transport | CHttp | own CNet-backed Owner/transport lifetime |
+| WS/WSS transport | CHttp 2.1 | owns fixed Owners, CNet placement, Manager and Handoff |
 | Cluster peer and consensus | FlowMQ/TurboRaft | independent transport peer and committed facts |
 | Static service composition | Salts::Component + CMeta | Component Configurator, typed Strategy/Factory/Adapter |
 | Dynamic provider lifetime | Salts::Plugin | outer ComponentPlugin generation Scope |
@@ -44,6 +44,13 @@ policy implementation. Unknown values are rejected, not silently mapped.
 `STRICT_KEY` is not exposed during TCP admission because MQTT ClientID is
 unknown before CONNECT and established transports cannot migrate. Connection
 and Manager/handoff credits are separate bounded resources.
+
+WS/WSS now delegates configured `network_workers` and RR/least-pressure
+connection placement to the published CHttp 2.1 API. Flowie holds one
+WebSocket wrapper while CHttp owns its fixed Owner lanes, acceptor, CNet
+Manager and bounded Handoff. Flowie's WebSocket peer table remains
+generation-fenced and mutex-guarded across concurrent callbacks. WS/WSS
+cannot use Flowie's explicit CPU binding: unsupported configuration fails fast.
 
 CNet 2.3 exports Manager/Handoff within **Salts::CNet**; delete historical
 linkage to the removed `Salts::CNetManager` target. The existing staging

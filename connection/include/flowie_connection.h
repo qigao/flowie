@@ -83,10 +83,13 @@ typedef struct flowie_server_config {
    * owners; each partition must hold max_message_bytes. Other CNet capacities
    * and command_capacity apply per owner. Callbacks for different connections
    * may overlap; one connection keeps its owner and ordered callbacks until close.
-   * UDP/KCP/WS/WSS reject values greater than one with SALTS_ENOTSUP.
+   * UDP/KCP reject values greater than one with SALTS_ENOTSUP.
+   * WS/WSS delegate network_workers and placement to CHttp's fixed-Owner
+   * runtime; Flowie does not create another WebSocket scheduler. Explicit
+   * per-Owner CPU affinity remains unsupported for WebSocket.
    */
   uint32_t network_workers;
-  /** TCP/TLS accept placement; includes pending handoffs in least-connections. */
+  /** TCP/TLS and CHttp WS/WSS accept placement; includes handoff pressure. */
   flowie_owner_policy network_policy;
   /** 0 preserves OS scheduling; otherwise exactly one CPU per effective owner. */
   uint32_t network_cpu_count;

@@ -1018,10 +1018,22 @@ static int flowie_init_websocket(flowie_server_impl *server) {
       .size = sizeof(socket_options),
       .stream = server->config.stream_socket_options,
       .listener = server->config.listener_options};
+  chttp_server_execution_options execution = CHTTP_SERVER_EXECUTION_OPTIONS_INIT;
+  chttp_server_owner_placement_options placement =
+      CHTTP_SERVER_OWNER_PLACEMENT_OPTIONS_INIT;
   int status = chttp_server_init(&server->websocket, &config);
   if (status != SALTS_OK) return status;
   server->websocket_initialized = true;
-  status = chttp_server_set_socket_options(&server->websocket, &socket_options);
+  execution.owner_count =
+      server->config.network_workers ? server->config.network_workers : 1u;
+  placement.kind = server->config.network_policy == TF_NET_OWNER_LEAST_CONNECTIONS
+                       ? CNET_OWNER_PLACE_LOWEST_PRESSURE
+                       : CNET_OWNER_PLACE_ROUND_ROBIN;
+  status = chttp_server_set_execution_options(&server->websocket, &execution);
+  if (status == SALTS_OK)
+    status = chttp_server_set_owner_placement(&server->websocket, &placement);
+  if (status == SALTS_OK)
+    status = chttp_server_set_socket_options(&server->websocket, &socket_options);
   if (status != SALTS_OK) return status;
   return chttp_server_websocket_with(&server->websocket, &route);
 }
@@ -1062,7 +1074,10 @@ static int flowie_owner_init(flowie_server *server, const flowie_server_config *
   if (impl == NULL) return SALTS_ENOMEM;
   impl->config = *config;
   impl->root = impl;
-  impl->owner_count = config->network_workers ? config->network_workers : 1u;
+  /* CHttp owns WS/WSS fixed execution lanes; Flowie has one wrapper. */
+  impl->owner_count = flowie_transport_websocket(config->transport)
+                          ? 1u
+                          : (config->network_workers ? config->network_workers : 1u);
   if (impl->config.stream_socket_options.size == 0u)
     impl->config.stream_socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
@@ -1121,9 +1136,15 @@ int flowie_server_init(flowie_server *server, const flowie_server_config *config
   if (count > FLOWIE_NETWORK_WORKERS_MAX ||
       (count > 1u && count > config->stream.connection_capacity) ||
       config->stream.connection_capacity > UINT32_MAX) return SALTS_ERANGE;
-  if ((count > 1u || config->network_policy != TF_NET_OWNER_ROUND_ROBIN ||
-       config->network_cpu_count != 0u) && !flowie_transport_stream(config->transport))
+  if (flowie_transport_websocket(config->transport)) {
+    /* CHttp 2.1 owns WS/WSS multi-owner admission and callback execution. */
+    if (config->network_cpu_count != 0u) return SALTS_ENOTSUP;
+    count = 1u; /* No separate Flowie network workers for WebSocket. */
+  } else if ((count > 1u || config->network_policy != TF_NET_OWNER_ROUND_ROBIN ||
+              config->network_cpu_count != 0u) &&
+             !flowie_transport_stream(config->transport)) {
     return SALTS_ENOTSUP;
+  }
   if (count > 1u && config->command_bytes_capacity / count < config->max_message_bytes)
     return SALTS_ERANGE;
   for (index = 0u; index < count; ++index) {
