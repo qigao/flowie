@@ -3,6 +3,8 @@
 #include "tinytest.h"
 #include "cmeta_error.h"
 #include <json_parser.h>
+#include "mtls_test_server.h"
+#include "fmt.h"
 
 #include <string.h>
 
@@ -12,6 +14,158 @@ static int test_set_environment(const char *name, const char *value) {
 #else
   return value ? setenv(name, value, 1) : unsetenv(name);
 #endif
+}
+
+static int test_http_security_configure(unsigned short port, const char *ca_file,
+                                        flowie_server_http_security_t **security) {
+  flowie_server_http_provider_config_t auth = {0}, acl;
+  tstr url = tstr_format("https://localhost:{}/v3/auth", (unsigned int)port);
+  int rc;
+  if (!url) return SALTS_ENOMEM;
+  if (tstr_len(url) >= sizeof(auth.url) || strlen(ca_file) >= sizeof(auth.ca_file)) {
+    tstr_free(url);
+    return SALTS_ERANGE;
+  }
+  memcpy(auth.url, url, tstr_len(url) + 1u);
+  memcpy(auth.ca_file, ca_file, strlen(ca_file) + 1u);
+  memcpy(auth.method, "password", sizeof("password"));
+  memcpy(auth.service_id, "broker-main", sizeof("broker-main"));
+  memcpy(auth.service_domain, "platform-services", sizeof("platform-services"));
+  memcpy(auth.service_token_ref, "env://FLOWIE_TEST_NATIVE_HTTP_TOKEN",
+         sizeof("env://FLOWIE_TEST_NATIVE_HTTP_TOKEN"));
+  auth.timeout_ms = 1000u;
+  auth.max_body_size = 4096u;
+  acl = auth;
+  acl.method[0] = '\0';
+  rc = flowie_server_http_security_create(&auth, &acl, security);
+  tstr_free(url);
+  return rc;
+}
+
+static flowie_security_auth_request_t test_http_auth_request(void) {
+  static const uint8_t secret[] = "test-only-password";
+  flowie_security_auth_request_t request = FLOWIE_SECURITY_AUTH_REQUEST_INIT;
+  request.identity = "device-a";
+  request.method = "password";
+  request.secret = secret;
+  request.secret_size = sizeof(secret) - 1u;
+  request.protocol = "mqtt5";
+  return request;
+}
+
+spec("Flowie server HTTPS Interceptor") {
+  static flow_mtls_test_server_t server;
+  static flowie_server_http_security_t *security;
+  static tstr wire_response;
+  static char ca_file[1025];
+
+  before_each() {
+    server = (flow_mtls_test_server_t){.listener = FLOW_MTLS_TEST_INVALID_SOCKET};
+    security = NULL;
+    wire_response = NULL;
+    ca_file[0] = '\0';
+    check_equal(test_set_environment("FLOWIE_TEST_NATIVE_HTTP_TOKEN", "test-only-token"), 0);
+    check_equal(tls_test_write_ca_file(ca_file, sizeof(ca_file)), 0);
+  }
+
+  after_each() {
+    flowie_server_http_security_destroy(security);
+    flow_mtls_test_server_join(&server);
+    tstr_free(wire_response);
+    if (ca_file[0]) tls_test_remove_file(ca_file);
+    check_equal(test_set_environment("FLOWIE_TEST_NATIVE_HTTP_TOKEN", NULL), 0);
+  }
+
+  it("unwinds successful authentication and keeps the caller request borrowed") {
+    static const char body[] =
+        "{\"version\":3,\"authenticated\":true,\"principal\":{\"id\":\"device-a\","
+        "\"type\":\"device\",\"auth_method\":\"password\",\"domain\":\"booth\","
+        "\"scope\":\"self\",\"roles\":[\"device\"],"
+        "\"groups\":[],\"expires_at\":1900000000,\"policy_version\":42}}";
+    flowie_security_auth_request_t request = test_http_auth_request();
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    const flowie_security_auth_provider_t *provider;
+    wire_response = tstr_format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        "Content-Length: {}\r\nConnection: close\r\n\r\n{}", sizeof(body) - 1u, body);
+    check_not_null(wire_response);
+    check_equal(flow_tls_test_server_start(&server, (const uint8_t *)wire_response,
+                                          tstr_len(wire_response)), 0);
+    check_equal(test_http_security_configure(server.port, ca_file, &security), SALTS_OK);
+    provider = flowie_server_http_security_auth_provider(security);
+    check_equal(provider->authenticate(provider->ctx, &request, &principal), SALTS_OK);
+    flow_mtls_test_server_join(&server);
+    check_equal(server.status, 0);
+    check_equal(principal.principal_id, "device-a");
+    check_equal(principal.policy_version, 42u);
+    check_equal(memcmp(request.secret, "test-only-password", request.secret_size), 0);
+    check_contains((const char *)server.request, "Authorization: Bearer test-only-token");
+  }
+
+  it("rejects invalid admission without dispatching the transport target") {
+    flowie_security_auth_request_t request = test_http_auth_request();
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    const flowie_security_auth_provider_t *provider;
+    /* No listener: admission errors must survive instead of becoming EIO. */
+    check_equal(test_http_security_configure(1u, ca_file, &security), SALTS_OK);
+    provider = flowie_server_http_security_auth_provider(security);
+    request.method = NULL;
+    check_equal(provider->authenticate(provider->ctx, &request, &principal), SALTS_EPERM);
+    request = test_http_auth_request();
+    request.size = 0u;
+    check_equal(provider->authenticate(provider->ctx, &request, &principal), SALTS_EINVAL);
+    request = test_http_auth_request();
+    request.secret_size = 4097u;
+    check_equal(provider->authenticate(provider->ctx, &request, &principal), SALTS_EPERM);
+    check_equal(principal.principal_id[0], '\0');
+  }
+
+  it("unwinds remote denial and preserves the HTTP authorization error") {
+    static const char denial[] = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+                                 "Connection: close\r\n\r\n";
+    flowie_security_auth_request_t request = test_http_auth_request();
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    const flowie_security_auth_provider_t *provider;
+    check_equal(flow_tls_test_server_start(&server, (const uint8_t *)denial,
+                                          sizeof(denial) - 1u), 0);
+    check_equal(test_http_security_configure(server.port, ca_file, &security), SALTS_OK);
+    provider = flowie_server_http_security_auth_provider(security);
+    check_equal(provider->authenticate(provider->ctx, &request, &principal), SALTS_EPERM);
+    flow_mtls_test_server_join(&server);
+    check_equal(server.status, 0);
+    check_equal(principal.principal_id[0], '\0');
+  }
+
+  it("unwinds successful ACL decoding without changing the remote policy decision") {
+    static const char body[] = "{\"version\":4,\"allowed\":false,\"reason\":\"deny_rule\","
+                               "\"policy_version\":42}";
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    flowie_security_request_t request = FLOWIE_SECURITY_REQUEST_INIT;
+    flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
+    const flowie_security_authorization_provider_t *provider;
+    memcpy(principal.principal_id, "device-a", sizeof("device-a"));
+    memcpy(principal.principal_type, "password", sizeof("password"));
+    memcpy(principal.domain_id, "booth", sizeof("booth"));
+    principal.expires_at = 1900000000u;
+    principal.policy_version = 42u;
+    request.principal = &principal;
+    request.domain_id = "booth";
+    request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
+    request.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
+    request.resource = "booth/devices/device-a/event";
+    wire_response = tstr_format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        "Content-Length: {}\r\nConnection: close\r\n\r\n{}", sizeof(body) - 1u, body);
+    check_not_null(wire_response);
+    check_equal(flow_tls_test_server_start(&server, (const uint8_t *)wire_response,
+                                          tstr_len(wire_response)), 0);
+    check_equal(test_http_security_configure(server.port, ca_file, &security), SALTS_OK);
+    provider = flowie_server_http_security_acl_provider(security);
+    check_equal(provider->authorize(provider->ctx, &request, 1u, &decision), SALTS_OK);
+    flow_mtls_test_server_join(&server);
+    check_equal(server.status, 0);
+    check_equal(decision.effect, FLOWIE_SECURITY_DENY);
+    check_equal(decision.reason, FLOWIE_SECURITY_REASON_DENY_RULE);
+    check_equal(decision.policy_version, 42u);
+  }
 }
 
 spec("Flowie standalone HTTPS security protocol") {

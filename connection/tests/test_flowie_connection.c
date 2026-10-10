@@ -270,6 +270,7 @@ typedef struct flowie_multi_probe {
   atomic_uint hold_slot;
   atomic_int blocked;
   atomic_int released;
+  atomic_int reject_open;
   unsigned char retained[8];
   atomic_uint generations[3];
   atomic_uintptr_t threads[3];
@@ -293,7 +294,7 @@ static int flowie_multi_open(void *user, flowie_connection connection,
     atomic_store(&probe->error, SALTS_EINVAL);
 #endif
   atomic_fetch_add(&probe->opened, 1);
-  return SALTS_OK;
+  return atomic_load(&probe->reject_open) ? SALTS_EPERM : SALTS_OK;
 }
 
 static int flowie_multi_receive(void *user, flowie_connection connection,
@@ -428,6 +429,75 @@ spec("Flowie multiple network owners") {
     check_equal(memcmp(received, "live", 4u), 0);
     check_equal(atomic_load(&probe.threads[0]), first_thread);
     check_equal(atomic_load(&probe.error), SALTS_OK);
+  }
+
+  it("returns handoff credits after rejected opens and reuses both fixed owners") {
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+    uint16_t port = 0u;
+    unsigned char received[4];
+    config.network_workers = 2u;
+    config.stream.connection_capacity = 2u;
+    config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                       flowie_multi_close, NULL, &probe};
+    atomic_store(&probe.reject_open, 1);
+    check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&probe.server), SALTS_OK);
+    check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+    for (size_t index = 0u; index < 8u; ++index) {
+      clients[0] = flowie_test_cnet_connect(port);
+      check_not_null(clients[0]);
+      check_equal(flowie_multi_wait(&probe.opened, (int)index + 1), SALTS_OK);
+      check_equal(flowie_multi_wait(&probe.closed, (int)index + 1), SALTS_OK);
+      flowie_test_cnet_close(clients[0]);
+      clients[0] = NULL;
+    }
+    atomic_store(&probe.reject_open, 0);
+    for (size_t index = 0u; index < 2u; ++index) {
+      clients[index] = flowie_test_cnet_connect(port);
+      check_not_null(clients[index]);
+      check_equal(flowie_multi_wait(&probe.opened, 9 + (int)index), SALTS_OK);
+      check_equal(flowie_test_cnet_send(clients[index], "live", sizeof(received)), SALTS_OK);
+      check_equal(flowie_test_cnet_recv_exact(clients[index], received, sizeof(received)), SALTS_OK);
+      check_equal(memcmp(received, "live", sizeof(received)), 0);
+    }
+    check_not_equal(atomic_load(&probe.threads[0]), atomic_load(&probe.threads[1]));
+    check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(atomic_load(&probe.closed), 10);
+    check_equal(atomic_load(&probe.error), SALTS_OK);
+    check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+  }
+
+  it("stops a blocked owner while new connections are pending") {
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+    uint16_t port = 0u;
+    config.network_workers = 2u;
+    config.stream.connection_capacity = 3u;
+    config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                       flowie_multi_close, NULL, &probe};
+    check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&probe.server), SALTS_OK);
+    check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+    for (size_t index = 0u; index < 2u; ++index) {
+      clients[index] = flowie_test_cnet_connect(port);
+      check_not_null(clients[index]);
+      check_equal(flowie_multi_wait(&probe.opened, (int)index + 1), SALTS_OK);
+    }
+    atomic_store(&probe.hold_slot, 1u);
+    check_equal(flowie_test_cnet_send(clients[0], "blocked", 7u), SALTS_OK);
+    check_equal(flowie_multi_wait(&probe.blocked, 1), SALTS_OK);
+    clients[2] = flowie_test_cnet_connect(port);
+    clients[3] = flowie_test_cnet_connect(port);
+    check_not_null(clients[2]);
+    check_not_null(clients[3]);
+    check_equal(atomic_load(&probe.opened), 2);
+    check_equal(flowie_server_stop(&probe.server, 1u), SALTS_ETIMEDOUT);
+    check_equal(flowie_server_destroy(&probe.server), SALTS_EBUSY);
+    atomic_store(&probe.hold_slot, 0u);
+    check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(atomic_load(&probe.opened), 2);
+    check_equal(atomic_load(&probe.closed), 2);
+    check_equal(atomic_load(&probe.error), SALTS_OK);
+    check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
   }
 
 #if defined(_WIN32) || defined(__linux__)

@@ -1,0 +1,77 @@
+<div class="dashboard__inner">
+  <nav class="dashboard-nav" aria-label="Control sections">
+    <div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">{% if capabilities.is_platform_workspace %}Platform{% endif %}{% if capabilities.is_domain_workspace %}Domain{% endif %}</p>
+      <a href="{{ navigation.overview_path }}"{% if sections.is_overview %} aria-current="page"{% endif %}>Overview</a>
+      <a href="{{ navigation.integration_path }}"{% if sections.is_integration %} aria-current="page"{% endif %}>{% if capabilities.is_platform_workspace %}Configuration{% endif %}{% if capabilities.is_domain_workspace %}Integration{% endif %}</a>
+    </div>
+    {% if capabilities.is_domain_workspace %}<div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">Identity</p>
+      <a href="{{ navigation.users_path }}"{% if sections.is_users %} aria-current="page"{% endif %}>Users</a>
+    </div>
+    <div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">Access</p>
+      <a href="{{ navigation.groups_path }}"{% if sections.is_groups %} aria-current="page"{% endif %}>Groups</a>
+      <a href="{{ navigation.roles_path }}"{% if sections.is_roles %} aria-current="page"{% endif %}>Roles</a>
+      <a href="{{ navigation.acls_path }}"{% if sections.is_acls %} aria-current="page"{% endif %}>ACL rules</a>
+    </div>{% endif %}
+    {% if capabilities.can_audit_read %}<div class="dashboard-nav__group">
+      <p class="dashboard-nav__label">Governance</p>
+      {% if capabilities.can_audit_read %}<a href="{{ navigation.audit_path }}"{% if sections.is_audit %} aria-current="page"{% endif %}>Audit</a>{% endif %}
+    </div>{% endif %}
+  </nav>
+
+  <div class="dashboard__content">
+  <section class="workspace-context" data-workspace-kind="{% if capabilities.is_platform_workspace %}platform{% endif %}{% if capabilities.is_domain_workspace %}domain{% endif %}" aria-labelledby="workspace-context-title">
+    <div class="workspace-context__identity">
+      <p class="eyebrow">Current scope</p>
+      <div class="workspace-context__title">
+        <h2 id="workspace-context-title">{% if capabilities.is_platform_workspace %}Platform{% endif %}{% if capabilities.is_domain_workspace %}Domain{% endif %}</h2>
+        <code>{{ identity.domain_id }}</code>
+      </div>
+      <p>{% if capabilities.is_platform_workspace %}Monitor the control plane, review runtime configuration, and manage Domain lifecycle. Domain-owned identities and policy remain outside this scope.{% endif %}{% if capabilities.is_domain_workspace %}Users, access policy, audit records and integration settings on this page belong only to this Domain.{% endif %}</p>
+    </div>
+  </section>
+  <div id="dashboard-feedback" class="feedback" aria-live="polite"></div>
+  {% if capabilities.credential_issued %}<section class="credential-secret" data-credential-secret tabindex="-1" aria-labelledby="credential-secret-title" aria-describedby="credential-secret-guidance">
+    <div class="credential-secret__heading"><div><p class="eyebrow">Service credential</p><h2 id="credential-secret-title">New token ready</h2></div><button type="button" class="button--quiet" data-dismiss-credential>Dismiss token</button></div>
+    <dl class="credential-secret__identity"><div><dt>Domain</dt><dd>{{ identity.credential_domain }}</dd></div><div><dt>Service ID</dt><dd>{{ identity.credential_principal }}</dd></div></dl>
+    <p id="credential-secret-guidance">Copy this token now. It will not be shown again. Issuing another token immediately invalidates this one.</p>
+    <div class="credential-secret__value"><code data-credential-token tabindex="0">{{ identity.credential_token }}</code><button type="button" data-copy-credential>Copy token</button></div>
+    <output class="credential-secret__status" data-credential-copy-status aria-live="polite"></output>
+  </section>{% endif %}
+  <template id="user-picker-options">{% for row_0 in collections.user_options %}<button type="button" class="entity-picker__option" data-picker-option data-value="{{ row_0.principal_id }}" role="option" aria-selected="false" tabindex="-1"{% if not row_0.enabled %} disabled{% endif %}><span>{{ row_0.principal_id }}</span><small>{{ row_0.principal_type }}</small></button>{% endfor %}{% if not collections.user_options %}<p class="empty">No users yet. Create a user to assign access.</p>{% endif %}</template>
+  <template id="group-picker-options">{% for row_0 in collections.group_options %}<button type="button" class="entity-picker__option entity-picker__option--tree" data-picker-option data-value="{{ row_0.group_id }}" role="option" aria-selected="false" tabindex="-1"{% if not row_0.enabled %} disabled{% endif %}><span>{{ row_0.tree_label }}</span><small>Group</small></button>{% endfor %}{% if not collections.group_options %}<p class="empty">No groups yet. Create a group to organize access.</p>{% endif %}</template>
+  <template id="group-member-picker-options">{% for row_0 in collections.group_options %}<button type="button" class="entity-picker__option entity-picker__option--tree" data-picker-option data-value="{{ row_0.group_id }}" role="option" aria-selected="false" tabindex="-1"{% if row_0.add_disabled %} disabled{% endif %}><span>{{ row_0.tree_label }}</span><small>Group</small></button>{% endfor %}{% if not collections.group_options %}<p class="empty">No groups available for membership.</p>{% endif %}</template>
+  <template id="group-parent-picker-options"><button type="button" class="entity-picker__option entity-picker__option--tree" data-picker-option data-value="{{ identity.domain_id }}" role="option" aria-selected="false" tabindex="-1"><span>{{ identity.domain_id }}</span><small>Domain</small></button>{% for row_0 in collections.group_options %}<button type="button" class="entity-picker__option entity-picker__option--tree" data-picker-option data-value="{{ row_0.group_id }}" role="option" aria-selected="false" tabindex="-1"{% if row_0.parent_disabled %} disabled{% endif %}><span>{{ row_0.tree_label }}</span><small>Group</small></button>{% endfor %}{% if not collections.group_options %}<p class="empty">No groups yet. Create a group to organize access.</p>{% endif %}</template>
+  <template id="role-picker-options">{% for row_0 in collections.role_options %}<button type="button" class="entity-picker__option" data-picker-option data-value="{{ row_0.role_id }}" role="option" aria-selected="false" tabindex="-1"{% if not row_0.enabled %} disabled{% endif %}><span>{{ row_0.role_id }}</span><small>Role</small></button>{% endfor %}{% if not collections.role_options %}<p class="empty">No roles yet. Create a role to assign permissions.</p>{% endif %}</template>
+  <template id="acl-builder-template">
+    <div class="acl-builder" data-acl-builder>
+      <div class="acl-builder__grid">
+        <label>Subject type<select data-acl-subject-kind><option value="user">User</option><option value="role">Role</option><option value="group">Group</option></select></label>
+        <label data-acl-subject-field="user">User<select data-acl-subject="user" required><option value="">Select user</option>{% for row_0 in collections.user_options %}<option value="{{ row_0.principal_id }}"{% if not row_0.enabled %} disabled{% endif %}>{{ row_0.principal_id }}</option>{% endfor %}</select></label>
+        <label data-acl-subject-field="role" hidden>Role<select data-acl-subject="role" disabled><option value="">Select role</option>{% for row_0 in collections.role_options %}<option value="{{ row_0.role_id }}"{% if not row_0.enabled %} disabled{% endif %}>{{ row_0.role_id }}</option>{% endfor %}</select></label>
+        <label data-acl-subject-field="group" hidden>Group<select data-acl-subject="group" disabled><option value="">Select group</option>{% for row_0 in collections.group_options %}<option value="{{ row_0.group_id }}"{% if not row_0.enabled %} disabled{% endif %}>{{ row_0.group_id }}</option>{% endfor %}</select></label>
+        <label>Connection<select data-acl-connection><option value="allow">Allow connection</option><option value="deny">Deny connection</option></select></label>
+        <label class="acl-builder__entries">Topic permissions<textarea data-acl-entries rows="8" maxlength="16000" spellcheck="false" placeholder="write topic {{ identity.domain_id }}/telemetry/%u/{event,heartbeat}"></textarea><small>One statement per line. Read permits subscriptions; write permits publishing. Use %u for MQTT username and %c for client ID in any complete segment.</small></label>
+      </div>
+      <div class="acl-preview"><span>Canonical document</span><output data-acl-preview></output></div>
+      <input type="hidden" name="rule_document" data-acl-rule required>
+    </div>
+  </template>
+
+  {% include "templates/dashboard_overview.html" %}
+
+  {% include "templates/dashboard_integration.html" %}
+
+  {% include "templates/dashboard_users.html" %}
+
+  {% include "templates/dashboard_groups.html" %}
+
+  {% include "templates/dashboard_roles.html" %}
+
+  {% include "templates/dashboard_acls.html" %}
+
+  {% include "templates/dashboard_audit.html" %}
+  </div>
+</div>

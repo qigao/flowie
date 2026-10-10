@@ -1,6 +1,7 @@
 #include "flowie_server_http_security_internal.h"
 
 #include "base64_utils.h"
+#include <cmeta/ace_interceptor.h>
 #include <http_client/http.h>
 #include "cmeta_error.h"
 #include <json_parser.h>
@@ -610,54 +611,142 @@ int flowie_server_http_headers(const flowie_server_http_provider_config_t *confi
   return SALTS_OK;
 }
 
+typedef struct flowie_server_http_invocation {
+  const flowie_server_http_endpoint_t *endpoint;
+  const flowie_server_http_provider_config_t *config;
+  const char *token;
+  chttp_response response;
+  char *body;
+  size_t body_size;
+  int status;
+  int sensitive;
+} flowie_server_http_invocation;
+
+CMETA_INTERCEPTOR_TYPE(flowie_server_auth_chain, flowie_security_auth_request_t,
+                       flowie_security_principal_t);
+CMETA_INTERCEPTOR_TYPE(flowie_server_acl_chain, flowie_security_request_t,
+                       flowie_security_decision_t);
+
+/* Each invocation owns its body/response and its chain lives on the calling
+ * stack. Hook/context borrows never escape the synchronous provider callback.
+ * Salts business errors stay separate from CMeta chain-control status. */
+static cmeta_status flowie_server_http_chain_status(int status) {
+  return status == SALTS_OK ? CMETA_OK : CMETA_CALLBACK_ERROR;
+}
+
+static void flowie_server_http_invocation_cleanup(flowie_server_http_invocation *invocation) {
+  chttp_response_destroy(&invocation->response);
+  flowie_server_http_body_destroy(invocation->body, invocation->body_size, invocation->sensitive);
+  invocation->body = NULL;
+  invocation->body_size = 0u;
+}
+
+static cmeta_status flowie_server_auth_before(void *context,
+    const flowie_security_auth_request_t *request, bool *proceed) {
+  flowie_server_http_invocation *invocation = context;
+  (void)proceed;
+  if (request->size < sizeof(*request)) invocation->status = SALTS_EINVAL;
+  else if (!request->method || request->secret_size == 0u ||
+           request->secret_size > invocation->config->max_body_size ||
+           strcmp(request->method, invocation->config->method) != 0)
+    invocation->status = SALTS_EPERM;
+  else
+    invocation->status = flowie_server_http_auth_encode(request, &invocation->body,
+                                                        &invocation->body_size);
+  return flowie_server_http_chain_status(invocation->status);
+}
+
+static cmeta_status flowie_server_acl_before(void *context,
+    const flowie_security_request_t *request, bool *proceed) {
+  flowie_server_http_invocation *invocation = context;
+  (void)proceed;
+  invocation->status = flowie_server_http_acl_encode(request, &invocation->body,
+                                                    &invocation->body_size);
+  return flowie_server_http_chain_status(invocation->status);
+}
+
+static int flowie_server_http_exchange(flowie_server_http_invocation *invocation) {
+  int rc = flowie_server_http_post(invocation->endpoint, invocation->config, invocation->token,
+      invocation->body, invocation->body_size, &invocation->response);
+  return rc == SALTS_OK ? flowie_server_http_response_status(&invocation->response) : SALTS_EIO;
+}
+
+static cmeta_status flowie_server_auth_target(void *context,
+    const flowie_security_auth_request_t *request, flowie_security_principal_t *principal) {
+  flowie_server_http_invocation *invocation = context;
+  (void)request;
+  invocation->status = flowie_server_http_exchange(invocation);
+  if (invocation->status == SALTS_OK)
+    invocation->status = flowie_server_http_auth_decode((const char *)invocation->response.body,
+        invocation->response.body_size, invocation->config->method, principal);
+  return flowie_server_http_chain_status(invocation->status);
+}
+
+static cmeta_status flowie_server_acl_target(void *context,
+    const flowie_security_request_t *request, flowie_security_decision_t *decision) {
+  flowie_server_http_invocation *invocation = context;
+  (void)request;
+  invocation->status = flowie_server_http_exchange(invocation);
+  if (invocation->status == SALTS_OK)
+    invocation->status = flowie_server_http_acl_decode((const char *)invocation->response.body,
+        invocation->response.body_size, decision);
+  return flowie_server_http_chain_status(invocation->status);
+}
+
+static void flowie_server_auth_after(void *context,
+    const flowie_security_auth_request_t *request, const flowie_security_principal_t *principal) {
+  (void)request;
+  (void)principal;
+  flowie_server_http_invocation_cleanup(context);
+}
+
+static void flowie_server_acl_after(void *context,
+    const flowie_security_request_t *request, const flowie_security_decision_t *decision) {
+  (void)request;
+  (void)decision;
+  flowie_server_http_invocation_cleanup(context);
+}
+
+static void flowie_server_auth_error(void *context,
+    const flowie_security_auth_request_t *request, cmeta_status status) {
+  (void)request;
+  (void)status;
+  flowie_server_http_invocation_cleanup(context);
+}
+
+static void flowie_server_acl_error(void *context,
+    const flowie_security_request_t *request, cmeta_status status) {
+  (void)request;
+  (void)status;
+  flowie_server_http_invocation_cleanup(context);
+}
+
 static int flowie_server_http_authenticate(void *ctx,
-                                           const flowie_security_auth_request_t *request,
-                                           flowie_security_principal_t *principal_out) {
-  flowie_server_http_security_t *security = (flowie_server_http_security_t *)ctx;
-  chttp_response response = {0};
-  char *body = NULL;
-  size_t body_size = 0u;
-  int rc;
-  if (!security || !request || !principal_out || request->secret_size == 0u ||
-      request->secret_size > security->auth_config.max_body_size ||
-      strcmp(request->method, security->auth_config.method) != 0)
-    return SALTS_EPERM;
-  rc = flowie_server_http_auth_encode(request, &body, &body_size);
-  if (rc != SALTS_OK) return rc;
-  rc = flowie_server_http_post(&security->auth_endpoint, &security->auth_config,
-                               security->auth_token, body, body_size, &response);
-  if (rc != SALTS_OK) rc = SALTS_EIO;
-  if (rc == SALTS_OK) rc = flowie_server_http_response_status(&response);
-  if (rc == SALTS_OK)
-    rc = flowie_server_http_auth_decode((const char *)response.body, response.body_size,
-                                        security->auth_config.method, principal_out);
-  chttp_response_destroy(&response);
-  flowie_server_http_body_destroy(body, body_size, 1);
-  return rc;
+    const flowie_security_auth_request_t *request, flowie_security_principal_t *principal_out) {
+  const flowie_server_http_security_t *security = ctx;
+  if (!security || !request || !principal_out) return SALTS_EPERM;
+  flowie_server_http_invocation invocation = {.endpoint = &security->auth_endpoint,
+      .config = &security->auth_config, .token = security->auth_token, .sensitive = 1};
+  const flowie_server_auth_chain_hook hook = {&invocation, flowie_server_auth_before,
+      flowie_server_auth_after, flowie_server_auth_error};
+  const flowie_server_auth_chain chain = {&invocation, flowie_server_auth_target, &hook, 1u};
+  const cmeta_status status = flowie_server_auth_chain_invoke(&chain, request, principal_out);
+  return status != CMETA_OK && invocation.status == SALTS_OK ? SALTS_EINVAL : invocation.status;
 }
 
 static int flowie_server_http_authorize(void *ctx, const flowie_security_request_t *request,
                                         uint64_t now_epoch_seconds,
                                         flowie_security_decision_t *decision_out) {
-  flowie_server_http_security_t *security = (flowie_server_http_security_t *)ctx;
-  chttp_response response = {0};
-  char *body = NULL;
-  size_t body_size = 0u;
-  int rc;
+  const flowie_server_http_security_t *security = ctx;
   (void)now_epoch_seconds;
   if (!security || !request || !decision_out) return SALTS_EINVAL;
-  rc = flowie_server_http_acl_encode(request, &body, &body_size);
-  if (rc != SALTS_OK) return rc;
-  rc = flowie_server_http_post(&security->acl_endpoint, &security->acl_config,
-                               security->acl_token, body, body_size, &response);
-  if (rc != SALTS_OK) rc = SALTS_EIO;
-  if (rc == SALTS_OK) rc = flowie_server_http_response_status(&response);
-  if (rc == SALTS_OK)
-    rc = flowie_server_http_acl_decode((const char *)response.body, response.body_size,
-                                       decision_out);
-  chttp_response_destroy(&response);
-  flowie_server_http_body_destroy(body, body_size, 0);
-  return rc;
+  flowie_server_http_invocation invocation = {.endpoint = &security->acl_endpoint,
+      .config = &security->acl_config, .token = security->acl_token};
+  const flowie_server_acl_chain_hook hook = {&invocation, flowie_server_acl_before,
+      flowie_server_acl_after, flowie_server_acl_error};
+  const flowie_server_acl_chain chain = {&invocation, flowie_server_acl_target, &hook, 1u};
+  const cmeta_status status = flowie_server_acl_chain_invoke(&chain, request, decision_out);
+  return status != CMETA_OK && invocation.status == SALTS_OK ? SALTS_EINVAL : invocation.status;
 }
 
 int flowie_server_http_security_create(const flowie_server_http_provider_config_t *auth,

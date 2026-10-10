@@ -201,7 +201,7 @@ function(cmake_add_test target_name)
   if(UNIX AND NOT APPLE)
     set(_runtime_test_environment)
     foreach(_runtime_target IN ITEMS Salts::Core Salts::CNet CHttp::Client
-                                      CHttp::Server Salts::Mustache)
+                                      CHttp::Server CHttp::App Salts::Jinja)
       if(TARGET ${_runtime_target})
         list(APPEND _runtime_test_environment
              "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:${_runtime_target}>")

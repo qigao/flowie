@@ -17,22 +17,22 @@
       </header>
 
       <nav class="scope-switch" aria-label="Sign-in scope">
-        <a href="/v2/control/login" {{#system_mode}}aria-current="page"{{/system_mode}}>System administrator</a>
-        <a href="/v2/control/login?scope=group" {{#group_mode}}aria-current="page"{{/group_mode}}>Domain</a>
+        <a href="/v2/control/login" {% if system_mode %}aria-current="page"{% endif %}>System administrator</a>
+        <a href="/v2/control/login?scope=group" {% if group_mode %}aria-current="page"{% endif %}>Domain</a>
       </nav>
 
-      {{#error}}<p class="auth-error" role="alert">The username or password is incorrect.</p>{{/error}}
+      {% if error %}<p class="auth-error" role="alert">The username or password is incorrect.</p>{% endif %}
 
       <form class="auth-form" method="post" action="/v2/control/login">
-        {{#system_mode}}
+        {% if system_mode %}
         <input type="hidden" name="domain" value="system">
         <div class="scope-field"><span>Scope</span><strong>System</strong></div>
-        {{/system_mode}}
-        {{#group_mode}}
+        {% endif %}
+        {% if group_mode %}
         <label>Domain
           <input name="domain" required maxlength="128" autocomplete="organization" placeholder="root-a">
         </label>
-        {{/group_mode}}
+        {% endif %}
         <label>Username
           <input name="principal" required maxlength="128" autocomplete="username">
         </label>

@@ -39,6 +39,158 @@ authority.
 
 ## Layers and ownership
 
+### Standalone server Component Configurator and Interceptor
+
+The product executable assembles a bounded explicit `Salts::Component` graph in
+`server/flowie_server_runtime.c`: security (HTTP providers plus realm), protocol
+repository, and endpoint. The endpoint requires the two canonical typed service
+Interfaces. Declarations and borrowed projections use CMeta; Component resolves
+the two dependency edges, creates instances and rolls them back in reverse order.
+There is no global lookup, provider ranking or hot-path service discovery. The
+endpoint service is bound once after the complete graph becomes ACTIVE.
+
+The trigger for this change was repeated manual cleanup across security creation,
+repository open, endpoint creation/start, check-only and signal failures. Keeping
+manual cleanup made each branch responsible for dependency ordering. A separate
+server registry would duplicate the available Component owner. The chosen graph
+uses three fixed instance slots, two dependency slots and three activation slots;
+it adds no scheduler or worker. Configuration remains parsed by Flowie's existing
+loader, and main retains CLI, signal and diagnostic ownership. Signal handlers
+are installed before activation can start the listener.
+
+The enclosing runtime owns address-stable state/provider/storage arrays. Each
+Component's owned ObjectRef releases its native resources, including valid partial
+create output and failed activation. On successful activation, deactivation stops
+the endpoint; destruction joins its execution/network users before the repository,
+realm and HTTP provider are released. Failed activation receives no deactivate
+call: endpoint destruction unwinds its partial startup. Security destroys its realm
+before the HTTP providers the realm borrows. Native Salts failure codes and their
+operation names survive the CMeta callback-status boundary. Runtime configuration
+and component-state reflection are read-only VIEWs, with explicit native cleanup;
+they do not grant value copying or implicit retention. The product configuration,
+database configuration and application callback context outlive runtime destroy.
+
+`--check` builds the same graph while skipping listener activation. A configuration
+that already omits security still supplies an explicit empty security binding;
+`--require-security` continues to be enforced by the loader before composition.
+CLI/YAML, MQTT settlement, persistence schema and the public SDK are unchanged.
+The new Component dependency is private to the product executable and its tests.
+There are no Plugin modules, ComponentPlugin generation swaps or reload semantics.
+Rollback is a rebuild of the prior executable; persisted data needs no migration.
+
+Auth v3 and ACL v4 callbacks use separate native-typed `CMETA_INTERCEPTOR_TYPE`
+chains. Each invocation has one borrowed hook and a private stack context. Before
+the HTTP target, the hook validates/encodes the caller's borrowed request. Successful
+after and failing on_error paths both release the response and request body;
+authentication bodies retain their existing wipe-before-free rule. An entered
+rejecting hook also unwinds. The target alone performs Chttp TLS/HTTP exchange and
+protocol decoding. Salts business errors remain distinct from CMeta control status:
+transport failures remain EIO, HTTP denial remains EPERM, and decode errors remain
+protocol errors. Shared providers store no mutable chain or per-call payload.
+Admission also rejects a missing authentication method before dereferencing it.
+
+| ACE/POSA2 pattern | Current server consumer and boundary |
+| --- | --- |
+| Component Configurator / Extension Interface | Explicit product graph and typed borrowed dependency views |
+| Interceptor | Synchronous Auth/ACL admission and success/error cleanup |
+| Acceptor/Connector / Reactor/Proactor | Existing CNet/Chttp and NativeIO progress owners |
+| Half-Sync/Half-Async / Active Object | Bounded network handoff and the existing serialized MQTT execution lane |
+| Leader/Followers | Not introduced: Salts rc.4 has CPU-event test prototypes, not an exported consumer executor |
+
+The [Salts rc.4 pattern inventory](https://github.com/qigao/salts/blob/v2.3.0-rc.4/cmeta/ACE_PATTERN_COVERAGE.md)
+and Platform test registration identify Leader/Followers as a test-local prototype.
+Leader/Followers cannot redistribute owner-affine sockets or native requests.
+Introducing it would require a concrete independent CPU workload, bounded owned
+message admission, successor election, exactly-one settlement and joined shutdown,
+then separate SDK/concurrency qualification. The current server needs none of those
+new ownership rules for this refactor, so its fixed network owners remain intact.
+
+### Control-plane CHttp::App composition
+
+`control/flowie_control_runtime.c` assembles three native resource groups with
+the Salts Component Configurator and canonical CMeta Extension Interfaces:
+
+| Component | Provides | Requires | Owned resources |
+| --- | --- | --- | --- |
+| Repository | Repository service | none | TurboDB store and its borrowed repository view; persistent bootstrap |
+| Identity | Session service | Repository | Management authentication, sessions and shared external identity providers |
+| Application | App service | Repository, Identity | Management service, HTTP application, RPC, dashboard and broker Auth/ACL endpoints |
+
+The runtime owns copied configuration and address-stable component/provider
+storage. Its resource fields remain the single fact source; projected service
+interfaces borrow those resources without extending their lifetime. Each
+component publishes an owned ObjectRef before native creation, so Configurator
+start failure releases partial resources and earlier components in reverse
+dependency order. Native Salts errors remain distinct from CMeta control status
+and are returned unchanged. The metadata wrapper exposes only the version and
+state fields; it does not grant reflection access to private owners or secrets.
+
+Component readiness means assembly is complete. `runtime_create()` binds routes
+without publishing a listener; the existing caller-serialized `runtime_start()`
+and `runtime_stop()` retain listener publication and drain semantics. Destruction
+first stops CHTTP and joins accepted workers while every dependency is alive,
+then stops the graph in Application → Identity → Repository order. Stop failure
+retains the runtime for the caller. Bootstrap is an existing persistent,
+idempotent operation: assembly rollback releases resources but does not undo
+committed database changes. Repeated assembly after failure does not add another
+bootstrap revision.
+
+Keeping the former manual cleanup list would leave partial construction and
+dependency ordering coupled to a single procedure. Separate App routing,
+session or executor ownership would duplicate existing authorities. The selected
+three groups reuse the published runtime while preserving HTTP routes,
+configuration, database schema and start/stop behavior. Server Auth/ACL
+Interceptors remain documented above; this control composition does not add
+another authorization policy or change network progress owners.
+
+All dashboard pages now use the published `CHttp::App` capability through
+`<chttp_app/app.h>`, with a fixed Jinja bundle and native CMeta read-only VIEW
+models. The management content frame groups identity, navigation, permissions,
+section flags, bounded row collections and pagination. It owns `tstr` copies of
+query results and generated URLs; canonical CMeta sequence views borrow the
+frame's stable row arrays only during synchronous rendering. Even empty
+collections carry valid element metadata. Partial model construction frees all
+owned strings, and the one-time credential token copy is wiped before release.
+Shell/password/error `vstr` fields borrow live caller bytes through Core's
+canonical buffer provider and explicit borrowed shape. No page builds an
+intermediate JSON presentation model.
+
+App bounds total template source to 512 KiB and output to the existing 16 MiB
+HTTP response limit. Each dashboard view owns one non-reentrant renderer and a
+mutex serializing render calls. Per-worker model state stays independent, HTML
+autoescape applies to every template, and only complete owned output is
+published to the existing copying deferred response path. The content template
+includes seven fixed section templates, keeping each below the SDK's compiled
+expression limit. All twelve names and sources are frozen and compiled at
+initialization; request input cannot select filesystem templates.
+
+Dashboard forms use App's bounded parser with eight caller-owned pair slots and
+decoded storage bounded by the existing 16 KiB body limit. Flowie retains command
+admission: exactly one explicit raw equals sign, unique decoded names, rejection
+of decoded NUL, exact operation field sets and acceptance of one trailing
+separator. Decoded scratch and owned form values are wiped on success and
+failure. Existing CSRF, login/session invalidation, permissions and management
+services remain their sole authorities.
+
+CMake regenerates the private resource bundle with `dashboard.html`,
+`dashboard_content.html`, `login.html`, `password.html`, `dashboard_error.html`
+and the `dashboard_{overview,integration,users,groups,roles,acls,audit}.html`
+includes. All five former Mustache templates are replaced. Internal
+resource-directory overrides must provide the complete matching bundle and
+existing assets; missing or invalid templates fail initialization. Rollback
+requires restoring the previous executable and resource bundle together.
+There is no public SDK, HTTP route, YAML, database or browser form migration.
+`CHttp::App` and `Salts::Component` come from the required SDKs with no new
+package. The build-time `salts-idlc` compiler retains its own Mustache dependency
+for generated C bindings, independently of dashboard rendering.
+
+Formal regressions cover Identity/Application construction failure, unchanged
+bootstrap revision after retry, concurrent independent render models, attribute
+escaping, strict form admission, tree/selectors, isolated pages, keyset
+pagination and one-time credentials. The existing HTTPS integration covers
+scoped APIs, sessions, CSRF, browser writes, password rotation/revocation and
+mTLS clients.
+
 ### TCP/TLS network owners
 
 `network_workers` selects 1–64 fixed CNet progress owners for one endpoint; zero
@@ -50,10 +202,12 @@ connection limit, and every byte partition must hold one maximum-sized packet.
 UDP/KCP and CHTTP WS/WSS reject multiple owners with `SALTS_ENOTSUP`.
 
 `network_policy` (`--network-policy`) selects `round-robin` (the default) or
-`least-connections`. The latter samples each owner's mutex-protected reservation
-count, including pending handoffs and live connections, with rotating ties. Only
-the listener increments reservations; concurrent closes may lower a sampled
-count. This is a load hint, not a globally atomic minimum or a byte/CPU load metric.
+`least-connections`. CNet's `owner_placement.h` maps these to round-robin and
+lowest-pressure decisions. The latter samples each `cnet_handoff` inbox's
+reserved + queued + taken credits, with rotating ties. Only the listener reserves
+credits; concurrent closes may lower a sampled count. The decision is advisory:
+the inbox commits admission through `cnet_handoff_reserve`. This is a load hint,
+not a globally atomic minimum or a byte/CPU load metric.
 Both policies skip full owners and preserve each connection's fixed owner.
 
 `network_cpus` (`--network-cpus 2,4`, YAML `[2,4]`) optionally supplies exactly one
@@ -79,7 +233,11 @@ must rebuild for the expanded configuration structs, as with `network_workers`.
 
 With multiple owners, one dedicated listener thread reserves an owner slot using
 the selected policy and performs detached accept. It moves
-the accepted descriptor through that owner's bounded mutex-protected queue.
+the accepted descriptor through that owner's bounded `cnet_handoff` inbox.
+Both inbox capacities equal the owner's existing connection-capacity partition.
+Successful publication moves the descriptor and ticket; failed publication leaves
+them with the listener for close and release. Taking returns queue space while the
+peer retains its credit until CLOSED/FAILED, or releases it after adoption failure.
 Pending handoffs and live connections share the same connection reservation;
 the total never exceeds `max_connections`. If all owners are full, new arrivals
 remain in the listener backlog. Admission failure releases the reservation and
@@ -106,11 +264,14 @@ network/TLS progress, not MQTT state execution; it does not establish a throughp
 gain without measurement. Applications consuming `Flowie::Connection` directly
 must make their observers safe for concurrent connections before opting in.
 
-Shutdown fences command and connection admission on every owner first. The
+Shutdown fences command admission and seals every handoff inbox first. The
 listener closes on its thread; each network owner closes pending handoffs and
 stops CNet through terminal callbacks. The caller joins all threads before
 destroying queues, TLS contexts, or clients. A timeout leaves resources owned and
-requires another stop call; destroy returns `SALTS_EBUSY` while workers remain.
+requires another stop call; destroy returns `SALTS_EBUSY` while workers remain
+or inbox credits are undrained. An empty inbox does not establish quiescence:
+the listener, including its publication/wake tail, and every owner must be joined
+before the inbox or wake target can be destroyed.
 An owner failure stops the group and is returned by stop. Lifecycle operations
 remain exclusive and must run outside network callbacks.
 
@@ -123,6 +284,15 @@ source initializers keep single-owner defaults. Roll back configuration to zero
 or one to restore the existing direct-accept path. Regression coverage belongs to
 the connection and MQTT transport suites, including owner affinity, retained SG,
 global capacity, stale handles, and shutdown with active connections.
+
+The Salts 2.3 refactor replaces the private accepted-descriptor ring and admission
+counter with CNet's existing bounded handoff protocol. Keeping both would duplicate
+capacity and seal authority; a CNet Manager or Component registry would add a
+lifecycle owner without a dynamic provider-selection requirement. Flowie retains
+the thread, observer and MQTT authorities. CMeta/ACE do not imply a new reflection
+table, registry, Component generation, READY classification or recovery policy.
+This refactor changes no public structure or wire/persisted-data format. Reverting
+the implementation requires rebuilding against the preceding coherent SDK set.
 
 Flowie endpoint Core owns its `Flowie::Connection` listener and accepted connection handles; it does not depend on
 or compose a generic `io/socket` adapter. The optional TurboFlow endpoint adapter injects a graph

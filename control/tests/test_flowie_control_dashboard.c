@@ -6,6 +6,7 @@
 #include "tinytest.h"
 #include "cmeta_error.h"
 #include "cmeta_thread.h"
+#include "fmt.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -180,7 +181,114 @@ static void dashboard_close(flowie_control_dashboard_t *dashboard,
   free(path);
 }
 
+typedef struct dashboard_render_task_s {
+  flowie_control_dashboard_t *dashboard;
+  atomic_int *ready;
+  atomic_int *start;
+  int group_mode;
+  int result;
+} dashboard_render_task_t;
+
+static void dashboard_render_task_run(void *arg) {
+  dashboard_render_task_t *task = (dashboard_render_task_t *)arg;
+  atomic_fetch_add_explicit(task->ready, 1, memory_order_release);
+  while (!atomic_load_explicit(task->start, memory_order_acquire)) cmeta_thread_yield();
+  task->result = SALTS_OK;
+  for (size_t iteration = 0u; iteration < 50u; ++iteration) {
+    char *html = NULL;
+    size_t size = 0u;
+    task->result = flowie_control_dashboard_render_login(task->dashboard, task->group_mode,
+                                                         task->group_mode, &html, &size);
+    if (task->result == SALTS_OK && (!html || size != strlen(html) ||
+        !strstr(html, task->group_mode ? "aria-current=\"page\">Domain"
+                                     : "aria-current=\"page\">System administrator") ||
+        (strstr(html, "role=\"alert\"") != NULL) != (task->group_mode != 0)))
+      task->result = SALTS_EPROTO;
+    flowie_control_dashboard_html_free(html);
+    if (task->result != SALTS_OK) break;
+  }
+}
+
 spec("Flowie ACL dashboard") {
+  it("renders isolated App models concurrently and escapes attribute input") {
+    enum { WORKERS = 4 };
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_dashboard_t *dashboard;
+    dashboard_render_task_t tasks[WORKERS] = {0};
+    cmeta_thread_t threads[WORKERS] = {0};
+    atomic_int ready;
+    atomic_int start;
+    char *html = NULL;
+    size_t size = 0u;
+    caller.domain_id = "root-a";
+    caller.actor = "viewer";
+    caller.permissions = FLOWIE_CONTROL_MANAGEMENT_VIEWER;
+    dashboard = dashboard_open(&path, &store, &service, &caller);
+    atomic_init(&ready, 0);
+    atomic_init(&start, 0);
+    for (size_t index = 0u; index < WORKERS; ++index) {
+      tasks[index] = (dashboard_render_task_t){dashboard, &ready, &start, (int)(index % 2u),
+                                             SALTS_EALREADY};
+      check_equal(cmeta_thread_create(&threads[index], dashboard_render_task_run, &tasks[index]),
+                  SALTS_OK);
+    }
+    while (atomic_load_explicit(&ready, memory_order_acquire) != WORKERS) cmeta_thread_yield();
+    atomic_store_explicit(&start, 1, memory_order_release);
+    for (size_t index = 0u; index < WORKERS; ++index) {
+      check_equal(cmeta_thread_join(&threads[index]), SALTS_OK);
+      cmeta_thread_destroy(&threads[index]);
+      check_equal(tasks[index].result, SALTS_OK);
+    }
+    check_equal(flowie_control_dashboard_render_password(dashboard, "\"><script>alert(1)</script>",
+                                                          &html, &size), SALTS_OK);
+    check_contains(html, "&lt;script&gt;");
+    check_false(strstr(html, "<script>") != NULL);
+    check_false(strstr(html, "value=\"\">") != NULL);
+    flowie_control_dashboard_html_free(html);
+    dashboard_close(dashboard, service, store, path);
+  }
+
+  it("preserves strict command form admission around the App parser") {
+    const char *invalid[] = {"principal_id=device%00hidden", "principal_id=device%GG",
+                            "principal_id=device-1&principal%5Fid=device-2",
+                            "principal_id=device-1=other", "principal_id", "=device-1",
+                            "principal_id=device-1&&principal_type=device",
+                            "principal_id=x&a=1&b=2&c=3&d=4&e=5&f=6&g=7"};
+    char *path = NULL;
+    flowie_control_store_t *store = NULL;
+    flowie_control_management_service_t *service = NULL;
+    flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+    flowie_control_dashboard_t *dashboard;
+    uint64_t revision = 0u;
+    tstr body;
+    caller.domain_id = "root-a";
+    caller.actor = "user-admin";
+    caller.permissions = FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN;
+    dashboard = dashboard_open(&path, &store, &service, &caller);
+    for (size_t index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+      body = tstr_format("csrf={}&operation=user.create&request_id=invalid&{}",
+                          DASHBOARD_CSRF, invalid[index]);
+      check_not_null(body);
+      check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF,
+                                                         body, tstr_len(body)), SALTS_EPROTO);
+      tstr_free(body);
+    }
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
+    check_equal(revision, 1u);
+    body = tstr_format("csrf={}&operation=user.create&principal_id=device%2D1&"
+                         "principal_type=device&request_id=app-parser&", DASHBOARD_CSRF);
+    check_not_null(body);
+    check_equal(flowie_control_dashboard_process_form(dashboard, &caller, DASHBOARD_CSRF,
+                                                       body, tstr_len(body)), SALTS_OK);
+    tstr_free(body);
+    check_equal(flowie_control_store_revision(store, &revision), SALTS_OK);
+    check_equal(revision, 2u);
+    dashboard_close(dashboard, service, store, path);
+  }
+
   it("rejects excess login work without blocking the coroutine scheduler") {
     enum { TASK_COUNT = 6 };
     char *path = NULL;

@@ -13,12 +13,14 @@
 #if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
   #include "flowie_control_jwt_jwks_authenticator_internal.h"
 #endif
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include "flowie_control_management_rpc_internal.h"
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_service_credential_internal.h"
 #include "monocypher.h"
-#include "cmeta_error.h"
-#include "cmeta_thread.h"
+#include <cmeta/data_reflect.h>
+#include <salts/component.h>
 
 #include <signal.h>
 #include <stdlib.h>
@@ -27,7 +29,67 @@
 #define FLOWIE_CONTROL_AUTH_ENDPOINT_BODY_MAX 8192u
 #define FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT "/.flowie/internal/session-runtime"
 
+enum {
+  FLOWIE_CONTROL_REPOSITORY_COMPONENT,
+  FLOWIE_CONTROL_IDENTITY_COMPONENT,
+  FLOWIE_CONTROL_APPLICATION_COMPONENT,
+  FLOWIE_CONTROL_COMPONENT_COUNT,
+  FLOWIE_CONTROL_IDENTITY_DEPENDENCY_COUNT = 1,
+  FLOWIE_CONTROL_APPLICATION_DEPENDENCY_COUNT = 2,
+  FLOWIE_CONTROL_DEPENDENCY_COUNT =
+      FLOWIE_CONTROL_IDENTITY_DEPENDENCY_COUNT + FLOWIE_CONTROL_APPLICATION_DEPENDENCY_COUNT
+};
+
+typedef struct flowie_control_component_config {
+  int version;
+  flowie_control_runtime_t *runtime;
+} flowie_control_component_config;
+cmeta_reflect_data(flowie_control_component_config, "flowie.control.ComponentConfig",
+                   cmeta_field(int, version));
+
+typedef struct flowie_control_component_state {
+  int kind;
+  int status;
+  flowie_control_runtime_t *runtime;
+} flowie_control_component_state;
+cmeta_reflect_data(flowie_control_component_state, "flowie.control.ComponentState",
+                   cmeta_field(int, kind) cmeta_field(int, status));
+
+#define FLOWIE_CONTROL_REPOSITORY_METHODS(X, I)                                                    \
+  X(I, R0, const flowie_control_repository_t *, repository, _)
+#define FLOWIE_CONTROL_IDENTITY_METHODS(X, I)                                                      \
+  X(I, R0, flowie_control_management_session_store_t *, sessions, _)
+#define FLOWIE_CONTROL_APPLICATION_METHODS(X, I) X(I, R0, flowie_control_http_app_t *, app, _)
+CMETA_INTERFACE(flowie_control_repository_service, FLOWIE_CONTROL_REPOSITORY_METHODS);
+CMETA_INTERFACE(flowie_control_identity_service, FLOWIE_CONTROL_IDENTITY_METHODS);
+CMETA_INTERFACE(flowie_control_application_service, FLOWIE_CONTROL_APPLICATION_METHODS);
+CMETA_OBJECT_INTERFACE_ADAPTER(flowie_control_repository_service);
+CMETA_OBJECT_INTERFACE_ADAPTER(flowie_control_identity_service);
+CMETA_OBJECT_INTERFACE_ADAPTER(flowie_control_application_service);
+
+cmeta_component_configured(FlowieControlRepository,
+                           cmeta_reflected_data(flowie_control_component_config),
+                           cmeta_provides(flowie_control_repository_service));
+cmeta_component_configured(FlowieControlIdentity,
+                           cmeta_reflected_data(flowie_control_component_config),
+                           cmeta_provides(flowie_control_identity_service)
+                               cmeta_requires(flowie_control_repository_service));
+cmeta_component_configured(FlowieControlApplication,
+                           cmeta_reflected_data(flowie_control_component_config),
+                           cmeta_provides(flowie_control_application_service)
+                               cmeta_requires(flowie_control_repository_service)
+                                   cmeta_requires(flowie_control_identity_service));
+
 struct flowie_control_runtime_s {
+  flowie_control_component_config component_config;
+  salts_component_context context;
+  salts_component_provider_binding providers[FLOWIE_CONTROL_COMPONENT_COUNT];
+  salts_component_deployment deployments[FLOWIE_CONTROL_COMPONENT_COUNT];
+  salts_component_instance instances[FLOWIE_CONTROL_COMPONENT_COUNT];
+  salts_component_dependency dependencies[FLOWIE_CONTROL_DEPENDENCY_COUNT];
+  size_t order[FLOWIE_CONTROL_COMPONENT_COUNT];
+  flowie_control_component_state states[FLOWIE_CONTROL_COMPONENT_COUNT];
+  flowie_control_application_service application;
   flowie_control_config_t config;
   flowie_control_store_t *store;
   const flowie_control_repository_t *repository;
@@ -525,13 +587,15 @@ flowie_control_runtime_create_jwt_jwks(flowie_control_runtime_t *runtime,
 }
 #endif
 
-static int flowie_control_runtime_create_management_sessions(flowie_control_runtime_t *runtime) {
+static int
+flowie_control_runtime_create_management_sessions(flowie_control_runtime_t *runtime,
+                                                  const flowie_control_repository_t *repository) {
   flowie_control_auth_service_config_t auth_config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
   flowie_control_management_session_config_t session_config =
       FLOWIE_CONTROL_MANAGEMENT_SESSION_CONFIG_INIT;
   int rc;
   if (!runtime || !runtime->repository) return SALTS_EINVAL;
-  auth_config.repository = runtime->repository;
+  auth_config.repository = repository;
   auth_config.method = runtime->config.auth.enabled ? runtime->config.auth.method : "password";
   auth_config.principal_ttl_seconds =
       runtime->config.management.session_ttl_seconds > FLOWIE_CONTROL_AUTH_MAX_PRINCIPAL_TTL_SECONDS
@@ -560,7 +624,7 @@ static int flowie_control_runtime_create_management_sessions(flowie_control_runt
 #endif
   rc = flowie_control_auth_service_create(&auth_config, &runtime->management_auth_service);
   if (rc != SALTS_OK) return rc;
-  session_config.repository = runtime->repository;
+  session_config.repository = repository;
   session_config.auth_service = runtime->management_auth_service;
   session_config.method = auth_config.method;
   session_config.capacity = runtime->config.management.session_capacity;
@@ -652,9 +716,10 @@ static int flowie_control_runtime_create_repository(flowie_control_runtime_t *ru
   return flowie_control_repository_validate(runtime->repository);
 }
 
-int flowie_control_runtime_create(const flowie_control_config_t *config,
-                                  flowie_control_runtime_t **out) {
-  flowie_control_runtime_t *runtime = NULL;
+static int
+flowie_control_runtime_create_application(flowie_control_runtime_t *runtime,
+                                          const flowie_control_repository_t *repository,
+                                          flowie_control_management_session_store_t *sessions) {
   flowie_control_management_service_config_t management_config =
       FLOWIE_CONTROL_MANAGEMENT_SERVICE_CONFIG_INIT;
   flowie_control_management_rpc_server_config_t rpc_server_config =
@@ -665,46 +730,27 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
   size_t worker_count;
   size_t worker_queue_capacity;
   int rc;
-  if (out) *out = NULL;
-  if (!config || config->size < sizeof(*config) ||
-      config->version != FLOWIE_CONTROL_CONFIG_VERSION || !out)
-    return SALTS_EINVAL;
-  rc = flowie_control_runtime_validate(config);
-  if (rc != SALTS_OK) return rc;
-  runtime = (flowie_control_runtime_t *)calloc(1u, sizeof(*runtime));
-  if (!runtime) return SALTS_ENOMEM;
-  runtime->config = *config;
-  rc = flowie_control_runtime_create_repository(runtime);
-  if (rc != SALTS_OK) goto fail;
-  rc = flowie_control_bootstrap_apply(runtime->repository, &runtime->config.bootstrap,
-                                      FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
-                                      sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u,
-                                      flowie_control_runtime_clock(NULL));
-  if (rc != SALTS_OK) goto fail;
-  rc = flowie_control_runtime_create_management_sessions(runtime);
-  if (rc != SALTS_OK) goto fail;
-  management_config.repository = runtime->repository;
+  if (!repository || !sessions || sessions != runtime->management_sessions) return SALTS_EPROTO;
+  management_config.repository = repository;
   rc = flowie_control_management_service_create(&management_config, &runtime->management_service);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != SALTS_OK) return rc;
   runtime->app = flowie_control_http_app_create();
   if (!runtime->app) {
     rc = SALTS_ENOMEM;
-    goto fail;
+    return rc;
   }
-  if (flowie_control_http_app_bind_context(runtime->app,
-                                           FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT,
+  if (flowie_control_http_app_bind_context(runtime->app, FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT,
                                            runtime) != SALTS_OK) {
     rc = SALTS_EBUSY;
-    goto fail;
+    return rc;
   }
   rc = flowie_control_http_app_use(runtime->app, flowie_control_runtime_session_middleware);
-  if (rc != SALTS_OK) goto fail;
-  limits = (flowie_control_http_limits_t){
-      runtime->config.listener.limits.max_header_name_length,
-      runtime->config.listener.limits.max_header_value_length,
-      runtime->config.listener.limits.max_url_length,
-      runtime->config.listener.limits.max_request_body_size,
-      runtime->config.listener.limits.max_headers_count};
+  if (rc != SALTS_OK) return rc;
+  limits = (flowie_control_http_limits_t){runtime->config.listener.limits.max_header_name_length,
+                                          runtime->config.listener.limits.max_header_value_length,
+                                          runtime->config.listener.limits.max_url_length,
+                                          runtime->config.listener.limits.max_request_body_size,
+                                          runtime->config.listener.limits.max_headers_count};
   worker_count = runtime->config.management.login_executor_workers;
   worker_queue_capacity = runtime->config.management.login_executor_queue_capacity;
   if (runtime->config.auth.enabled && runtime->config.auth.local_executor.workers > worker_count)
@@ -712,9 +758,9 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
   if (runtime->config.auth.enabled &&
       runtime->config.auth.local_executor.queue_capacity > worker_queue_capacity)
     worker_queue_capacity = runtime->config.auth.local_executor.queue_capacity;
-  rc = flowie_control_http_app_configure(runtime->app, &limits, worker_count,
-                                         worker_queue_capacity);
-  if (rc != SALTS_OK) goto fail;
+  rc =
+      flowie_control_http_app_configure(runtime->app, &limits, worker_count, worker_queue_capacity);
+  if (rc != SALTS_OK) return rc;
   rpc_config.endpoint = runtime->config.management.rpc_path;
   rpc_config.enable_introspection = 0;
   rpc_config.enable_batch = 0;
@@ -724,7 +770,7 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
   runtime->rpc_context = rpc_init(&rpc_config);
   if (!runtime->rpc_context) {
     rc = SALTS_ENOMEM;
-    goto fail;
+    return rc;
   }
   rpc_server_config.service = runtime->management_service;
   rpc_server_config.rpc_context = runtime->rpc_context;
@@ -734,9 +780,9 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
   rpc_server_config.external_https_stats = flowie_control_runtime_external_https_stats;
   rpc_server_config.external_https_stats_ctx = runtime;
   rc = flowie_control_management_rpc_server_create(&rpc_server_config, &runtime->management_rpc);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_control_management_rpc_server_bind(runtime->management_rpc, runtime->app);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != SALTS_OK) return rc;
   if (runtime->config.dashboard_enabled) {
     dashboard_config.service = runtime->management_service;
     dashboard_config.resolve_session = flowie_control_runtime_resolve_session;
@@ -756,20 +802,249 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
         runtime->config.management.login_executor_deadline_ms;
     dashboard_config.rpc_path = runtime->config.management.rpc_path;
     rc = flowie_control_dashboard_create(&dashboard_config, &runtime->dashboard);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != SALTS_OK) return rc;
     rc = flowie_control_dashboard_bind(runtime->dashboard, runtime->app);
-    if (rc != SALTS_OK) goto fail;
+    if (rc != SALTS_OK) return rc;
   }
   rc = flowie_control_runtime_create_auth(runtime);
-  if (rc != SALTS_OK) goto fail;
+  if (rc != SALTS_OK) return rc;
+  return SALTS_OK;
+}
+
+static void flowie_control_runtime_release_application(flowie_control_runtime_t *runtime) {
+  flowie_control_acl_iris_endpoint_destroy(runtime->acl_endpoint);
+  runtime->acl_endpoint = NULL;
+  flowie_control_auth_iris_endpoint_destroy(runtime->auth_endpoint);
+  runtime->auth_endpoint = NULL;
+  flowie_control_auth_iris_adapter_destroy(runtime->auth_adapter);
+  runtime->auth_adapter = NULL;
+  flowie_control_service_credential_resolver_destroy(runtime->service_credentials);
+  runtime->service_credentials = NULL;
+  flowie_control_auth_service_destroy(runtime->auth_service);
+  runtime->auth_service = NULL;
+  flowie_control_dashboard_destroy(runtime->dashboard);
+  runtime->dashboard = NULL;
+  flowie_control_management_rpc_server_destroy(runtime->management_rpc);
+  runtime->management_rpc = NULL;
+  if (runtime->app)
+    (void)flowie_control_http_app_unbind_context(runtime->app,
+                                                 FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT, runtime);
+  flowie_control_http_app_destroy(runtime->app);
+  runtime->app = NULL;
+  rpc_destroy(runtime->rpc_context);
+  runtime->rpc_context = NULL;
+  flowie_control_management_service_destroy(runtime->management_service);
+  runtime->management_service = NULL;
+}
+
+static void flowie_control_runtime_release_identity(flowie_control_runtime_t *runtime) {
+  flowie_control_management_session_store_destroy(runtime->management_sessions);
+  runtime->management_sessions = NULL;
+  flowie_control_auth_service_destroy(runtime->management_auth_service);
+  runtime->management_auth_service = NULL;
+#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH) || defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  flowie_control_external_subject_mapper_destroy(runtime->external_subject_mapper);
+  runtime->external_subject_mapper = NULL;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
+  flowie_control_external_https_authenticator_destroy(runtime->external_https_authenticator);
+  runtime->external_https_authenticator = NULL;
+#endif
+#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
+  flowie_control_jwt_jwks_authenticator_destroy(runtime->jwt_jwks_authenticator);
+  runtime->jwt_jwks_authenticator = NULL;
+#endif
+}
+
+static void flowie_control_runtime_release_repository(flowie_control_runtime_t *runtime) {
+  flowie_control_store_destroy(runtime->store);
+  runtime->store = NULL;
+  runtime->repository = NULL;
+}
+
+static const flowie_control_repository_t *flowie_control_repository(void *self) {
+  return ((flowie_control_component_state *)self)->runtime->repository;
+}
+static flowie_control_management_session_store_t *flowie_control_sessions(void *self) {
+  return ((flowie_control_component_state *)self)->runtime->management_sessions;
+}
+static flowie_control_http_app_t *flowie_control_application(void *self) {
+  return ((flowie_control_component_state *)self)->runtime->app;
+}
+CMETA_IMPLEMENTS(flowie_control_repository_service, flowie_control_repository_impl, 0u,
+                 .repository = flowie_control_repository);
+CMETA_IMPLEMENTS(flowie_control_identity_service, flowie_control_identity_impl, 0u,
+                 .sessions = flowie_control_sessions);
+CMETA_IMPLEMENTS(flowie_control_application_service, flowie_control_application_impl, 0u,
+                 .app = flowie_control_application);
+
+static cmeta_status flowie_control_component_project(void *context, const cmeta_object_ref *object,
+                                                     const cmeta_interface_desc *expected,
+                                                     cmeta_interface_projection *out) {
+  const flowie_control_component_state *state = object->object;
+  (void)context;
+  if (state->kind == FLOWIE_CONTROL_REPOSITORY_COMPONENT &&
+      cmeta_interface_desc_equal(expected, flowie_control_repository_service_interface()))
+    out->dispatch =
+        flowie_control_repository_impl_as_flowie_control_repository_service(object->object).vtable;
+  else if (state->kind == FLOWIE_CONTROL_IDENTITY_COMPONENT &&
+           cmeta_interface_desc_equal(expected, flowie_control_identity_service_interface()))
+    out->dispatch =
+        flowie_control_identity_impl_as_flowie_control_identity_service(object->object).vtable;
+  else if (state->kind == FLOWIE_CONTROL_APPLICATION_COMPONENT &&
+           cmeta_interface_desc_equal(expected, flowie_control_application_service_interface()))
+    out->dispatch =
+        flowie_control_application_impl_as_flowie_control_application_service(object->object)
+            .vtable;
+  else return CMETA_TRAIT_MISSING;
+  out->size = sizeof(*out);
+  out->interface = expected;
+  out->self = object->object;
+  return CMETA_OK;
+}
+static const cmeta_object_interface_provider flowie_control_component_services = {
+    sizeof(cmeta_object_interface_provider), NULL, flowie_control_component_project};
+
+/* The runtime holds address-stable storage and one resource fact source.
+ * ObjectRef owns cleanup obligations, including a partially created group. */
+static void flowie_control_component_destroy(void *context, void *object) {
+  flowie_control_component_state *state = object;
+  (void)context;
+  if (state->kind == FLOWIE_CONTROL_APPLICATION_COMPONENT)
+    flowie_control_runtime_release_application(state->runtime);
+  else if (state->kind == FLOWIE_CONTROL_IDENTITY_COMPONENT)
+    flowie_control_runtime_release_identity(state->runtime);
+  else flowie_control_runtime_release_repository(state->runtime);
+}
+static const cmeta_object_lifecycle flowie_control_component_lifecycle = {
+    .size = sizeof(cmeta_object_lifecycle), .destroy = flowie_control_component_destroy};
+
+static cmeta_status SALTS_COMPONENT_CALL flowie_control_component_create(
+    void *context, const cmeta_data_desc *config_data, const void *config_value,
+    const salts_component_dependency *dependencies, size_t dependency_count,
+    cmeta_object_ref *out) {
+  flowie_control_component_state *state = context;
+  const flowie_control_component_config *config = config_value;
+  const salts_component_dependency *dependency = NULL;
+  const flowie_control_repository_t *repository = NULL;
+  flowie_control_management_session_store_t *sessions = NULL;
+  flowie_control_repository_service repository_service;
+  flowie_control_identity_service identity_service;
+  cmeta_status status;
+  size_t expected_dependencies = state->kind == FLOWIE_CONTROL_REPOSITORY_COMPONENT ? 0u
+                                 : state->kind == FLOWIE_CONTROL_IDENTITY_COMPONENT
+                                     ? FLOWIE_CONTROL_IDENTITY_DEPENDENCY_COUNT
+                                     : FLOWIE_CONTROL_APPLICATION_DEPENDENCY_COUNT;
+  if (!config ||
+      !cmeta_data_desc_equal(config_data, cmeta_reflected_data(flowie_control_component_config)) ||
+      config->version != FLOWIE_CONTROL_CONFIG_VERSION || config->runtime != state->runtime ||
+      dependency_count != expected_dependencies)
+    return CMETA_INVALID_ARGUMENT;
+  if (state->kind != FLOWIE_CONTROL_REPOSITORY_COMPONENT) {
+    if (salts_component_dependency_find(dependencies, dependency_count,
+                                        flowie_control_repository_service_interface(),
+                                        &dependency) != SALTS_COMPONENT_OK)
+      return CMETA_TRAIT_MISSING;
+    status = flowie_control_repository_service_borrow_from_object(
+        dependency->provider_instance, dependency->provider_interfaces, &repository_service);
+    if (status != CMETA_OK) return status;
+    repository = flowie_control_repository_service_repository(&repository_service);
+    if (!repository || repository != state->runtime->repository) return CMETA_INVALID_ARGUMENT;
+  }
+  if (state->kind == FLOWIE_CONTROL_APPLICATION_COMPONENT) {
+    if (salts_component_dependency_find(dependencies, dependency_count,
+                                        flowie_control_identity_service_interface(),
+                                        &dependency) != SALTS_COMPONENT_OK)
+      return CMETA_TRAIT_MISSING;
+    status = flowie_control_identity_service_borrow_from_object(
+        dependency->provider_instance, dependency->provider_interfaces, &identity_service);
+    if (status != CMETA_OK) return status;
+    sessions = flowie_control_identity_service_sessions(&identity_service);
+    if (!sessions) return CMETA_INVALID_ARGUMENT;
+  }
+  status =
+      cmeta_object_borrow(out, state, cmeta_reflected_data(flowie_control_component_state), NULL);
+  if (status != CMETA_OK) return status;
+  status = cmeta_object_take(out, &flowie_control_component_lifecycle);
+  if (status != CMETA_OK) return status;
+  if (state->kind == FLOWIE_CONTROL_REPOSITORY_COMPONENT) {
+    state->status = flowie_control_runtime_create_repository(state->runtime);
+    if (state->status == SALTS_OK)
+      /* Bootstrap commits stay persistent and idempotent across assembly failure. */
+      state->status = flowie_control_bootstrap_apply(
+          state->runtime->repository, &state->runtime->config.bootstrap,
+          FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD,
+          sizeof(FLOWIE_CONTROL_SYSTEM_ADMIN_INITIAL_PASSWORD) - 1u,
+          flowie_control_runtime_clock(NULL));
+  } else if (state->kind == FLOWIE_CONTROL_IDENTITY_COMPONENT)
+    state->status = flowie_control_runtime_create_management_sessions(state->runtime, repository);
+  else
+    state->status = flowie_control_runtime_create_application(state->runtime, repository, sessions);
+  return state->status == SALTS_OK ? CMETA_OK : CMETA_CALLBACK_ERROR;
+}
+
+int flowie_control_runtime_create(const flowie_control_config_t *config,
+                                  flowie_control_runtime_t **out) {
+  const cmeta_component_desc *components[] = {cmeta_component_meta(FlowieControlRepository),
+                                              cmeta_component_meta(FlowieControlIdentity),
+                                              cmeta_component_meta(FlowieControlApplication)};
+  flowie_control_runtime_t *runtime;
+  salts_component_service service;
+  salts_component_status status;
+  int rc;
+  if (out) *out = NULL;
+  if (!config || config->size < sizeof(*config) ||
+      config->version != FLOWIE_CONTROL_CONFIG_VERSION || !out)
+    return SALTS_EINVAL;
+  rc = flowie_control_runtime_validate(config);
+  if (rc != SALTS_OK) return rc;
+  runtime = calloc(1u, sizeof(*runtime));
+  if (!runtime) return SALTS_ENOMEM;
+  runtime->config = *config;
+  runtime->component_config = (flowie_control_component_config){config->version, runtime};
+  runtime->context = (salts_component_context)SALTS_COMPONENT_CONTEXT_INIT;
+  for (size_t index = 0u; index < FLOWIE_CONTROL_COMPONENT_COUNT; ++index) {
+    runtime->states[index] = (flowie_control_component_state){(int)index, SALTS_OK, runtime};
+    runtime->providers[index] =
+        (salts_component_provider_binding){sizeof(salts_component_provider_binding),
+                                           SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+                                           components[index],
+                                           &runtime->states[index],
+                                           &flowie_control_component_services,
+                                           flowie_control_component_create,
+                                           NULL,
+                                           NULL};
+    runtime->deployments[index] = (salts_component_deployment){
+        &runtime->providers[index], cmeta_reflected_data(flowie_control_component_config),
+        &runtime->component_config};
+  }
+  status = salts_component_context_init(
+      &runtime->context, runtime->deployments, FLOWIE_CONTROL_COMPONENT_COUNT, NULL, 0u,
+      runtime->instances, FLOWIE_CONTROL_COMPONENT_COUNT, runtime->dependencies,
+      FLOWIE_CONTROL_DEPENDENCY_COUNT, runtime->order, FLOWIE_CONTROL_COMPONENT_COUNT);
+  if (status == SALTS_COMPONENT_OK) status = salts_component_context_resolve(&runtime->context);
+  if (status == SALTS_COMPONENT_OK) status = salts_component_context_start(&runtime->context);
+  if (status != SALTS_COMPONENT_OK) {
+    const salts_component_failure *failure = salts_component_context_failure(&runtime->context);
+    rc = SALTS_EPROTO;
+    if (failure && failure->component_index < FLOWIE_CONTROL_COMPONENT_COUNT &&
+        runtime->states[failure->component_index].status != SALTS_OK)
+      rc = runtime->states[failure->component_index].status;
+    /* Start rolls back every owned partial group before reporting failure. */
+    crypto_wipe(runtime, sizeof(*runtime));
+    free(runtime);
+    return rc;
+  }
+  status = salts_component_context_find_service(
+      &runtime->context, flowie_control_application_service_interface(), &service);
+  if (status != SALTS_COMPONENT_OK ||
+      flowie_control_application_service_borrow_from_object(service.object, service.interfaces,
+                                                            &runtime->application) != CMETA_OK) {
+    rc = flowie_control_runtime_destroy(runtime);
+    return rc == SALTS_OK ? SALTS_EPROTO : rc;
+  }
   *out = runtime;
   return SALTS_OK;
-
-fail: {
-  int cleanup_rc = flowie_control_runtime_destroy(runtime);
-  if (cleanup_rc != SALTS_OK) return cleanup_rc;
-}
-  return rc;
 }
 
 int flowie_control_runtime_start(flowie_control_runtime_t *runtime) {
@@ -778,8 +1053,9 @@ int flowie_control_runtime_start(flowie_control_runtime_t *runtime) {
   if (!runtime || !runtime->app || runtime->listener_started) return SALTS_EINVAL;
   rc = flowie_control_runtime_tls_config(&runtime->config, &tls);
   if (rc != SALTS_OK) return rc;
-  rc = flowie_control_http_app_start_tls(runtime->app, runtime->config.listener.host,
-                                         runtime->config.listener.port, &tls);
+  rc = flowie_control_http_app_start_tls(
+      flowie_control_application_service_app(&runtime->application), runtime->config.listener.host,
+      runtime->config.listener.port, &tls);
   if (rc == SALTS_OK) runtime->listener_started = 1;
   return rc;
 }
@@ -807,7 +1083,8 @@ int flowie_control_runtime_run(flowie_control_runtime_t *runtime) {
     return SALTS_EIO;
   }
   rc = flowie_control_runtime_start(runtime);
-  while (rc == SALTS_OK && !flowie_control_runtime_stop_requested) cmeta_sleep_ms(100u);
+  while (rc == SALTS_OK && !flowie_control_runtime_stop_requested)
+    cmeta_sleep_ms(100u);
   if (rc == SALTS_OK) rc = flowie_control_runtime_stop(runtime);
   (void)signal(SIGTERM, previous_term);
   (void)signal(SIGINT, previous_int);
@@ -817,53 +1094,11 @@ int flowie_control_runtime_run(flowie_control_runtime_t *runtime) {
 int flowie_control_runtime_destroy(flowie_control_runtime_t *runtime) {
   int rc;
   if (!runtime) return SALTS_OK;
+  /* Drain listener/workers while all typed dependencies remain alive. */
   rc = flowie_control_runtime_stop(runtime);
   if (rc != SALTS_OK) return rc;
-  flowie_control_acl_iris_endpoint_destroy(runtime->acl_endpoint);
-  runtime->acl_endpoint = NULL;
-  flowie_control_auth_iris_endpoint_destroy(runtime->auth_endpoint);
-  runtime->auth_endpoint = NULL;
-  flowie_control_auth_iris_adapter_destroy(runtime->auth_adapter);
-  runtime->auth_adapter = NULL;
-  flowie_control_service_credential_resolver_destroy(runtime->service_credentials);
-  runtime->service_credentials = NULL;
-  flowie_control_auth_service_destroy(runtime->auth_service);
-  runtime->auth_service = NULL;
-  flowie_control_dashboard_destroy(runtime->dashboard);
-  runtime->dashboard = NULL;
-  flowie_control_management_rpc_server_destroy(runtime->management_rpc);
-  runtime->management_rpc = NULL;
-  if (runtime->app)
-    (void)flowie_control_http_app_unbind_context(runtime->app,
-                                                 FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT,
-                                                 runtime);
-  flowie_control_http_app_destroy(runtime->app);
-  runtime->app = NULL;
-  rpc_destroy(runtime->rpc_context);
-  runtime->rpc_context = NULL;
-  flowie_control_management_session_store_destroy(runtime->management_sessions);
-  runtime->management_sessions = NULL;
-  flowie_control_auth_service_destroy(runtime->management_auth_service);
-  runtime->management_auth_service = NULL;
-#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH) || defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
-  flowie_control_external_subject_mapper_destroy(runtime->external_subject_mapper);
-  runtime->external_subject_mapper = NULL;
-#endif
-#if defined(FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH)
-  flowie_control_external_https_authenticator_destroy(runtime->external_https_authenticator);
-  runtime->external_https_authenticator = NULL;
-#endif
-#if defined(FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH)
-  flowie_control_jwt_jwks_authenticator_destroy(runtime->jwt_jwks_authenticator);
-  runtime->jwt_jwks_authenticator = NULL;
-#endif
-  flowie_control_management_service_destroy(runtime->management_service);
-  runtime->management_service = NULL;
-  rc = SALTS_OK;
-  flowie_control_store_destroy(runtime->store);
-  runtime->store = NULL;
-  runtime->repository = NULL;
+  if (salts_component_context_stop(&runtime->context) != SALTS_COMPONENT_OK) return SALTS_EPROTO;
   crypto_wipe(runtime, sizeof(*runtime));
   free(runtime);
-  return rc;
+  return SALTS_OK;
 }

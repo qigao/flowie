@@ -10,7 +10,7 @@ Flowie owns MQTT protocol behavior, broker core state, sessions, subscriptions, 
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-Flowie uses the installed Salts, SaltsUtils, Chttp, and TurboDB/Orm packages. TurboDB 2.3.1 or newer is required by both the build and the exported Flowie package. Optional cluster builds also use the installed FlowMQ and TurboRaft packages. Configure each profile root to the latest published SDK; configuration and compilation fail if a required API is unavailable.
+Flowie uses the installed Salts 2.3.0, SaltsUtils 4.3.0, Chttp 2.1.0, and TurboDB/Orm >= 2.3.2 packages. Both the build and the exported Flowie package enforce these versions using each producer's CMake compatibility policy; Chttp requires the full `2.1.0` version. Optional cluster builds also use the installed FlowMQ and TurboRaft packages. Configure each profile root to the matching published SDK family; configuration and compilation fail if a required API is unavailable. Native CI retains its floating producer-package resolution; the exact release candidates below are the SDKs used for this refactor's Linux qualification.
 
 Flowie uses the canonical Salts headers and symbols (`cmeta_*.h`, `cmeta_*`,
 `coro.h`, and `coro_executor.h`). Rebuild Flowie and its dependent SDKs together
@@ -18,7 +18,7 @@ after the Salts public-name migration; old binaries referencing `salts_*`
 symbols are incompatible. Error codes, ownership, executor placement, and MQTT
 behavior are unchanged.
 
-CNet 2.1 accepts retained buffers for stream sends. Flowie's byte-oriented
+Salts CNet accepts retained buffers for stream sends. Flowie's byte-oriented
 send paths copy into an immutable `mem_buffer_t`, release their local reference
 after admission, and let CNet retain the payload until terminal completion.
 This preserves caller-buffer and mailbox reuse, including after a client
@@ -38,7 +38,98 @@ Flowie's public ORM header also references CFlow type descriptors, so
 
 Flowie does not push MQTT-specific state back into Salts. Dependency direction remains one-way.
 
+### Fixed network owners and admission
+
+Multi-owner TCP/TLS accepts use CNet's `owner_placement.h` and `handoff.h`.
+Flowie maps its existing round-robin and least-connections settings to CNet's
+round-robin and lowest-pressure decisions. The pressure is the inbox snapshot's
+reserved + queued + taken credits; ties rotate from the next owner. Selection is
+advisory, and `cnet_handoff_reserve` commits the actual admission. Established
+connections retain their owner, public slot/generation and callback ordering.
+
+Each owner has one bounded inbox whose connection and queue capacities equal
+that owner's existing connection-capacity partition. The listener is the sole
+producer and the fixed network worker is the sole consumer. A reservation is
+released if detached accept fails. Successful publication moves the detached
+socket and ticket into the inbox; rejection leaves both with the listener,
+which closes the socket and releases the ticket. Taking returns queue space;
+the peer keeps its credit until a real CNet CLOSED/FAILED callback. Adoption
+failure closes the detached socket and returns its credit. Full owners leave
+new connections in the listener backlog. No payload, TLS state or live stream
+migrates between owners.
+
+Stop seals every inbox before draining queued sockets and stopping CNet. A
+timeout preserves workers, inboxes and payloads for a later stop. Destroy requires
+all network workers and the accept producer to be joined, including publication
+and wake tails, and every inbox to be drained. Flowie owns this lifecycle;
+the CNet helpers create no threads or scheduler. Single-owner and packet/HTTP
+WebSocket progress retain their existing owners.
+
+This replaces Flowie's private accepted-socket ring and duplicate admission
+counter with the existing CNet protocol. Keeping the old ring would duplicate
+capacity, generation and seal rules; introducing a Component registry would
+add lifecycle authority without a provider-selection requirement. CMeta/ACE
+remain the declaration and composition contracts; this change adds no reflection
+table, registry, Component generation, protocol READY classification or recovery
+policy. MQTT sessions and acknowledgements remain owned by Flowie. Rollback
+requires rebuilding Flowie against its preceding coherent SDK set; there is no
+wire, persisted-data or public configuration migration.
+
+The requested qualification SDKs are [Salts 2.3.0-rc.4](https://github.com/qigao/salts/releases/tag/v2.3.0-rc.4),
+[SaltsUtils 4.3.0-rc.2](https://github.com/qigao/salts-utils/releases/tag/v4.3.0-rc.2),
+[Chttp 2.1.0-rc.1](https://github.com/qigao/chttp/releases/tag/v2.1.0-rc.1) and
+[TurboDB 2.3.2](https://github.com/qigao/turbodb/releases/tag/v2.3.2).
+SaltsNet 1.1.0-rc.1 and TurboWasm 0.2.0 are available ecosystem SDKs, but Flowie
+does not consume their APIs and does not add them as link dependencies.
+
+External HTTPS and JWKS authenticator configuration validates trust files and
+client identity through the same Chttp/CNet TLS profile used by requests,
+instead of prechecking them through a separate OpenSSL TLS context. Temporary
+profiles are destroyed before creation returns, and encrypted-key passwords
+retain the existing secret lease and wipe protocol. Verification and identity
+remain enabled. JWT signature cryptography and the independent TLS test servers
+retain their existing crypto dependencies.
+
+Linux qualification for this refactor used GCC 12.2, the published SDKs above,
+and the `ci-linux-release-user` configure/build/test presets with vcpkg manifest
+mode enabled. The complete Release graph built and `install-ci-linux-release-user`
+installed successfully. After the server ACE refactor, CTest passed all 51 enabled
+tests; the public MQTT live test remained disabled. The connection suite passed
+ten consecutive runs, and the server runtime and HTTPS security suites each
+passed ten consecutive runs using `--repeat until-fail:10`.
+
+The `eu` build host runs Debian 12 with glibc 2.36. The published CNet library
+requires `GLIBC_2.38`, so tests ran in an isolated Ubuntu 24.04 container with
+glibc 2.39 against the same build and SDK tree. Reproduce the test runs with
+`ctest --preset ci-linux-release-user --output-on-failure` and
+`ctest --preset ci-linux-release-user -R '^test_flowie_connection$' --repeat until-fail:10 --output-on-failure`
+in that compatible runtime. Windows, sanitizers, live services and the optional
+FlowMQ/TurboRaft cluster runtime were not qualified in this run.
+
+Server lifecycle/interceptor regressions can be selected with
+`ctest --preset ci-linux-release-user -R '^(test_flowie_server_runtime|test_flowie_server_http_security|flowie_server_check_.*)$' --output-on-failure`.
+
+The control-plane uses the Salts Component Configurator for Repository,
+Identity/Session and Application assembly, rollback and reverse-order cleanup.
+All dashboard pages and management content use `CHttp::App` with native CMeta
+VIEW models and a bounded, serialized Jinja renderer. Fixed section includes
+preserve tree, pagination and permission behavior; forms retain Flowie's CSRF
+and management authority. See [App ownership and resource migration](flowie/ARCHITECTURE.md#control-plane-chttpapp-composition).
+After the complete control-plane ACE/Jinja migration, the Release graph rebuilt
+and installed successfully. All 51 enabled CTest tests passed; runtime,
+bootstrap runtime, dashboard and HTTPS integration each passed 10 consecutive
+runs in the same compatible Ubuntu 24.04 SDK container. The new rollback test
+verifies Identity/Application failure cleanup and persistent bootstrap idempotency.
+Select the relevant regressions with
+`ctest --preset ci-linux-release-user -R '^test_flowie_control_(runtime|bootstrap_runtime|dashboard|https_integration)$' --output-on-failure`.
+
 ## Ecosystem role
+
+The standalone executable also uses an explicit `Salts::Component` graph for
+security, repository and endpoint startup/rollback. Auth/ACL HTTPS callbacks use
+native-typed CMeta Interceptor chains for admission and success/error cleanup.
+See [server composition and ownership](flowie/ARCHITECTURE.md#standalone-server-component-configurator-and-interceptor)
+for configuration lifetime, check-only behavior and the Leader/Followers boundary.
 
 ```text
 Salts

@@ -1,7 +1,7 @@
 #include "flowie.h"
 #include "flowie_server_config_internal.h"
-#include "flowie_server_http_security_internal.h"
 #include "flowie_server_turbodb_config_internal.h"
+#include "flowie_server_runtime_internal.h"
 
 #include "cmeta_error.h"
 #include <cmd_arger.h>
@@ -20,7 +20,6 @@ enum {
 };
 
 #define FLOWIE_SERVER_LOG_COMPONENT "Flowie.Server"
-#define FLOWIE_SERVER_PROTOCOL_NAMESPACE "flowie_server"
 #define FLOWIE_SERVER_PROTOCOL_STORE_DRIVER_ENV "FLOWIE_PROTOCOL_STORE_DRIVER"
 #define FLOWIE_SERVER_PROTOCOL_STORE_OPTIONS_ENV "FLOWIE_PROTOCOL_STORE_OPTIONS"
 
@@ -231,79 +230,14 @@ static void flowie_server_logging_destroy(tlog_t *logger) {
   tlog_destroy(logger);
 }
 
-static int flowie_server_repository_open(const orm_config_t *database,
-                                         const flowie_endpoint_config_t *endpoint_config,
-                                         flowie_protocol_repository_t **out) {
-  flowie_protocol_repository_config_t repository_config = FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT;
-  if (out) *out = NULL;
-  if (!database || !endpoint_config || !out) return SALTS_EINVAL;
-
-  repository_config.database = database;
-  repository_config.namespace_name = FLOWIE_SERVER_PROTOCOL_NAMESPACE;
-  repository_config.create_schema = 1;
-  repository_config.limits.max_sessions = endpoint_config->max_sessions;
-  repository_config.limits.max_subscriptions_per_session =
-      endpoint_config->max_subscriptions_per_session;
-  repository_config.limits.max_inflight_per_session = endpoint_config->max_inflight_per_session;
-  repository_config.limits.max_retained_messages = endpoint_config->max_retained_messages;
-  repository_config.limits.max_client_id_size = FLOWIE_MQTT_MAX_UTF8_SIZE;
-  repository_config.limits.max_topic_size = FLOWIE_MQTT_MAX_UTF8_SIZE;
-  repository_config.limits.max_packet_size = endpoint_config->max_packet_size;
-  return flowie_protocol_repository_open(&repository_config, out);
-}
-
-static void flowie_server_runtime_destroy(flowie_endpoint_core_t *endpoint,
-                                          flowie_protocol_repository_t *repository) {
-  flowie_endpoint_core_destroy(endpoint);
-  flowie_protocol_repository_close(repository);
-}
-
-typedef struct flowie_server_security_runtime_s {
-  flowie_server_http_security_t *http;
-  flowie_security_realm_t *realm;
-} flowie_server_security_runtime_t;
-
-static void flowie_server_security_runtime_destroy(flowie_server_security_runtime_t *runtime) {
-  if (!runtime) return;
-  flowie_security_realm_destroy(runtime->realm);
-  flowie_server_http_security_destroy(runtime->http);
-  memset(runtime, 0, sizeof(*runtime));
-}
-
-static int flowie_server_security_runtime_create(
-    const flowie_server_config_t *config, const flowie_endpoint_config_t *endpoint_config,
-    flowie_server_security_runtime_t *runtime) {
-  flowie_security_realm_config_t realm_config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
-  int rc;
-  if (!config || !endpoint_config || !runtime || !flowie_server_config_realm_name(config) ||
-      endpoint_config->max_connections == 0u)
-    return SALTS_EINVAL;
-  memset(runtime, 0, sizeof(*runtime));
-  rc = flowie_server_http_security_create(flowie_server_config_auth(config),
-                                          flowie_server_config_acl(config), &runtime->http);
-  realm_config.resource_uid = flowie_server_config_realm_resource_uid(config);
-  realm_config.owner_name = flowie_server_config_realm_owner_name(config);
-  realm_config.policy_source = flowie_server_config_acl_provider_name(config);
-  if (rc == SALTS_OK) rc = flowie_security_realm_create(&realm_config, &runtime->realm);
-  if (rc == SALTS_OK)
-    rc = flowie_security_realm_bind_authorization_provider(
-        runtime->realm, flowie_server_http_security_acl_provider(runtime->http));
-  if (rc != SALTS_OK) flowie_server_security_runtime_destroy(runtime);
-  return rc;
-}
-
 int main(int argc, char **argv) {
   flowie_endpoint_config_t endpoint_config = FLOWIE_ENDPOINT_CONFIG_INIT;
   flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
-  flowie_execution_binding_t execution = FLOWIE_EXECUTION_BINDING_INIT;
-  flowie_endpoint_security_binding_t security_binding = FLOWIE_ENDPOINT_SECURITY_BINDING_INIT;
-  flowie_endpoint_persistence_binding_t persistence = FLOWIE_ENDPOINT_PERSISTENCE_BINDING_INIT;
-  flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
-  flowie_endpoint_core_t *endpoint = NULL;
-  flowie_protocol_repository_t *repository = NULL;
   flowie_server_config_t *server_config = NULL;
   flowie_server_config_error_t config_error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
-  flowie_server_security_runtime_t security_runtime = {0};
+  flowie_server_runtime_t *runtime = NULL;
+  const char *operation = NULL;
+  int exit_status = EXIT_FAILURE;
   flowie_server_turbodb_config_t *turbodb = NULL;
   char *config_path = NULL;
   char *profile_name = NULL;
@@ -476,82 +410,24 @@ int main(int argc, char **argv) {
       (unsigned long long)endpoint_config.tcp_keepalive_interval_ms,
       (unsigned int)endpoint_config.tcp_keepalive_count);
 
-  if (server_config && flowie_server_config_realm_name(server_config)) {
-    rc = flowie_server_security_runtime_create(server_config, &endpoint_config,
-                                               &security_runtime);
-    if (rc != SALTS_OK) {
-      SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                       "security-runtime-create-failed status={} reason={}", rc,
-                       cmeta_strerror(rc));
-      flowie_server_logging_destroy(logger);
-      flowie_server_turbodb_config_destroy(turbodb);
-      flowie_server_config_destroy(server_config);
-      return EXIT_FAILURE;
-    }
-    security_binding.realm_channel = flowie_server_config_realm_name(server_config);
-    security_binding.auth_method = flowie_server_config_auth_method(server_config);
-    security_binding.auth_provider =
-        flowie_server_http_security_auth_provider(security_runtime.http);
-    security_binding.realm = security_runtime.realm;
-    bindings.security = &security_binding;
-  }
-
-  rc = flowie_server_repository_open(flowie_server_turbodb_config_database(turbodb),
-                                     &endpoint_config, &repository);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "protocol-store-open-failed driver={} status={} reason={}",
-                     flowie_server_turbodb_config_driver(turbodb), rc, cmeta_strerror(rc));
-    flowie_server_security_runtime_destroy(&security_runtime);
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_FAILURE;
-  }
-  persistence.repository = repository;
-  bindings.persistence = &persistence;
-  rc = flowie_endpoint_core_create_ex("mqtt", &endpoint_config, &options, &execution, &bindings,
-                                      &endpoint);
-  if (rc != SALTS_OK) {
-    SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-create-failed status={} reason={}", rc, cmeta_strerror(rc));
-    flowie_server_runtime_destroy(endpoint, repository);
-    flowie_server_security_runtime_destroy(&security_runtime);
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_FAILURE;
-  }
-  if (check_only) {
-    flowie_server_runtime_destroy(endpoint, repository);
-    flowie_server_security_runtime_destroy(&security_runtime);
-    (void)fprintf(stdout, "flowie_server: options are valid\n");
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_SUCCESS;
-  }
-  if (signal(SIGINT, flowie_server_signal) == SIG_ERR ||
-      signal(SIGTERM, flowie_server_signal) == SIG_ERR) {
+  if (!check_only && (signal(SIGINT, flowie_server_signal) == SIG_ERR ||
+                      signal(SIGTERM, flowie_server_signal) == SIG_ERR)) {
     SALTS_LOG_ERROR(logger, FLOWIE_SERVER_LOG_COMPONENT,
                     "signal-handler-install-failed action=check process signal policy");
-    flowie_server_runtime_destroy(endpoint, repository);
-    flowie_server_security_runtime_destroy(&security_runtime);
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_FAILURE;
+    goto done;
   }
-  rc = flowie_endpoint_core_start(endpoint);
+  rc = flowie_server_runtime_create(server_config, &endpoint_config,
+      flowie_server_turbodb_config_database(turbodb), &options, check_only ? 1 : 0,
+      &runtime, &operation);
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
-                     "endpoint-start-failed status={} reason={}", rc, cmeta_strerror(rc));
-    flowie_server_runtime_destroy(endpoint, repository);
-    flowie_server_security_runtime_destroy(&security_runtime);
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_FAILURE;
+                     "{}-failed driver={} status={} reason={}", operation,
+                     flowie_server_turbodb_config_driver(turbodb), rc, cmeta_strerror(rc));
+    goto done;
+  }
+  if (check_only) {
+    exit_status = EXIT_SUCCESS;
+    goto done;
   }
   SALTS_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                   "server-started transport={} host={} port={}",
@@ -560,20 +436,23 @@ int main(int argc, char **argv) {
   (void)fprintf(stdout, "flowie_server: mqtt://%s:%d running; press Ctrl+C to stop\n",
                 endpoint_config.host, endpoint_config.port);
   while (!flowie_server_stop_requested) cmeta_sleep_ms(FLOWIE_SERVER_WAIT_INTERVAL_MS);
-  rc = flowie_endpoint_core_stop(endpoint);
-  flowie_server_runtime_destroy(endpoint, repository);
-  flowie_server_security_runtime_destroy(&security_runtime);
+  exit_status = EXIT_SUCCESS;
+
+done:
+  rc = flowie_server_runtime_destroy(&runtime);
   if (rc != SALTS_OK) {
     SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                      "endpoint-stop-failed status={} reason={}", rc, cmeta_strerror(rc));
-    flowie_server_logging_destroy(logger);
-    flowie_server_turbodb_config_destroy(turbodb);
-    flowie_server_config_destroy(server_config);
-    return EXIT_FAILURE;
+    exit_status = EXIT_FAILURE;
   }
-  SALTS_LOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
+  if (exit_status == EXIT_SUCCESS) {
+    if (check_only)
+      (void)fprintf(stdout, "flowie_server: options are valid\n");
+    else
+      SALTS_LOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
+  }
   flowie_server_logging_destroy(logger);
   flowie_server_turbodb_config_destroy(turbodb);
   flowie_server_config_destroy(server_config);
-  return EXIT_SUCCESS;
+  return exit_status;
 }

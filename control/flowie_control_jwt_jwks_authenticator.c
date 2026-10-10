@@ -9,8 +9,6 @@
 #include "tstr.h"
 #include "cmeta_thread.h"
 
-#include <openssl/ssl.h>
-
 #include <limits.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -213,15 +211,16 @@ done:
   return rc;
 }
 
-static int jwt_jwks_ca_file_validate(const char *ca_file) {
-  SSL_CTX *context;
-  int rc = SALTS_OK;
+static int jwt_jwks_ca_file_validate(const char *ca_file, const char *server_name) {
+  chttp_tls_profile profile = {0};
+  const cnet_tls_client_config config = {
+      .size = sizeof(config), .ca_file = ca_file, .server_name = server_name};
+  int rc;
   if (!ca_file) return SALTS_OK;
   if (!jwt_jwks_text_valid(ca_file, FLOWIE_CONTROL_JWT_JWKS_URL_MAX)) return SALTS_EINVAL;
-  context = SSL_CTX_new(TLS_client_method());
-  if (!context) return SALTS_EIO;
-  if (SSL_CTX_load_verify_locations(context, ca_file, NULL) != 1) rc = SALTS_EIO;
-  SSL_CTX_free(context);
+  /* Chttp/CNet owns trust parsing for both admission and the eventual fetch. */
+  rc = chttp_tls_profile_init(&profile, &config);
+  (void)chttp_tls_profile_destroy(&profile);
   return rc;
 }
 
@@ -877,7 +876,7 @@ int flowie_control_jwt_jwks_authenticator_create(
     goto fail;
   rc = jwt_jwks_validate_url(authenticator->url, &authenticator->host, &authenticator->port);
   if (rc != SALTS_OK) goto fail;
-  rc = jwt_jwks_ca_file_validate(authenticator->ca_file);
+  rc = jwt_jwks_ca_file_validate(authenticator->ca_file, authenticator->host);
   if (rc != SALTS_OK) goto fail;
   authenticator->algorithm_id = algorithm;
   authenticator->timeout_ms = config->timeout_ms;

@@ -10,6 +10,7 @@ find_program(FLOWIE_CONTROL_SALTS_IDLC
              PATHS "$ENV{SALTS_UTILS_ROOT}/bin"
              NO_DEFAULT_PATH REQUIRED)
 if(WIN32)
+  # salts-idlc still uses Mustache for generated C bindings; dashboard rendering uses App/Jinja.
   set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
       "PATH=$<TARGET_FILE_DIR:Salts::Mustache>\;$<TARGET_FILE_DIR:Salts::Core>\;$ENV{PATH}")
 elseif(APPLE)
@@ -199,7 +200,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
     flowie_control_external_https_authenticator
     PUBLIC flowie_control_core
     PRIVATE CHttp::Client Salts::Core Salts::JsonParser
-            Salts::UriParser OpenSSL::SSL OpenSSL::Crypto monocypher)
+            Salts::UriParser monocypher)
 
   add_library(
     flowie_control_cjwt STATIC
@@ -230,7 +231,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   target_link_libraries(
     flowie_control_jwt_jwks_authenticator
     PRIVATE flowie_control_cjwt CHttp::Client Salts::Core
-            Salts::JsonParser Salts::UriParser OpenSSL::SSL OpenSSL::Crypto)
+            Salts::JsonParser Salts::UriParser OpenSSL::Crypto)
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_config_internal.h
@@ -260,8 +261,11 @@ target_link_libraries(flowie_control_startup
                    "${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}/assets/${resource}"
                    COPYONLY)
   endforeach()
-  foreach(resource IN ITEMS dashboard.mustache dashboard_content.mustache
-                            dashboard_error.mustache login.mustache password.mustache)
+  foreach(resource IN ITEMS dashboard.html dashboard_content.html
+                            dashboard_overview.html dashboard_integration.html
+                            dashboard_users.html dashboard_groups.html dashboard_roles.html
+                            dashboard_acls.html dashboard_audit.html
+                            dashboard_error.html login.html password.html)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/templates/${resource}"
                    "${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}/templates/${resource}"
                    COPYONLY)
@@ -291,7 +295,8 @@ target_link_libraries(flowie_control_startup
                                                  flowie_control_dashboard.c
                                                  flowie_control_dashboard_internal.h
                                                  flowie_control_dashboard_view.c
-                                                 flowie_control_dashboard_view_internal.h)
+                                                 flowie_control_dashboard_view_internal.h
+                                                 flowie_control_dashboard_model_internal.h)
     target_sources(flowie_control_iris_adapter
                    PRIVATE flowie_control_management_rpc.c
                            flowie_control_management_rpc_internal.h)
@@ -303,8 +308,8 @@ target_link_libraries(flowie_control_startup
     flowie_control_iris_adapter
     PRIVATE FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR="${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}")
   target_link_libraries(flowie_control_iris_adapter
-                        PRIVATE flowie_control_http CHttp::Server Salts::Core Salts::Coroutine Salts::JsonParser
-                                Salts::Mustache monocypher $<LINK_ONLY:flowie>
+                        PRIVATE flowie_control_http CHttp::App Salts::CMeta Salts::Core Salts::Coroutine Salts::JsonParser
+                                monocypher $<LINK_ONLY:flowie>
                         PUBLIC flowie_control_core Flowie::Protocol)
 
     add_library(flowie_control_runtime STATIC flowie_control_runtime.c
@@ -315,6 +320,7 @@ target_link_libraries(flowie_control_startup
     target_link_libraries(flowie_control_runtime
                           PUBLIC flowie_control_startup flowie_control_core
                           PRIVATE flowie_control_iris_adapter CHttp::Server Salts::Core
+                                  Salts::Component Salts::CMeta
                                   monocypher)
       target_link_libraries(flowie_control_runtime
                             PRIVATE flowie_control_external_https_authenticator)

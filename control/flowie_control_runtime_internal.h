@@ -13,7 +13,11 @@ typedef struct flowie_control_runtime_s flowie_control_runtime_t;
 /** Validate TLS identity, secret references, and store selection without opening a listener/DB. */
 int flowie_control_runtime_validate(const flowie_control_config_t *config);
 
-/** Create the complete controller composition root and bind all enabled routes. */
+/**
+ * Assemble Repository, Identity and Application through the Component Configurator.
+ * Routes are bound without publishing the listener. Failure leaves *out NULL and
+ * releases partially created resources; committed bootstrap data remains persistent.
+ */
 int flowie_control_runtime_create(const flowie_control_config_t *config,
                                   flowie_control_runtime_t **out);
 
@@ -30,7 +34,8 @@ int flowie_control_runtime_stop(flowie_control_runtime_t *runtime);
 int flowie_control_runtime_run(flowie_control_runtime_t *runtime);
 
 /**
- * Stop request handling and destroy the TurboDB-backed repository.
+ * Drain request handling before stopping the component graph in reverse dependency order.
+ * On stop failure the runtime remains owned by the caller and must not be freed.
  */
 int flowie_control_runtime_destroy(flowie_control_runtime_t *runtime);
 
