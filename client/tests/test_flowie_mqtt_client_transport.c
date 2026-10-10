@@ -425,6 +425,12 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
   }
 
 
+  it("pins the CNet Managed Dial destination across three MQTT session episodes") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 1, 3);
+  }
+
   it("recycles one bounded Owner-local CNet Manager record across three MQTT sessions") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                     FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,

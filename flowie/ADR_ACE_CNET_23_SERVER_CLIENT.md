@@ -153,8 +153,22 @@ terminal through `cnet_manager_advance`. The physical close/worker teardown
 seals and drains Manager before destroying its borrowed CNet client.
 No generic physical Pool is used for a one-socket MQTT session.
 
-This first Manager integration intentionally retains Flowie's existing
-MQTT-level CONNECT/CONNACK and explicit resilience semantics. `CNet::ManagedDial`,
-protocol-ready recovery tickets, one-Owner shared SG cohosting, session
-takeover, and the ACE Component Configurator remain separate open gates; the
-generic transport does not replay MQTT PUBLISH or infer protocol readiness. Stable release and master merge are separate gates.
+TCP/TLS now builds a **bounded one-attempt CNet Managed Dial** for each
+logical MQTT CONNECT. The borrowed TLS config is stable client-owned storage;
+the dial uses the same single Owner CNet client and Manager, no extra backend
+or timer. `cnet_managed_dial_advance` consumes one physical attempt, but
+transport CONNECTED is deliberately not MQTT READY. Only after successful
+MQTT CONNACK and full protocol negotiation does Flowie read the current
+generation-safe recovery ticket and call `cnet_managed_dial_protocol_ready`.
+Rejected/failed protocol handshakes do not mark ready; close seals the dial
+and waits for real Manager recycle before destruction. The policy admits
+one physical attempt per logical CONNECT and **never** retries MQTT PUBLISH
+or masks the last operation's outcome.
+
+The original Flowie `create_ex` MQTT-level reconnect/backoff remains
+authoritative for *another* CONNECT command, including its existing
+`max_attempts=0` (unlimited) contract. Managed Dial does not add a second
+automatic reconnect loop, cross-Broker failover, generic physical Pool,
+or covert QoS replay. A later separately reviewed migration may expose
+bounded CNet recovery episodes and remove the old retry scheduler.
+Nonblocking SG cohosting and the ACE Component Configurator remain open. Stable release and master merge are separate gates.
