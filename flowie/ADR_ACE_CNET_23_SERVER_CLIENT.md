@@ -53,10 +53,20 @@ generation-fenced and mutex-guarded across concurrent callbacks. WS/WSS
 cannot use Flowie's explicit CPU binding: unsupported configuration fails fast.
 
 CNet 2.3 exports Manager/Handoff within **Salts::CNet**; delete historical
-linkage to the removed `Salts::CNetManager` target. The existing staging
-connection tests cover RR/least occupied placement, owner affinity, stale
-handle/generation, bounded credits, TLS/retained sends and shutdown; rerun
-against the **exact** unified installed candidate before merge.
+linkage to the removed `Salts::CNetManager` target. In the TCP/TLS path, CNet client construction and destruction now run on
+the final Owner thread, alongside Manager and polling. The accept producer
+must publish its terminal `accept_done` and finish all Handoff/wake tails
+before Owner drain. Short-lived cross-thread wake leases prevent destruction
+while an admitted send/stop is still issuing a backend wake. On startup
+failure with no accept thread, the host marks producer completion explicitly;
+an unsuccessful native destroy leaves the server non-destroyable rather than
+freeing live CNet storage. Single- and multi-owner shutdown tests must verify
+these fences against the exact installed SDK.
+
+The existing staging connection tests cover RR/least occupied placement,
+owner affinity, stale handle/generation, bounded credits, TLS/retained sends
+and shutdown. Re-run the final code against the **exact** unified SDK before
+merging into master.
 
 ## Client Destination policy slice (implemented); Manager/Recovery/SG remain #61
 
