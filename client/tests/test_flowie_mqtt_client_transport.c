@@ -858,6 +858,7 @@ static void flowie_client_transport_injected_full_close(void) {
   config.port = (int)port;
   config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   config.on_connect = flowie_client_transport_fault_connect_complete;
+  config.on_ping = flowie_client_transport_fault_connect_complete;
   config.user_data = &connect_callbacks;
   check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
   connect.version = FLOWIE_MQTT_VERSION_5;
