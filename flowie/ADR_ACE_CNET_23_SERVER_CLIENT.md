@@ -146,5 +146,15 @@ YAML or create an implicit Configurator.
 - Exact-HEAD CI, installed SDK consumers, real benchmark CPU/op, p99,
   copied/retained bytes, cross-owner hops and queue occupancy.
 
-Do not mark Client Manager/Managed Dial/nonblocking cohosting or Component
-Configurator complete based on these Server + Client Destination slices. Stable release and master merge are separate gates.
+Client TCP/TLS physical admission now uses exactly **one CNet Manager** on
+its private fixed worker Owner. Each dial reserves a bounded Manager record,
+calls `cnet_manager_connect`, and recycles only after a real CNet native
+terminal through `cnet_manager_advance`. The physical close/worker teardown
+seals and drains Manager before destroying its borrowed CNet client.
+No generic physical Pool is used for a one-socket MQTT session.
+
+This first Manager integration intentionally retains Flowie's existing
+MQTT-level CONNECT/CONNACK and explicit resilience semantics. `CNet::ManagedDial`,
+protocol-ready recovery tickets, one-Owner shared SG cohosting, session
+takeover, and the ACE Component Configurator remain separate open gates; the
+generic transport does not replay MQTT PUBLISH or infer protocol readiness. Stable release and master merge are separate gates.

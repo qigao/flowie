@@ -9,6 +9,7 @@
 
 #include <http_client/http.h>
 #include <cnet/cnet.h>
+#include <cnet/manager.h>
 #include <cnet/destination_policy.h>
 #include <cnet/websocket.h>
 #include "flowie_mqtt_protocol.h"
@@ -78,6 +79,7 @@ typedef struct flowie_mqtt_owned_endpoint_s {
 
 struct flowie_mqtt_client_s {
   cnet_client network;
+  cnet_manager network_manager;
   cnet_connection network_connection;
   chttp_websocket_client websocket;
   chttp_tls_profile websocket_tls;
@@ -169,6 +171,7 @@ struct flowie_mqtt_client_s {
   cmeta_cond_t command_changed;
   cmeta_thread_t worker;
   int network_initialized;
+  int network_manager_initialized;
   int websocket_initialized;
   int websocket_tls_initialized;
   int network_connected;
@@ -351,6 +354,20 @@ static void flowie_mqtt_client_network_send(void *user, cnet_connection connecti
   client->network_send_ready = 1;
 }
 
+/* All calls are on the MQTT worker Owner, outside CNet callbacks. Manager
+ * retires real native terminal records before the next physical admission. */
+static int flowie_mqtt_client_manager_advance(flowie_mqtt_client_t *client) {
+  size_t work = 0u;
+  if (!client || !client->network_manager_initialized) return SALTS_OK;
+  return cnet_manager_advance(&client->network_manager, 1u, &work);
+}
+
+static int flowie_mqtt_client_poll_managed(flowie_mqtt_client_t *client, uint32_t timeout_ms,
+                                           size_t *events) {
+  const int status = cnet_client_poll(&client->network, timeout_ms, events);
+  return status == SALTS_OK ? flowie_mqtt_client_manager_advance(client) : status;
+}
+
 static const flowie_mqtt_client_tls_config_t *
 flowie_mqtt_client_tls_config(const flowie_mqtt_client_config_t *config) {
   return config ? &config->tls : NULL;
@@ -513,9 +530,10 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
     while (!client->network_terminal && cmeta_monotonic_ms() < deadline) {
       size_t events = 0u;
       const uint32_t slice = flowie_mqtt_client_poll_slice(deadline);
-      if (cnet_client_poll(&client->network, slice, &events) != SALTS_OK) break;
+      if (flowie_mqtt_client_poll_managed(client, slice, &events) != SALTS_OK) break;
     }
     client->network_connection = (cnet_connection){0};
+    (void)flowie_mqtt_client_manager_advance(client);
   }
   client->network_connected = 0;
   client->network_terminal = 0;
@@ -912,7 +930,7 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
     int rc = flowie_mqtt_client_should_interrupt(client);
     if (rc == SALTS_ESHUTDOWN) return rc;
     if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-    rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+    rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
   return client->network_send_ready ? client->network_status
@@ -961,7 +979,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
     rc = flowie_mqtt_client_should_interrupt(client);
     if (rc != SALTS_OK) return rc;
     if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-    rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+    rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
   return client->network_receive_ready ? client->network_status
@@ -1567,14 +1585,36 @@ static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) 
   rc = cnet_client_init(&client->network, &network_config);
   if (rc != SALTS_OK) return rc;
   client->network_initialized = 1;
-  return cnet_client_set_stream_socket_options(&client->network, &socket_options);
+  rc = cnet_client_set_stream_socket_options(&client->network, &socket_options);
+  if (rc != SALTS_OK) return rc;
+  {
+    const cnet_manager_config config = {
+        .size = sizeof(config), .version = CNET_MANAGER_VERSION,
+        .client = &client->network, .record_capacity = 1u, .connection_capacity = 1u};
+    rc = cnet_manager_init(&client->network_manager, &config);
+    if (rc == SALTS_OK) client->network_manager_initialized = 1;
+  }
+  return rc;
 }
 
 static void flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client) {
+  int status;
   if (!client->network_initialized) return;
-  (void)cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
-  (void)cnet_client_destroy(&client->network);
-  client->network_initialized = 0;
+  if (client->network_manager_initialized) {
+    (void)cnet_manager_request_close(&client->network_manager);
+    (void)flowie_mqtt_client_manager_advance(client);
+  }
+  status = cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
+  if (status != SALTS_OK && status != SALTS_EALREADY) return;
+  if (client->network_manager_initialized) {
+    status = flowie_mqtt_client_manager_advance(client);
+    if (status != SALTS_OK) return;
+    status = cnet_manager_destroy(&client->network_manager);
+    if (status != SALTS_OK) return;
+    client->network_manager_initialized = 0;
+  }
+  if (cnet_client_destroy(&client->network) == SALTS_OK)
+    client->network_initialized = 0;
 }
 
 static void flowie_mqtt_client_worker(void *arg) {
@@ -2158,18 +2198,28 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     client->network_status = SALTS_OK;
     options.uri = uri;
     options.tls = client->tls_configured ? &tls : NULL;
-    options.observer = (cnet_observer){.on_state = flowie_mqtt_client_network_state,
-                                       .on_receive = flowie_mqtt_client_network_receive,
-                                       .user = client,
-                                       .on_send = flowie_mqtt_client_network_send};
-    rc = cnet_connect(&client->network, &options, &client->network_connection);
+    {
+      const cnet_manager_attachment attachment = {
+          .observer = {.on_state = flowie_mqtt_client_network_state,
+                       .on_receive = flowie_mqtt_client_network_receive,
+                       .user = client, .on_send = flowie_mqtt_client_network_send},
+          .on_recycle = NULL, .hold_context = false};
+      cnet_managed_connection record = {0};
+      rc = flowie_mqtt_client_manager_advance(client);
+      if (rc == SALTS_OK)
+        rc = cnet_manager_reserve(&client->network_manager, &attachment, &record);
+      if (rc == SALTS_OK)
+        rc = cnet_manager_connect(&client->network_manager, record, &options,
+                                  &client->network_connection);
+      if (rc != SALTS_OK) (void)flowie_mqtt_client_manager_advance(client);
+    }
     free(uri);
     if (rc != SALTS_OK) return rc;
     while (!client->network_connected && !client->network_terminal) {
       size_t events = 0u;
       if (flowie_mqtt_client_is_stopping(client)) return SALTS_ESHUTDOWN;
       if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-      rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+      rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
       if (rc != SALTS_OK) return rc;
     }
     return client->network_connected ? SALTS_OK
