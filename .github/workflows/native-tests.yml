@@ -18,9 +18,10 @@ concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
 
-# Immutable unified ACE + CNet 2.3 candidate for installed-source qualification (#1081).
+# Published 2.3/4.3/2.1 release candidates form one native SDK ABI epoch.
+# A manual source SHA is a qualification override only; push CI consumes packages.
 env:
-  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '58ff08fc95b4aa1dc493c0b7080426b2c11d4959' }}
+  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '' }}
 
 jobs:
   test:
@@ -61,8 +62,6 @@ jobs:
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-        with:
-          version: '4.6.3'
       - uses: actions/checkout@v4
         if: env.SALTS_SOURCE_REF != ''
         with:
@@ -70,7 +69,7 @@ jobs:
           ref: ${{ env.SALTS_SOURCE_REF }}
           path: build/dependencies/salts
           persist-credentials: false
-      - name: Restore published SDKs
+      - name: Restore one coherent published native SDK family
         shell: pwsh
         env:
           SDK_RID: ${{ matrix.rid }}
@@ -79,35 +78,50 @@ jobs:
           $downloads = Join-Path $env:RUNNER_TEMP 'flowie-downloads'
           $packages = Join-Path $env:RUNNER_TEMP 'flowie-sdk'
           New-Item -ItemType Directory -Path $downloads -Force | Out-Null
+
+          # SDK compatibility epochs are checked here. We do not pin an exact
+          # RC or silently fall back to stable releases from an older ABI.
+          # The newest published package inside each compatible epoch wins.
           $sdks = @(
-            @{ Repo='salts'; Package='Salts.Native'; Directory='salts'; Tag='' },
-            @{ Repo='salts-utils'; Package='SaltsUtils.Native'; Directory='salts-utils'; Tag='' },
-            @{ Repo='chttp'; Package='CHttp.Native'; Directory='http-services'; Tag='' },
-            @{ Repo='turbodb'; Package='TurboDB.Native'; Directory='turbodb'; Tag='v2.3.1' }
+            @{ Repo='salts'; Package='Salts.Native'; Directory='salts'; Pattern='^v2\.3\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='salts-utils'; Package='SaltsUtils.Native'; Directory='salts-utils'; Pattern='^v4\.3\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='chttp'; Package='CHttp.Native'; Directory='http-services'; Pattern='^v2\.1\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='turbodb'; Package='TurboDB.Native'; Directory='turbodb'; Pattern='^v2\.3\.\d+$' }
           )
           foreach ($sdk in $sdks) {
             if ($sdk.Repo -eq 'salts' -and $env:SALTS_SOURCE_REF) { continue }
-            $arguments = @('release', 'view', '--repo', ('qigao/' + $sdk.Repo), '--json', 'tagName,assets')
-            if ($sdk.Tag) { $arguments += $sdk.Tag }
-            $releaseJson = & gh @arguments
-            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $($sdk.Package)" }
+            $repository = 'qigao/' + $sdk.Repo
+            $listing = & gh release list --repo $repository --limit 100 --json tagName,isDraft,isPrerelease,publishedAt
+            if ($LASTEXITCODE -ne 0) { throw "Cannot list $($sdk.Package) releases" }
+            $candidates = @($listing | ConvertFrom-Json | Where-Object {
+              -not $_.isDraft -and $_.tagName -match $sdk.Pattern
+            } | Sort-Object -Property publishedAt -Descending)
+            if ($candidates.Count -eq 0) {
+              throw "No published compatible SDK candidate found for $($sdk.Package)"
+            }
+            $tag = $candidates[0].tagName
+            $releaseJson = & gh release view $tag --repo $repository --json tagName,assets
+            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $($sdk.Package) $tag" }
             $release = $releaseJson | ConvertFrom-Json
             $assets = @($release.assets | Where-Object { $_.name -like ($sdk.Package + '.*.nupkg') })
-            if ($assets.Count -ne 1) { throw "Expected one SDK asset for $($sdk.Package)" }
+            if ($assets.Count -ne 1) { throw "Expected one SDK asset for $($sdk.Package) at $tag" }
             $asset = $assets[0]
-            & gh release download $release.tagName --repo ('qigao/' + $sdk.Repo) --pattern $asset.name --dir $downloads
-            if ($LASTEXITCODE -ne 0) { throw "Cannot download $($sdk.Package)" }
+            & gh release download $tag --repo $repository --pattern $asset.name --dir $downloads
+            if ($LASTEXITCODE -ne 0) { throw "Cannot download $($sdk.Package) at $tag" }
             $archive = Join-Path $downloads $asset.name
             $digest = 'sha256:' + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($digest -ne $asset.digest) { throw "Digest mismatch for $($sdk.Package)" }
             $unpacked = Join-Path $downloads $sdk.Directory
             [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
             $source = Join-Path $unpacked ('sdk/' + $env:SDK_RID)
-            if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Missing SDK: $source" }
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+              throw "Missing compatible $($env:SDK_RID) SDK: $source"
+            }
             $parent = Join-Path $packages $sdk.Directory
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
             Copy-Item -LiteralPath $source -Destination (Join-Path $parent 'release') -Recurse
-            Write-Output "$($sdk.Package)=$($release.tagName) $($asset.digest)"
+            Write-Output "$($sdk.Package)=$tag $digest"
+            "- $($sdk.Package) $tag ($digest)" >> $env:GITHUB_STEP_SUMMARY
           }
       - name: Prepare Linux host
         if: runner.os == 'Linux'
