@@ -204,7 +204,7 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
                                          flowie_transport server_transport,
                                          flowie_client_transport_connack_mode connack_mode,
                                          uint64_t client_timeout_ms, int expected_connect_status,
-                                         int with_destination_policy) {
+                                         int with_destination_policy, int round_trips) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -279,37 +279,44 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
-  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
-  if (with_destination_policy) {
-    const flowie_mqtt_client_remote_endpoint_t endpoints[] = {
-        {20u, "127.0.0.1", port, 1u, 0u, 1u}};
-    const flowie_mqtt_client_destination_policy_t policy = {
-        sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
-        FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 1u,
-        1u, UINT64_MAX, 0u, 20u, 0u, 0u};
-    check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EBUSY);
-  }
-  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
-  while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
-         cmeta_monotonic_ms() < deadline)
-    cmeta_sleep_ms(1u);
+  for (int round = 0; round < round_trips; ++round) {
+    atomic_store_explicit(&probe.done, 0, memory_order_release);
+    atomic_store_explicit(&probe.connect_status, SALTS_EBUSY, memory_order_relaxed);
+    atomic_store_explicit(&probe.ping_status, SALTS_EBUSY, memory_order_relaxed);
+    atomic_store_explicit(&probe.disconnect_status, SALTS_EBUSY, memory_order_relaxed);
+    check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+    if (with_destination_policy) {
+      const flowie_mqtt_client_remote_endpoint_t endpoints[] = {
+          {20u, "127.0.0.1", port, 1u, 0u, 1u}};
+      const flowie_mqtt_client_destination_policy_t policy = {
+          sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+          FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 1u,
+          1u, UINT64_MAX, 0u, 20u, 0u, 0u};
+      check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_EBUSY);
+    }
+    deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+    while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
+           cmeta_monotonic_ms() < deadline)
+      cmeta_sleep_ms(1u);
 
-  check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
-  check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
-              expected_connect_status);
-  if (expected_connect_status == SALTS_OK) {
-    check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
-    check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
-    check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
+                expected_connect_status);
+    if (expected_connect_status == SALTS_OK) {
+      check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
+      check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
+      check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
+    }
+    check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
+    check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), round + 1);
+    check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), round + 1);
+    check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed),
+                expected_connect_status == SALTS_OK ? round + 1 : 0);
+    check_equal(atomic_load_explicit(&broker.disconnects, memory_order_relaxed),
+                expected_connect_status == SALTS_OK ? round + 1 : 0);
+    check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), SALTS_OK);
+
   }
-  check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
-  check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 1);
-  check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed),
-              expected_connect_status == SALTS_OK ? 1 : 0);
-  check_equal(atomic_load_explicit(&broker.disconnects, memory_order_relaxed),
-              expected_connect_status == SALTS_OK ? 1 : 0);
-  check_equal(atomic_load_explicit(&broker.error, memory_order_relaxed), SALTS_OK);
 
   flowie_mqtt_client_destroy(client);
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
@@ -321,7 +328,7 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
                                          flowie_client_transport_connack_mode connack_mode,
                                          uint64_t client_timeout_ms, int expected_connect_status) {
   flowie_client_transport_case_ex(client_transport, server_transport, connack_mode,
-                                  client_timeout_ms, expected_connect_status, 0);
+                                  client_timeout_ms, expected_connect_status, 0, 1);
 }
 
 static void flowie_client_transport_abrupt_tls_close(void) {
@@ -384,7 +391,7 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
   it("selects an authorized physical MQTT broker through CNet Destination Policy") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                     FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
-                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 1);
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 1, 1);
   }
 
   it("rejects invalid and unsupported remote policy profiles before CONNECT") {
@@ -417,6 +424,12 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
     flowie_mqtt_client_destroy(client);
   }
 
+
+  it("recycles one bounded Owner-local CNet Manager record across three MQTT sessions") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 0, 3);
+  }
 
   it("runs CONNECT, PING, and DISCONNECT over CNet TCP") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
