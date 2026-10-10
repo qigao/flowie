@@ -197,6 +197,8 @@ struct flowie_mqtt_client_s {
   atomic_uint test_close_full_hits;
   atomic_uint test_close_full_progress;
   atomic_uint test_close_full_wrong_owner;
+  atomic_int test_native_stop_mode;
+  atomic_uint test_native_stop_timeout_hits;
 #endif
 };
 
@@ -1691,6 +1693,56 @@ static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client) {
   return cnet_managed_dial_seal(&client->network_dial);
 }
 
+/* Private fault-test modes: 1 = observed progress error after a real,
+ * completed native stop; 2 = synthetic timeout before native stop. Neither
+ * mode changes the installed SDK or fabricates a native terminal. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+static atomic_uint flowie_mqtt_client_test_native_stop_error_count = ATOMIC_VAR_INIT(0u);
+
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_set_native_stop_mode(flowie_mqtt_client_t *client, int mode) {
+  if (!client || mode < 0 || mode > 2) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_native_stop_mode, mode, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_native_stop_timeout_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_native_stop_timeout_hits,
+                                        memory_order_acquire) : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_native_stop_reported_errors(void) {
+  return atomic_load_explicit(&flowie_mqtt_client_test_native_stop_error_count,
+                              memory_order_acquire);
+}
+#endif
+
+static int flowie_mqtt_client_stop_native(flowie_mqtt_client_t *client, uint32_t timeout_ms) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  const int mode = atomic_load_explicit(&client->test_native_stop_mode, memory_order_acquire);
+  if (flowie_mqtt_client_current != client) return SALTS_EPERM;
+  if (mode == 2) {
+    atomic_fetch_add_explicit(&client->test_native_stop_timeout_hits, 1u,
+                              memory_order_relaxed);
+    cmeta_sleep_ms(1u); /* Avoid a zero-progress synthetic busy spin. */
+    return SALTS_ETIMEDOUT; /* Real CNet backend remains live. */
+  }
+#endif
+  const int status = cnet_client_stop(&client->network, timeout_ms);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (mode == 1 && (status == SALTS_OK || status == SALTS_EALREADY)) {
+    /* Native really stopped, but the observed return emulates the CNet 2.3
+     * callback_error latch. Only cnet_client_destroy() authorizes release. */
+    atomic_fetch_add_explicit(&flowie_mqtt_client_test_native_stop_error_count, 1u,
+                              memory_order_relaxed);
+    return SALTS_EIO;
+  }
+#endif
+  return status;
+}
+
 /* Strictly Owner-local and retryable. Never let the Client allocation die while
  * any managed connection, callback or native backend still borrows it. */
 static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client,
@@ -1759,7 +1811,7 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
   const uint32_t remaining = now >= deadline ? 0u
                               : deadline - now > UINT32_MAX ? UINT32_MAX
                               : (uint32_t)(deadline - now);
-  status = cnet_client_stop(&client->network, remaining);
+  status = flowie_mqtt_client_stop_native(client, remaining);
   /* Salts 2.3 explicitly permits an earlier callback/progress error to be
    * returned even after native quiescence. The real cnet_client_destroy()
    * below—not a whitelist of historical status codes—is authoritative.
@@ -1968,6 +2020,8 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   atomic_init(&client->test_close_full_hits, 0u);
   atomic_init(&client->test_close_full_progress, 0u);
   atomic_init(&client->test_close_full_wrong_owner, 0u);
+  atomic_init(&client->test_native_stop_mode, 0);
+  atomic_init(&client->test_native_stop_timeout_hits, 0u);
 #endif
   client->selected_version = FLOWIE_MQTT_VERSION_5;
   client->selected_destination_index = SIZE_MAX;

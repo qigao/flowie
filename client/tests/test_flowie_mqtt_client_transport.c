@@ -903,6 +903,34 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
   it("retains the Client across injected ENOBUFS and progresses close on the original Owner") {
     flowie_client_transport_injected_full_close();
   }
+  it("destroys a genuinely stopped native backend despite an observed callback error") {
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_t *client = NULL;
+    const unsigned before = flowie_mqtt_client_test_native_stop_reported_errors();
+    config.host = "127.0.0.1";
+    config.port = 1883;
+    check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+    check_equal(flowie_mqtt_client_test_set_native_stop_mode(client, 1), SALTS_OK);
+    check_equal(flowie_mqtt_client_try_destroy(
+        client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_mqtt_client_test_native_stop_reported_errors(), before + 1u);
+  }
+  it("retains the native backend on stop timeout and releases only after real retry") {
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_t *client = NULL;
+    int status;
+    config.host = "127.0.0.1";
+    config.port = 1883;
+    check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+    check_equal(flowie_mqtt_client_test_set_native_stop_mode(client, 2), SALTS_OK);
+    status = flowie_mqtt_client_try_destroy(client, 150u);
+    check(status == SALTS_ETIMEDOUT || status == SALTS_EBUSY);
+    check(flowie_mqtt_client_test_native_stop_timeout_hits(client) > 0u);
+    /* Still-live native owner is retryable: no force-free on timeout. */
+    check_equal(flowie_mqtt_client_test_set_native_stop_mode(client, 0), SALTS_OK);
+    check_equal(flowie_mqtt_client_try_destroy(
+        client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  }
 #endif
   it("selects an authorized physical MQTT broker through CNet Destination Policy") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
