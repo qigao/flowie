@@ -199,6 +199,8 @@ struct flowie_mqtt_client_s {
   atomic_uint test_close_full_wrong_owner;
   atomic_int test_native_stop_mode;
   atomic_uint test_native_stop_timeout_hits;
+  atomic_int test_websocket_destroy_timeout;
+  atomic_uint test_websocket_destroy_timeout_hits;
 #endif
 };
 
@@ -542,6 +544,37 @@ static void flowie_mqtt_client_recv_release(flowie_mqtt_client_t *client) {
   client->recv_offset = 0u;
 }
 
+/* This isolated fault seam preserves a REAL CHttp WS/WSS backend on
+ * forced destroy timeout. It is not compiled into production Flowie::Client.
+ * The original Worker Owner performs the eventual real CHttp destruction. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_set_ws_destroy_timeout(flowie_mqtt_client_t *client, int enabled) {
+  if (!client) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_websocket_destroy_timeout,
+                        enabled != 0, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_ws_destroy_timeout_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_websocket_destroy_timeout_hits,
+                                       memory_order_acquire) : 0u;
+}
+#endif
+
+static int flowie_mqtt_client_destroy_websocket(flowie_mqtt_client_t *client,
+                                                 uint32_t timeout_ms) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (atomic_load_explicit(&client->test_websocket_destroy_timeout, memory_order_acquire)) {
+    atomic_fetch_add_explicit(&client->test_websocket_destroy_timeout_hits,
+                              1u, memory_order_relaxed);
+    return SALTS_ETIMEDOUT;
+  }
+#endif
+  return chttp_websocket_client_destroy(&client->websocket, timeout_ms);
+}
+
 static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int reset_framing) {
   if (!client) return;
   flowie_mqtt_client_recv_release(client);
@@ -549,7 +582,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
     const int close_status = chttp_websocket_client_close(
         &client->websocket, 1000u, NULL, 0u, (uint32_t)client->timeout_ms);
     (void)close_status;
-    (void)chttp_websocket_client_destroy(&client->websocket, (uint32_t)client->timeout_ms);
+    (void)flowie_mqtt_client_destroy_websocket(client, (uint32_t)client->timeout_ms);
     /* Do not discard a live CHttp owner with pending native callbacks. */
     if (client->websocket.impl == NULL) client->websocket_initialized = 0;
   }
@@ -1753,7 +1786,7 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
                                 ? UINT64_MAX : start + budget_ms;
   int status;
   if (client->websocket.impl != NULL) {
-    const int ws_status = chttp_websocket_client_destroy(&client->websocket, budget_ms);
+    const int ws_status = flowie_mqtt_client_destroy_websocket(client, budget_ms);
     if (client->websocket.impl != NULL)
       return ws_status == SALTS_OK ? SALTS_EBUSY : ws_status;
     client->websocket_initialized = 0;
@@ -2023,6 +2056,8 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   atomic_init(&client->test_close_full_wrong_owner, 0u);
   atomic_init(&client->test_native_stop_mode, 0);
   atomic_init(&client->test_native_stop_timeout_hits, 0u);
+  atomic_init(&client->test_websocket_destroy_timeout, 0);
+  atomic_init(&client->test_websocket_destroy_timeout_hits, 0u);
 #endif
   client->selected_version = FLOWIE_MQTT_VERSION_5;
   client->selected_destination_index = SIZE_MAX;

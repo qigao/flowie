@@ -24,4 +24,11 @@ flowie_mqtt_client_test_native_stop_timeout_hits(const flowie_mqtt_client_t *cli
 FLOWIE_MQTT_CLIENT_C_API unsigned int
 flowie_mqtt_client_test_native_stop_reported_errors(void);
 
+/* Test-only WS/WSS destruction timeout; real CHttp context remains owned
+ * until the original Worker successfully calls native destroy. */
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_set_ws_destroy_timeout(flowie_mqtt_client_t *client, int enabled);
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_ws_destroy_timeout_hits(const flowie_mqtt_client_t *client);
+
 #endif

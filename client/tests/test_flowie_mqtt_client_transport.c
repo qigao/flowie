@@ -889,6 +889,107 @@ static void flowie_client_transport_injected_full_close(void) {
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
   check_equal(flowie_server_destroy(&server), SALTS_OK);
 }
+/* Real loopback WSS or WS transport with pending MQTT CONNACK. The
+ * isolated test DLL refuses CHttp destruction, forcing try_destroy() to
+ * retain its TLS/backend/Client borrows until a same-Owner retry. */
+static void flowie_client_transport_ws_destroy_timeout_case(int use_tls) {
+  static const unsigned char id[] = "ws-native-close-timeout";
+  flowie_client_transport_broker broker = {0};
+  atomic_int connect_callbacks;
+  flowie_server server = {0};
+  flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
+  flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_t *client = NULL;
+  cnet_tls_server_config tls = {0};
+  char ca_file[512] = {0};
+  char cert_file[512] = {0};
+  char key_file[512] = {0};
+  uint64_t deadline;
+  uint16_t port = 0u;
+  int status;
+
+  atomic_init(&connect_callbacks, 0);
+  atomic_init(&broker.opens, 0);
+  atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
+  atomic_init(&broker.pings, 0);
+  atomic_init(&broker.disconnects, 0);
+  atomic_init(&broker.closes, 0);
+  atomic_init(&broker.error, SALTS_OK);
+  broker.server = &server;
+  broker.connack_mode = FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT;
+
+  if (use_tls) {
+    check_equal(tls_test_write_server_files(cert_file, sizeof(cert_file),
+                                            key_file, sizeof(key_file)), 0);
+    check_equal(tls_test_write_ca_file(ca_file, sizeof(ca_file)), 0);
+    tls.size = sizeof(tls);
+    tls.cert_file = cert_file;
+    tls.key_file = key_file;
+    tls.client_auth = CNET_TLS_CLIENT_AUTH_NONE;
+  }
+  server_config.transport = use_tls ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_WS;
+  server_config.host = "127.0.0.1";
+  server_config.port = 0u;
+  server_config.backlog = 4u;
+  server_config.path = "/mqtt";
+  server_config.websocket_subprotocol = "mqtt";
+  server_config.stream = flowie_client_transport_network();
+  server_config.command_capacity = 8u;
+  server_config.command_bytes_capacity = 8192u;
+  server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
+  server_config.poll_slice_ms = 1u;
+  server_config.tls = use_tls ? &tls : NULL;
+  server_config.observer = (flowie_observer){
+      flowie_client_transport_open, flowie_client_transport_receive,
+      flowie_client_transport_close, NULL, &broker};
+  check_equal(flowie_server_init(&server, &server_config), SALTS_OK);
+  check_equal(flowie_server_start(&server), SALTS_OK);
+  check_equal(flowie_server_port(&server, &port), SALTS_OK);
+
+  config.transport = use_tls ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_WS;
+  config.host = "127.0.0.1";
+  config.port = (int)port;
+  config.path = "/mqtt";
+  config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  config.tls.ca_file = use_tls ? ca_file : NULL;
+  config.on_connect = flowie_client_transport_fault_connect_complete;
+  config.on_ping = flowie_client_transport_fault_connect_complete;
+  config.user_data = &connect_callbacks;
+  check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+  check_equal(flowie_mqtt_client_test_set_ws_destroy_timeout(client, 1), SALTS_OK);
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){id, sizeof(id) - 1u};
+  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
+
+  status = flowie_mqtt_client_try_destroy(client, 250u);
+  check(status == SALTS_ETIMEDOUT || status == SALTS_EBUSY);
+  check(flowie_mqtt_client_test_ws_destroy_timeout_hits(client) > 0u);
+  check_equal(flowie_mqtt_client_ping(client), SALTS_ESHUTDOWN);
+  check_equal(flowie_mqtt_client_test_set_ws_destroy_timeout(client, 0), SALTS_OK);
+  check_equal(flowie_mqtt_client_try_destroy(
+      client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(atomic_load_explicit(&connect_callbacks, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire), 0);
+  check_equal(atomic_load_explicit(&broker.error, memory_order_acquire), SALTS_OK);
+  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(flowie_server_destroy(&server), SALTS_OK);
+  if (use_tls) {
+    tls_test_remove_file(ca_file);
+    tls_test_remove_file(cert_file);
+    tls_test_remove_file(key_file);
+  }
+}
+
 #endif
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
@@ -915,6 +1016,12 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
     check_equal(flowie_mqtt_client_try_destroy(
         client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(flowie_mqtt_client_test_native_stop_reported_errors(), before + 1u);
+  }
+  it("retains a real WebSocket backend when CHttp destroy times out") {
+    flowie_client_transport_ws_destroy_timeout_case(0);
+  }
+  it("retains a real WSS TLS backend until CHttp native teardown succeeds") {
+    flowie_client_transport_ws_destroy_timeout_case(1);
   }
   it("retains the native backend on stop timeout and releases only after real retry") {
     flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
