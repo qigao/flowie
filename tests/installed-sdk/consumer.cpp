@@ -35,5 +35,25 @@ int main() {
       endpoint.weight != 1u || set_destination == nullptr) return 1;
   if (set_destination(nullptr, nullptr) != SALTS_EINVAL) return 2;
   if (cnet_owner_placement_choose(&input, &owner) != SALTS_OK || owner != 1u) return 3;
+
+  flowie_pattern_selector_t selector{};
+  flowie_pattern_selection_iterator_t iterator = FLOWIE_PATTERN_SELECTION_ITERATOR_INIT;
+  flowie_pattern_exchange_t exchange{};
+  flowie_pattern_exchange_state_t state = FLOWIE_PATTERN_EXCHANGE_READY;
+  uint64_t correlation = 0u;
+  size_t candidate = SIZE_MAX;
+  if (flowie_pattern_selector_init(&selector) != SALTS_OK ||
+      flowie_pattern_selection_begin(&selector, FLOWIE_PATTERN_SELECT_ROUND_ROBIN,
+                                     3u, &iterator) != SALTS_OK ||
+      flowie_pattern_selection_next(&iterator, &candidate) != SALTS_OK ||
+      candidate >= 3u)
+    return 4;
+  if (flowie_pattern_exchange_init(&exchange) != SALTS_OK ||
+      flowie_pattern_exchange_begin(&exchange, FLOWIE_PATTERN_EXCHANGE_WAIT_REPLY,
+                                    UINT64_C(314159)) != SALTS_OK ||
+      flowie_pattern_exchange_snapshot(&exchange, &state, &correlation) != SALTS_OK ||
+      state != FLOWIE_PATTERN_EXCHANGE_WAIT_REPLY || correlation != UINT64_C(314159) ||
+      flowie_pattern_exchange_reset(&exchange) != SALTS_OK)
+    return 5;
   return 0;
 }
