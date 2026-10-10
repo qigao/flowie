@@ -155,6 +155,31 @@ jobs:
           cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
+      - name: Install and test external C11/C++17 consumer (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset install-ci-linux-release-user --parallel 2
+          export PKG_ROOT="$RUNNER_TEMP/flowie-sdk"
+          export FLOWIE_ROOT="$PKG_ROOT/flowie/release"
+          export SALTS_ROOT="$PKG_ROOT/salts/release"
+          export SALTS_UTILS_ROOT="$PKG_ROOT/salts-utils/release"
+          export HTTP_SERVICES_ROOT="$PKG_ROOT/http-services/release"
+          export TURBODB_ROOT="$PKG_ROOT/turbodb/release"
+          test -f "$FLOWIE_ROOT/lib/cmake/Flowie/FlowieConfig.cmake"
+          cmake -S tests/installed-sdk -B build/flowie-installed-consumer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFlowie_DIR="$FLOWIE_ROOT/lib/cmake/Flowie" \
+            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
+            -DVCPKG_MANIFEST_MODE=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build/flowie-installed-consumer --parallel 2
+          export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$SALTS_ROOT/lib:$SALTS_UTILS_ROOT/lib:$HTTP_SERVICES_ROOT/lib:$TURBODB_ROOT/lib:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir build/flowie-installed-consumer --timeout 45 --output-on-failure
       - name: Locate Windows compiler and install ccache
         if: runner.os == 'Windows'
         shell: pwsh
@@ -200,6 +225,36 @@ jobs:
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
           ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
+          if errorlevel 1 exit /b 1
+      - name: Install and test external C11/C++17 consumer (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --build --preset install-ci-win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
+          set "PKG_ROOT=%RUNNER_TEMP%\flowie-sdk"
+          set "FLOWIE_ROOT=%PKG_ROOT%\flowie\release"
+          set "SALTS_ROOT=%PKG_ROOT%\salts\release"
+          set "SALTS_UTILS_ROOT=%PKG_ROOT%\salts-utils\release"
+          set "HTTP_SERVICES_ROOT=%PKG_ROOT%\http-services\release"
+          set "TURBODB_ROOT=%PKG_ROOT%\turbodb\release"
+          if not exist "%FLOWIE_ROOT%\lib\cmake\Flowie\FlowieConfig.cmake" exit /b 1
+          set "PATH=%FLOWIE_ROOT%\bin;%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
+          cmake -S tests/installed-sdk -B build/flowie-installed-consumer -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DFlowie_DIR="%FLOWIE_ROOT%/lib/cmake/Flowie" ^
+            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -DVCPKG_INSTALLED_DIR="%GITHUB_WORKSPACE%/vcpkg_installed" ^
+            -DVCPKG_MANIFEST_MODE=OFF ^
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache ^
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          if errorlevel 1 exit /b 1
+          cmake --build build/flowie-installed-consumer --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --test-dir build/flowie-installed-consumer --timeout 45 --output-on-failure
           if errorlevel 1 exit /b 1
       - name: Report compiler cache statistics
         if: always()
