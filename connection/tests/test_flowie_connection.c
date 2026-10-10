@@ -272,16 +272,16 @@ typedef struct flowie_multi_probe {
   atomic_int blocked;
   atomic_int released;
   unsigned char retained[8];
-  atomic_uint generations[3];
-  atomic_uintptr_t threads[3];
+  atomic_uint generations[4];
+  atomic_uintptr_t threads[4];
   int check_affinity;
-  uint32_t expected_cpus[3];
+  uint32_t expected_cpus[4];
 } flowie_multi_probe;
 
 static int flowie_multi_open(void *user, flowie_connection connection,
                               const flowie_peer_info *peer) {
   flowie_multi_probe *probe = (flowie_multi_probe *)user;
-  if (peer == NULL || connection.slot == 0u || connection.slot > 3u) {
+  if (peer == NULL || connection.slot == 0u || connection.slot > 4u) {
     atomic_store(&probe->error, SALTS_ERANGE);
     return SALTS_ERANGE;
   }
@@ -303,7 +303,7 @@ static int flowie_multi_receive(void *user, flowie_connection connection,
   mem_buffer_t *buffer;
   mem_slice_t slices[2];
   int status;
-  if (connection.slot == 0u || connection.slot > 3u ||
+  if (connection.slot == 0u || connection.slot > 4u ||
       atomic_load(&probe->threads[connection.slot - 1u]) !=
           (uintptr_t)cmeta_thread_current_token()) {
     atomic_store(&probe->error, SALTS_EINVAL);
@@ -339,7 +339,7 @@ static int flowie_multi_receive(void *user, flowie_connection connection,
 static void flowie_multi_close(void *user, flowie_connection connection, int status) {
   flowie_multi_probe *probe = (flowie_multi_probe *)user;
   (void)status;
-  if (connection.slot == 0u || connection.slot > 3u ||
+  if (connection.slot == 0u || connection.slot > 4u ||
       atomic_load(&probe->threads[connection.slot - 1u]) !=
           (uintptr_t)cmeta_thread_current_token()) {
     atomic_store(&probe->error, SALTS_EINVAL);
@@ -435,6 +435,67 @@ spec("Flowie multiple network owners") {
       }
       check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
       check_equal(atomic_load(&probe.error), SALTS_OK);
+      check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+    }
+  }
+
+  it("keeps four fixed CNet Owners distinct and drains all live connections") {
+    for (uint32_t cycle = 0u; cycle < 4u; ++cycle) {
+      flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+      uint16_t port = 0u;
+      unsigned char received[4] = {0};
+      memset(&probe, 0, sizeof(probe));
+      config.network_workers = 4u;
+      config.stream.connection_capacity = 4u;
+      config.command_bytes_capacity = 4u * config.max_message_bytes;
+      config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                          flowie_multi_close, NULL, &probe};
+      check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+      check_equal(flowie_server_start(&probe.server), SALTS_OK);
+      check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+      for (uint32_t index = 0u; index < 4u; ++index) {
+        unsigned char payload[4] = {(unsigned char)index, (unsigned char)cycle, 0x45u, 0x6au};
+        clients[index] = flowie_test_cnet_connect(port);
+        check_not_null(clients[index]);
+        check_equal(flowie_multi_wait(&probe.opened, (int)(index + 1u)), SALTS_OK);
+        check_equal(flowie_test_cnet_send(clients[index], payload, sizeof(payload)), SALTS_OK);
+        check_equal(flowie_test_cnet_recv_exact(clients[index], received, sizeof(received)),
+                    SALTS_OK);
+        check_equal(memcmp(received, payload, sizeof(payload)), 0);
+      }
+      for (uint32_t index = 0u; index < 4u; ++index) {
+        check_not_equal(atomic_load(&probe.threads[index]), (uintptr_t)0u);
+        for (uint32_t previous = 0u; previous < index; ++previous)
+          check_not_equal(atomic_load(&probe.threads[index]),
+                          atomic_load(&probe.threads[previous]));
+      }
+      check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS),
+                  SALTS_OK);
+      check_equal(atomic_load(&probe.closed), 4);
+      check_equal(atomic_load(&probe.error), SALTS_OK);
+      check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+      for (size_t index = 0u; index < 4u; ++index) {
+        flowie_test_cnet_close(clients[index]);
+        clients[index] = NULL;
+      }
+    }
+  }
+
+  it("quiesces an idle four-Owner acceptor before native worker destruction") {
+    for (uint32_t cycle = 0u; cycle < 8u; ++cycle) {
+      flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+      memset(&probe, 0, sizeof(probe));
+      config.network_workers = 4u;
+      config.stream.connection_capacity = 4u;
+      config.command_bytes_capacity = 4u * config.max_message_bytes;
+      config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                          flowie_multi_close, NULL, &probe};
+      check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+      check_equal(flowie_server_start(&probe.server), SALTS_OK);
+      check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS),
+                  SALTS_OK);
+      check_equal(atomic_load(&probe.opened), 0);
+      check_equal(atomic_load(&probe.closed), 0);
       check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
     }
   }

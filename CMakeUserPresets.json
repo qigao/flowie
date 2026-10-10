@@ -18,8 +18,8 @@
         "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed"
       },
       "cacheVariables": {
-        "CMAKE_C_COMPILER_LAUNCHER": "sccache",
-        "CMAKE_CXX_COMPILER_LAUNCHER": "sccache",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
         "VCPKG_INSTALLED_DIR": "$env{VCPKG_INSTALLED_DIR}",
         "VCPKG_MANIFEST_MODE": "ON",
         "CMAKE_INSTALL_PREFIX": "$env{PKG_ROOT}/flowie/release",
