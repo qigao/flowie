@@ -468,6 +468,77 @@ static void flowie_client_transport_tls_identity_fail_closed(void) {
   tls_test_remove_file(ca_path);
 }
 
+static void flowie_client_transport_destroy_pending_connack(void) {
+  static const unsigned char id[] = "managed-dial-pending-destroy";
+  flowie_client_transport_broker broker = {0};
+  flowie_client_transport_probe probe = {0};
+  flowie_server server = {0};
+  flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
+  flowie_mqtt_client_config_t client_config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_t *client = NULL;
+  uint16_t port = 0u;
+  uint64_t deadline;
+  atomic_init(&broker.opens, 0);
+  atomic_init(&broker.connects, 0);
+  atomic_init(&broker.pings, 0);
+  atomic_init(&broker.disconnects, 0);
+  atomic_init(&broker.closes, 0);
+  atomic_init(&broker.error, SALTS_OK);
+  atomic_init(&probe.done, 0);
+  atomic_init(&probe.connect_status, SALTS_EBUSY);
+  atomic_init(&probe.ping_status, SALTS_EBUSY);
+  atomic_init(&probe.disconnect_status, SALTS_EBUSY);
+  atomic_init(&probe.submit_status, SALTS_EBUSY);
+  atomic_init(&probe.errors, 0);
+  atomic_init(&probe.reconnect_attempts, 0);
+  broker.server = &server;
+  broker.connack_mode = FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT;
+  server_config.transport = TF_NET_TRANSPORT_TCP;
+  server_config.host = "127.0.0.1";
+  server_config.port = 0u;
+  server_config.backlog = 4u;
+  server_config.stream = flowie_client_transport_network();
+  server_config.command_capacity = 8u;
+  server_config.command_bytes_capacity = 8192u;
+  server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
+  server_config.poll_slice_ms = 1u;
+  server_config.observer = (flowie_observer){
+      flowie_client_transport_open, flowie_client_transport_receive,
+      flowie_client_transport_close, NULL, &broker};
+  check_equal(flowie_server_init(&server, &server_config), SALTS_OK);
+  check_equal(flowie_server_start(&server), SALTS_OK);
+  check_equal(flowie_server_port(&server, &port), SALTS_OK);
+
+  client_config.host = "127.0.0.1";
+  client_config.port = (int)port;
+  client_config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  client_config.on_connect = flowie_client_transport_connect_complete;
+  client_config.on_ping = flowie_client_transport_ping_complete;
+  client_config.on_disconnect = flowie_client_transport_disconnect_complete;
+  client_config.on_error = flowie_client_transport_error;
+  client_config.user_data = &probe;
+  check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){id, sizeof(id) - 1u};
+  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
+  /* The backend is alive and waiting on CONNACK. A zero-budget call must
+   * preserve ownership, not free a user pointer still in its observer. */
+  check_equal(flowie_mqtt_client_try_destroy(client, 0u), SALTS_EBUSY);
+  check_equal(flowie_mqtt_client_try_destroy(
+      client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire), 0);
+  check_equal(atomic_load_explicit(&broker.error, memory_order_acquire), SALTS_OK);
+  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(flowie_server_destroy(&server), SALTS_OK);
+}
+
 spec("Flowie MQTT client CNet and CHTTP transports") {
   it("selects an authorized physical MQTT broker through CNet Destination Policy") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
@@ -516,6 +587,10 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                     FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
                                     FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 0, 3);
+  }
+
+  it("safely drains a pending MQTT CONNECT/CONNACK before releasing Client") {
+    flowie_client_transport_destroy_pending_connack();
   }
 
   it("retains a Client after nonblocking destroy and retries on the same Owner") {

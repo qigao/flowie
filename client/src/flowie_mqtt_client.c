@@ -2075,8 +2075,22 @@ int flowie_mqtt_client_try_destroy(flowie_mqtt_client_t *client, uint32_t timeou
     cmeta_cond_broadcast(&client->command_changed);
     if (!client->network_closing && client->network_initialized)
       (void)cnet_client_wake(&client->network);
-    while (!client->worker_cleanup_result_ready) {
+    for (;;) {
       const uint64_t now = cmeta_monotonic_ms();
+      if (client->worker_cleanup_result_ready) {
+        const int rc = client->worker_cleanup_status;
+        if (rc == SALTS_OK) break;
+        if (timeout_ms == 0u || now >= deadline ||
+            (rc != SALTS_EBUSY && rc != SALTS_ETIMEDOUT &&
+             rc != SALTS_ENOBUFS)) break;
+        /* One bounded try_destroy call may retry a FULL/unfinished native
+         * drain, but only on the very same Owner and within its deadline. */
+        client->worker_cleanup_result_ready = 0;
+        client->worker_cleanup_retry = 1;
+        client->worker_cleanup_budget_ms =
+            deadline - now > UINT32_MAX ? UINT32_MAX : (uint32_t)(deadline - now);
+        cmeta_cond_broadcast(&client->command_changed);
+      }
       if (timeout_ms == 0u || now >= deadline) break;
       const uint64_t remaining_ms = deadline - now;
       const uint64_t ns = remaining_ms > UINT64_MAX / 1000000u
