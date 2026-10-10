@@ -191,6 +191,13 @@ struct flowie_mqtt_client_s {
   int network_status;
   int network_security_failure;
   atomic_int public_connected;
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  /* Private to the separate fault-test DLL; absent from the shipped Client. */
+  atomic_int test_close_full_enabled;
+  atomic_uint test_close_full_hits;
+  atomic_uint test_close_full_progress;
+  atomic_uint test_close_full_wrong_owner;
+#endif
 };
 
 static SALTS_THREAD_LOCAL flowie_mqtt_client_t *flowie_mqtt_client_current;
@@ -1635,6 +1642,47 @@ static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) 
   return rc;
 }
 
+/* This seam is compiled only into the isolated fault-test DLL, never into
+ * Flowie::Client or its installed SDK. It simulates close-command admission
+ * returning FULL, without forging a CNet terminal or modifying Manager state. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_force_close_full(flowie_mqtt_client_t *client, int enabled) {
+  if (!client) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_close_full_enabled, enabled != 0, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_progress(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_progress, memory_order_acquire)
+                : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_wrong_owner(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_wrong_owner,
+                                       memory_order_acquire) : 0u;
+}
+#endif
+
+static int flowie_mqtt_client_request_manager_close(flowie_mqtt_client_t *client) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (atomic_load_explicit(&client->test_close_full_enabled, memory_order_acquire)) {
+    if (flowie_mqtt_client_current != client)
+      atomic_fetch_add_explicit(&client->test_close_full_wrong_owner, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&client->test_close_full_hits, 1u, memory_order_relaxed);
+    return SALTS_ENOBUFS;
+  }
+#endif
+  return cnet_manager_request_close(&client->network_manager);
+}
+
 /* Strictly Owner-local and retryable. Never let the Client allocation die while
  * any managed connection, callback or native backend still borrows it. */
 static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client,
@@ -1659,8 +1707,34 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
       return status;
   }
   if (client->network_manager.impl != NULL) {
-    status = cnet_manager_request_close(&client->network_manager);
-    if (status != SALTS_OK) return status;
+    /* A FULL close-command queue needs Owner-local forward progress before
+     * admission can be retried. Merely returning ENOBUFS to try_destroy would
+     * spin over a queue that no thread is draining. Keep one bounded deadline
+     * and retain all native observers when that deadline is exhausted. */
+    for (;;) {
+      size_t work = 0u, events = 0u;
+      uint64_t now, remaining;
+      uint32_t slice;
+      status = flowie_mqtt_client_request_manager_close(client);
+      if (status == SALTS_OK) break;
+      if (status != SALTS_ENOBUFS && status != SALTS_EBUSY) return status;
+      if (budget_ms == 0u) return SALTS_EBUSY;
+      now = cmeta_monotonic_ms();
+      if (now >= deadline) return SALTS_ETIMEDOUT;
+      status = cnet_manager_advance(&client->network_manager, 1u, &work);
+      if (status != SALTS_OK && status != SALTS_ENOBUFS && status != SALTS_EBUSY)
+        return status;
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+      atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
+#endif
+      now = cmeta_monotonic_ms();
+      if (now >= deadline) return SALTS_ETIMEDOUT;
+      remaining = deadline - now;
+      slice = (uint32_t)(remaining < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
+                             ? remaining : FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS);
+      status = cnet_client_poll(&client->network, slice, &events);
+      if (status != SALTS_OK) return status;
+    }
     for (;;) {
       cnet_manager_snapshot snapshot = {0};
       size_t work = 0u, events = 0u;
@@ -1892,6 +1966,12 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   client = (flowie_mqtt_client_t *)calloc(1, sizeof(*client));
   if (!client) return SALTS_ENOMEM;
   atomic_init(&client->public_connected, 0);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  atomic_init(&client->test_close_full_enabled, 0);
+  atomic_init(&client->test_close_full_hits, 0u);
+  atomic_init(&client->test_close_full_progress, 0u);
+  atomic_init(&client->test_close_full_wrong_owner, 0u);
+#endif
   client->selected_version = FLOWIE_MQTT_VERSION_5;
   client->selected_destination_index = SIZE_MAX;
   client->transport = config->transport;

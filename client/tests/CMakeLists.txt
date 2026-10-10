@@ -82,3 +82,41 @@ if(WIN32)
   target_link_libraries(test_flowie_mqtt_client PRIVATE ws2_32)
   target_link_libraries(test_flowie_mqtt_client_live PRIVATE ws2_32)
 endif()
+
+# Compile the exact Client translation unit as a separate test-only DLL so
+# deterministic CNet admission failures never leak into the installed SDK.
+if(FLOWIE_BUILD_TESTS)
+  add_library(flowie_client_close_fault SHARED
+              ${PROJECT_SOURCE_DIR}/client/src/flowie_mqtt_client.c)
+  target_compile_definitions(flowie_client_close_fault
+                             PRIVATE FLOWIE_MQTT_CLIENT_BUILD FLOWIE_CLIENT_FAULT_TEST)
+  target_include_directories(
+    flowie_client_close_fault
+    PUBLIC ${PROJECT_SOURCE_DIR}/client/include
+           ${PROJECT_SOURCE_DIR}/protocol/include
+    PRIVATE ${PROJECT_SOURCE_DIR}/flowie/include)
+  target_link_libraries(
+    flowie_client_close_fault
+    PRIVATE Flowie::Protocol Salts::Core Salts::CSTL Salts::CNet CHttp::Client
+            monocypher)
+
+  cmake_add_test(
+    test_flowie_mqtt_client_close_full
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
+    LIBS flowie_client_close_fault Flowie::Protocol Flowie::Connection
+         Salts::Core Salts::TinyTest
+    FOLDER "client/tests")
+  target_compile_definitions(test_flowie_mqtt_client_close_full
+                             PRIVATE FLOWIE_CLIENT_FAULT_TEST)
+  target_include_directories(test_flowie_mqtt_client_close_full
+                             PRIVATE ${PROJECT_SOURCE_DIR}/flowie/tests)
+  target_link_libraries(test_flowie_mqtt_client_close_full
+                        PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+  cmake_target_enable_boringssl_linkage(test_flowie_mqtt_client_close_full)
+  if(WIN32)
+    target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE ws2_32)
+  endif()
+  set_tests_properties(test_flowie_mqtt_client_close_full PROPERTIES
+    LABELS "flowie;flowie-release;mqtt;client;fault-injection;lifetime"
+    TIMEOUT 60)
+endif()

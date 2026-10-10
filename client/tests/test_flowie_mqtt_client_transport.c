@@ -1,4 +1,7 @@
 #include "flowie_mqtt_client.h"
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+#include "flowie_mqtt_client_fault_test.h"
+#endif
 #include "flowie_connection.h"
 #include "mtls_test_server.h"
 #include "tinytest.h"
@@ -651,7 +654,86 @@ static void flowie_client_transport_self_stop_case(
   check_equal(flowie_server_destroy(&server), SALTS_OK);
 }
 
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+/* Connect a real TCP broker but withhold CONNACK. Simulate native Manager
+ * CLOSE admission FULL, prove the original Owner makes forward progress and
+ * a bounded failure never frees the still-borrowed Client. */
+static void flowie_client_transport_injected_full_close(void) {
+  static const unsigned char id[] = "manager-close-full-lifetime";
+  flowie_client_transport_broker broker = {0};
+  flowie_server server = {0};
+  flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
+  flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_t *client = NULL;
+  uint16_t port = 0u;
+  uint64_t deadline;
+  int status;
+
+  atomic_init(&broker.opens, 0);
+  atomic_init(&broker.connects, 0);
+  atomic_init(&broker.pings, 0);
+  atomic_init(&broker.disconnects, 0);
+  atomic_init(&broker.closes, 0);
+  atomic_init(&broker.error, SALTS_OK);
+  broker.server = &server;
+  broker.connack_mode = FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT;
+
+  server_config.transport = TF_NET_TRANSPORT_TCP;
+  server_config.host = "127.0.0.1";
+  server_config.port = 0u;
+  server_config.backlog = 4u;
+  server_config.stream = flowie_client_transport_network();
+  server_config.command_capacity = 8u;
+  server_config.command_bytes_capacity = 8192u;
+  server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
+  server_config.poll_slice_ms = 1u;
+  server_config.observer = (flowie_observer){
+      flowie_client_transport_open, flowie_client_transport_receive,
+      flowie_client_transport_close, NULL, &broker};
+  check_equal(flowie_server_init(&server, &server_config), SALTS_OK);
+  check_equal(flowie_server_start(&server), SALTS_OK);
+  check_equal(flowie_server_port(&server, &port), SALTS_OK);
+
+  config.host = "127.0.0.1";
+  config.port = (int)port;
+  config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){id, sizeof(id) - 1u};
+  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(&broker.connects, memory_order_acquire), 1);
+
+  check_equal(flowie_mqtt_client_test_force_close_full(client, 1), SALTS_OK);
+  status = flowie_mqtt_client_try_destroy(client, 150u);
+  check(status == SALTS_ETIMEDOUT || status == SALTS_EBUSY || status == SALTS_ENOBUFS);
+  check(flowie_mqtt_client_test_close_full_hits(client) > 0u);
+  check(flowie_mqtt_client_test_close_full_progress(client) > 0u);
+  check_equal(flowie_mqtt_client_test_close_full_wrong_owner(client), 0u);
+  /* The first call reported incomplete teardown: Client and borrowed Owner
+   * are still live, but new commands are rejected immediately. */
+  check_equal(flowie_mqtt_client_ping(client), SALTS_ESHUTDOWN);
+  check_equal(flowie_mqtt_client_test_force_close_full(client, 0), SALTS_OK);
+  check_equal(flowie_mqtt_client_try_destroy(
+      client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(atomic_load_explicit(&broker.pings, memory_order_acquire), 0);
+  check_equal(atomic_load_explicit(&broker.error, memory_order_acquire), SALTS_OK);
+  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(flowie_server_destroy(&server), SALTS_OK);
+}
+#endif
+
 spec("Flowie MQTT client CNet and CHTTP transports") {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  it("retains the Client across injected ENOBUFS and progresses close on the original Owner") {
+    flowie_client_transport_injected_full_close();
+  }
+#endif
   it("selects an authorized physical MQTT broker through CNet Destination Policy") {
     flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                     FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
