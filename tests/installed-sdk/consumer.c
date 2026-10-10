@@ -26,6 +26,7 @@ int main(void) {
   if (endpoint.size != sizeof(endpoint) || client.size != sizeof(client) ||
       packet.size != sizeof(packet) || set_destination == NULL) return 1;
   if (set_destination(NULL, NULL) != SALTS_EINVAL) return 2;
+  if (flowie_mqtt_client_try_destroy(NULL, 0u) != SALTS_EINVAL) return 4;
   if (cnet_owner_placement_choose(&input, &owner) != SALTS_OK || owner != 1u) return 3;
   return 0;
 }

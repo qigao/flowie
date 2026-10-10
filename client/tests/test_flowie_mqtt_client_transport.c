@@ -518,6 +518,18 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                     FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 0, 3);
   }
 
+  it("retains a Client after nonblocking destroy and retries on the same Owner") {
+    flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+    flowie_mqtt_client_t *client = NULL;
+    config.host = "127.0.0.1";
+    config.port = 1883;
+    check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+    check_equal(flowie_mqtt_client_try_destroy(NULL, 0u), SALTS_EINVAL);
+    check_equal(flowie_mqtt_client_try_destroy(client, 0u), SALTS_EBUSY);
+    check_equal(flowie_mqtt_client_try_destroy(client,
+                FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  }
+
   it("runs CONNECT, PING, and DISCONNECT over CNet TCP") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,

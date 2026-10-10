@@ -321,6 +321,15 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create_ex(
  */
 FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
 
+/** Additive explicit bounded destruction. SALTS_OK releases the Client;
+ * EBUSY/ETIMEDOUT/error keep the Client and Owner thread alive so the same
+ * caller may retry after remaining native obligations drain. Passing zero is
+ * a nonblocking attempt. Only use outside Client callbacks; concurrent
+ * destroy attempts are rejected. The void API cannot report failures and
+ * retains Client storage on incomplete drain rather than forcing UAF. */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_try_destroy(
+    flowie_mqtt_client_t *client, uint32_t timeout_ms);
+
 /** Additive pre-CONNECT TCP/TLS destination policy. CNet chooses at first dial
  * and subsequent reconnects revalidate the same pinned remote endpoint.
  * WS/WSS explicitly returns ENOTSUP until CHttp authority selection is ready.

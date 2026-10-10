@@ -34,6 +34,7 @@ int main() {
   if (policy.size == 0u || policy.version == 0u ||
       endpoint.weight != 1u || set_destination == nullptr) return 1;
   if (set_destination(nullptr, nullptr) != SALTS_EINVAL) return 2;
+  if (flowie_mqtt_client_try_destroy(nullptr, 0u) != SALTS_EINVAL) return 6;
   if (cnet_owner_placement_choose(&input, &owner) != SALTS_OK || owner != 1u) return 3;
 
   flowie_pattern_selector_t selector{};

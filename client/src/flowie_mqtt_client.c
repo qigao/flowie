@@ -163,6 +163,12 @@ struct flowie_mqtt_client_s {
   int worker_started;
   int worker_ready;
   int worker_start_status;
+  int destroy_in_progress;
+  int worker_cleanup_result_ready;
+  int worker_cleanup_complete;
+  int worker_cleanup_retry;
+  int worker_cleanup_status;
+  uint32_t worker_cleanup_budget_ms;
   int network_closing;
   int stopping;
   int version_locked;
@@ -1628,33 +1634,71 @@ static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) 
   return rc;
 }
 
-static void flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client) {
+/* Strictly Owner-local and retryable. Never let the Client allocation die while
+ * any managed connection, callback or native backend still borrows it. */
+static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client,
+                                                      uint32_t budget_ms) {
+  const uint64_t start = cmeta_monotonic_ms();
+  const uint64_t deadline = budget_ms > UINT64_MAX - start
+                                ? UINT64_MAX : start + budget_ms;
   int status;
-  if (!client->network_initialized) return;
-  if (client->network_dial_initialized)
-    (void)cnet_managed_dial_seal(&client->network_dial);
-  if (client->network_manager_initialized) {
-    (void)cnet_manager_request_close(&client->network_manager);
-    (void)flowie_mqtt_client_manager_advance(client);
+  if (client->network.impl == NULL)
+    return client->network_manager.impl == NULL && client->network_dial.impl == NULL
+               ? SALTS_OK : SALTS_EBUSY;
+  if (client->network_dial.impl != NULL) {
+    status = cnet_managed_dial_seal(&client->network_dial);
+    if (status != SALTS_OK && status != SALTS_EALREADY &&
+        status != SALTS_ENOBUFS && status != SALTS_EBUSY)
+      return status;
   }
-  status = cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
-  if (status != SALTS_OK && status != SALTS_EALREADY) return;
-  if (client->network_manager_initialized) {
-    status = flowie_mqtt_client_manager_advance(client);
-    if (status != SALTS_OK) return;
+  if (client->network_manager.impl != NULL) {
+    status = cnet_manager_request_close(&client->network_manager);
+    if (status != SALTS_OK) return status;
+    for (;;) {
+      cnet_manager_snapshot snapshot = {0};
+      size_t work = 0u, events = 0u;
+      status = cnet_manager_advance(&client->network_manager, 1u, &work);
+      if (status != SALTS_OK && status != SALTS_ENOBUFS && status != SALTS_EBUSY)
+        return status;
+      status = cnet_manager_get_snapshot(&client->network_manager, &snapshot);
+      if (status != SALTS_OK) return status;
+      if (snapshot.drained) break;
+      if (budget_ms == 0u) return SALTS_EBUSY;
+      const uint64_t now = cmeta_monotonic_ms();
+      if (now >= deadline) return SALTS_ETIMEDOUT;
+      if (client->network_dial.impl != NULL)
+        (void)cnet_managed_dial_seal(&client->network_dial);
+      const uint32_t slice = (uint32_t)(deadline - now < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
+                                          ? deadline - now : FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS);
+      status = cnet_client_poll(&client->network, slice, &events);
+      if (status != SALTS_OK) return status;
+    }
   }
-  if (client->network_dial_initialized) {
+  /* The native stop status can carry an earlier callback failure even after
+   * actual backend shutdown; only the successful destruction of the real
+   * resources permits the outer Client allocation to be freed. */
+  const uint64_t now = cmeta_monotonic_ms();
+  const uint32_t remaining = now >= deadline ? 0u
+                              : deadline - now > UINT32_MAX ? UINT32_MAX
+                              : (uint32_t)(deadline - now);
+  status = cnet_client_stop(&client->network, remaining);
+  if (status != SALTS_OK && status != SALTS_EALREADY &&
+      status != SALTS_EIO && status != SALTS_EPROTO)
+    return status;
+  if (client->network_dial.impl != NULL) {
     status = cnet_managed_dial_destroy(&client->network_dial);
-    if (status != SALTS_OK) return;
+    if (status != SALTS_OK) return status;
     client->network_dial_initialized = 0;
   }
-  if (client->network_manager_initialized) {
+  if (client->network_manager.impl != NULL) {
     status = cnet_manager_destroy(&client->network_manager);
-    if (status != SALTS_OK) return;
+    if (status != SALTS_OK) return status;
     client->network_manager_initialized = 0;
   }
-  if (cnet_client_destroy(&client->network) == SALTS_OK)
-    client->network_initialized = 0;
+  status = cnet_client_destroy(&client->network);
+  if (client->network.impl != NULL) return status == SALTS_OK ? SALTS_EBUSY : status;
+  client->network_initialized = 0;
+  return SALTS_OK;
 }
 
 static void flowie_mqtt_client_worker(void *arg) {
@@ -1662,20 +1706,37 @@ static void flowie_mqtt_client_worker(void *arg) {
   int status;
   flowie_mqtt_client_current = client;
   status = flowie_mqtt_client_worker_network_init(client);
-  if (status != SALTS_OK) flowie_mqtt_client_worker_network_destroy(client);
   cmeta_mutex_lock(&client->command_mutex);
   client->worker_start_status = status;
   client->worker_ready = 1;
   cmeta_cond_broadcast(&client->command_changed);
   cmeta_mutex_unlock(&client->command_mutex);
-  if (status == SALTS_OK) {
-    flowie_mqtt_client_worker_pump(client);
+  if (status == SALTS_OK) flowie_mqtt_client_worker_pump(client);
+  cmeta_mutex_lock(&client->command_mutex);
+  client->network_closing = 1; /* Fence foreign native wakes. */
+  cmeta_mutex_unlock(&client->command_mutex);
+  for (;;) {
+    uint32_t budget;
     cmeta_mutex_lock(&client->command_mutex);
-    /* Public destroy must not wake a CNet object concurrently being torn
-     * down after an in-worker callback requested shutdown. */
-    client->network_closing = 1;
+    budget = client->worker_cleanup_budget_ms;
     cmeta_mutex_unlock(&client->command_mutex);
-    flowie_mqtt_client_worker_network_destroy(client);
+    status = flowie_mqtt_client_worker_network_destroy(client, budget);
+    cmeta_mutex_lock(&client->command_mutex);
+    client->worker_cleanup_status = status;
+    client->worker_cleanup_result_ready = 1;
+    if (status == SALTS_OK) client->worker_cleanup_complete = 1;
+    cmeta_cond_broadcast(&client->command_changed);
+    if (client->worker_cleanup_complete) {
+      cmeta_mutex_unlock(&client->command_mutex);
+      break;
+    }
+    /* Report incomplete drain while keeping this exact native Owner alive.
+     * Another try_destroy may request a new bounded attempt. */
+    while (!client->worker_cleanup_retry)
+      cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+    client->worker_cleanup_retry = 0;
+    client->worker_cleanup_result_ready = 0;
+    cmeta_mutex_unlock(&client->command_mutex);
   }
   flowie_mqtt_client_current = NULL;
 }
@@ -1943,29 +2004,9 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
   return flowie_mqtt_client_create_ex(config, NULL, out);
 }
 
-void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
+static void flowie_mqtt_client_finalize(flowie_mqtt_client_t *client) {
   flowie_mqtt_client_command_t *command = NULL;
-  if (!client) return;
-  if (client->worker_started) {
-    if (flowie_mqtt_client_current == client) {
-      cmeta_mutex_lock(&client->command_mutex);
-      client->stopping = 1;
-      cmeta_cond_signal(&client->command_changed);
-      cmeta_mutex_unlock(&client->command_mutex);
-      return;
-    }
-    cmeta_mutex_lock(&client->command_mutex);
-    client->stopping = 1;
-    cmeta_cond_signal(&client->command_changed);
-    /* The worker cannot finish its stop path until it observes stopping.
-     * Wake before dropping this mutex, while the CNet object remains live. */
-    if (!client->network_closing && client->network_initialized)
-      (void)cnet_client_wake(&client->network);
-    cmeta_mutex_unlock(&client->command_mutex);
-    if (cmeta_thread_join(&client->worker) != SALTS_OK) return;
-    cmeta_thread_destroy(&client->worker);
-    client->worker_started = 0;
-  }
+  /* All borrowed native contexts have completed before freeing user data. */
   flowie_mqtt_client_transport_close(client, 1);
   if (client->command_queue_initialized) {
     while (deque_pop_front(&client->commands, &command) == STL_OK)
@@ -2001,6 +2042,87 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   free(client);
 }
 
+int flowie_mqtt_client_try_destroy(flowie_mqtt_client_t *client, uint32_t timeout_ms) {
+  int status;
+  if (client == NULL) return SALTS_EINVAL;
+  /* A Client callback is not allowed to wait for its own worker. Set the
+   * stop intent, but retain ownership for an explicit external retry. */
+  if (flowie_mqtt_client_current == client) {
+    if (client->sync_initialized) {
+      cmeta_mutex_lock(&client->command_mutex);
+      client->stopping = 1;
+      cmeta_cond_broadcast(&client->command_changed);
+      cmeta_mutex_unlock(&client->command_mutex);
+    }
+    return SALTS_EBUSY;
+  }
+  if (client->worker_started) {
+    const uint64_t start = cmeta_monotonic_ms();
+    const uint64_t deadline = timeout_ms > UINT64_MAX - start
+                                  ? UINT64_MAX : start + timeout_ms;
+    cmeta_mutex_lock(&client->command_mutex);
+    if (client->destroy_in_progress) {
+      cmeta_mutex_unlock(&client->command_mutex);
+      return SALTS_EBUSY;
+    }
+    client->destroy_in_progress = 1;
+    client->stopping = 1;
+    client->worker_cleanup_budget_ms = timeout_ms;
+    if (client->worker_cleanup_result_ready && !client->worker_cleanup_complete) {
+      client->worker_cleanup_result_ready = 0;
+      client->worker_cleanup_retry = 1;
+    }
+    cmeta_cond_broadcast(&client->command_changed);
+    if (!client->network_closing && client->network_initialized)
+      (void)cnet_client_wake(&client->network);
+    while (!client->worker_cleanup_result_ready) {
+      const uint64_t now = cmeta_monotonic_ms();
+      if (timeout_ms == 0u || now >= deadline) break;
+      const uint64_t remaining_ms = deadline - now;
+      const uint64_t ns = remaining_ms > UINT64_MAX / 1000000u
+                              ? UINT64_MAX : remaining_ms * 1000000u;
+      (void)cmeta_cond_timedwait(&client->command_changed, &client->command_mutex, ns);
+    }
+    status = client->worker_cleanup_result_ready ? client->worker_cleanup_status
+                                                 : timeout_ms == 0u ? SALTS_EBUSY
+                                                                    : SALTS_ETIMEDOUT;
+    if (status != SALTS_OK || !client->worker_cleanup_complete) {
+      client->destroy_in_progress = 0;
+      cmeta_mutex_unlock(&client->command_mutex);
+      return status == SALTS_OK ? SALTS_EBUSY : status;
+    }
+    cmeta_mutex_unlock(&client->command_mutex);
+    status = cmeta_thread_join(&client->worker);
+    if (status != SALTS_OK) {
+      cmeta_mutex_lock(&client->command_mutex);
+      client->destroy_in_progress = 0;
+      cmeta_mutex_unlock(&client->command_mutex);
+      return status;
+    }
+    cmeta_thread_destroy(&client->worker);
+    client->worker_started = 0;
+  }
+  /* Fail closed: retaining a Client allocation is safer than releasing
+   * storage still borrowed by a CNet/Dial/Manager observer. */
+  if (client->network.impl != NULL || client->network_manager.impl != NULL ||
+      client->network_dial.impl != NULL || client->websocket_initialized)
+    return SALTS_EBUSY;
+  flowie_mqtt_client_finalize(client);
+  return SALTS_OK;
+}
+
+void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
+  int status;
+  if (client == NULL) return;
+  status = flowie_mqtt_client_try_destroy(client,
+      client->timeout_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)client->timeout_ms);
+  if (status != SALTS_OK && flowie_mqtt_client_current != client) {
+    /* Explicit diagnostic; legacy void destruction never force-frees a
+     * retained native context. Use try_destroy to regain error/ownership. */
+    fprintf(stderr, "flowie_mqtt_client_destroy: incomplete Owner drain (%d); "
+                    "Client storage retained; retry try_destroy()\n", status);
+  }
+}
 
 static int flowie_mqtt_client_remote_host_valid(const char *host) {
   size_t length;

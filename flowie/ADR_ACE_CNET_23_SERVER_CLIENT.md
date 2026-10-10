@@ -183,3 +183,24 @@ Dedicated loopback tests also repeat CONNACK timeout and unexpected pre-CONNACK
 packet failures across three independent logical MQTT CONNECTs, asserting
 Manager/Dial recycling rather than turning physical CONNECTED into READY.
 Nonblocking SG cohosting and the ACE Component Configurator remain open. Stable release and master merge are separate gates.
+
+## Exceptional Client teardown (Flowie #67)
+
+The public `flowie_mqtt_client_try_destroy(client, timeout_ms)` gives the
+caller an explicit bounded result. An incomplete CNet/Manager/ManagedDial
+terminal retains the Client allocation, its exact original Worker Owner and
+all observer/user borrow storage. The Worker seals admission, drives at most
+the requested budget, and reports failure while retaining itself for a
+later retry on the same Owner. No foreign thread calls native stop/destroy.
+A successful result joins that Worker and releases user storage. The
+legacy void destroy can only fail closed and emit an error diagnostic on
+incomplete drain; the explicit API is required for ownership-aware callers.
+A callback may request stop but never join/destroy its own Worker.
+
+The normal release sequence is Managed Dial seal, Manager close/request,
+CNet terminal + Manager recycle, CNet stop, Managed Dial destroy,
+Manager destroy, CNet destroy, and finally the Flowie Client object.
+The actual native destroy result, **not** a stop callback error alone,
+determines whether it is safe to free. Bounded close-admission FULL
+faults and WSS TLS transport failure cases remain independent acceptance
+gates in #67; no future retry authorizes MQTT PUBLISH replay.
