@@ -1689,9 +1689,13 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
                               : deadline - now > UINT32_MAX ? UINT32_MAX
                               : (uint32_t)(deadline - now);
   status = cnet_client_stop(&client->network, remaining);
-  if (status != SALTS_OK && status != SALTS_EALREADY &&
-      status != SALTS_EIO && status != SALTS_EPROTO)
-    return status;
+  /* Salts 2.3 explicitly permits an earlier callback/progress error to be
+   * returned even after native quiescence. The real cnet_client_destroy()
+   * below—not a whitelist of historical status codes—is authoritative.
+   * Only known unfinished stop states are deferred to a later same-Owner
+   * attempt, without freeing anything borrowed by the native backend. */
+  if (status == SALTS_ETIMEDOUT || status == SALTS_EBUSY ||
+      status == SALTS_ENOTSUP) return status;
   if (client->network_dial.impl != NULL) {
     status = cnet_managed_dial_destroy(&client->network_dial);
     if (status != SALTS_OK) return status;

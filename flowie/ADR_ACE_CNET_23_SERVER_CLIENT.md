@@ -215,3 +215,10 @@ its own CNet/native terminal and pending output on failed destroy; Flowie
 does not substitute a second backend. A three-episode MQTT-over-WS test
 exercises repeated normal CHttp close/reinitialization. WSS fault-injected
 FULL/timeout remains an acceptance gate in #67.
+
+Salts 2.3 explicitly documents that `cnet_client_stop` may return an
+earlier native callback/progress error **after** all callbacks have quiesced,
+and requires the caller still to try `cnet_client_destroy`. Accordingly,
+Owner drain treats only `ETIMEDOUT`/`EBUSY`/`ENOTSUP` as unfinished stop
+conditions; otherwise, the actual native destroy result—not an error-code
+whitelist—determines if Client user/observer storage is safe to release.
