@@ -183,6 +183,7 @@ struct flowie_mqtt_client_s {
   int network_receive_ready;
   int network_send_ready;
   int network_status;
+  int network_security_failure;
   atomic_int public_connected;
 };
 
@@ -1357,6 +1358,13 @@ static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *cli
   int has_reason;
   int schedule = 0;
   if (!client || !client->resilience_enabled || !client->reconnect_connect) return;
+  /* Never schedule even the legacy MQTT CONNECT retry on a TLS trust/
+   * handshake security failure. A new credential/trust configuration requires
+   * an explicit new Client, not opportunistic plaintext or peer failover. */
+  if (client->network_security_failure) {
+    flowie_mqtt_client_reconnect_cancel(client, 1);
+    return;
+  }
   reason_code = client->disconnect_reason;
   has_reason = client->disconnect_reason_valid;
   client->disconnect_reason_valid = 0;
@@ -2174,6 +2182,23 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   return SALTS_OK;
 }
 
+/* CNet classifies the failed physical connection; MQTT packet/session replay
+ * is not authorized by this decision. A TLS handshake failure is a security
+ * failure even when the underlying TLS provider reports generic EIO. */
+static cnet_reconnect_failure_kind flowie_mqtt_client_dial_classify(
+    void *user, cnet_connection_state state, const cnet_error *error) {
+  flowie_mqtt_client_t *client = (flowie_mqtt_client_t *)user;
+  if (client == NULL || state != CNET_CONNECTION_FAILED || error == NULL)
+    return CNET_RECONNECT_PERMANENT;
+  if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS &&
+      error->stage != NULL && strcmp(error->stage, "handshake") == 0) {
+    client->network_security_failure = 1;
+    return CNET_RECONNECT_SECURITY;
+  }
+  return flowie_mqtt_client_reconnect_status(error->status)
+             ? CNET_RECONNECT_TRANSIENT : CNET_RECONNECT_PERMANENT;
+}
+
 static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
   char *uri = NULL;
   int rc;
@@ -2237,6 +2262,7 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     client->network_connected = 0;
     client->network_terminal = 0;
     client->network_status = SALTS_OK;
+    client->network_security_failure = 0;
     client->network_connection = (cnet_connection){0};
     /* CNet borrows TLS profile pointers through Managed Dial destroy. All
      * paths reference client-owned, deep-copied identity and trust strings. */
@@ -2270,6 +2296,8 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
         .maximum_backoff_ms = 0u,
         .jitter_seed = 1u};
     config.recovery_episode_ms = span;
+    config.classify = flowie_mqtt_client_dial_classify;
+    config.classify_user = client;
     rc = cnet_managed_dial_init(&client->network_dial, &config);
     if (rc == SALTS_OK) {
       client->network_dial_initialized = 1;

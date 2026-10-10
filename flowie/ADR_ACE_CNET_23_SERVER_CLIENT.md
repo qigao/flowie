@@ -171,4 +171,15 @@ authoritative for *another* CONNECT command, including its existing
 automatic reconnect loop, cross-Broker failover, generic physical Pool,
 or covert QoS replay. A later separately reviewed migration may expose
 bounded CNet recovery episodes and remove the old retry scheduler.
+The initial Managed Dial now installs an explicit physical failure classifier.
+Known transient transport errors remain transient, while TLS failures at CNet
+handshake stage are classified SECURITY and also stop the legacy Flowie
+automatic reconnect scheduler. This is fail-closed; it never downgrades TLS,
+switches authority or retries outcome-unknown MQTT PUBLISH. A further
+credential/security failure-matrix test and general multi-attempt CNet Recovery
+migration remain open.
+
+Dedicated loopback tests also repeat CONNACK timeout and unexpected pre-CONNACK
+packet failures across three independent logical MQTT CONNECTs, asserting
+Manager/Dial recycling rather than turning physical CONNECTED into READY.
 Nonblocking SG cohosting and the ACE Component Configurator remain open. Stable release and master merge are separate gates.

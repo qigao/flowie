@@ -449,6 +449,20 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                  FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK);
   }
 
+  it("recovers Manager and Dial after three unsuccessful MQTT CONNACK deadlines") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT,
+                                    FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS,
+                                    SALTS_ETIMEDOUT, 0, 3);
+  }
+
+  it("recovers Manager and Dial after three invalid pre-CONNACK responses") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET,
+                                    FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS,
+                                    SALTS_EPROTO, 0, 3);
+  }
+
   it("reports a missing CONNACK as a timeout rather than a protocol error") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_SILENT,
