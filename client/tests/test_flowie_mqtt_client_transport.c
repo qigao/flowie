@@ -43,6 +43,7 @@ typedef struct flowie_client_transport_probe {
   atomic_int disconnect_status;
   atomic_int submit_status;
   atomic_int errors;
+  atomic_int reconnect_attempts;
 } flowie_client_transport_probe;
 
 static native_io_backend_kind flowie_client_transport_backend(void) {
@@ -182,6 +183,17 @@ static void flowie_client_transport_error(flowie_mqtt_client_t *client, int stat
   atomic_store_explicit(&probe->done, 1, memory_order_release);
 }
 
+static void flowie_client_transport_reconnect_event(
+    flowie_mqtt_client_t *client, uint32_t attempt, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  flowie_client_transport_probe *probe = (flowie_client_transport_probe *)user;
+  (void)client;
+  (void)attempt;
+  (void)status;
+  (void)response;
+  atomic_fetch_add_explicit(&probe->reconnect_attempts, 1, memory_order_relaxed);
+}
+
 static cnet_client_config flowie_client_transport_network(void) {
   const cnet_client_config config = {.backend = flowie_client_transport_backend(),
                                      .connection_capacity = 4u,
@@ -228,6 +240,7 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   atomic_init(&probe.disconnect_status, SALTS_EBUSY);
   atomic_init(&probe.submit_status, SALTS_EBUSY);
   atomic_init(&probe.errors, 0);
+  atomic_init(&probe.reconnect_attempts, 0);
   broker.server = &server;
   broker.connack_mode = connack_mode;
 
@@ -347,6 +360,7 @@ static void flowie_client_transport_abrupt_tls_close(void) {
   atomic_init(&probe.disconnect_status, SALTS_EBUSY);
   atomic_init(&probe.submit_status, SALTS_EBUSY);
   atomic_init(&probe.errors, 0);
+  atomic_init(&probe.reconnect_attempts, 0);
 
   check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
   check_equal(flow_tls_test_server_start_abrupt(&server), 0);
@@ -384,6 +398,73 @@ static void flowie_client_transport_abrupt_tls_close(void) {
   check_equal(server.request[0] >> 4u, FLOWIE_MQTT_PACKET_CONNECT);
 
   flowie_mqtt_client_destroy(client);
+  tls_test_remove_file(ca_path);
+}
+
+
+static void flowie_client_transport_tls_identity_fail_closed(void) {
+  static const unsigned char client_id[] = "cnet-client-tls-identity-rejection";
+  flow_mtls_test_server_t server;
+  flowie_client_transport_probe probe = {0};
+  flowie_mqtt_client_config_t client_config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_client_resilience_config_t resilience = FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_t *client = NULL;
+  char ca_path[512] = {0};
+  uint64_t deadline;
+  atomic_init(&probe.done, 0);
+  atomic_init(&probe.connect_status, SALTS_EBUSY);
+  atomic_init(&probe.ping_status, SALTS_EBUSY);
+  atomic_init(&probe.disconnect_status, SALTS_EBUSY);
+  atomic_init(&probe.submit_status, SALTS_EBUSY);
+  atomic_init(&probe.errors, 0);
+  atomic_init(&probe.reconnect_attempts, 0);
+  check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
+  check_equal(flow_tls_test_server_start_abrupt(&server), 0);
+
+  client_config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
+  client_config.host = "wrong-tls-identity.invalid";
+  client_config.port = 1; /* Must never be dialed: CNet selects authorized target. */
+  client_config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  client_config.tls.ca_file = ca_path;
+  client_config.on_connect = flowie_client_transport_connect_complete;
+  client_config.on_ping = flowie_client_transport_ping_complete;
+  client_config.on_disconnect = flowie_client_transport_disconnect_complete;
+  client_config.on_error = flowie_client_transport_error;
+  client_config.user_data = &probe;
+  resilience.initial_delay_ms = 25u;
+  resilience.max_delay_ms = 90u;
+  resilience.max_attempts = 0u; /* Legacy unlimited retries must NOT bypass security. */
+  resilience.on_reconnect = flowie_client_transport_reconnect_event;
+  check_equal(flowie_mqtt_client_create_ex(&client_config, &resilience, &client), SALTS_OK);
+  {
+    const flowie_mqtt_client_remote_endpoint_t endpoints[] = {
+        {100u, "127.0.0.1", server.port, 1u, 0u, 1u}};
+    const flowie_mqtt_client_destination_policy_t destination = {
+        sizeof(destination), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+        FLOWIE_MQTT_DESTINATION_EXPLICIT, endpoints, 1u,
+        1u, UINT64_MAX, 0u, 100u, 0u, 0u};
+    check_equal(flowie_mqtt_client_set_destination_policy(client, &destination), SALTS_OK);
+  }
+
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
+  check_not_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed), SALTS_OK);
+  check_not_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed), SALTS_EBUSY);
+  check_equal(flowie_mqtt_client_is_connected(client), 0);
+  cmeta_sleep_ms(200u); /* Longer than the configured retry delay. */
+  check_equal(atomic_load_explicit(&probe.reconnect_attempts, memory_order_acquire), 0);
+  flowie_mqtt_client_destroy(client);
+  flow_mtls_test_server_join(&server);
+  /* A wrong TLS authority must never progress to MQTT CONNECT. */
+  check_equal(server.request_size, (size_t)0u);
   tls_test_remove_file(ca_path);
 }
 
@@ -473,6 +554,10 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, TF_NET_TRANSPORT_TCP,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_UNEXPECTED_PACKET,
                                  FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS, SALTS_EPROTO);
+  }
+
+  it("classifies a TLS authority mismatch as SECURITY without automatic MQTT retry") {
+    flowie_client_transport_tls_identity_fail_closed();
   }
 
   it("reports an abrupt TLS EOF after CONNECT as an aborted connection") {
