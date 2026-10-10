@@ -32,6 +32,8 @@ typedef struct flowie_client_transport_broker {
   size_t input_size;
   atomic_int opens;
   atomic_int connects;
+  atomic_int publishes;
+  atomic_int last_publish_qos;
   atomic_int pings;
   atomic_int disconnects;
   atomic_int closes;
@@ -118,6 +120,14 @@ static int flowie_client_transport_receive(void *user, flowie_connection connect
     case FLOWIE_MQTT_PACKET_PINGREQ:
       atomic_fetch_add_explicit(&broker->pings, 1, memory_order_relaxed);
       status = flowie_server_send(broker->server, connection, pingresp, sizeof(pingresp));
+      break;
+    case FLOWIE_MQTT_PACKET_PUBLISH:
+      /* Deliberately withhold PUBACK/PUBREC: the sender must still own the
+       * accepted QoS1/2 command when shutdown interrupts the exchange. */
+      atomic_store_explicit(&broker->last_publish_qos,
+                            (broker->input[0] >> 1u) & 3u, memory_order_release);
+      atomic_fetch_add_explicit(&broker->publishes, 1, memory_order_relaxed);
+      status = SALTS_OK;
       break;
     case FLOWIE_MQTT_PACKET_DISCONNECT:
       atomic_fetch_add_explicit(&broker->disconnects, 1, memory_order_relaxed);
@@ -257,6 +267,8 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
 
   atomic_init(&broker.opens, 0);
   atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
   atomic_init(&broker.pings, 0);
   atomic_init(&broker.disconnects, 0);
   atomic_init(&broker.closes, 0);
@@ -508,6 +520,8 @@ static void flowie_client_transport_destroy_pending_connack(void) {
   uint64_t deadline;
   atomic_init(&broker.opens, 0);
   atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
   atomic_init(&broker.pings, 0);
   atomic_init(&broker.disconnects, 0);
   atomic_init(&broker.closes, 0);
@@ -584,6 +598,8 @@ static void flowie_client_transport_self_stop_case(
 
   atomic_init(&broker.opens, 0);
   atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
   atomic_init(&broker.pings, 0);
   atomic_init(&broker.disconnects, 0);
   atomic_init(&broker.closes, 0);
@@ -654,6 +670,135 @@ static void flowie_client_transport_self_stop_case(
   check_equal(flowie_server_destroy(&server), SALTS_OK);
 }
 
+typedef struct flowie_client_transport_qos_probe {
+  atomic_int submit_status;
+  atomic_int publish_completions;
+  atomic_int publish_completion_status;
+  uint8_t qos;
+} flowie_client_transport_qos_probe;
+
+static void flowie_client_transport_qos_connect(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  flowie_client_transport_qos_probe *probe = (flowie_client_transport_qos_probe *)user;
+  static const unsigned char topic_name[] = "flowie/lifetime/inflight";
+  static const unsigned char payload[] = "publish must not replay on shutdown";
+  flowie_mqtt_client_publish_topic_t topic = {0};
+  flowie_mqtt_client_publish_topic_vec_t topics = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
+  if (status == SALTS_OK && response != NULL &&
+      response->type == FLOWIE_MQTT_PACKET_CONNACK && response->reason_code == 0u) {
+    topic.qos = probe->qos;
+    topic.topic = (flowie_mqtt_span_t){topic_name, sizeof(topic_name) - 1u};
+    topic.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
+    topics.version = FLOWIE_MQTT_VERSION_5;
+    topics.data = &topic;
+    topics.count = 1u;
+    status = flowie_mqtt_client_publish(client, &topics);
+  } else if (status == SALTS_OK) {
+    status = SALTS_EPROTO;
+  }
+  atomic_store_explicit(&probe->submit_status, status, memory_order_release);
+}
+
+static void flowie_client_transport_qos_publish_done(
+    flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  flowie_client_transport_qos_probe *probe = (flowie_client_transport_qos_probe *)user;
+  (void)client;
+  (void)response;
+  atomic_store_explicit(&probe->publish_completion_status, status, memory_order_relaxed);
+  atomic_fetch_add_explicit(&probe->publish_completions, 1, memory_order_release);
+}
+
+/* The broker receives exactly one QoS1/2 PUBLISH but intentionally never
+ * completes its ack handshake. Shutdown must cancel without replay, and must
+ * retain the packet buffers/owner until the real CNet drain completes. */
+static void flowie_client_transport_qos_shutdown_case(uint8_t qos) {
+  static const unsigned char id[] = "qos-inflight-teardown";
+  static const unsigned char topic_name[] = "flowie/lifetime/inflight";
+  static const unsigned char payload[] = "another publish after stop";
+  flowie_client_transport_broker broker = {0};
+  flowie_client_transport_qos_probe probe = {0};
+  flowie_server server = {0};
+  flowie_server_config server_config = TF_NET_SERVER_CONFIG_INIT;
+  flowie_mqtt_client_config_t client_config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_publish_topic_t topic = {0};
+  flowie_mqtt_client_publish_topic_vec_t topics = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
+  flowie_mqtt_client_t *client = NULL;
+  uint64_t deadline;
+  uint16_t port = 0u;
+  atomic_init(&broker.opens, 0);
+  atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
+  atomic_init(&broker.pings, 0);
+  atomic_init(&broker.disconnects, 0);
+  atomic_init(&broker.closes, 0);
+  atomic_init(&broker.error, SALTS_OK);
+  atomic_init(&probe.submit_status, SALTS_EBUSY);
+  atomic_init(&probe.publish_completions, 0);
+  atomic_init(&probe.publish_completion_status, SALTS_EBUSY);
+  probe.qos = qos;
+  broker.server = &server;
+  broker.connack_mode = FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID;
+
+  server_config.transport = TF_NET_TRANSPORT_TCP;
+  server_config.host = "127.0.0.1";
+  server_config.port = 0u;
+  server_config.backlog = 4u;
+  server_config.stream = flowie_client_transport_network();
+  server_config.command_capacity = 8u;
+  server_config.command_bytes_capacity = 8192u;
+  server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
+  server_config.poll_slice_ms = 1u;
+  server_config.observer = (flowie_observer){
+      flowie_client_transport_open, flowie_client_transport_receive,
+      flowie_client_transport_close, NULL, &broker};
+  check_equal(flowie_server_init(&server, &server_config), SALTS_OK);
+  check_equal(flowie_server_start(&server), SALTS_OK);
+  check_equal(flowie_server_port(&server, &port), SALTS_OK);
+
+  client_config.host = "127.0.0.1";
+  client_config.port = (int)port;
+  client_config.timeout_ms = FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  client_config.on_connect = flowie_client_transport_qos_connect;
+  client_config.on_publish = flowie_client_transport_qos_publish_done;
+  client_config.user_data = &probe;
+  check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){id, sizeof(id) - 1u};
+  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(&broker.publishes, memory_order_acquire) == 0 &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(&probe.submit_status, memory_order_acquire), SALTS_OK);
+  check_equal(atomic_load_explicit(&broker.publishes, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.last_publish_qos, memory_order_acquire), qos);
+  check_equal(atomic_load_explicit(&probe.publish_completions, memory_order_acquire), 0);
+
+  check_equal(flowie_mqtt_client_try_destroy(client, 0u), SALTS_EBUSY);
+  topic.qos = qos;
+  topic.topic = (flowie_mqtt_span_t){topic_name, sizeof(topic_name) - 1u};
+  topic.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
+  topics.version = FLOWIE_MQTT_VERSION_5;
+  topics.data = &topic;
+  topics.count = 1u;
+  check_equal(flowie_mqtt_client_publish(client, &topics), SALTS_ESHUTDOWN);
+  check_equal(flowie_mqtt_client_try_destroy(
+      client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(atomic_load_explicit(&probe.publish_completions, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&probe.publish_completion_status, memory_order_acquire),
+              SALTS_ESHUTDOWN);
+  check_equal(atomic_load_explicit(&broker.publishes, memory_order_acquire), 1);
+  check_equal(atomic_load_explicit(&broker.error, memory_order_acquire), SALTS_OK);
+  check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(flowie_server_destroy(&server), SALTS_OK);
+}
+
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
 static void flowie_client_transport_fault_connect_complete(
     flowie_mqtt_client_t *client, int status,
@@ -684,6 +829,8 @@ static void flowie_client_transport_injected_full_close(void) {
   atomic_init(&connect_callbacks, 0);
   atomic_init(&broker.opens, 0);
   atomic_init(&broker.connects, 0);
+  atomic_init(&broker.publishes, 0);
+  atomic_init(&broker.last_publish_qos, 0);
   atomic_init(&broker.pings, 0);
   atomic_init(&broker.disconnects, 0);
   atomic_init(&broker.closes, 0);
@@ -744,6 +891,14 @@ static void flowie_client_transport_injected_full_close(void) {
 #endif
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
+#if !defined(FLOWIE_CLIENT_FAULT_TEST)
+  it("stops during an unacknowledged QoS1 PUBLISH without replay or early release") {
+    flowie_client_transport_qos_shutdown_case(1u);
+  }
+  it("stops during an unacknowledged QoS2 PUBLISH without replay or early release") {
+    flowie_client_transport_qos_shutdown_case(2u);
+  }
+#endif
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
   it("retains the Client across injected ENOBUFS and progresses close on the original Owner") {
     flowie_client_transport_injected_full_close();

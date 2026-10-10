@@ -384,6 +384,13 @@ static int flowie_mqtt_client_manager_advance(flowie_mqtt_client_t *client) {
 static int flowie_mqtt_client_poll_managed(flowie_mqtt_client_t *client, uint32_t timeout_ms,
                                            size_t *events) {
   const int status = cnet_client_poll(&client->network, timeout_ms, events);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  /* Native progress during pre-cleanup transport_close is still real Owner
+   * progress. The initial cleanup attempt may time out before reaching the
+   * later final-destroy loop, but it must never free this Client. */
+  if (atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) != 0u)
+    atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
+#endif
   return status == SALTS_OK ? flowie_mqtt_client_manager_advance(client) : status;
 }
 
