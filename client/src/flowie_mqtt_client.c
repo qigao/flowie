@@ -9,6 +9,9 @@
 
 #include <http_client/http.h>
 #include <cnet/cnet.h>
+#include <cnet/manager.h>
+#include <cnet/managed_dial.h>
+#include <cnet/destination_policy.h>
 #include <cnet/websocket.h>
 #include "flowie_mqtt_protocol.h"
 #include "monocypher.h"
@@ -66,8 +69,20 @@ typedef struct flowie_mqtt_client_command_s {
   } packet;
 } flowie_mqtt_client_command_t;
 
+typedef struct flowie_mqtt_owned_endpoint_s {
+  tstr host;
+  uint64_t endpoint_id;
+  uint64_t inflight;
+  uint32_t weight;
+  uint16_t port;
+  uint8_t eligible;
+} flowie_mqtt_owned_endpoint_t;
+
 struct flowie_mqtt_client_s {
   cnet_client network;
+  cnet_manager network_manager;
+  cnet_managed_dial network_dial;
+  cnet_tls_client_config network_dial_tls;
   cnet_connection network_connection;
   chttp_websocket_client websocket;
   chttp_tls_profile websocket_tls;
@@ -76,6 +91,16 @@ struct flowie_mqtt_client_s {
   flowie_mqtt_version_t selected_version;
   flowie_mqtt_version_t version;
   tstr host;
+  flowie_mqtt_owned_endpoint_t *destinations;
+  size_t destination_count;
+  size_t selected_destination_index;
+  flowie_mqtt_client_destination_kind_t destination_kind;
+  uint64_t destination_generation;
+  uint64_t destination_expires_at_ms;
+  uint64_t destination_sequence;
+  uint64_t destination_explicit_id;
+  uint64_t destination_key_hash;
+  uint8_t destination_key_known;
   tstr path;
   tstr tls_ca_file;
   tstr tls_cert_file;
@@ -136,6 +161,15 @@ struct flowie_mqtt_client_s {
   int command_queue_initialized;
   int sync_initialized;
   int worker_started;
+  int worker_ready;
+  int worker_start_status;
+  int destroy_in_progress;
+  int worker_cleanup_result_ready;
+  int worker_cleanup_complete;
+  int worker_cleanup_retry;
+  int worker_cleanup_status;
+  uint32_t worker_cleanup_budget_ms;
+  int network_closing;
   int stopping;
   int version_locked;
   size_t command_queue_capacity;
@@ -146,6 +180,8 @@ struct flowie_mqtt_client_s {
   cmeta_cond_t command_changed;
   cmeta_thread_t worker;
   int network_initialized;
+  int network_manager_initialized;
+  int network_dial_initialized;
   int websocket_initialized;
   int websocket_tls_initialized;
   int network_connected;
@@ -153,10 +189,23 @@ struct flowie_mqtt_client_s {
   int network_receive_ready;
   int network_send_ready;
   int network_status;
+  int network_security_failure;
   atomic_int public_connected;
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  /* Private to the separate fault-test DLL; absent from the shipped Client. */
+  atomic_int test_close_full_enabled;
+  atomic_uint test_close_full_hits;
+  atomic_uint test_close_full_progress;
+  atomic_uint test_close_full_wrong_owner;
+  atomic_int test_native_stop_mode;
+  atomic_uint test_native_stop_timeout_hits;
+  atomic_int test_websocket_destroy_timeout;
+  atomic_uint test_websocket_destroy_timeout_hits;
+#endif
 };
 
 static SALTS_THREAD_LOCAL flowie_mqtt_client_t *flowie_mqtt_client_current;
+static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client);
 
 static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
                                                 const flowie_mqtt_connect_packet_t *packet,
@@ -328,6 +377,27 @@ static void flowie_mqtt_client_network_send(void *user, cnet_connection connecti
   client->network_send_ready = 1;
 }
 
+/* All calls are on the MQTT worker Owner, outside CNet callbacks. Manager
+ * retires real native terminal records before the next physical admission. */
+static int flowie_mqtt_client_manager_advance(flowie_mqtt_client_t *client) {
+  size_t work = 0u;
+  if (!client || !client->network_manager_initialized) return SALTS_OK;
+  return cnet_manager_advance(&client->network_manager, 1u, &work);
+}
+
+static int flowie_mqtt_client_poll_managed(flowie_mqtt_client_t *client, uint32_t timeout_ms,
+                                           size_t *events) {
+  const int status = cnet_client_poll(&client->network, timeout_ms, events);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  /* Native progress during pre-cleanup transport_close is still real Owner
+   * progress. The initial cleanup attempt may time out before reaching the
+   * later final-destroy loop, but it must never free this Client. */
+  if (atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) != 0u)
+    atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
+#endif
+  return status == SALTS_OK ? flowie_mqtt_client_manager_advance(client) : status;
+}
+
 static const flowie_mqtt_client_tls_config_t *
 flowie_mqtt_client_tls_config(const flowie_mqtt_client_config_t *config) {
   return config ? &config->tls : NULL;
@@ -474,6 +544,37 @@ static void flowie_mqtt_client_recv_release(flowie_mqtt_client_t *client) {
   client->recv_offset = 0u;
 }
 
+/* This isolated fault seam preserves a REAL CHttp WS/WSS backend on
+ * forced destroy timeout. It is not compiled into production Flowie::Client.
+ * The original Worker Owner performs the eventual real CHttp destruction. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_set_ws_destroy_timeout(flowie_mqtt_client_t *client, int enabled) {
+  if (!client) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_websocket_destroy_timeout,
+                        enabled != 0, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_ws_destroy_timeout_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_websocket_destroy_timeout_hits,
+                                       memory_order_acquire) : 0u;
+}
+#endif
+
+static int flowie_mqtt_client_destroy_websocket(flowie_mqtt_client_t *client,
+                                                 uint32_t timeout_ms) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (atomic_load_explicit(&client->test_websocket_destroy_timeout, memory_order_acquire)) {
+    atomic_fetch_add_explicit(&client->test_websocket_destroy_timeout_hits,
+                              1u, memory_order_relaxed);
+    return SALTS_ETIMEDOUT;
+  }
+#endif
+  return chttp_websocket_client_destroy(&client->websocket, timeout_ms);
+}
+
 static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int reset_framing) {
   if (!client) return;
   flowie_mqtt_client_recv_release(client);
@@ -481,18 +582,39 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
     const int close_status = chttp_websocket_client_close(
         &client->websocket, 1000u, NULL, 0u, (uint32_t)client->timeout_ms);
     (void)close_status;
-    (void)chttp_websocket_client_destroy(&client->websocket, (uint32_t)client->timeout_ms);
-    client->websocket_initialized = 0;
+    (void)flowie_mqtt_client_destroy_websocket(client, (uint32_t)client->timeout_ms);
+    /* Do not discard a live CHttp owner with pending native callbacks. */
+    if (client->websocket.impl == NULL) client->websocket_initialized = 0;
   }
-  if (client->network_connection.slot != 0u && client->network_initialized) {
-    uint64_t deadline = cmeta_monotonic_ms() + client->timeout_ms;
-    if (!client->network_terminal) (void)cnet_close(&client->network, client->network_connection);
-    while (!client->network_terminal && cmeta_monotonic_ms() < deadline) {
+  if (client->network_initialized &&
+      (client->network_connection.slot != 0u || client->network_dial_initialized)) {
+    const uint64_t now = cmeta_monotonic_ms();
+    const uint64_t deadline = client->timeout_ms > UINT64_MAX - now
+                                  ? UINT64_MAX : now + client->timeout_ms;
+    int close_status = SALTS_OK;
+    if (client->network_dial_initialized)
+      close_status = flowie_mqtt_client_seal_managed_dial(client);
+    else if (client->network_connection.slot != 0u && !client->network_terminal)
+      close_status = cnet_close(&client->network, client->network_connection);
+    while (cmeta_monotonic_ms() < deadline &&
+           client->network_connection.slot != 0u &&
+           !client->network_terminal) {
       size_t events = 0u;
       const uint32_t slice = flowie_mqtt_client_poll_slice(deadline);
-      if (cnet_client_poll(&client->network, slice, &events) != SALTS_OK) break;
+      if (client->network_dial_initialized && close_status != SALTS_OK)
+        close_status = flowie_mqtt_client_seal_managed_dial(client);
+      if (flowie_mqtt_client_poll_managed(client, slice, &events) != SALTS_OK)
+        break;
     }
-    client->network_connection = (cnet_connection){0};
+    (void)flowie_mqtt_client_manager_advance(client);
+    if (client->network_dial_initialized) {
+      /* Destroy requires Manager's *real* recycle, including a rejected
+       * synchronous dial that never had an active CNet connection. */
+      const int status = cnet_managed_dial_destroy(&client->network_dial);
+      if (status == SALTS_OK) client->network_dial_initialized = 0;
+    }
+    if (!client->network_dial_initialized)
+      client->network_connection = (cnet_connection){0};
   }
   client->network_connected = 0;
   client->network_terminal = 0;
@@ -889,7 +1011,7 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
     int rc = flowie_mqtt_client_should_interrupt(client);
     if (rc == SALTS_ESHUTDOWN) return rc;
     if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-    rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+    rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
   return client->network_send_ready ? client->network_status
@@ -938,7 +1060,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
     rc = flowie_mqtt_client_should_interrupt(client);
     if (rc != SALTS_OK) return rc;
     if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-    rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+    rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
   return client->network_receive_ready ? client->network_status
@@ -1293,6 +1415,13 @@ static void flowie_mqtt_client_reconnect_after_failure(flowie_mqtt_client_t *cli
   int has_reason;
   int schedule = 0;
   if (!client || !client->resilience_enabled || !client->reconnect_connect) return;
+  /* Never schedule even the legacy MQTT CONNECT retry on a TLS trust/
+   * handshake security failure. A new credential/trust configuration requires
+   * an explicit new Client, not opportunistic plaintext or peer failover. */
+  if (client->network_security_failure) {
+    flowie_mqtt_client_reconnect_cancel(client, 1);
+    return;
+  }
   reason_code = client->disconnect_reason;
   has_reason = client->disconnect_reason_valid;
   client->disconnect_reason_valid = 0;
@@ -1531,10 +1660,252 @@ static void flowie_mqtt_client_worker_pump(flowie_mqtt_client_t *client) {
   }
 }
 
+/* NativeIO backends (notably io_uring SINGLE_ISSUER) must be constructed on
+ * their final network Owner. The worker exclusively owns CNet create/poll/stop
+ * and destruction; callers only perform thread-safe command/wake admission. */
+static int flowie_mqtt_client_worker_network_init(flowie_mqtt_client_t *client) {
+  cnet_client_config network_config;
+  cnet_stream_socket_options socket_options;
+  int rc;
+  if (flowie_mqtt_client_is_websocket(client)) return SALTS_OK;
+  network_config = flowie_mqtt_client_network_config(client);
+  socket_options = flowie_mqtt_client_socket_options(client);
+  rc = cnet_client_init(&client->network, &network_config);
+  if (rc != SALTS_OK) return rc;
+  client->network_initialized = 1;
+  rc = cnet_client_set_stream_socket_options(&client->network, &socket_options);
+  if (rc != SALTS_OK) return rc;
+  {
+    const cnet_manager_config config = {
+        .size = sizeof(config), .version = CNET_MANAGER_VERSION,
+        .client = &client->network, .record_capacity = 1u, .connection_capacity = 1u};
+    rc = cnet_manager_init(&client->network_manager, &config);
+    if (rc == SALTS_OK) client->network_manager_initialized = 1;
+  }
+  return rc;
+}
+
+/* This seam exists only in the separate fault-test DLL, never in the installed
+ * SDK. Managed Dial seal() (not Manager request_close()) can report ENOBUFS
+ * when a CNet CLOSE command cannot be admitted. Never forge a terminal. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_force_close_full(flowie_mqtt_client_t *client, int enabled) {
+  if (!client) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_close_full_enabled, enabled != 0, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_progress(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_progress, memory_order_acquire)
+                : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_close_full_wrong_owner(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_close_full_wrong_owner,
+                                       memory_order_acquire) : 0u;
+}
+#endif
+
+static int flowie_mqtt_client_seal_managed_dial(flowie_mqtt_client_t *client) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (atomic_load_explicit(&client->test_close_full_enabled, memory_order_acquire)) {
+    if (flowie_mqtt_client_current != client)
+      atomic_fetch_add_explicit(&client->test_close_full_wrong_owner, 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&client->test_close_full_hits, 1u, memory_order_relaxed);
+    return SALTS_ENOBUFS;
+  }
+#endif
+  return cnet_managed_dial_seal(&client->network_dial);
+}
+
+/* Private fault-test modes: 1 = observed progress error after a real,
+ * completed native stop; 2 = synthetic timeout before native stop. Neither
+ * mode changes the installed SDK or fabricates a native terminal. */
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+/* Static-storage atomics are zero-initialized by C; MSVC C11 rejects ATOMIC_VAR_INIT here. */
+static atomic_uint flowie_mqtt_client_test_native_stop_error_count;
+
+FLOWIE_MQTT_CLIENT_C_API int
+flowie_mqtt_client_test_set_native_stop_mode(flowie_mqtt_client_t *client, int mode) {
+  if (!client || mode < 0 || mode > 2) return SALTS_EINVAL;
+  atomic_store_explicit(&client->test_native_stop_mode, mode, memory_order_release);
+  return SALTS_OK;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_native_stop_timeout_hits(const flowie_mqtt_client_t *client) {
+  return client ? atomic_load_explicit(&client->test_native_stop_timeout_hits,
+                                        memory_order_acquire) : 0u;
+}
+
+FLOWIE_MQTT_CLIENT_C_API unsigned int
+flowie_mqtt_client_test_native_stop_reported_errors(void) {
+  return atomic_load_explicit(&flowie_mqtt_client_test_native_stop_error_count,
+                              memory_order_acquire);
+}
+#endif
+
+static int flowie_mqtt_client_stop_native(flowie_mqtt_client_t *client, uint32_t timeout_ms) {
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  const int mode = atomic_load_explicit(&client->test_native_stop_mode, memory_order_acquire);
+  if (flowie_mqtt_client_current != client) return SALTS_EPERM;
+  if (mode == 2) {
+    atomic_fetch_add_explicit(&client->test_native_stop_timeout_hits, 1u,
+                              memory_order_relaxed);
+    cmeta_sleep_ms(1u); /* Avoid a zero-progress synthetic busy spin. */
+    return SALTS_ETIMEDOUT; /* Real CNet backend remains live. */
+  }
+#endif
+  const int status = cnet_client_stop(&client->network, timeout_ms);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  if (mode == 1 && (status == SALTS_OK || status == SALTS_EALREADY)) {
+    /* Native really stopped, but the observed return emulates the CNet 2.3
+     * callback_error latch. Only cnet_client_destroy() authorizes release. */
+    atomic_fetch_add_explicit(&flowie_mqtt_client_test_native_stop_error_count, 1u,
+                              memory_order_relaxed);
+    return SALTS_EIO;
+  }
+#endif
+  return status;
+}
+
+/* Strictly Owner-local and retryable. Never let the Client allocation die while
+ * any managed connection, callback or native backend still borrows it. */
+static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *client,
+                                                      uint32_t budget_ms) {
+  const uint64_t start = cmeta_monotonic_ms();
+  const uint64_t deadline = budget_ms > UINT64_MAX - start
+                                ? UINT64_MAX : start + budget_ms;
+  int status;
+  if (client->websocket.impl != NULL) {
+    const int ws_status = flowie_mqtt_client_destroy_websocket(client, budget_ms);
+    if (client->websocket.impl != NULL)
+      return ws_status == SALTS_OK ? SALTS_EBUSY : ws_status;
+    client->websocket_initialized = 0;
+  }
+  if (client->network.impl == NULL)
+    return client->network_manager.impl == NULL && client->network_dial.impl == NULL
+               ? SALTS_OK : SALTS_EBUSY;
+  if (client->network_dial.impl != NULL) {
+    status = flowie_mqtt_client_seal_managed_dial(client);
+    if (status != SALTS_OK && status != SALTS_EALREADY &&
+        status != SALTS_ENOBUFS && status != SALTS_EBUSY)
+      return status;
+  }
+  if (client->network_manager.impl != NULL) {
+    /* Manager request_close seals state; actual CNet CLOSE admission occurs
+     * in Managed Dial seal / Manager advance. Both can report ENOBUFS. */
+    status = cnet_manager_request_close(&client->network_manager);
+    if (status != SALTS_OK) return status;
+    for (;;) {
+      cnet_manager_snapshot snapshot = {0};
+      size_t work = 0u, events = 0u;
+      int seal_pending = 0;
+      status = cnet_manager_advance(&client->network_manager, 1u, &work);
+      if (status != SALTS_OK && status != SALTS_ENOBUFS && status != SALTS_EBUSY)
+        return status;
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+      if (atomic_load_explicit(&client->test_close_full_hits, memory_order_acquire) != 0u)
+        atomic_fetch_add_explicit(&client->test_close_full_progress, 1u, memory_order_relaxed);
+#endif
+      status = cnet_manager_get_snapshot(&client->network_manager, &snapshot);
+      if (status != SALTS_OK) return status;
+      /* A drained Manager is not proof that an earlier FULL Dial seal
+       * admitted its close. Retry that independent obligation before stop. */
+      if (client->network_dial.impl != NULL) {
+        const int seal_status = flowie_mqtt_client_seal_managed_dial(client);
+        if (seal_status == SALTS_ENOBUFS || seal_status == SALTS_EBUSY) {
+          seal_pending = 1;
+        } else if (seal_status != SALTS_OK && seal_status != SALTS_EALREADY) {
+          return seal_status;
+        }
+      }
+      if (snapshot.drained && !seal_pending) break;
+      if (budget_ms == 0u) return SALTS_EBUSY;
+      const uint64_t now = cmeta_monotonic_ms();
+      if (now >= deadline) return SALTS_ETIMEDOUT;
+      const uint32_t slice = (uint32_t)(deadline - now < FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS
+                                          ? deadline - now : FLOWIE_MQTT_CLIENT_IO_POLL_SLICE_MS);
+      status = cnet_client_poll(&client->network, slice, &events);
+      if (status != SALTS_OK) return status;
+    }
+  }
+  /* The native stop status can carry an earlier callback failure even after
+   * actual backend shutdown; only the successful destruction of the real
+   * resources permits the outer Client allocation to be freed. */
+  const uint64_t now = cmeta_monotonic_ms();
+  const uint32_t remaining = now >= deadline ? 0u
+                              : deadline - now > UINT32_MAX ? UINT32_MAX
+                              : (uint32_t)(deadline - now);
+  status = flowie_mqtt_client_stop_native(client, remaining);
+  /* Salts 2.3 explicitly permits an earlier callback/progress error to be
+   * returned even after native quiescence. The real cnet_client_destroy()
+   * below—not a whitelist of historical status codes—is authoritative.
+   * Only known unfinished stop states are deferred to a later same-Owner
+   * attempt, without freeing anything borrowed by the native backend. */
+  if (status == SALTS_ETIMEDOUT || status == SALTS_EBUSY ||
+      status == SALTS_ENOTSUP) return status;
+  if (client->network_dial.impl != NULL) {
+    status = cnet_managed_dial_destroy(&client->network_dial);
+    if (status != SALTS_OK) return status;
+    client->network_dial_initialized = 0;
+  }
+  if (client->network_manager.impl != NULL) {
+    status = cnet_manager_destroy(&client->network_manager);
+    if (status != SALTS_OK) return status;
+    client->network_manager_initialized = 0;
+  }
+  status = cnet_client_destroy(&client->network);
+  if (client->network.impl != NULL) return status == SALTS_OK ? SALTS_EBUSY : status;
+  client->network_initialized = 0;
+  return SALTS_OK;
+}
+
 static void flowie_mqtt_client_worker(void *arg) {
   flowie_mqtt_client_t *client = (flowie_mqtt_client_t *)arg;
+  int status;
   flowie_mqtt_client_current = client;
-  flowie_mqtt_client_worker_pump(client);
+  status = flowie_mqtt_client_worker_network_init(client);
+  cmeta_mutex_lock(&client->command_mutex);
+  client->worker_start_status = status;
+  client->worker_ready = 1;
+  cmeta_cond_broadcast(&client->command_changed);
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (status == SALTS_OK) flowie_mqtt_client_worker_pump(client);
+  cmeta_mutex_lock(&client->command_mutex);
+  client->network_closing = 1; /* Fence foreign native wakes. */
+  cmeta_mutex_unlock(&client->command_mutex);
+  for (;;) {
+    uint32_t budget;
+    cmeta_mutex_lock(&client->command_mutex);
+    budget = client->worker_cleanup_budget_ms;
+    cmeta_mutex_unlock(&client->command_mutex);
+    status = flowie_mqtt_client_worker_network_destroy(client, budget);
+    cmeta_mutex_lock(&client->command_mutex);
+    client->worker_cleanup_status = status;
+    client->worker_cleanup_result_ready = 1;
+    if (status == SALTS_OK) client->worker_cleanup_complete = 1;
+    cmeta_cond_broadcast(&client->command_changed);
+    if (client->worker_cleanup_complete) {
+      cmeta_mutex_unlock(&client->command_mutex);
+      break;
+    }
+    /* Report incomplete drain while keeping this exact native Owner alive.
+     * Another try_destroy may request a new bounded attempt. */
+    while (!client->worker_cleanup_retry)
+      cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+    client->worker_cleanup_retry = 0;
+    client->worker_cleanup_result_ready = 0;
+    cmeta_mutex_unlock(&client->command_mutex);
+  }
   flowie_mqtt_client_current = NULL;
 }
 
@@ -1678,7 +2049,18 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   client = (flowie_mqtt_client_t *)calloc(1, sizeof(*client));
   if (!client) return SALTS_ENOMEM;
   atomic_init(&client->public_connected, 0);
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+  atomic_init(&client->test_close_full_enabled, 0);
+  atomic_init(&client->test_close_full_hits, 0u);
+  atomic_init(&client->test_close_full_progress, 0u);
+  atomic_init(&client->test_close_full_wrong_owner, 0u);
+  atomic_init(&client->test_native_stop_mode, 0);
+  atomic_init(&client->test_native_stop_timeout_hits, 0u);
+  atomic_init(&client->test_websocket_destroy_timeout, 0);
+  atomic_init(&client->test_websocket_destroy_timeout_hits, 0u);
+#endif
   client->selected_version = FLOWIE_MQTT_VERSION_5;
+  client->selected_destination_index = SIZE_MAX;
   client->transport = config->transport;
   client->port = config->port;
   client->timeout_ms =
@@ -1767,16 +2149,6 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   rc =
       flowie_stl_error(deque_reserve(&client->commands, client->command_queue_capacity));
   if (rc != SALTS_OK) goto fail;
-  if (!flowie_mqtt_client_is_websocket(client)) {
-    const cnet_client_config network_config = flowie_mqtt_client_network_config(client);
-    const cnet_stream_socket_options socket_options =
-        flowie_mqtt_client_socket_options(client);
-    rc = cnet_client_init(&client->network, &network_config);
-    if (rc != SALTS_OK) goto fail;
-    client->network_initialized = 1;
-    rc = cnet_client_set_stream_socket_options(&client->network, &socket_options);
-    if (rc != SALTS_OK) goto fail;
-  }
   if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS && client->tls_configured) {
     const cnet_tls_client_config tls_config = {.size = sizeof(tls_config),
                                                .ca_file = client->tls_ca_file,
@@ -1791,6 +2163,12 @@ int flowie_mqtt_client_create_ex(const flowie_mqtt_client_config_t *config,
   rc = cmeta_thread_create(&client->worker, flowie_mqtt_client_worker, client);
   if (rc != SALTS_OK) goto fail;
   client->worker_started = 1;
+  cmeta_mutex_lock(&client->command_mutex);
+  while (!client->worker_ready)
+    cmeta_cond_wait(&client->command_changed, &client->command_mutex);
+  rc = client->worker_start_status;
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (rc != SALTS_OK) goto fail;
   *out = client;
   return SALTS_OK;
 
@@ -1804,26 +2182,9 @@ int flowie_mqtt_client_create(const flowie_mqtt_client_config_t *config,
   return flowie_mqtt_client_create_ex(config, NULL, out);
 }
 
-void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
+static void flowie_mqtt_client_finalize(flowie_mqtt_client_t *client) {
   flowie_mqtt_client_command_t *command = NULL;
-  if (!client) return;
-  if (client->worker_started) {
-    if (flowie_mqtt_client_current == client) {
-      cmeta_mutex_lock(&client->command_mutex);
-      client->stopping = 1;
-      cmeta_cond_signal(&client->command_changed);
-      cmeta_mutex_unlock(&client->command_mutex);
-      return;
-    }
-    cmeta_mutex_lock(&client->command_mutex);
-    client->stopping = 1;
-    cmeta_cond_signal(&client->command_changed);
-    cmeta_mutex_unlock(&client->command_mutex);
-    if (client->network_initialized) (void)cnet_client_wake(&client->network);
-    if (cmeta_thread_join(&client->worker) != SALTS_OK) return;
-    cmeta_thread_destroy(&client->worker);
-    client->worker_started = 0;
-  }
+  /* All borrowed native contexts have completed before freeing user data. */
   flowie_mqtt_client_transport_close(client, 1);
   if (client->command_queue_initialized) {
     while (deque_pop_front(&client->commands, &command) == STL_OK)
@@ -1832,11 +2193,6 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
   }
   flowie_mqtt_client_command_destroy(client->reconnect_connect);
   client->reconnect_connect = NULL;
-  if (client->network_initialized) {
-    (void)cnet_client_stop(&client->network, (uint32_t)client->timeout_ms);
-    (void)cnet_client_destroy(&client->network);
-    client->network_initialized = 0;
-  }
   if (client->websocket_tls_initialized) {
     (void)chttp_tls_profile_destroy(&client->websocket_tls);
     client->websocket_tls_initialized = 0;
@@ -1857,8 +2213,245 @@ void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
     crypto_wipe(client->tls_key_password, tstr_len(client->tls_key_password));
     tstr_freep(&client->tls_key_password);
   }
+  for (size_t index = 0u; index < client->destination_count; ++index)
+    tstr_freep(&client->destinations[index].host);
+  free(client->destinations);
   free(client->topic_handlers);
   free(client);
+}
+
+int flowie_mqtt_client_try_destroy(flowie_mqtt_client_t *client, uint32_t timeout_ms) {
+  int status;
+  if (client == NULL) return SALTS_EINVAL;
+  /* A Client callback is not allowed to wait for its own worker. Set the
+   * stop intent, but retain ownership for an explicit external retry. */
+  if (flowie_mqtt_client_current == client) {
+    if (client->sync_initialized) {
+      cmeta_mutex_lock(&client->command_mutex);
+      client->stopping = 1;
+      cmeta_cond_broadcast(&client->command_changed);
+      cmeta_mutex_unlock(&client->command_mutex);
+    }
+    return SALTS_EBUSY;
+  }
+  if (client->worker_started) {
+    const uint64_t start = cmeta_monotonic_ms();
+    const uint64_t deadline = timeout_ms > UINT64_MAX - start
+                                  ? UINT64_MAX : start + timeout_ms;
+    cmeta_mutex_lock(&client->command_mutex);
+    if (client->destroy_in_progress) {
+      cmeta_mutex_unlock(&client->command_mutex);
+      return SALTS_EBUSY;
+    }
+    client->destroy_in_progress = 1;
+    client->stopping = 1;
+    client->worker_cleanup_budget_ms = timeout_ms;
+    if (client->worker_cleanup_result_ready && !client->worker_cleanup_complete) {
+      client->worker_cleanup_result_ready = 0;
+      client->worker_cleanup_retry = 1;
+    }
+    cmeta_cond_broadcast(&client->command_changed);
+    if (!client->network_closing && client->network_initialized)
+      (void)cnet_client_wake(&client->network);
+    for (;;) {
+      const uint64_t now = cmeta_monotonic_ms();
+      if (client->worker_cleanup_result_ready) {
+        const int rc = client->worker_cleanup_status;
+        if (rc == SALTS_OK) break;
+        if (timeout_ms == 0u || now >= deadline ||
+            (rc != SALTS_EBUSY && rc != SALTS_ETIMEDOUT &&
+             rc != SALTS_ENOBUFS)) break;
+        /* One bounded try_destroy call may retry a FULL/unfinished native
+         * drain, but only on the very same Owner and within its deadline. */
+        client->worker_cleanup_result_ready = 0;
+        client->worker_cleanup_retry = 1;
+        client->worker_cleanup_budget_ms =
+            deadline - now > UINT32_MAX ? UINT32_MAX : (uint32_t)(deadline - now);
+        cmeta_cond_broadcast(&client->command_changed);
+      }
+      if (timeout_ms == 0u || now >= deadline) break;
+      const uint64_t remaining_ms = deadline - now;
+      const uint64_t ns = remaining_ms > UINT64_MAX / 1000000u
+                              ? UINT64_MAX : remaining_ms * 1000000u;
+      (void)cmeta_cond_timedwait(&client->command_changed, &client->command_mutex, ns);
+    }
+    status = client->worker_cleanup_result_ready ? client->worker_cleanup_status
+                                                 : timeout_ms == 0u ? SALTS_EBUSY
+                                                                    : SALTS_ETIMEDOUT;
+    if (status != SALTS_OK || !client->worker_cleanup_complete) {
+      client->destroy_in_progress = 0;
+      cmeta_mutex_unlock(&client->command_mutex);
+      return status == SALTS_OK ? SALTS_EBUSY : status;
+    }
+    cmeta_mutex_unlock(&client->command_mutex);
+    status = cmeta_thread_join(&client->worker);
+    if (status != SALTS_OK) {
+      cmeta_mutex_lock(&client->command_mutex);
+      client->destroy_in_progress = 0;
+      cmeta_mutex_unlock(&client->command_mutex);
+      return status;
+    }
+    cmeta_thread_destroy(&client->worker);
+    client->worker_started = 0;
+  }
+  /* Fail closed: retaining a Client allocation is safer than releasing
+   * storage still borrowed by a CNet/Dial/Manager observer. */
+  if (client->network.impl != NULL || client->network_manager.impl != NULL ||
+      client->network_dial.impl != NULL || client->websocket_initialized)
+    return SALTS_EBUSY;
+  flowie_mqtt_client_finalize(client);
+  return SALTS_OK;
+}
+
+void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client) {
+  int status;
+  if (client == NULL) return;
+  status = flowie_mqtt_client_try_destroy(client,
+      client->timeout_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)client->timeout_ms);
+  if (status != SALTS_OK && flowie_mqtt_client_current != client) {
+    /* Explicit diagnostic; legacy void destruction never force-frees a
+     * retained native context. Use try_destroy to regain error/ownership. */
+    fprintf(stderr, "flowie_mqtt_client_destroy: incomplete Owner drain (%d); "
+                    "Client storage retained; retry try_destroy()\n", status);
+  }
+}
+
+static int flowie_mqtt_client_remote_host_valid(const char *host) {
+  size_t length;
+  if (host == NULL || host[0] == '\0') return 0;
+  length = strlen(host);
+  if (length > 255u) return 0;
+  for (size_t index = 0u; index < length; ++index) {
+    const unsigned char c = (unsigned char)host[index];
+    if (c <= 32u || c == 127u || c == '/' || c == '\\' ||
+        c == '@' || c == '?' || c == '#')
+      return 0;
+  }
+  return 1;
+}
+
+static cnet_destination_policy_kind flowie_mqtt_client_destination_map(
+    flowie_mqtt_client_destination_kind_t kind) {
+  switch (kind) {
+  case FLOWIE_MQTT_DESTINATION_EXPLICIT: return CNET_DESTINATION_EXPLICIT;
+  case FLOWIE_MQTT_DESTINATION_ROUND_ROBIN: return CNET_DESTINATION_ROUND_ROBIN;
+  case FLOWIE_MQTT_DESTINATION_WEIGHTED_ROUND_ROBIN: return CNET_DESTINATION_WEIGHTED_RR;
+  case FLOWIE_MQTT_DESTINATION_LEAST_INFLIGHT: return CNET_DESTINATION_LEAST_INFLIGHT;
+  case FLOWIE_MQTT_DESTINATION_STRICT_KEY: return CNET_DESTINATION_STRICT_KEY;
+  default: return (cnet_destination_policy_kind)0;
+  }
+}
+
+/* Destination selection is an advisory CNet decision, not a transport or
+ * MQTT protocol action. Pin the first winner for all reconnect episodes. */
+static int flowie_mqtt_client_choose_destination(flowie_mqtt_client_t *client) {
+  cnet_destination_hint hints[FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS] = {{0}};
+  cnet_destination_selection selection = {0};
+  cnet_destination_result result = {0};
+  int rc;
+  if (client == NULL) return SALTS_EINVAL;
+  if (client->destination_count == 0u) return SALTS_OK;
+  for (size_t index = 0u; index < client->destination_count; ++index) {
+    const flowie_mqtt_owned_endpoint_t *endpoint = &client->destinations[index];
+    hints[index] = (cnet_destination_hint){
+        .endpoint_id = endpoint->endpoint_id,
+        .weight = endpoint->weight,
+        .inflight = endpoint->inflight,
+        .eligible = endpoint->eligible != 0u};
+  }
+  selection.size = sizeof(selection);
+  selection.version = CNET_DESTINATION_POLICY_VERSION;
+  selection.kind = client->selected_destination_index == SIZE_MAX
+                       ? flowie_mqtt_client_destination_map(client->destination_kind)
+                       : CNET_DESTINATION_EXPLICIT;
+  selection.endpoints = hints;
+  selection.endpoint_count = client->destination_count;
+  selection.snapshot_generation = client->destination_generation;
+  selection.expires_at_ms = client->destination_expires_at_ms;
+  selection.now_ms = cmeta_monotonic_ms();
+  selection.sequence = client->destination_sequence;
+  selection.explicit_endpoint_id =
+      client->selected_destination_index == SIZE_MAX
+          ? client->destination_explicit_id
+          : client->destinations[client->selected_destination_index].endpoint_id;
+  selection.key_hash = client->destination_key_hash;
+  selection.key_known = client->destination_key_known != 0u;
+  rc = cnet_destination_choose(&selection, &result);
+  if (rc != SALTS_OK) return rc;
+  if (result.index >= client->destination_count ||
+      (client->selected_destination_index != SIZE_MAX &&
+       result.index != client->selected_destination_index))
+    return SALTS_EPROTO;
+  client->selected_destination_index = result.index;
+  return SALTS_OK;
+}
+
+int flowie_mqtt_client_set_destination_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_destination_policy_t *policy) {
+  cnet_destination_hint hints[FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS] = {{0}};
+  flowie_mqtt_owned_endpoint_t *owned;
+  int rc;
+  if (client == NULL || policy == NULL) return SALTS_EINVAL;
+  if (flowie_mqtt_client_is_websocket(client)) return SALTS_ENOTSUP;
+  if (policy->size != sizeof(*policy) ||
+      policy->version != FLOWIE_MQTT_CLIENT_DESTINATION_VERSION ||
+      policy->endpoints == NULL || policy->endpoint_count == 0u ||
+      policy->endpoint_count > FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS ||
+      policy->snapshot_generation == 0u || policy->expires_at_ms == 0u ||
+      flowie_mqtt_client_destination_map(policy->kind) == 0 ||
+      (policy->kind == FLOWIE_MQTT_DESTINATION_EXPLICIT &&
+       policy->explicit_endpoint_id == 0u) ||
+      (policy->kind == FLOWIE_MQTT_DESTINATION_STRICT_KEY && !policy->key_known))
+    return SALTS_EINVAL;
+  for (size_t index = 0u; index < policy->endpoint_count; ++index) {
+    const flowie_mqtt_client_remote_endpoint_t *endpoint = &policy->endpoints[index];
+    if (!flowie_mqtt_client_remote_host_valid(endpoint->host) || endpoint->port == 0u)
+      return SALTS_EINVAL;
+    hints[index] = (cnet_destination_hint){
+        .endpoint_id = endpoint->endpoint_id, .weight = endpoint->weight,
+        .inflight = endpoint->inflight, .eligible = endpoint->eligible != 0u};
+  }
+  rc = cnet_destination_validate(hints, policy->endpoint_count);
+  if (rc != SALTS_OK) return rc;
+  owned = (flowie_mqtt_owned_endpoint_t *)calloc(policy->endpoint_count, sizeof(*owned));
+  if (owned == NULL) return SALTS_ENOMEM;
+  for (size_t index = 0u; index < policy->endpoint_count; ++index) {
+    const flowie_mqtt_client_remote_endpoint_t *endpoint = &policy->endpoints[index];
+    owned[index] = (flowie_mqtt_owned_endpoint_t){
+        .host = tstr_dup(endpoint->host), .endpoint_id = endpoint->endpoint_id,
+        .port = endpoint->port, .weight = endpoint->weight,
+        .inflight = endpoint->inflight, .eligible = endpoint->eligible};
+    if (owned[index].host == NULL) {
+      rc = SALTS_ENOMEM;
+      goto reject;
+    }
+  }
+  cmeta_mutex_lock(&client->command_mutex);
+  if (client->stopping) {
+    rc = SALTS_ESHUTDOWN;
+  } else if (client->version_locked || client->destinations != NULL ||
+             !deque_empty(&client->commands)) {
+    rc = SALTS_EBUSY;
+  } else {
+    client->destinations = owned;
+    client->destination_count = policy->endpoint_count;
+    client->destination_kind = policy->kind;
+    client->destination_generation = policy->snapshot_generation;
+    client->destination_expires_at_ms = policy->expires_at_ms;
+    client->destination_sequence = policy->sequence;
+    client->destination_explicit_id = policy->explicit_endpoint_id;
+    client->destination_key_hash = policy->key_hash;
+    client->destination_key_known = policy->key_known;
+    rc = SALTS_OK;
+  }
+  cmeta_mutex_unlock(&client->command_mutex);
+  if (rc == SALTS_OK) return SALTS_OK;
+reject:
+  for (size_t index = 0u; index < policy->endpoint_count; ++index)
+    tstr_freep(&owned[index].host);
+  free(owned);
+  return rc;
 }
 
 static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *scheme,
@@ -1869,10 +2462,21 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   size_t path_size;
   size_t capacity;
   int written;
+  const char *dial_host;
+  int dial_port;
   if (!client || !scheme || !out) return SALTS_EINVAL;
-  bracket_host = strchr(client->host, ':') != NULL && client->host[0] != '[';
+  dial_host = client->host;
+  dial_port = client->port;
+  if (client->destination_count != 0u) {
+    if (client->selected_destination_index >= client->destination_count) return SALTS_EINVAL;
+    const flowie_mqtt_owned_endpoint_t *endpoint =
+        &client->destinations[client->selected_destination_index];
+    dial_host = endpoint->host;
+    dial_port = endpoint->port;
+  }
+  bracket_host = strchr(dial_host, ':') != NULL && dial_host[0] != '[';
   scheme_size = strlen(scheme);
-  host_size = tstr_len(client->host);
+  host_size = strlen(dial_host);
   path_size = path ? strlen(path) : 0u;
   *out = NULL;
   if (scheme_size > SIZE_MAX - host_size - path_size - 32u) return SALTS_EMSGSIZE;
@@ -1880,10 +2484,10 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   *out = (char *)malloc(capacity);
   if (!*out) return SALTS_ENOMEM;
   written = bracket_host
-                ? snprintf(*out, capacity, "%s://[%s]:%d%s", scheme, client->host,
-                           client->port, path ? path : "")
-                : snprintf(*out, capacity, "%s://%s:%d%s", scheme, client->host,
-                           client->port, path ? path : "");
+                ? snprintf(*out, capacity, "%s://[%s]:%d%s", scheme, dial_host,
+                           dial_port, path ? path : "")
+                : snprintf(*out, capacity, "%s://%s:%d%s", scheme, dial_host,
+                           dial_port, path ? path : "");
   if (written < 0 || (size_t)written >= capacity) {
     free(*out);
     *out = NULL;
@@ -1892,11 +2496,30 @@ static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *sche
   return SALTS_OK;
 }
 
+/* CNet classifies the failed physical connection; MQTT packet/session replay
+ * is not authorized by this decision. A TLS handshake failure is a security
+ * failure even when the underlying TLS provider reports generic EIO. */
+static cnet_reconnect_failure_kind flowie_mqtt_client_dial_classify(
+    void *user, cnet_connection_state state, const cnet_error *error) {
+  flowie_mqtt_client_t *client = (flowie_mqtt_client_t *)user;
+  if (client == NULL || state != CNET_CONNECTION_FAILED || error == NULL)
+    return CNET_RECONNECT_PERMANENT;
+  if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS &&
+      error->stage != NULL && strcmp(error->stage, "handshake") == 0) {
+    client->network_security_failure = 1;
+    return CNET_RECONNECT_SECURITY;
+  }
+  return flowie_mqtt_client_reconnect_status(error->status)
+             ? CNET_RECONNECT_TRANSIENT : CNET_RECONNECT_PERMANENT;
+}
+
 static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
   char *uri = NULL;
   int rc;
   if (!client) return SALTS_EINVAL;
   if (flowie_mqtt_client_is_websocket(client)) {
+    /* A retained CHttp owner must be destroyed, never initialized over. */
+    if (client->websocket.impl != NULL) return SALTS_EBUSY;
     const cnet_client_config network = flowie_mqtt_client_network_config(client);
     const chttp_websocket_client_config config = {
         .size = sizeof(config),
@@ -1927,37 +2550,89 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
     free(uri);
     return rc;
   }
-  if (!client->network_initialized) return SALTS_EINVAL;
+  if (!client->network_initialized || !client->network_manager_initialized)
+    return SALTS_EINVAL;
+  if (client->network_dial_initialized) return SALTS_EBUSY;
+  rc = flowie_mqtt_client_choose_destination(client);
+  if (rc != SALTS_OK) return rc;
+  rc = flowie_mqtt_client_uri(
+      client, client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ? "tls" : "tcp",
+      NULL, &uri);
+  if (rc != SALTS_OK) return rc;
   {
-    cnet_tls_client_config tls = {.size = sizeof(tls),
-                                  .ca_file = client->tls_ca_file,
-                                  .cert_file = client->tls_cert_file,
-                                  .key_file = client->tls_key_file,
-                                  .key_password = client->tls_key_password,
-                                  .server_name = client->host};
-    cnet_connect_options options = {0};
-    const uint64_t deadline_ms = cmeta_monotonic_ms() + client->timeout_ms;
-    rc = flowie_mqtt_client_uri(
-        client, client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ? "tls" : "tcp", NULL,
-        &uri);
-    if (rc != SALTS_OK) return rc;
+    cnet_managed_dial_config config = {0};
+    cnet_managed_dial_snapshot snapshot = {0};
+    cnet_manager_snapshot manager_snapshot = {0};
+    uint64_t now = cmeta_monotonic_ms();
+    uint64_t span = client->timeout_ms > UINT64_MAX / 3u
+                        ? UINT64_MAX : client->timeout_ms * 3u;
+    uint64_t deadline = span > UINT64_MAX - now ? UINT64_MAX : now + span;
+    uint64_t wait_ms = 0u;
+    rc = cnet_manager_get_snapshot(&client->network_manager, &manager_snapshot);
+    if (rc == SALTS_OK && !manager_snapshot.drained) rc = SALTS_EBUSY;
+    if (rc == SALTS_OK && deadline <= now) rc = SALTS_ETIMEDOUT;
+    if (rc != SALTS_OK) {
+      free(uri);
+      return rc;
+    }
     client->network_connected = 0;
     client->network_terminal = 0;
     client->network_status = SALTS_OK;
-    options.uri = uri;
-    options.tls = client->tls_configured ? &tls : NULL;
-    options.observer = (cnet_observer){.on_state = flowie_mqtt_client_network_state,
-                                       .on_receive = flowie_mqtt_client_network_receive,
-                                       .user = client,
-                                       .on_send = flowie_mqtt_client_network_send};
-    rc = cnet_connect(&client->network, &options, &client->network_connection);
+    client->network_security_failure = 0;
+    client->network_connection = (cnet_connection){0};
+    /* CNet borrows TLS profile pointers through Managed Dial destroy. All
+     * paths reference client-owned, deep-copied identity and trust strings. */
+    client->network_dial_tls = (cnet_tls_client_config){
+        .size = sizeof(client->network_dial_tls),
+        .ca_file = client->tls_ca_file,
+        .cert_file = client->tls_cert_file,
+        .key_file = client->tls_key_file,
+        .key_password = client->tls_key_password,
+        .server_name = client->host};
+    config.size = sizeof(config);
+    config.version = CNET_MANAGED_DIAL_VERSION;
+    config.manager = &client->network_manager;
+    config.client = &client->network;
+    config.connection = (cnet_connect_options){
+        .uri = uri,
+        .tls = client->tls_configured ? &client->network_dial_tls : NULL,
+        .observer = {.on_state = flowie_mqtt_client_network_state,
+                     .on_receive = flowie_mqtt_client_network_receive,
+                     .on_send = flowie_mqtt_client_network_send,
+                     .user = client}};
+    /* One CNet physical attempt per MQTT CONNECT, never implicit packet
+     * replay. Flowie's existing optional MQTT reconnect policy remains the
+     * only authority for another logical CONNECT command. */
+    config.recovery = (cnet_reconnect_config){
+        .size = sizeof(cnet_reconnect_config),
+        .version = CNET_RECOVERY_POLICY_VERSION,
+        .max_attempts = 1u,
+        .deadline_ms = deadline,
+        .initial_backoff_ms = 0u,
+        .maximum_backoff_ms = 0u,
+        .jitter_seed = 1u};
+    config.recovery_episode_ms = span;
+    config.classify = flowie_mqtt_client_dial_classify;
+    config.classify_user = client;
+    rc = cnet_managed_dial_init(&client->network_dial, &config);
+    if (rc == SALTS_OK) {
+      client->network_dial_initialized = 1;
+      rc = cnet_managed_dial_advance(&client->network_dial, now, &wait_ms);
+    }
+    if (rc == SALTS_OK) {
+      rc = cnet_managed_dial_get_snapshot(&client->network_dial, &snapshot);
+      if (rc == SALTS_OK) client->network_connection = snapshot.connection;
+    }
     free(uri);
     if (rc != SALTS_OK) return rc;
+    /* CNet CONNECTED still is not MQTT-ready. The ticket will only be
+     * accepted after AUTH/CONNACK and protocol negotiation succeed. */
     while (!client->network_connected && !client->network_terminal) {
       size_t events = 0u;
       if (flowie_mqtt_client_is_stopping(client)) return SALTS_ESHUTDOWN;
-      if (cmeta_monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
-      rc = cnet_client_poll(&client->network, flowie_mqtt_client_poll_slice(deadline_ms), &events);
+      if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+      rc = flowie_mqtt_client_poll_managed(
+          client, flowie_mqtt_client_poll_slice(deadline), &events);
       if (rc != SALTS_OK) return rc;
     }
     return client->network_connected ? SALTS_OK
@@ -2008,6 +2683,14 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
   }
   rc = flowie_mqtt_client_negotiate_connack(client, connack);
   if (rc != SALTS_OK) goto fail;
+  if (!flowie_mqtt_client_is_websocket(client) && client->network_dial_initialized) {
+    cnet_managed_dial_snapshot snapshot = {0};
+    rc = cnet_managed_dial_get_snapshot(&client->network_dial, &snapshot);
+    if (rc == SALTS_OK)
+      rc = cnet_managed_dial_protocol_ready(
+          &client->network_dial, snapshot.recovery_ticket, cmeta_monotonic_ms());
+    if (rc != SALTS_OK) goto fail;
+  }
   client->state = FLOWIE_MQTT_CLIENT_CONNECTED;
   atomic_store_explicit(&client->public_connected, 1, memory_order_release);
   rc = SALTS_OK;

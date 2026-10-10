@@ -4,6 +4,7 @@
 #include "flowie_connection.h"
 
 #include <http_client/http.h>
+#include <cnet/owner_placement.h>
 
 #include "../../flowie/tests/flowie_test_cnet.h"
 #include "tinytest.h"
@@ -271,16 +272,16 @@ typedef struct flowie_multi_probe {
   atomic_int blocked;
   atomic_int released;
   unsigned char retained[8];
-  atomic_uint generations[3];
-  atomic_uintptr_t threads[3];
+  atomic_uint generations[4];
+  atomic_uintptr_t threads[4];
   int check_affinity;
-  uint32_t expected_cpus[3];
+  uint32_t expected_cpus[4];
 } flowie_multi_probe;
 
 static int flowie_multi_open(void *user, flowie_connection connection,
                               const flowie_peer_info *peer) {
   flowie_multi_probe *probe = (flowie_multi_probe *)user;
-  if (peer == NULL || connection.slot == 0u || connection.slot > 3u) {
+  if (peer == NULL || connection.slot == 0u || connection.slot > 4u) {
     atomic_store(&probe->error, SALTS_ERANGE);
     return SALTS_ERANGE;
   }
@@ -302,7 +303,7 @@ static int flowie_multi_receive(void *user, flowie_connection connection,
   mem_buffer_t *buffer;
   mem_slice_t slices[2];
   int status;
-  if (connection.slot == 0u || connection.slot > 3u ||
+  if (connection.slot == 0u || connection.slot > 4u ||
       atomic_load(&probe->threads[connection.slot - 1u]) !=
           (uintptr_t)cmeta_thread_current_token()) {
     atomic_store(&probe->error, SALTS_EINVAL);
@@ -338,7 +339,7 @@ static int flowie_multi_receive(void *user, flowie_connection connection,
 static void flowie_multi_close(void *user, flowie_connection connection, int status) {
   flowie_multi_probe *probe = (flowie_multi_probe *)user;
   (void)status;
-  if (connection.slot == 0u || connection.slot > 3u ||
+  if (connection.slot == 0u || connection.slot > 4u ||
       atomic_load(&probe->threads[connection.slot - 1u]) !=
           (uintptr_t)cmeta_thread_current_token()) {
     atomic_store(&probe->error, SALTS_EINVAL);
@@ -434,6 +435,67 @@ spec("Flowie multiple network owners") {
       }
       check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
       check_equal(atomic_load(&probe.error), SALTS_OK);
+      check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+    }
+  }
+
+  it("keeps four fixed CNet Owners distinct and drains all live connections") {
+    for (uint32_t cycle = 0u; cycle < 4u; ++cycle) {
+      flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+      uint16_t port = 0u;
+      unsigned char received[4] = {0};
+      memset(&probe, 0, sizeof(probe));
+      config.network_workers = 4u;
+      config.stream.connection_capacity = 4u;
+      config.command_bytes_capacity = 4u * config.max_message_bytes;
+      config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                          flowie_multi_close, NULL, &probe};
+      check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+      check_equal(flowie_server_start(&probe.server), SALTS_OK);
+      check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+      for (uint32_t index = 0u; index < 4u; ++index) {
+        unsigned char payload[4] = {(unsigned char)index, (unsigned char)cycle, 0x45u, 0x6au};
+        clients[index] = flowie_test_cnet_connect(port);
+        check_not_null(clients[index]);
+        check_equal(flowie_multi_wait(&probe.opened, (int)(index + 1u)), SALTS_OK);
+        check_equal(flowie_test_cnet_send(clients[index], payload, sizeof(payload)), SALTS_OK);
+        check_equal(flowie_test_cnet_recv_exact(clients[index], received, sizeof(received)),
+                    SALTS_OK);
+        check_equal(memcmp(received, payload, sizeof(payload)), 0);
+      }
+      for (uint32_t index = 0u; index < 4u; ++index) {
+        check_not_equal(atomic_load(&probe.threads[index]), (uintptr_t)0u);
+        for (uint32_t previous = 0u; previous < index; ++previous)
+          check_not_equal(atomic_load(&probe.threads[index]),
+                          atomic_load(&probe.threads[previous]));
+      }
+      check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS),
+                  SALTS_OK);
+      check_equal(atomic_load(&probe.closed), 4);
+      check_equal(atomic_load(&probe.error), SALTS_OK);
+      check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+      for (size_t index = 0u; index < 4u; ++index) {
+        flowie_test_cnet_close(clients[index]);
+        clients[index] = NULL;
+      }
+    }
+  }
+
+  it("quiesces an idle four-Owner acceptor before native worker destruction") {
+    for (uint32_t cycle = 0u; cycle < 8u; ++cycle) {
+      flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+      memset(&probe, 0, sizeof(probe));
+      config.network_workers = 4u;
+      config.stream.connection_capacity = 4u;
+      config.command_bytes_capacity = 4u * config.max_message_bytes;
+      config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                          flowie_multi_close, NULL, &probe};
+      check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+      check_equal(flowie_server_start(&probe.server), SALTS_OK);
+      check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS),
+                  SALTS_OK);
+      check_equal(atomic_load(&probe.opened), 0);
+      check_equal(atomic_load(&probe.closed), 0);
       check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
     }
   }
@@ -543,7 +605,9 @@ spec("Flowie multiple network owners") {
     config.network_cpu_count = FLOWIE_NETWORK_WORKERS_MAX + 1u;
     check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
     config.network_cpu_count = 0u;
-    config.network_policy = (flowie_owner_policy)2;
+    config.network_policy = (flowie_owner_policy)CNET_OWNER_PLACE_ROUND_ROBIN;
+    check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
+    config.network_policy = (flowie_owner_policy)CNET_OWNER_PLACE_STRICT_KEY;
     check_equal(flowie_server_init(&probe.server, &config), SALTS_EINVAL);
     config.network_workers = 1u;
     config.transport = TF_NET_TRANSPORT_UDP;
@@ -665,6 +729,44 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_server_init(&probe.server, &config), SALTS_ERANGE);
     check_null(probe.server.impl);
   }
+}
+
+
+typedef struct flowie_ws_multi_owner_probe {
+  flowie_server *server;
+  atomic_int opened;
+  atomic_int closed;
+  atomic_int errors;
+  atomic_uintptr_t callback_threads[2];
+} flowie_ws_multi_owner_probe;
+
+static int flowie_ws_multi_open(void *user, flowie_connection connection,
+                                const flowie_peer_info *peer) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  int index;
+  (void)connection;
+  if (peer == NULL) return SALTS_EINVAL;
+  index = atomic_fetch_add(&probe->opened, 1);
+  if (index >= 2) return SALTS_ENOBUFS;
+  atomic_store(&probe->callback_threads[index],
+               (uintptr_t)cmeta_thread_current_token());
+  return SALTS_OK;
+}
+
+static int flowie_ws_multi_receive(void *user, flowie_connection connection,
+                                   const void *data, size_t size) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  const int status = flowie_server_send(probe->server, connection, data, size);
+  if (status != SALTS_OK) atomic_store(&probe->errors, status);
+  return status;
+}
+
+static void flowie_ws_multi_close(void *user, flowie_connection connection,
+                                  int status) {
+  flowie_ws_multi_owner_probe *probe = (flowie_ws_multi_owner_probe *)user;
+  (void)connection;
+  (void)status;
+  atomic_fetch_add(&probe->closed, 1);
 }
 
 spec("Flowie CNet and CHTTP transport connection") {
@@ -805,6 +907,59 @@ spec("Flowie CNet and CHTTP transport connection") {
   it("uses the same Flowie connection contract for KCP") {
     flowie_connection_test_packet_round_trip(TF_NET_TRANSPORT_KCP, CNET_PACKET_KCP,
                                        UINT32_C(0x12345678));
+  }
+
+
+  it("uses CHttp 2.1 fixed Owners and CNet placement for WS connections") {
+    flowie_server server = {0};
+    flowie_ws_multi_owner_probe probe = {0};
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_WS);
+    chttp_websocket_client clients[2] = {{0}};
+    chttp_websocket_client_config client_config =
+        flowie_connection_test_websocket_client_config();
+    chttp_websocket_connect_options options = {.size = sizeof(options),
+        .timeout_ms = FLOWIE_CONNECTION_TEST_TIMEOUT_MS, .subprotocol = "mqtt"};
+    chttp_websocket_event event = {0};
+    uint16_t port = 0u;
+    char uri[128];
+    static const unsigned char payload[] = "two-owner-websocket";
+    probe.server = &server;
+    config.network_workers = 2u;
+    config.network_policy = TF_NET_OWNER_LEAST_CONNECTIONS;
+    config.stream.connection_capacity = 2u;
+    config.websocket_subprotocol = "mqtt";
+    config.observer = (flowie_observer){flowie_ws_multi_open, flowie_ws_multi_receive,
+                                        flowie_ws_multi_close, NULL, &probe};
+    check_equal(flowie_server_init(&server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&server), SALTS_OK);
+    check_equal(flowie_server_port(&server, &port), SALTS_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/mqtt",
+                        (unsigned int)port) > 0);
+    options.uri = uri;
+    for (size_t i = 0u; i < 2u; ++i) {
+      unsigned int http_status = 0u;
+      check_equal(chttp_websocket_client_init(&clients[i], &client_config), SALTS_OK);
+      check_equal(chttp_websocket_client_connect(&clients[i], &options, &http_status), SALTS_OK);
+      check_equal(http_status, 101u);
+      check_equal(chttp_websocket_client_send_binary(
+          &clients[i], payload, sizeof(payload), FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+      check_equal(chttp_websocket_client_receive(
+          &clients[i], FLOWIE_CONNECTION_TEST_TIMEOUT_MS, &event), SALTS_OK);
+      check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+      check_equal(event.size, sizeof(payload));
+      check_equal(memcmp(event.data, payload, sizeof(payload)), 0);
+    }
+    check_equal(atomic_load(&probe.opened), 2);
+    check_not_equal(atomic_load(&probe.callback_threads[0]), (uintptr_t)0u);
+    check_not_equal(atomic_load(&probe.callback_threads[1]), (uintptr_t)0u);
+    check_not_equal(atomic_load(&probe.callback_threads[0]),
+                    atomic_load(&probe.callback_threads[1]));
+    for (size_t i = 0u; i < 2u; ++i)
+      check_equal(chttp_websocket_client_destroy(
+          &clients[i], FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_stop(&server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_destroy(&server), SALTS_OK);
+    check_equal(atomic_load(&probe.errors), SALTS_OK);
   }
 
   it("routes WS through CHTTP WebSocket with the same Flowie connection contract") {

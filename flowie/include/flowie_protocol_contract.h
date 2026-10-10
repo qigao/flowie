@@ -5,9 +5,36 @@
 #include "platform.h"
 #include "cmeta_error.h"
 
-#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* The public selector/exchange fields are C11 atomic objects in C. C++17
+ * sees the matching native atomic representation; keep size/alignment
+ * identical so Flowie's C functions can safely operate on caller storage.
+ * Copying a live selector or exchange remains forbidden in either language.
+ * Unsupported native atomics fail at compile time, never silently downgrade
+ * to non-atomic fields or a compatibility fallback. */
+#ifdef __cplusplus
+  #include <atomic>
+  typedef std::atomic<int> flowie_atomic_int_t;
+  typedef std::atomic<uint_fast64_t> flowie_atomic_u64_t;
+  static_assert(sizeof(flowie_atomic_int_t) == sizeof(int) &&
+                alignof(flowie_atomic_int_t) == alignof(int),
+                "Flowie C++ atomic int must match native C11 atomic ABI");
+  static_assert(sizeof(flowie_atomic_u64_t) == sizeof(uint_fast64_t) &&
+                alignof(flowie_atomic_u64_t) == alignof(uint_fast64_t),
+                "Flowie C++ atomic u64 must match native C11 atomic ABI");
+#else
+  #include <stdatomic.h>
+  typedef atomic_int flowie_atomic_int_t;
+  typedef atomic_uint_fast64_t flowie_atomic_u64_t;
+  _Static_assert(sizeof(flowie_atomic_int_t) == sizeof(int) &&
+                 _Alignof(flowie_atomic_int_t) == _Alignof(int),
+                 "Flowie C11 atomic int layout must match public ABI");
+  _Static_assert(sizeof(flowie_atomic_u64_t) == sizeof(uint_fast64_t) &&
+                 _Alignof(flowie_atomic_u64_t) == _Alignof(uint_fast64_t),
+                 "Flowie C11 atomic u64 layout must match public ABI");
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,7 +77,7 @@ typedef enum flowie_pattern_selection_e {
 typedef struct flowie_pattern_selector_s {
   size_t size;
   uint32_t contract_version;
-  atomic_uint_fast64_t cursor;
+  flowie_atomic_u64_t cursor;
 } flowie_pattern_selector_t;
 
 typedef struct flowie_pattern_selection_iterator_s {
@@ -94,8 +121,8 @@ typedef enum flowie_pattern_exchange_state_e {
 typedef struct flowie_pattern_exchange_s {
   size_t size;
   uint32_t contract_version;
-  atomic_int state;
-  atomic_uint_fast64_t correlation_id;
+  flowie_atomic_int_t state;
+  flowie_atomic_u64_t correlation_id;
 } flowie_pattern_exchange_t;
 
 typedef enum flowie_mqtt_protocol_version_e {

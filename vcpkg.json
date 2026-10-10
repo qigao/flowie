@@ -6,6 +6,9 @@
       "name": "c-ares"
     },
     {
+      "name": "gmssl"
+    },
+    {
       "name": "llhttp"
     },
     {

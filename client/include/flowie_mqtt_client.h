@@ -35,6 +35,8 @@
 #define FLOWIE_MQTT_CLIENT_DEFAULT_RECONNECT_MAX_DELAY_MS 30000u
 #define FLOWIE_MQTT_CLIENT_MIN_STREAM_RECV_BUFFER_SIZE 1024u
 #define FLOWIE_MQTT_CLIENT_MAX_STREAM_RECV_BUFFER_SIZE (1024u * 1024u)
+#define FLOWIE_MQTT_CLIENT_MAX_DESTINATIONS 16u
+#define FLOWIE_MQTT_CLIENT_DESTINATION_VERSION 1u
 
 typedef struct flowie_mqtt_client_s flowie_mqtt_client_t;
 
@@ -50,6 +52,41 @@ typedef enum flowie_mqtt_client_transport_e {
  * cert_file and key_file must be configured together. key_password is wiped when
  * the client is destroyed. Peer verification cannot be disabled through this API.
  */
+
+/* Caller-authorized TCP/TLS endpoint-set; accepted rows are deep-copied.
+ * host is the physical target; the client's original config.host stays
+ * the logical TLS identity/SNI. Entries must have ascending stable IDs. */
+typedef struct flowie_mqtt_client_remote_endpoint_s {
+  uint64_t endpoint_id;
+  const char *host;
+  uint16_t port;
+  uint32_t weight;
+  uint64_t inflight;
+  uint8_t eligible;
+} flowie_mqtt_client_remote_endpoint_t;
+
+typedef enum flowie_mqtt_client_destination_kind_e {
+  FLOWIE_MQTT_DESTINATION_EXPLICIT = 1,
+  FLOWIE_MQTT_DESTINATION_ROUND_ROBIN,
+  FLOWIE_MQTT_DESTINATION_WEIGHTED_ROUND_ROBIN,
+  FLOWIE_MQTT_DESTINATION_LEAST_INFLIGHT,
+  FLOWIE_MQTT_DESTINATION_STRICT_KEY
+} flowie_mqtt_client_destination_kind_t;
+
+typedef struct flowie_mqtt_client_destination_policy_s {
+  size_t size;
+  uint32_t version;
+  flowie_mqtt_client_destination_kind_t kind;
+  const flowie_mqtt_client_remote_endpoint_t *endpoints;
+  size_t endpoint_count;
+  uint64_t snapshot_generation;
+  uint64_t expires_at_ms; /* Absolute monotonic ms, UINT64_MAX = non-expiring. */
+  uint64_t sequence;
+  uint64_t explicit_endpoint_id;
+  uint64_t key_hash;
+  uint8_t key_known;
+} flowie_mqtt_client_destination_policy_t;
+
 typedef struct flowie_mqtt_client_tls_config_s {
   const char *ca_file;
   const char *cert_file;
@@ -283,6 +320,23 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_create_ex(
  * SALTS_ESHUTDOWN, and joins its worker.
  */
 FLOWIE_MQTT_CLIENT_C_API void flowie_mqtt_client_destroy(flowie_mqtt_client_t *client);
+
+/** Additive explicit bounded destruction. SALTS_OK releases the Client;
+ * EBUSY/ETIMEDOUT/error keep the Client and Owner thread alive so the same
+ * caller may retry after remaining native obligations drain. Passing zero is
+ * a nonblocking attempt. Only use outside Client callbacks; concurrent
+ * destroy attempts are rejected. The void API cannot report failures and
+ * retains Client storage on incomplete drain rather than forcing UAF. */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_try_destroy(
+    flowie_mqtt_client_t *client, uint32_t timeout_ms);
+
+/** Additive pre-CONNECT TCP/TLS destination policy. CNet chooses at first dial
+ * and subsequent reconnects revalidate the same pinned remote endpoint.
+ * WS/WSS explicitly returns ENOTSUP until CHttp authority selection is ready.
+ * No physical pool, hidden failover, connection migration or PUBLISH replay. */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_destination_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_destination_policy_t *policy);
 
 /**
  * Select the MQTT protocol version before the first versioned command is accepted.

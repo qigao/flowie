@@ -24,8 +24,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "cmake")
 
 if(MSVC)
-  # The equivalent '-' spelling lets sccache pass through this newer MSVC flag;
-  # an unrecognized '/' flag is otherwise parsed as another input file.
+  # MSVC accepts this spelling; it is preserved by the ccache launcher.
   add_compile_options(-experimental:c11atomics)
 endif()
 
@@ -90,7 +89,7 @@ file(TO_CMAKE_PATH "$ENV{TURBODB_ROOT}" FLOWIE_TURBODB_ROOT_PATH)
 if(NOT IS_DIRECTORY "${FLOWIE_TURBODB_ROOT_PATH}")
   message(FATAL_ERROR "TURBODB_ROOT is not a directory: $ENV{TURBODB_ROOT}")
 endif()
-find_package(TurboDB 2.3.1 CONFIG REQUIRED
+find_package(TurboDB CONFIG REQUIRED
              PATHS "${FLOWIE_TURBODB_ROOT_PATH}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(MSVC)
   # These SDK usage requirements carry the same atomics flag. Keep the requirement

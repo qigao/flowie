@@ -1,0 +1,224 @@
+# ACE + CNet 2.3: Flowie Server and Client ownership
+
+**Status:** phased integration; this is not a claim of a released Salts 2.3 SDK,
+a migrated MQTT Client or an implemented Component Configurator. Follow
+[Flowie #42](https://github.com/qigao/flowie/issues/42),
+[Server #56](https://github.com/qigao/flowie/issues/56),
+[Client #61](https://github.com/qigao/flowie/issues/61),
+[Configurator #62](https://github.com/qigao/flowie/issues/62),
+[Benchmark #49](https://github.com/qigao/flowie/issues/49), and
+[Salts #1081](https://github.com/qigao/salts/issues/1081).
+
+| Responsibility | Owner | ACE / CNet primitive |
+| --- | --- | --- |
+| TCP/TLS listener, admission and fixed execution Owner | Salts::CNet | Acceptor–Connector, Owner Placement, bounded Handoff/Manager |
+| OS readiness/completion and native SG progress | NativeIO/CNet | Reactor/Proactor, single backend observer |
+| Remote outbound broker/peer selection | Salts::CNet | Destination Policy at dial/acquire, not per message |
+| Physical client connection and reconnect | Salts::CNet | owner-local Manager/Managed Dial/Recovery |
+| MQTT CONNECT/AUTH/CONNACK, QoS and session | Flowie | protocol FSM/ACK truth, generation fencing |
+| MQTT fanout and retained/session index | Flowie endpoint | owner-local delivery, bounded cross-Owner descriptors |
+| WS/WSS transport | CHttp 2.1 | owns fixed Owners, CNet placement, Manager and Handoff |
+| Cluster peer and consensus | FlowMQ/TurboRaft | independent transport peer and committed facts |
+| Static service composition | Salts::Component + CMeta | Component Configurator, typed Strategy/Factory/Adapter |
+| Dynamic provider lifetime | Salts::Plugin | outer ComponentPlugin generation Scope |
+
+Do not create a Flowie Reactor, CNet-Actor bridge, global connection pool,
+second CNet Manager DSO, plugin registry or per-packet Component lookup.
+ACE Leader/Followers is **not** the SG fixed-owner model.
+
+## Server transport slice (in this branch)
+
+```text
+listener -> canonical CNet RR/LOWEST_PRESSURE chooser
+         -> advisory owner hints (eligible / handoff occupancy)
+         -> authoritative cnet_handoff_reserve
+         -> detached accept -> publish once -> wake final Owner
+         -> take -> owner-local cnet_manager_reserve/adopt
+         -> callback on fixed Owner -> real terminal / recycle
+```
+
+The existing Flowie `TF_NET_OWNER_ROUND_ROBIN` and
+`TF_NET_OWNER_LEAST_CONNECTIONS` API remains a deliberately restricted,
+source-stable facade. Both now delegate selection to the canonical CNet 2.3
+policy implementation. Unknown values are rejected, not silently mapped.
+`STRICT_KEY` is not exposed during TCP admission because MQTT ClientID is
+unknown before CONNECT and established transports cannot migrate. Connection
+and Manager/handoff credits are separate bounded resources.
+
+WS/WSS now delegates configured `network_workers` and RR/least-pressure
+connection placement to the published CHttp 2.1 API. Flowie holds one
+WebSocket wrapper while CHttp owns its fixed Owner lanes, acceptor, CNet
+Manager and bounded Handoff. Flowie's WebSocket peer table remains
+generation-fenced and mutex-guarded across concurrent callbacks. WS/WSS
+cannot use Flowie's explicit CPU binding: unsupported configuration fails fast.
+
+CNet 2.3 exports Manager/Handoff within **Salts::CNet**; delete historical
+linkage to the removed `Salts::CNetManager` target. In the TCP/TLS path, CNet client construction and destruction now run on
+the final Owner thread, alongside Manager and polling. The accept producer
+must publish its terminal `accept_done` and finish all Handoff/wake tails
+before Owner drain. Short-lived cross-thread wake leases prevent destruction
+while an admitted send/stop is still issuing a backend wake. On startup
+failure with no accept thread, the host marks producer completion explicitly;
+an unsuccessful native destroy leaves the server non-destroyable rather than
+freeing live CNet storage. Single- and multi-owner shutdown tests must verify
+these fences against the exact installed SDK.
+
+The existing staging connection tests cover RR/least occupied placement,
+owner affinity, stale handle/generation, bounded credits, TLS/retained sends
+and shutdown. Re-run the final code against the **exact** unified SDK before
+merging into master.
+
+## Client Destination policy slice (implemented); Manager/Recovery/SG remain #61
+
+```text
+typed host-configured Client / ACE Component provider
+ -> fixed local network Owner
+ -> immutable allowed endpoint-set + CNet destination selection
+ -> owner-local Manager, optional Managed Dial/Recovery
+ -> transport CONNECTED
+ -> Flowie MQTT CONNECT/AUTH/CONNACK and session validation
+ -> cnet_managed_dial_protocol_ready(active generation ticket)
+ -> subscription / QoS0/1/2 / settlement on same Owner
+```
+
+Local Owner affinity, remote broker endpoint selection and pool compatibility
+are **three separate decisions**. STRICT_KEY selects by stable remote endpoint
+identity, fails closed on an unavailable pinned winner and cannot override
+TLS/authority policy. A single authenticated MQTT client owns one long-lived
+session-bound connection; it does not acquire/release a generic physical pool
+slot on every PUBLISH. A multi-client process may use an optional bounded
+Owner-local connection set keyed by Owner, authority, trust/SNI/client identity,
+protocol, broker and MQTT session/ClientID. No cross-Owner or cross-identity
+physical reuse.
+
+CNet reconnect only restores physical connectivity; MQTT CONNACK is the
+protocol-ready boundary. PacketID, Receive Maximum, SUBSCRIBE restoration,
+QoS1/2 settlement and PUBREL/PUBCOMP remain Flowie-owned. No automatic
+retry/replay for an outcome-unknown PUBLISH or TLS security downgrade.
+This branch implements additive `flowie_mqtt_client_set_destination_policy()`
+for TCP/TLS. The host supplies an ID-sorted, authorized endpoint snapshot;
+Flowie deep-copies the dial hosts, CNet `cnet_destination_choose()` chooses
+the first physical dial target, and all reconnects revalidate the exact
+selected endpoint as EXPLICIT. `config.host` remains the original logical
+TLS authority/SNI. Unknown/expired/strict-key-incomplete policies fail closed,
+and WS/WSS policy selection returns ENOTSUP until an appropriate CHttp
+authority contract is available. This does not implement general failover,
+a physical connection pool or generic PUBLISH retry.
+
+The Client now constructs and tears down its TCP/TLS CNet client **on
+the final worker Owner** (including a startup-ready barrier so create_ex()
+still fails synchronously on native backend admission errors). This fixes
+io_uring SINGLE_ISSUER construction/owner affinity, without moving live
+endpoints between threads. Caller threads only submit bounded commands and
+wake the worker. The Client still performs synchronous CNet polling **inside**
+its dedicated worker. Before Manager/Managed Dial or mixed Server+Client SG
+cohosting, it must adopt nonblocking incremental MQTT progression and retain
+one authoritative backend observer. This branch does **not** implement those
+remaining operations.
+
+## ACE Component Configurator / YAML contract (not yet implemented)
+
+Flowie host YAML contains deployment facts, not an embedded `.flow` DAG.
+A single validated typed representation feeds explicit
+`cmeta_component_desc` manifests, `salts_component_deployment` and
+`salts_component_selection`. The composition root calls
+`salts_component_context_init/resolve/start/stop`, binds typed Interfaces
+once, and drains in reverse dependency order. CNet builtin enum policies are
+typed fields of network service configuration, **not** separately instantiated
+Components. Static-only composition needs no Plugin DSO; dynamic providers
+require an outer lease through every borrowed callable and completion.
+
+YAML config is pre-start-only initially. No automatic hot reload, implicit
+compatibility fallback or runtime Reflection lookup on the MQTT hot path.
+The embeddable Flowie::Client and graph-neutral protocol module do not parse
+YAML or create an implicit Configurator.
+
+## Mandatory downstream gate
+
+- An **immutable verified installed Salts 2.3 candidate**, rebuilt coherent
+  producer SDKs, C11/C++17 and real Linux/Windows/macOS conformance (as supported).
+- Server and Client-only, combined gateway fixed-Owner 1/2/4; real TCP/TLS,
+  CHttp WS/WSS and FlowMQ cluster without double Observe/second Manager.
+- CLIENT: TLS identity failure, stale reconnect tickets, MQTT CONNACK refusal,
+  cancellation/late completion and QoS0/1/2 no-replay, bounded pressure.
+- Component: real YAML preflight/DAG, failure-atomic activate/rollback, static
+  providers, and dynamic Plugin Scope lifetime where used.
+- Exact-HEAD CI, installed SDK consumers, real benchmark CPU/op, p99,
+  copied/retained bytes, cross-owner hops and queue occupancy.
+
+Client TCP/TLS physical admission now uses exactly **one CNet Manager** on
+its private fixed worker Owner. Each dial reserves a bounded Manager record,
+calls `cnet_manager_connect`, and recycles only after a real CNet native
+terminal through `cnet_manager_advance`. The physical close/worker teardown
+seals and drains Manager before destroying its borrowed CNet client.
+No generic physical Pool is used for a one-socket MQTT session.
+
+TCP/TLS now builds a **bounded one-attempt CNet Managed Dial** for each
+logical MQTT CONNECT. The borrowed TLS config is stable client-owned storage;
+the dial uses the same single Owner CNet client and Manager, no extra backend
+or timer. `cnet_managed_dial_advance` consumes one physical attempt, but
+transport CONNECTED is deliberately not MQTT READY. Only after successful
+MQTT CONNACK and full protocol negotiation does Flowie read the current
+generation-safe recovery ticket and call `cnet_managed_dial_protocol_ready`.
+Rejected/failed protocol handshakes do not mark ready; close seals the dial
+and waits for real Manager recycle before destruction. The policy admits
+one physical attempt per logical CONNECT and **never** retries MQTT PUBLISH
+or masks the last operation's outcome.
+
+The original Flowie `create_ex` MQTT-level reconnect/backoff remains
+authoritative for *another* CONNECT command, including its existing
+`max_attempts=0` (unlimited) contract. Managed Dial does not add a second
+automatic reconnect loop, cross-Broker failover, generic physical Pool,
+or covert QoS replay. A later separately reviewed migration may expose
+bounded CNet recovery episodes and remove the old retry scheduler.
+The initial Managed Dial now installs an explicit physical failure classifier.
+Known transient transport errors remain transient, while TLS failures at CNet
+handshake stage are classified SECURITY and also stop the legacy Flowie
+automatic reconnect scheduler. This is fail-closed; it never downgrades TLS,
+switches authority or retries outcome-unknown MQTT PUBLISH. A further
+credential/security failure-matrix test and general multi-attempt CNet Recovery
+migration remain open.
+
+Dedicated loopback tests also repeat CONNACK timeout and unexpected pre-CONNACK
+packet failures across three independent logical MQTT CONNECTs, asserting
+Manager/Dial recycling rather than turning physical CONNECTED into READY.
+Nonblocking SG cohosting and the ACE Component Configurator remain open. Stable release and master merge are separate gates.
+
+## Exceptional Client teardown (Flowie #67)
+
+The public `flowie_mqtt_client_try_destroy(client, timeout_ms)` gives the
+caller an explicit bounded result. An incomplete CNet/Manager/ManagedDial
+terminal retains the Client allocation, its exact original Worker Owner and
+all observer/user borrow storage. The Worker seals admission, drives at most
+the requested budget, and reports failure while retaining itself for a
+later retry on the same Owner. No foreign thread calls native stop/destroy.
+A successful result joins that Worker and releases user storage. The
+legacy void destroy can only fail closed and emit an error diagnostic on
+incomplete drain; the explicit API is required for ownership-aware callers.
+A callback may request stop but never join/destroy its own Worker.
+
+The normal release sequence is Managed Dial seal, Manager close/request,
+CNet terminal + Manager recycle, CNet stop, Managed Dial destroy,
+Manager destroy, CNet destroy, and finally the Flowie Client object.
+The actual native destroy result, **not** a stop callback error alone,
+determines whether it is safe to free. Bounded close-admission FULL
+faults and WSS TLS transport failure cases remain independent acceptance
+gates in #67; no future retry authorizes MQTT PUBLISH replay.
+
+### CHttp WebSocket exceptional close
+
+The same bounded `try_destroy` admission applies to WS/WSS. A failed
+`chttp_websocket_client_destroy` preserves the live `websocket.impl`
+wrapper and fails subsequent WebSocket initialization closed; the original
+Worker Owner retries CHttp teardown before Flowie Client free. CHttp retains
+its own CNet/native terminal and pending output on failed destroy; Flowie
+does not substitute a second backend. A three-episode MQTT-over-WS test
+exercises repeated normal CHttp close/reinitialization. WSS fault-injected
+FULL/timeout remains an acceptance gate in #67.
+
+Salts 2.3 explicitly documents that `cnet_client_stop` may return an
+earlier native callback/progress error **after** all callbacks have quiesced,
+and requires the caller still to try `cnet_client_destroy`. Accordingly,
+Owner drain treats only `ETIMEDOUT`/`EBUSY`/`ENOTSUP` as unfinished stop
+conditions; otherwise, the actual native destroy result—not an error-code
+whitelist—determines if Client user/observer storage is safe to release.
