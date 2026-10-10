@@ -611,6 +611,12 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                  FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK);
   }
 
+  it("recycles the same CHttp Owner over three sequential MQTT WS sessions") {
+    flowie_client_transport_case_ex(FLOWIE_MQTT_CLIENT_TRANSPORT_WS, TF_NET_TRANSPORT_WS,
+                                    FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS, SALTS_OK, 0, 3);
+  }
+
   it("runs MQTT over a CHTTP WebSocket with the mqtt subprotocol") {
     flowie_client_transport_case(FLOWIE_MQTT_CLIENT_TRANSPORT_WS, TF_NET_TRANSPORT_WS,
                                  FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID,

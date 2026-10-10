@@ -204,3 +204,14 @@ The actual native destroy result, **not** a stop callback error alone,
 determines whether it is safe to free. Bounded close-admission FULL
 faults and WSS TLS transport failure cases remain independent acceptance
 gates in #67; no future retry authorizes MQTT PUBLISH replay.
+
+### CHttp WebSocket exceptional close
+
+The same bounded `try_destroy` admission applies to WS/WSS. A failed
+`chttp_websocket_client_destroy` preserves the live `websocket.impl`
+wrapper and fails subsequent WebSocket initialization closed; the original
+Worker Owner retries CHttp teardown before Flowie Client free. CHttp retains
+its own CNet/native terminal and pending output on failed destroy; Flowie
+does not substitute a second backend. A three-episode MQTT-over-WS test
+exercises repeated normal CHttp close/reinitialization. WSS fault-injected
+FULL/timeout remains an acceptance gate in #67.

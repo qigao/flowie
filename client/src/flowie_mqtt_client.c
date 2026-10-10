@@ -533,7 +533,8 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
         &client->websocket, 1000u, NULL, 0u, (uint32_t)client->timeout_ms);
     (void)close_status;
     (void)chttp_websocket_client_destroy(&client->websocket, (uint32_t)client->timeout_ms);
-    client->websocket_initialized = 0;
+    /* Do not discard a live CHttp owner with pending native callbacks. */
+    if (client->websocket.impl == NULL) client->websocket_initialized = 0;
   }
   if (client->network_initialized &&
       (client->network_connection.slot != 0u || client->network_dial_initialized)) {
@@ -1642,6 +1643,12 @@ static int flowie_mqtt_client_worker_network_destroy(flowie_mqtt_client_t *clien
   const uint64_t deadline = budget_ms > UINT64_MAX - start
                                 ? UINT64_MAX : start + budget_ms;
   int status;
+  if (client->websocket.impl != NULL) {
+    const int ws_status = chttp_websocket_client_destroy(&client->websocket, budget_ms);
+    if (client->websocket.impl != NULL)
+      return ws_status == SALTS_OK ? SALTS_EBUSY : ws_status;
+    client->websocket_initialized = 0;
+  }
   if (client->network.impl == NULL)
     return client->network_manager.impl == NULL && client->network_dial.impl == NULL
                ? SALTS_OK : SALTS_EBUSY;
@@ -2340,6 +2347,8 @@ static int flowie_mqtt_client_transport_connect(flowie_mqtt_client_t *client) {
   int rc;
   if (!client) return SALTS_EINVAL;
   if (flowie_mqtt_client_is_websocket(client)) {
+    /* A retained CHttp owner must be destroyed, never initialized over. */
+    if (client->websocket.impl != NULL) return SALTS_EBUSY;
     const cnet_client_config network = flowie_mqtt_client_network_config(client);
     const chttp_websocket_client_config config = {
         .size = sizeof(config),
