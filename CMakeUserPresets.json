@@ -43,6 +43,7 @@
       "binaryDir": "${sourceDir}/build/windows-sdk",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_HOST_TRIPLET": "x64-windows",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/sdk/windows-x64"
       },
       "environment": {
