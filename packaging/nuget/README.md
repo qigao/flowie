@@ -25,3 +25,7 @@ The release pipeline resolves published producer packages (including the Salts 2
 Flowie 1.1 uses GmSSL. Rebuild native consumers with a coherent SDK family; do not combine these binaries with the retired OpenSSL dependency family. TidesSQL remains disabled.
 
 The package is built from released producer SDKs and shared vcpkg binary cache artifacts; producer source builds are not used in the release pipeline.
+
+The shared installed-package test lives in `packaging/tests`. Linux and Windows
+run it through CTest; Android compiles and links it. It calls all three exported
+libraries to verify link/load closure rather than only checking header layouts.
