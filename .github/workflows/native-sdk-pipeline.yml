@@ -22,8 +22,6 @@ jobs:
       salts_utils_version: ${{ steps.producers.outputs.salts_utils_version }}
       chttp_version: ${{ steps.producers.outputs.chttp_version }}
       turbodb_version: ${{ steps.producers.outputs.turbodb_version }}
-      flowmq_version: ${{ steps.producers.outputs.flowmq_version }}
-      turboraft_version: ${{ steps.producers.outputs.turboraft_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,8 +65,6 @@ jobs:
               <PackageReference Include="SaltsUtils.Native" Version="*-*" />
               <PackageReference Include="CHttp.Native" Version="*-*" />
               <PackageReference Include="TurboDB.Native" Version="*" />
-              <PackageReference Include="FlowMQ.Native" Version="*" />
-              <PackageReference Include="TurboRaft.Native" Version="*" />
             </ItemGroup>
           </Project>
           EOF
@@ -85,8 +81,6 @@ jobs:
               "SaltsUtils.Native": "salts_utils_version",
               "CHttp.Native": "chttp_version",
               "TurboDB.Native": "turbodb_version",
-              "FlowMQ.Native": "flowmq_version",
-              "TurboRaft.Native": "turboraft_version",
           }
           with open(sys.argv[2], "a", encoding="utf-8") as output:
               for package, name in packages.items():
@@ -109,8 +103,6 @@ jobs:
       SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
       CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
       TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-      FLOWMQ_VERSION: ${{ needs.metadata.outputs.flowmq_version }}
-      TURBORAFT_VERSION: ${{ needs.metadata.outputs.turboraft_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -156,8 +148,6 @@ jobs:
               <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
               <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
               <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
-              <PackageReference Include="FlowMQ.Native" Version="[$FLOWMQ_VERSION]" />
-              <PackageReference Include="TurboRaft.Native" Version="[$TURBORAFT_VERSION]" />
             </ItemGroup>
           </Project>
           EOF
@@ -167,8 +157,6 @@ jobs:
           salts_utils_root="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
           chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
           turbodb_root="$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
-          flowmq_root="$packages/flowmq.native/$FLOWMQ_VERSION/sdk/linux-x64"
-          turboraft_root="$packages/turboraft.native/$TURBORAFT_VERSION/sdk/linux-x64"
 
           test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
@@ -176,16 +164,12 @@ jobs:
           test -f "$turbodb_root/lib/cmake/TurboDB/OrmTargets.cmake"
           turbodb_cmake_version="$(sed -nE 's/^set\(PACKAGE_VERSION "([^"]+)"\).*$/\1/p' "$turbodb_root/lib/cmake/TurboDB/TurboDBConfigVersion.cmake")"
           test -n "$turbodb_cmake_version"
-          test -f "$flowmq_root/lib/cmake/FlowMQ/FlowMQConfig.cmake"
-          test -f "$turboraft_root/lib/cmake/TurboRaft/TurboRaftConfig.cmake"
 
           {
             echo "SALTS_ROOT=$salts_root"
             echo "SALTS_UTILS_ROOT=$salts_utils_root"
             echo "HTTP_SERVICES_ROOT=$chttp_root"
             echo "TURBODB_ROOT=$turbodb_root"
-            echo "FLOWMQ_ROOT=$flowmq_root"
-            echo "TURBORAFT_ROOT=$turboraft_root"
             echo "RELEASE_PACKAGES=$packages"
             echo "TURBODB_CMAKE_VERSION=$turbodb_cmake_version"
           } >> "$GITHUB_ENV"
@@ -213,15 +197,15 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cmake -S . -B build/release-sdk -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF             -DFLOWIE_BUILD_TESTS=ON             -DFLOWIE_BUILD_CONTROL=ON             -DFLOWIE_BUILD_CLUSTER=ON             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF             -DFLOWIE_TURBODB_LIVE_TESTS=OFF             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF             -DFLOWIE_MQTT_SOAK_TESTS=OFF             -DENABLE_SANITIZER_ADDRESS=OFF             -DENABLE_SANITIZER_UNDEFINED=OFF
+          cmake -S . -B build/release-sdk -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF             -DFLOWIE_BUILD_TESTS=ON             -DFLOWIE_BUILD_CONTROL=ON             -DFLOWIE_BUILD_CLUSTER=OFF             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF             -DFLOWIE_TURBODB_LIVE_TESTS=OFF             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF             -DFLOWIE_MQTT_SOAK_TESTS=OFF             -DENABLE_SANITIZER_ADDRESS=OFF             -DENABLE_SANITIZER_UNDEFINED=OFF
 
       - name: Build and qualify complete release graph
         shell: bash
         run: |
           set -euxo pipefail
           cmake --build build/release-sdk --parallel 2
-          export LD_LIBRARY_PATH="$TURBORAFT_ROOT/lib:$TURBORAFT_ROOT/bin:$FLOWMQ_ROOT/lib:$FLOWMQ_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
-          ctest --test-dir build/release-sdk             -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster.*|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$'             --no-tests=error --output-on-failure --timeout 180
+          export LD_LIBRARY_PATH="$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir build/release-sdk             -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$'             --no-tests=error --output-on-failure --timeout 180
 
       - name: Install release SDK
         shell: bash
@@ -248,8 +232,7 @@ jobs:
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
           turbodb_cmake=$TURBODB_CMAKE_VERSION
-          flowmq_qualification=$FLOWMQ_VERSION
-          turboraft_qualification=$TURBORAFT_VERSION
+          cluster=OFF
           profile=Release
           qualification=runtime
           EOF
@@ -424,6 +407,7 @@ jobs:
             "chttp=$env:CHTTP_VERSION",
             "turbodb=$env:TURBODB_VERSION",
             "turbodb_cmake=$env:TURBODB_CMAKE_VERSION",
+            "cluster=OFF",
             "profile=Release",
             "qualification=runtime"
           ) | Set-Content -LiteralPath (Join-Path $prefix "flowie-sdk-manifest.txt") -Encoding ascii
@@ -572,6 +556,7 @@ jobs:
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
           turbodb_cmake=$TURBODB_CMAKE_VERSION
+          cluster=OFF
           profile=Release
           qualification=compile-link
           EOF

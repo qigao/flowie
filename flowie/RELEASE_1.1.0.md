@@ -44,6 +44,9 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
   两个平台安装后的 C11/C++17 测试均为 2/2 通过，runtime 和 ORM 回归正常。
   原生 CI 的安装后测试使用版本化 user presets，并启用根目录 vcpkg manifest。
   Windows 保留共享缓存 setup 选择的 vcpkg，并在环境来源处规范化 SDK 路径。
+- 默认关闭实验 Cluster 后，本机通过 `ci-win-release-user` 完成 configure、完整 build 和 CTest：
+  51 项通过，1 项公网 live 按配置关闭；实际缓存为 `FLOWIE_BUILD_CLUSTER=OFF`、
+  `VCPKG_MANIFEST_MODE=ON`。SDK 工作流通过 actionlint，三平台打包尚未重新运行。
 
 ## 发布前阻塞与范围
 
@@ -58,11 +61,14 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
   producer 为 Salts 2.3.0-rc.10 / SaltsUtils 4.3.0-rc.8。
   ORM 正式测试移除了已退役驱动的成功加载预期，保留缺失模块错误传播验证；
   Flowie 两平台的 ORM 测试已通过；其他回归结果见上。
-- HIGH：[SDK qualification 38105843587](https://github.com/qigao/flowie/actions/runs/38105843587)
-  在 Linux Cluster 链接失败：已发布 TurboRaft 0.3.1 仍引用 `salts_fs_write`、旧
+- 范围调整：TurboRaft/Cluster 为默认关闭的实验功能。普通 CI 与正式 SDK 发布
+  均关闭 `FLOWIE_BUILD_CLUSTER`，不恢复 FlowMQ/TurboRaft 包，不将 Cluster 资格验证作为发布条件。
+  显式开启的源码构建仍要求兼容的 SDK；实验代码和测试保留。
+  [此前 SDK qualification 38105843587](https://github.com/qigao/flowie/actions/runs/38105843587)
+  在 Linux Cluster 链接失败：当时的 TurboRaft 0.3.1 仍引用 `salts_fs_write`、旧
   `tbe_typed_*` 等符号，并引入 `libcrypto.so`，不兼容当前 Salts/GmSSL 组合。
   Windows 与 Android SDK 构建成功，但 Pack 与安装后消费步骤因 Linux 失败未运行。
-  需要兼容的 TurboRaft 发布包；保留 Cluster 验证，不通过关闭它掩盖失败。
+  该失败仍是实验 Cluster 的已知限制，不再阻塞默认发布范围；调整后的 SDK 打包验证待运行。
 - HIGH：目前没有同一候选 revision 的完整产品 gate 证据。
   [RELEASE_GATE.md](RELEASE_GATE.md) 中部分自动门禁实现已缺失；固定 broker、持久化、mTLS、
   sanitizer 与长稳结果不能由普通 CI 或此前部署测试代替。

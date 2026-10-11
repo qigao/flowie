@@ -25,6 +25,7 @@
         "CMAKE_INSTALL_PREFIX": "$env{PKG_ROOT}/flowie/release",
         "FLOWIE_BUILD_TESTS": "ON",
         "FLOWIE_BUILD_CONTROL": "ON",
+        "FLOWIE_BUILD_CLUSTER": "OFF",
         "FLOWIE_BUILD_SERVER": "ON"
       }
     },

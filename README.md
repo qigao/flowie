@@ -10,7 +10,7 @@ Flowie owns MQTT protocol behavior, broker core state, sessions, subscriptions, 
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-Flowie uses the installed Salts 2.3, SaltsUtils 4.3, Chttp, and TurboDB/Orm packages. TurboDB 2.3.1 or newer is required by both the build and the exported Flowie package. Optional cluster builds also use the installed FlowMQ and TurboRaft packages. Configure each profile root to the latest published SDK; configuration and compilation fail if a required API is unavailable.
+Flowie uses the installed Salts 2.3, SaltsUtils 4.3, Chttp, and TurboDB/Orm packages. TurboDB 2.3.4 or newer is required by both the build and the exported Flowie package. Experimental cluster builds also use the installed FlowMQ and TurboRaft packages and are disabled by default. Configure each profile root to the latest published SDK; configuration and compilation fail if a required API is unavailable.
 
 Flowie uses the canonical Salts headers and symbols (`cmeta_*.h`, `cmeta_*`,
 `coro.h`, and `coro_executor.h`). Rebuild Flowie and its dependent SDKs together
@@ -34,7 +34,7 @@ Flowie's public ORM header also references CFlow type descriptors, so
 - **SaltsUtils** provides JSON/YAML/command-line/LTV and related parser components used by broker/server features.
 - **CHTTP** provides HTTP and WebSocket client/server infrastructure.
 - **TurboDB ORM** provides database integration through the configured installed profile.
-- optional cluster mode integrates with FlowMQ and TurboRaft through their public packages.
+- experimental cluster mode integrates with FlowMQ and TurboRaft through their public packages; it requires explicit opt-in.
 
 Flowie does not push MQTT-specific state back into Salts. Dependency direction remains one-way.
 
@@ -126,7 +126,7 @@ Common options include:
 
 - `FLOWIE_BUILD_SERVER` — build the standalone MQTT server.
 - `FLOWIE_BUILD_TESTS` — build tests.
-- `FLOWIE_BUILD_CLUSTER` — enable optional cluster integration.
+- `FLOWIE_BUILD_CLUSTER` — enable experimental TurboRaft cluster integration (default `OFF`).
 - `FLOWIE_BUILD_CONTROL` — enable optional control-plane components.
 
 ## Required installed SDKs
@@ -138,7 +138,10 @@ The current top-level build resolves dependencies explicitly from configured pac
 - `HTTP_SERVICES_ROOT` — current CHTTP install root
 - `TURBODB_ROOT` — TurboDB/ORM profile
 
-Cluster builds additionally use the configured FlowMQ and TurboRaft roots.
+Ordinary CI and SDK releases keep Cluster disabled and do not restore FlowMQ or TurboRaft.
+To opt into an experimental source build, configure a user preset with
+`-DFLOWIE_BUILD_CLUSTER=ON` and provide compatible `FLOWMQ_ROOT` and `TURBORAFT_ROOT`
+SDKs. Explicitly enabled Cluster builds fail if either dependency is missing or incompatible.
 
 The build fails when the configured package roots are missing or invalid; it does not silently fall back to unrelated profiles.
 
