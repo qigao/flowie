@@ -1,7 +1,8 @@
 cmake_add_test(
   test_flowie_core
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_core.c
-  LIBS Flowie::App Salts::TinyTest
+  LIBS Flowie::App Flowie::Transport Flowie::Connection Salts::TinyTest
+  INCLUDES ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "flowie/tests")
 
 set_tests_properties(test_flowie_core PROPERTIES LABELS "flowie;flowie-release;mqtt-fast")

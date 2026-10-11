@@ -7,7 +7,7 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
-project(Flowie VERSION 1.0.1 LANGUAGES C CXX)
+project(Flowie VERSION 1.0.2 LANGUAGES C CXX)
 
 set(PROJECT_DESCRIPTION "Flowie MQTT server and client library")
 set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/flowie")

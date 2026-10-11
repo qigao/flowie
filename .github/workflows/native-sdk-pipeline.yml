@@ -605,6 +605,8 @@ jobs:
     name: Qualify packed Flowie.Native (Linux x64)
     needs: [metadata, pack]
     runs-on: ubuntu-24.04
+    env:
+      FLOWIE_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -677,7 +679,7 @@ jobs:
           cat > "$consumer/CMakeLists.txt" <<'EOF'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie $ENV{FLOWIE_VERSION} EXACT CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
           add_executable(flowie_release_consumer main.c)
           target_link_libraries(flowie_release_consumer PRIVATE
@@ -702,6 +704,8 @@ jobs:
     needs: [metadata, pack]
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      FLOWIE_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -777,7 +781,7 @@ jobs:
           @'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie $ENV{FLOWIE_VERSION} EXACT CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH)
           add_executable(flowie_release_consumer main.c)
           target_link_libraries(flowie_release_consumer PRIVATE
@@ -810,6 +814,8 @@ jobs:
     needs: [metadata, pack]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      FLOWIE_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -889,7 +895,7 @@ jobs:
           cat > "$consumer/CMakeLists.txt" <<'EOF'
           cmake_minimum_required(VERSION 3.25)
           project(FlowieReleaseConsumer LANGUAGES C CXX)
-          find_package(Flowie 1.0.1 EXACT CONFIG REQUIRED
+          find_package(Flowie $ENV{FLOWIE_VERSION} EXACT CONFIG REQUIRED
                        PATHS "$ENV{FLOWIE_ROOT}" NO_DEFAULT_PATH
                        NO_CMAKE_FIND_ROOT_PATH)
           add_executable(flowie_release_consumer main.c)

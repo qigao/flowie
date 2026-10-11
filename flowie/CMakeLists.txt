@@ -24,6 +24,7 @@ add_library(
   ${PROJECT_SOURCE_DIR}/cluster/flowie_cluster.c
   ${PROJECT_SOURCE_DIR}/cluster/flowie_cluster_internal.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/flowie_endpoint.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/flowie_endpoint_owner_lane_internal.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/flowie_ingress.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/flowie_ingress_internal.h
   ${CMAKE_CURRENT_SOURCE_DIR}/src/flowie_message.c
