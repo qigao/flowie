@@ -46,11 +46,11 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
 
 ## 发布前阻塞与范围
 
-- HIGH：上述 2.3.4 原生回归中，Windows 的 `test_flowie_control_runtime` 仍在
-  `composes JWT JWKS auth for management and broker endpoints` 用例中崩溃，
-  安装后消费步骤未执行。此问题也曾出现在 TurboDB 2.3.2 的
-  [原生 CI 38105842320](https://github.com/qigao/flowie/actions/runs/38105842320)，
-  尚无证据确定崩溃根因。
+- 已修复、待 CI 回归：Windows `test_flowie_control_runtime` 的崩溃已由本机调试器确认
+  为 `0xC00000FD` 栈溢出。TinyTest 的各用例共用一个函数，多份大型配置使其 MSVC
+  Release 栈预留达到 865,304 字节；JWT/JWKS 组合用例创建 Dashboard 模板时耗尽默认
+  1 MiB 栈。改为每个用例前重置的静态配置 fixture 后，栈预留降至 1,248 字节。
+  本机正式 CTest 已通过全部 14 个用例、126 条断言；未提高栈限制或跳过断言。
 - 已解除：TurboDB 2.3.4 包排除了 TidesDB/TidesSQL，下载包的三项正式包测试通过，SHA-256 为
   `cb47e45a07c80bbc6ffaa9a6aa06f50c4c24f1bce006caba73785e69e4889aba`。
   producer 为 Salts 2.3.0-rc.10 / SaltsUtils 4.3.0-rc.8。
