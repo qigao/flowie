@@ -1,6 +1,6 @@
 # Flowie.Native
 
-Prebuilt Flowie 1.0.1 native SDK package.
+Prebuilt Flowie 1.1.0 native SDK package.
 
 ## Included SDK
 
@@ -20,6 +20,8 @@ Prebuilt Flowie 1.0.1 native SDK package.
 - CHttp.Native
 - TurboDB.Native (Orm)
 
-The release pipeline resolves the latest stable producer packages, uses the same versions for every platform, and records the selected versions in each SDK manifest. FlowMQ and TurboRaft qualify the optional Cluster build but are not dependencies of the installed base SDK targets.
+The release pipeline resolves published producer packages (including the Salts 2.3, SaltsUtils 4.3 and CHttp 2.1 release candidates), uses the same resolved versions for every platform, and records them in each SDK manifest. FlowMQ and TurboRaft qualify the optional Cluster build but are not dependencies of the installed base SDK targets.
+
+Flowie 1.1 uses GmSSL. Rebuild native consumers with a coherent SDK family; do not combine these binaries with the retired OpenSSL dependency family. TidesSQL remains disabled.
 
 The package is built from released producer SDKs and shared vcpkg binary cache artifacts; producer source builds are not used in the release pipeline.

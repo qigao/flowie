@@ -9,7 +9,8 @@
 #include <stdlib.h>
 
 /* Presentation frames own bounded rows and strings. CMeta exposes read-only
- * views; collection views borrow these address-stable rows through rendering. */
+ * views; collection views borrow these address-stable rows through rendering.
+ * SALTS_TSTR_CMETA_*_REF are import-safe static descriptor references on Windows. */
 enum {
   FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE = 25,
   FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT = 100,
@@ -29,7 +30,7 @@ typedef struct flowie_control_dashboard_domain_model {
 } flowie_control_dashboard_domain_model;
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_domain_model, "flowie.control.dashboard.domain",
-    cmeta_data_field(tstr, domain_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, domain_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_field(bool, selected));
 // clang-format on
 
@@ -56,9 +57,9 @@ typedef struct flowie_control_dashboard_group_model {
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_group_model, "flowie.control.dashboard.group",
     cmeta_data_field(uint64_t, row_index, &cmeta_data_uint64, &cmeta_type_uint64)
-    cmeta_data_field(tstr, group_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, parent_group_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, tree_label, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, group_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, parent_group_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, tree_label, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_data_field(uint64_t, depth, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_data_field(uint64_t, aria_level, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_field(bool, enabled)
@@ -87,8 +88,8 @@ typedef struct flowie_control_dashboard_user_model {
 } flowie_control_dashboard_user_model;
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_user_model, "flowie.control.dashboard.user",
-    cmeta_data_field(tstr, principal_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, principal_type, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, principal_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, principal_type, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_field(bool, enabled)
     cmeta_data_field(uint64_t, row_index, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_field(bool, is_service)
@@ -107,7 +108,7 @@ typedef struct flowie_control_dashboard_role_model {
 } flowie_control_dashboard_role_model;
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_role_model, "flowie.control.dashboard.role",
-    cmeta_data_field(tstr, role_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, role_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_field(bool, enabled)
     cmeta_data_field(uint64_t, row_index, &cmeta_data_uint64, &cmeta_type_uint64));
 // clang-format on
@@ -133,11 +134,11 @@ typedef struct flowie_control_dashboard_rule_model {
 cmeta_reflect_data(flowie_control_dashboard_rule_model, "flowie.control.dashboard.rule",
     cmeta_data_field(uint64_t, row_index, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_data_field( uint64_t, ordinal, &cmeta_data_uint64, &cmeta_type_uint64)
-    cmeta_data_field(tstr, rule_document, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, connection_label, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, subject_label, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, subject_kind_label, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, subject_kind, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, rule_document, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, connection_label, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, subject_label, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, subject_kind_label, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, subject_kind, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_data_field(uint64_t, entry_count, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_data_field(uint64_t, expanded_topic_count, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_field(bool, uses_username)
@@ -161,9 +162,9 @@ typedef struct flowie_control_dashboard_audit_model {
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_audit_model, "flowie.control.dashboard.audit",
     cmeta_data_field(uint64_t, cursor, &cmeta_data_uint64, &cmeta_type_uint64)
-    cmeta_data_field(tstr, actor, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, operation, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, target_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type));
+    cmeta_data_field(tstr, actor, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, operation, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, target_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF));
 // clang-format on
 
 static void
@@ -185,12 +186,12 @@ typedef struct flowie_control_dashboard_pager_model {
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_pager_model, "flowie.control.dashboard.pager",
     cmeta_data_field(uint64_t, count, &cmeta_data_uint64, &cmeta_type_uint64)
-    cmeta_data_field(tstr, refresh_url, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, query_url, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, refresh_url, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, query_url, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_field(bool, first)
-    cmeta_data_field(tstr, first_url, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, first_url, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_field(bool, more)
-    cmeta_data_field(tstr, more_url, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type));
+    cmeta_data_field(tstr, more_url, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF));
 // clang-format on
 
 static void
@@ -214,15 +215,15 @@ typedef struct flowie_control_dashboard_identity_model {
 } flowie_control_dashboard_identity_model;
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_identity_model, "flowie.control.dashboard.identity",
-    cmeta_data_field(tstr, domain_id, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, actor, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, csrf, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
+    cmeta_data_field(tstr, domain_id, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, actor, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, csrf, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
     cmeta_data_field(uint64_t, policy_version, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_data_field(uint64_t, draft_rule_count, &cmeta_data_uint64, &cmeta_type_uint64)
     cmeta_data_field(uint64_t, published_rule_count, &cmeta_data_uint64, &cmeta_type_uint64)
-    cmeta_data_field(tstr, credential_domain, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, credential_principal, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, credential_token, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type));
+    cmeta_data_field(tstr, credential_domain, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, credential_principal, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, credential_token, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF));
 // clang-format on
 
 static void
@@ -250,15 +251,15 @@ typedef struct flowie_control_dashboard_navigation_model {
 } flowie_control_dashboard_navigation_model;
 // clang-format off
 cmeta_reflect_data(flowie_control_dashboard_navigation_model, "flowie.control.dashboard.navigation",
-    cmeta_data_field(tstr, rpc_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, action_url, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, overview_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, users_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, groups_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, roles_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, acls_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, audit_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type)
-    cmeta_data_field(tstr, integration_path, &cmeta_tstr_cmeta_data, &cmeta_tstr_cmeta_type));
+    cmeta_data_field(tstr, rpc_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, action_url, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, overview_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, users_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, groups_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, roles_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, acls_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, audit_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF)
+    cmeta_data_field(tstr, integration_path, SALTS_TSTR_CMETA_DATA_REF, SALTS_TSTR_CMETA_TYPE_REF));
 // clang-format on
 
 static void
