@@ -9,8 +9,6 @@
 #include "tstr.h"
 #include "cmeta_thread.h"
 
-#include <openssl/ssl.h>
-
 #include <limits.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -214,14 +212,13 @@ done:
 }
 
 static int jwt_jwks_ca_file_validate(const char *ca_file) {
-  SSL_CTX *context;
-  int rc = SALTS_OK;
+  chttp_tls_profile profile = {0};
+  cnet_tls_client_config config = {.size = sizeof(config), .ca_file = ca_file};
+  int rc;
   if (!ca_file) return SALTS_OK;
   if (!jwt_jwks_text_valid(ca_file, FLOWIE_CONTROL_JWT_JWKS_URL_MAX)) return SALTS_EINVAL;
-  context = SSL_CTX_new(TLS_client_method());
-  if (!context) return SALTS_EIO;
-  if (SSL_CTX_load_verify_locations(context, ca_file, NULL) != 1) rc = SALTS_EIO;
-  SSL_CTX_free(context);
+  rc = chttp_tls_profile_init(&profile, &config);
+  (void)chttp_tls_profile_destroy(&profile);
   return rc;
 }
 

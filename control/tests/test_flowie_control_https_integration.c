@@ -13,15 +13,17 @@
 #include "cmeta_process.h"
 #include "cmeta_thread.h"
 
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/rsa.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
+#include <gmssl/x509.h>
+#include <gmssl/x509_ext.h>
+#include <gmssl/oid.h>
+#include <gmssl/pem.h>
+#include <gmssl/mem.h>
+#include <gmssl/sha2.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
@@ -39,7 +41,6 @@
 
 #define CONTROL_INTEGRATION_TIMEOUT_MS 15000u
 #define CONTROL_INTEGRATION_REQUEST_TIMEOUT_MS 1500
-#define CONTROL_INTEGRATION_RSA_BITS 2048
 #define CONTROL_INTEGRATION_STATUS_RPC_BODY                                                        \
   "{\"jsonrpc\":\"2.0\",\"method\":\"control.system.status\",\"id\":1}"
 #define CONTROL_INTEGRATION_USER_CREATE_RPC_BODY                                                   \
@@ -353,15 +354,20 @@ static void http_response_free(http_response_t *response) {
   free(response);
 }
 
+typedef struct control_test_certificate_s {
+  uint8_t der[4096];
+  size_t size;
+} control_test_certificate_t;
+
 typedef struct control_tls_material_s {
-  EVP_PKEY *ca_key;
-  X509 *ca_cert;
-  EVP_PKEY *server_key;
-  X509 *server_cert;
-  EVP_PKEY *known_key;
-  X509 *known_cert;
-  EVP_PKEY *unknown_key;
-  X509 *unknown_cert;
+  X509_KEY *ca_key;
+  control_test_certificate_t *ca_cert;
+  X509_KEY *server_key;
+  control_test_certificate_t *server_cert;
+  X509_KEY *known_key;
+  control_test_certificate_t *known_cert;
+  X509_KEY *unknown_key;
+  control_test_certificate_t *unknown_cert;
   char *ca_path;
   char *server_cert_path;
   char *server_key_path;
@@ -450,114 +456,117 @@ static int control_test_reserve_port(unsigned short *port_out) {
   return 0;
 }
 
-static EVP_PKEY *control_test_generate_key(void) {
-  EVP_PKEY_CTX *context = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
-  EVP_PKEY *key = NULL;
-  if (!context || EVP_PKEY_keygen_init(context) <= 0 ||
-      EVP_PKEY_CTX_set_rsa_keygen_bits(context, CONTROL_INTEGRATION_RSA_BITS) <= 0 ||
-      EVP_PKEY_keygen(context, &key) <= 0) {
-    EVP_PKEY_free(key);
+static void control_test_key_free(X509_KEY *key) {
+  if (!key) return;
+  x509_key_cleanup(key);
+  free(key);
+}
+
+static X509_KEY *control_test_generate_key(void) {
+  const int curve = OID_secp256r1;
+  X509_KEY *key = (X509_KEY *)calloc(1, sizeof(*key));
+  if (key && x509_key_generate(key, OID_ec_public_key, &curve, sizeof(curve)) != 1) {
+    control_test_key_free(key);
     key = NULL;
   }
-  EVP_PKEY_CTX_free(context);
   return key;
 }
 
-static int control_test_add_extension(X509 *certificate, X509 *issuer, int nid, const char *value) {
-  X509V3_CTX extension_context;
-  X509_EXTENSION *extension;
-  if (!certificate || !issuer || !value) return -1;
-  X509V3_set_ctx(&extension_context, issuer, certificate, NULL, NULL, 0);
-  extension = X509V3_EXT_nconf_nid(NULL, &extension_context, nid, value);
-  if (!extension) return -1;
-  if (X509_add_ext(certificate, extension, -1) != 1) {
-    X509_EXTENSION_free(extension);
-    return -1;
-  }
-  X509_EXTENSION_free(extension);
-  return 0;
-}
-
-static X509 *control_test_make_certificate(EVP_PKEY *key, X509 *issuer, EVP_PKEY *issuer_key,
-                                           long serial, const char *common_name, int is_ca,
-                                           const char *san, const char *extended_usage) {
-  X509 *certificate = X509_new();
-  X509_NAME *subject;
-  if (!certificate || !key || !common_name) goto fail;
-  if (X509_set_version(certificate, 2) != 1 ||
-      ASN1_INTEGER_set(X509_get_serialNumber(certificate), serial) != 1 ||
-      !X509_gmtime_adj(X509_get_notBefore(certificate), -300) ||
-      !X509_gmtime_adj(X509_get_notAfter(certificate), 31536000L))
-    goto fail;
-  subject = X509_get_subject_name(certificate);
-  if (!subject || X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
-                                             (const unsigned char *)common_name, -1, -1, 0) != 1)
-    goto fail;
-  if (issuer) {
-    if (X509_set_issuer_name(certificate, X509_get_subject_name(issuer)) != 1) goto fail;
-  } else if (X509_set_issuer_name(certificate, subject) != 1) {
-    goto fail;
-  }
-  if (X509_set_pubkey(certificate, key) != 1) goto fail;
-  if (is_ca) {
-    if (control_test_add_extension(certificate, certificate, NID_basic_constraints,
-                                   "critical,CA:TRUE") != 0 ||
-        control_test_add_extension(certificate, certificate, NID_key_usage,
-                                   "critical,keyCertSign,cRLSign") != 0)
-      goto fail;
-  } else {
-    if (control_test_add_extension(certificate, issuer, NID_basic_constraints,
-                                   "critical,CA:FALSE") != 0 ||
-        control_test_add_extension(certificate, issuer, NID_key_usage,
-                                   "critical,digitalSignature,keyEncipherment") != 0 ||
-        (san && control_test_add_extension(certificate, issuer, NID_subject_alt_name, san) != 0) ||
-        (extended_usage &&
-         control_test_add_extension(certificate, issuer, NID_ext_key_usage, extended_usage) != 0))
-      goto fail;
-  }
+/* Disposable P-256 test identities retain the CA, SAN and EKU boundaries of the
+ * HTTPS scenarios; no production credential or verification policy is changed. */
+static control_test_certificate_t *control_test_make_certificate(
+    X509_KEY *key, control_test_certificate_t *issuer, X509_KEY *issuer_key,
+    unsigned char serial, const char *common_name, int is_ca, int is_server) {
+  control_test_certificate_t *certificate = NULL;
+  uint8_t subject[256], extensions[512], names[64];
+  size_t subject_size = 0, extensions_size = 0, names_size = 0, required = 0;
+  const uint8_t *issuer_name = subject;
+  size_t issuer_size;
+  const uint8_t loopback[] = {127, 0, 0, 1};
+  int usage = is_server ? OID_kp_server_auth : OID_kp_client_auth;
+  time_t now = time(NULL);
+  uint8_t *out;
+  if (!key || !common_name || (issuer && !issuer_key) || now == (time_t)-1 ||
+      x509_name_set(subject, &subject_size, sizeof(subject), NULL, NULL, NULL,
+                    NULL, NULL, common_name) != 1) return NULL;
+  issuer_size = subject_size;
+  if (issuer && x509_cert_get_subject(issuer->der, issuer->size, &issuer_name,
+                                     &issuer_size) != 1) return NULL;
+  if (x509_exts_add_basic_constraints(extensions, &extensions_size, sizeof(extensions),
+                                      1, is_ca, -1) != 1 ||
+      x509_exts_add_key_usage(extensions, &extensions_size, sizeof(extensions), 1,
+          is_ca ? X509_KU_KEY_CERT_SIGN | X509_KU_CRL_SIGN : X509_KU_DIGITAL_SIGNATURE) != 1)
+    return NULL;
+  if (!is_ca && x509_exts_add_ext_key_usage(extensions, &extensions_size,
+                                            sizeof(extensions), 0, &usage, 1) != 1)
+    return NULL;
+  if (is_server &&
+      (x509_general_names_add_dns_name(names, &names_size, sizeof(names), "localhost") != 1 ||
+       x509_general_names_add_general_name(names, &names_size, sizeof(names),
+                                           X509_gn_ip_address, loopback, sizeof(loopback)) != 1 ||
+       x509_exts_add_subject_alt_name(extensions, &extensions_size, sizeof(extensions),
+                                      0, names, names_size) != 1)) return NULL;
   if (!issuer_key) issuer_key = key;
-  if (X509_sign(certificate, issuer_key, EVP_sha256()) <= 0) goto fail;
+  /* Query the DER size before allowing the encoder to write into bounded storage. */
+  if (x509_cert_sign_to_der(X509_version_v3, &serial, 1, OID_ecdsa_with_sha256,
+          issuer_name, issuer_size, now - 300, now + 31536000,
+          subject, subject_size, key, NULL, 0, NULL, 0, extensions, extensions_size,
+          issuer_key, NULL, 0, NULL, &required) != 1 ||
+      required > sizeof(((control_test_certificate_t *)0)->der)) return NULL;
+  certificate = (control_test_certificate_t *)calloc(1, sizeof(*certificate));
+  if (!certificate) return NULL;
+  out = certificate->der;
+  if (x509_cert_sign_to_der(X509_version_v3, &serial, 1, OID_ecdsa_with_sha256,
+          issuer_name, issuer_size, now - 300, now + 31536000,
+          subject, subject_size, key, NULL, 0, NULL, 0, extensions, extensions_size,
+          issuer_key, NULL, 0, &out, &certificate->size) != 1 ||
+      certificate->size != required) {
+    free(certificate);
+    return NULL;
+  }
   return certificate;
-
-fail:
-  X509_free(certificate);
-  return NULL;
 }
 
-static int control_test_write_certificate(const char *path, X509 *certificate) {
-  BIO *file = NULL;
-  int rc = -1;
-  if (!path || !certificate) return -1;
-  file = BIO_new_file(path, "wb");
-  if (file && PEM_write_bio_X509(file, certificate) == 1) rc = 0;
-  BIO_free(file);
+static int control_test_write_certificate(const char *path, control_test_certificate_t *certificate) {
+  FILE *file;
+  int rc;
+  if (!path || !certificate || !(file = fopen(path, "wb"))) return -1;
+  rc = x509_cert_to_pem(certificate->der, certificate->size, file) == 1 ? 0 : -1;
+  if (fclose(file) != 0) rc = -1;
   return rc;
 }
 
-static int control_test_write_key(const char *path, EVP_PKEY *key) {
-  BIO *file = NULL;
+static int control_test_write_key(const char *path, X509_KEY *key) {
+  uint8_t der[512], *out = der;
+  size_t required = 0, size = 0;
+  FILE *file;
   int rc = -1;
-  if (!path || !key) return -1;
-  file = BIO_new_file(path, "wb");
-  if (file && PEM_write_bio_PrivateKey(file, key, NULL, NULL, 0, NULL, NULL) == 1) rc = 0;
-  BIO_free(file);
+  if (!path || !key || x509_private_key_info_to_der(key, NULL, &required) != 1 ||
+      required > sizeof(der)) return -1;
+  if (x509_private_key_info_to_der(key, &out, &size) == 1 &&
+      size == required && (file = fopen(path, "wb")) != NULL) {
+    rc = pem_write(file, "PRIVATE KEY", der, size) == 1 ? 0 : -1;
+    if (fclose(file) != 0) rc = -1;
+  }
+  gmssl_secure_clear(der, sizeof(der));
   return rc;
 }
 
-static int control_test_fingerprint(X509 *certificate,
+static int control_test_fingerprint(control_test_certificate_t *certificate,
                                     char output[FLOWIE_CONTROL_HTTP_PEER_CERTIFICATE_SHA256_CAPACITY]) {
-  unsigned char digest[EVP_MAX_MD_SIZE];
-  unsigned int digest_size = 0u;
+  uint8_t digest[SHA256_DIGEST_SIZE];
+  SHA256_CTX context;
   static const char hex[] = "0123456789abcdef";
-  if (!certificate || !output ||
-      X509_digest(certificate, EVP_sha256(), digest, &digest_size) != 1 || digest_size != 32u)
-    return -1;
+  if (!certificate || !output) return -1;
+  sha256_init(&context);
+  sha256_update(&context, certificate->der, certificate->size);
+  sha256_finish(&context, digest);
   memcpy(output, "sha256:", sizeof("sha256:") - 1u);
-  for (unsigned int index = 0u; index < digest_size; ++index) {
+  for (size_t index = 0; index < sizeof(digest); ++index) {
     output[sizeof("sha256:") - 1u + index * 2u] = hex[digest[index] >> 4u];
     output[sizeof("sha256:") + index * 2u] = hex[digest[index] & 0x0fu];
   }
-  output[sizeof("sha256:") - 1u + digest_size * 2u] = '\0';
+  output[sizeof("sha256:") - 1u + sizeof(digest) * 2u] = '\0';
   return 0;
 }
 
@@ -577,19 +586,19 @@ static int control_test_tls_material_open(control_tls_material_t *material) {
     return -1;
   material->ca_key = control_test_generate_key();
   material->ca_cert = control_test_make_certificate(material->ca_key, NULL, NULL, 1,
-                                                    "Flowie integration CA", 1, NULL, NULL);
+                                                    "Flowie integration CA", 1, 0);
   material->server_key = control_test_generate_key();
   material->server_cert =
       control_test_make_certificate(material->server_key, material->ca_cert, material->ca_key, 2,
-                                    "localhost", 0, "DNS:localhost,IP:127.0.0.1", "serverAuth");
+                                    "localhost", 0, 1);
   material->known_key = control_test_generate_key();
   material->known_cert =
       control_test_make_certificate(material->known_key, material->ca_cert, material->ca_key, 3,
-                                    "flowie-admin", 0, NULL, "clientAuth");
+                                    "flowie-admin", 0, 0);
   material->unknown_key = control_test_generate_key();
   material->unknown_cert =
       control_test_make_certificate(material->unknown_key, material->ca_cert, material->ca_key, 4,
-                                    "flowie-unknown", 0, NULL, "clientAuth");
+                                    "flowie-unknown", 0, 0);
   if (!material->ca_key || !material->ca_cert || !material->server_key || !material->server_cert ||
       !material->known_key || !material->known_cert || !material->unknown_key ||
       !material->unknown_cert ||
@@ -621,14 +630,14 @@ static void control_test_tls_material_close(control_tls_material_t *material) {
       free(paths[index]);
     }
   }
-  X509_free(material->unknown_cert);
-  EVP_PKEY_free(material->unknown_key);
-  X509_free(material->known_cert);
-  EVP_PKEY_free(material->known_key);
-  X509_free(material->server_cert);
-  EVP_PKEY_free(material->server_key);
-  X509_free(material->ca_cert);
-  EVP_PKEY_free(material->ca_key);
+  free(material->unknown_cert);
+  control_test_key_free(material->unknown_key);
+  free(material->known_cert);
+  control_test_key_free(material->known_key);
+  free(material->server_cert);
+  control_test_key_free(material->server_key);
+  free(material->ca_cert);
+  control_test_key_free(material->ca_key);
   memset(material, 0, sizeof(*material));
 }
 

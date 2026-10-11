@@ -108,13 +108,14 @@ typedef struct flowie_endpoint_config_s {
    */
   const char *tls_client_ca_file;
   /**
-   * TCP/TLS network owners (0/1 selects one; maximum 64 and max_connections).
-   * Connection and network_command_bytes budgets are divided across owners.
-   * Each byte partition must hold max_packet_size. MQTT state remains on the
-   * endpoint execution shard. Other transports reject values greater than one.
+   * TCP/TLS or CHttp WS/WSS owners (0/1 selects one; maximum 64 and max_connections).
+   * TCP/TLS divides connection and network_command_bytes budgets across owners;
+   * each byte partition must hold max_packet_size. WS/WSS keeps one aggregate
+   * Flowie wrapper mailbox and delegates execution lanes to CHttp. MQTT state
+   * remains on the endpoint execution shard. UDP/KCP rejects multiple owners.
    */
   uint32_t network_workers;
-  /** TCP/TLS accept placement; least-connections counts pending and live connections. */
+  /** TCP/TLS/WS/WSS accept placement; least-connections includes pending admissions. */
   flowie_network_policy_t network_policy;
   /** 0 leaves scheduling to the OS; otherwise must equal the effective worker count. */
   uint32_t network_cpu_count;
@@ -122,7 +123,7 @@ typedef struct flowie_endpoint_config_s {
    * Copied IDs, one per owner. Windows: group * 64 + processor; Linux/Android:
    * logical CPU below CPU_SETSIZE. Duplicates are allowed. Explicit binding on
    * other platforms returns ENOTSUP; unavailable CPUs fail endpoint start.
-   * Non-default policy and binding are supported only for TCP/TLS.
+   * Explicit CPU binding is supported only for TCP/TLS, not WS/WSS.
    */
   uint32_t network_cpus[FLOWIE_MAX_NETWORK_WORKERS];
 } flowie_endpoint_config_t;

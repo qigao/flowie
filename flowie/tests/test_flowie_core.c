@@ -42,6 +42,37 @@ suite("Flowie public network placement") {
     check_null(endpoint);
   }
 
+  it("admits CHttp WS and WSS placement without partitioning the wrapper mailbox") {
+    const flowie_transport_t transports[] = {FLOWIE_TRANSPORT_WS, FLOWIE_TRANSPORT_WSS};
+    for (size_t index = 0u; index < sizeof(transports) / sizeof(transports[0]); ++index) {
+      flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+      flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+      config.host = "127.0.0.1";
+      config.path = "/mqtt";
+      config.transport = transports[index];
+      config.network_workers = 2u;
+      config.max_connections = 2u;
+      config.network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
+      config.max_packet_size = 4096u;
+      config.network_command_bytes = 4096u;
+      options.on_message = flowie_test_dispatch;
+      check_equal(flowie_endpoint_core_create("websocket", &config, &options, &endpoint), SALTS_OK);
+      flowie_endpoint_core_destroy(endpoint);
+      endpoint = NULL;
+      config.network_cpu_count = 2u;
+      config.network_cpus[0] = 0u;
+      config.network_cpus[1] = 1u;
+      check_equal(flowie_endpoint_core_create("websocket-cpu", &config, &options, &endpoint),
+                  SALTS_ENOTSUP);
+      check_null(endpoint);
+      config.network_cpu_count = 0u;
+      config.max_connections = 1u;
+      check_equal(flowie_endpoint_core_create("websocket-capacity", &config, &options, &endpoint),
+                  SALTS_ERANGE);
+      check_null(endpoint);
+    }
+  }
+
   it("retains its CPU settings and propagates binding failure from start") {
     flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
     flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;

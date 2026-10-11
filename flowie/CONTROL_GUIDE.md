@@ -43,7 +43,7 @@ build\Msvc-Release\bin\flowie-control.exe --check
 ```
 
 仅在本地开发时使用 `--env-file/-E`。程序不会隐式读取当前目录 `.env`。`--check` 解析完整 schema，
-并用 CHTTP/OpenSSL 实际加载 server chain、private key、client CA，以及启用的第三方 HTTPS client
+并用 CHttp/CNet（GmSSL） 实际加载 server chain、private key、client CA，以及启用的第三方 HTTPS client
 CA/certificate/private key；它不打开 listener、不连接第三方服务或控制数据库，也不执行 schema
 migration。证书、私钥、CA 或 secret reference 无法加载时立即失败，不回退到 HTTP、其他 TurboDB
 driver 或本地 credential。

@@ -1,7 +1,8 @@
 # ACE + CNet 2.3: Flowie Server and Client ownership
 
-**Status:** phased integration; this is not a claim of a released Salts 2.3 SDK,
-a migrated MQTT Client or an implemented Component Configurator. Follow
+**Status:** phased integration against the published Salts 2.3 RC SDK. Static
+Server Configurator/Interceptor composition and Client Manager/Managed Dial
+are implemented; mixed Server/Client SG hosting and general recovery remain open. Follow
 [Flowie #42](https://github.com/qigao/flowie/issues/42),
 [Server #56](https://github.com/qigao/flowie/issues/56),
 [Client #61](https://github.com/qigao/flowie/issues/61),
@@ -51,6 +52,9 @@ WebSocket wrapper while CHttp owns its fixed Owner lanes, acceptor, CNet
 Manager and bounded Handoff. Flowie's WebSocket peer table remains
 generation-fenced and mutex-guarded across concurrent callbacks. WS/WSS
 cannot use Flowie's explicit CPU binding: unsupported configuration fails fast.
+The standalone Server YAML loader and Endpoint admission accept these WS/WSS
+settings as well. Flowie's wrapper mailbox stays aggregate; the TCP/TLS
+per-owner mailbox partition check does not apply to CHttp's execution lanes.
 
 CNet 2.3 exports Manager/Handoff within **Salts::CNet**; delete historical
 linkage to the removed `Salts::CNetManager` target. In the TCP/TLS path, CNet client construction and destruction now run on
@@ -68,7 +72,7 @@ owner affinity, stale handle/generation, bounded credits, TLS/retained sends
 and shutdown. Re-run the final code against the **exact** unified SDK before
 merging into master.
 
-## Client Destination policy slice (implemented); Manager/Recovery/SG remain #61
+## Client Destination policy, Manager and Managed Dial (implemented)
 
 ```text
 typed host-configured Client / ACE Component provider
@@ -100,8 +104,10 @@ for TCP/TLS. The host supplies an ID-sorted, authorized endpoint snapshot;
 Flowie deep-copies the dial hosts, CNet `cnet_destination_choose()` chooses
 the first physical dial target, and all reconnects revalidate the exact
 selected endpoint as EXPLICIT. `config.host` remains the original logical
-TLS authority/SNI. Unknown/expired/strict-key-incomplete policies fail closed,
-and WS/WSS policy selection returns ENOTSUP until an appropriate CHttp
+TLS authority/SNI, including when trust uses the default store: the client always
+supplies its logical TLS server name independently of custom CA or identity files.
+Unknown/expired/strict-key-incomplete policies fail closed, and WS/WSS policy
+selection returns ENOTSUP until an appropriate CHttp
 authority contract is available. This does not implement general failover,
 a physical connection pool or generic PUBLISH retry.
 
@@ -111,19 +117,18 @@ still fails synchronously on native backend admission errors). This fixes
 io_uring SINGLE_ISSUER construction/owner affinity, without moving live
 endpoints between threads. Caller threads only submit bounded commands and
 wake the worker. The Client still performs synchronous CNet polling **inside**
-its dedicated worker. Before Manager/Managed Dial or mixed Server+Client SG
-cohosting, it must adopt nonblocking incremental MQTT progression and retain
-one authoritative backend observer. This branch does **not** implement those
-remaining operations.
+its dedicated worker, with one Manager and Managed Dial described below.
+Mixed Server+Client SG cohosting still requires nonblocking incremental MQTT
+progression and one authoritative backend observer; it is not implemented.
 
-## ACE Component Configurator / YAML contract (not yet implemented)
+## ACE Component Configurator / YAML contract (implemented for standalone Server)
 
 Flowie host YAML contains deployment facts, not an embedded `.flow` DAG.
-A single validated typed representation feeds explicit
-`cmeta_component_desc` manifests, `salts_component_deployment` and
-`salts_component_selection`. The composition root calls
-`salts_component_context_init/resolve/start/stop`, binds typed Interfaces
-once, and drains in reverse dependency order. CNet builtin enum policies are
+A single validated typed representation feeds three explicit configured
+Components: Security, Repository and Endpoint. The Endpoint requires typed
+Security and Repository Interfaces. The private `flowie_server_runtime` calls
+`salts_component_context_init/resolve/start/stop`, binds those Interfaces
+once, and stops/releases the Endpoint before its dependencies. CNet builtin enum policies are
 typed fields of network service configuration, **not** separately instantiated
 Components. Static-only composition needs no Plugin DSO; dynamic providers
 require an outer lease through every borrowed callable and completion.
@@ -132,6 +137,32 @@ YAML config is pre-start-only initially. No automatic hot reload, implicit
 compatibility fallback or runtime Reflection lookup on the MQTT hot path.
 The embeddable Flowie::Client and graph-neutral protocol module do not parse
 YAML or create an implicit Configurator.
+
+The runtime owns fixed arrays for three instances and two dependency bindings.
+Configuration, database options and callback contexts remain caller-owned and
+live until runtime destruction. Owned ObjectRefs cover partial construction;
+create/activate failure rolls back the graph and preserves the originating
+Salts status and diagnostic phase without publishing a runtime. `--check`
+assembles the same graph but skips listener activation. The HTTP auth/ACL
+providers use synchronous typed Interceptor chains for admission, HTTP exchange
+and decoding; both success and error paths release invocation-owned responses
+and bodies, clearing credential bodies before release. TLS remains CHttp/CNet
+with GmSSL and retains certificate/authority validation.
+
+This reuses the existing Server composition rather than introducing a second
+service registry or a Component per network owner. YAML and CLI formats and
+MQTT behavior are unchanged. WS/WSS worker policies pass from the validated
+endpoint configuration through the graph to CHttp; explicit CPU lists still
+fail with ENOTSUP. Reverting the private composition restores the former direct
+Server lifecycle without a stored-data or wire migration. It also restores
+manual failure cleanup, which must preserve the same dependency order.
+
+`test_flowie_server_runtime` covers check-only assembly, repository failure,
+invalid placement, activation rollback, actual YAML WS/WSS two-owner startup
+and CPU-policy rejection followed by corrected activation.
+`test_flowie_server_http_security` covers Interceptor admission, successful
+authentication/ACL decoding and remote denial. The transport baseline separately
+exercises MQTT 3.1/3.1.1/5 and QoS0/1/2 across CHttp WS/WSS owners.
 
 ## Mandatory downstream gate
 
@@ -182,7 +213,41 @@ migration remain open.
 Dedicated loopback tests also repeat CONNACK timeout and unexpected pre-CONNACK
 packet failures across three independent logical MQTT CONNECTs, asserting
 Manager/Dial recycling rather than turning physical CONNECTED into READY.
-Nonblocking SG cohosting and the ACE Component Configurator remain open. Stable release and master merge are separate gates.
+Nonblocking SG cohosting remains open. Static Server Configurator composition
+is implemented above; stable release and master merge are separate gates.
+
+## Client receive and operation boundaries
+
+The MQTT worker owns one outstanding CNet receive credit and one copied receive
+chunk. Interrupting an idle wait to execute a command does not cancel that
+credit. Only the matching receive callback or native terminal settles it; the
+worker consumes the copied chunk before granting another credit. An unexpected
+second delivery fails explicitly instead of overwriting unread bytes. Callback
+views remain borrowed and are copied before returning to CNet. Stop retains the
+existing native drain protocol and never treats a logical timeout as completion.
+
+Each executing command has one monotonic deadline, including physical connect,
+AUTH, fragmented packets, unsolicited traffic and multi-stage QoS exchanges.
+Queue waiting is outside this budget. Cleanup retains its independent bounded
+budget so expiration cannot authorize early release. Callback execution cannot
+be preempted; the worker checks the deadline again before further protocol work.
+This deliberately replaces per-read timeout renewal, which could indefinitely
+delay later commands. MQTT application delivery starts only after successful
+CONNACK negotiation; CONNECT admits only CONNACK and valid enhanced AUTH.
+
+The refresh callback ABI remains unchanged. Its output spans must use stable
+caller-owned storage until the next client callback begins, matching AUTH
+response storage. Flowie copies them immediately after the callback returns;
+callback-local buffers were never safe despite the previous documentation.
+An allocating writer callback was considered but would add an unnecessary
+public interface. Existing stable buffers and borrowed current CONNECT spans
+remain supported. Callers using local buffers must move them to user_data.
+
+These corrections are confined to Client, its formal tests and documentation;
+no broker data or deployment changes are required. Validation covers receive
+credit settlement, CONNECT admission, retained refresh data and fixed operation
+deadlines, followed by the existing transport/lifetime suites. Reverting the
+Client patch restores the former behavior but also restores the reviewed defects.
 
 ## Exceptional Client teardown (Flowie #67)
 
@@ -222,3 +287,38 @@ and requires the caller still to try `cnet_client_destroy`. Accordingly,
 Owner drain treats only `ETIMEDOUT`/`EBUSY`/`ENOTSUP` as unfinished stop
 conditions; otherwise, the actual native destroy result—not an error-code
 whitelist—determines if Client user/observer storage is safe to release.
+
+## TLS and JWS backend alignment
+
+The published CNet/CHttp SDK uses GmSSL. Flowie previously preflighted TLS
+credentials with a different backend and linked BoringSSL for its JWT adapter
+and TLS test peers. That could admit credentials differently from the transport
+that actually consumes them, and kept a second crypto dependency in the build.
+
+TLS preflight now constructs and destroys a CHttp TLS profile using the same
+CNet configuration as the client. It preserves CA, client identity, password
+lease cleanup and fail-closed errors. JWS uses the SaltsUtils 4.3 Crypto API via
+the adapter already maintained by CHttp (source revision in the vendor
+provenance), preserving the existing HMAC, RSA/PSS, EC and EdDSA algorithms.
+Independent PEM/JWK vectors and signature rejection tests cover the adapter;
+JWE remains explicitly unsupported. No alternate crypto provider or retry
+fallback is introduced.
+
+The shared TLS peer and generated HTTPS integration identities use GmSSL.
+P-256 disposable identities preserve CA/SAN/EKU and certificate fingerprint
+checks; tests observe handshake rejection and verified peer identity rather
+than an OpenSSL-specific alert callback. Flowie's build no longer requests
+OpenSSL/BoringSSL or the C++ linker workaround for BoringSSL. Existing TLS
+configuration and JWT interfaces are unchanged. This raises the consumer SDK
+minimum to SaltsUtils 4.3; deployment must update the SDK and application
+together. Rollback requires the prior coherent dependency set and adapter,
+not a runtime fallback to a second verifier.
+
+The native SDK pipeline resolves Salts, SaltsUtils and CHttp with NuGet's
+`*-*` floating version, which includes published prereleases as required by this
+integration. A stable-only `*` can select the previous SDK family. Each run
+reevaluates resolution, records the selected versions, and passes those exact
+versions to its platform jobs; a newer incompatible SDK fails the build instead
+of falling back. See the [NuGet floating-version contract](https://github.com/NuGet/Home/wiki/Support-pre-release-packages-with-floating-versions).
+The source-built container also supplies both Salts and SaltsUtils to CHttp;
+its dependency stages must use matching profile roots.

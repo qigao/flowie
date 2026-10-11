@@ -617,4 +617,12 @@ spec("Flowie TCP/TLS/WS/WSS release baseline") {
   it("serves MQTT 3.1, 3.1.1, and 5 over WSS") {
     check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 400u, 1u), SALTS_OK);
   }
+
+  it("serves all MQTT versions and QoS levels with multiple CHttp WS owners") {
+    check_equal(flowie_transport_baseline_versions(FLOWIE_TRANSPORT_WS, 600u, 2u), SALTS_OK);
+  }
+
+  it("serves all MQTT versions and QoS levels with multiple CHttp WSS owners") {
+    check_equal(flowie_transport_baseline_secure_versions(FLOWIE_TRANSPORT_WSS, 700u, 2u), SALTS_OK);
+  }
 }

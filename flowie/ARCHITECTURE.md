@@ -4,9 +4,11 @@
 
 Flowie MQTT protocol/session Core is graph-neutral. An embedded application may create and drive
 that Core directly through `flowie_endpoint_core_*`; a TurboFlow adapter is an optional thin
-composition layer over the same owner. The configured `flowie_server` product is a TurboFlow
-application assembled from a product provider registry, resolved YAML, a `.flow` Graph, and that
-same Core. The protocol library alone is not an application. The normative terminology and the
+composition layer over the same owner. The standalone `flowie_server` product assembles
+Security, Repository and Endpoint through a static Salts Component Configurator, using
+validated YAML or CLI configuration. It does not require a `.flow` Graph. Configured TurboFlow
+applications can compose the same Core through their provider registry and Graph.
+The protocol library alone is not an application. The normative terminology and the
 composition forms are defined in
 [`CONFIGURED_BROKER_CONCEPTS.md`](CONFIGURED_BROKER_CONCEPTS.md).
 
@@ -47,7 +49,9 @@ YAML accepts `network_workers` in the endpoint adapter's `config`, alongside
 `network_command_bytes` (CLI: `--network-command-bytes`). For example, four owners with the default 16 MiB
 mailbox budget reserve 4 MiB per owner. The worker count cannot exceed the
 connection limit, and every byte partition must hold one maximum-sized packet.
-UDP/KCP and CHTTP WS/WSS reject multiple owners with `SALTS_ENOTSUP`.
+UDP/KCP rejects multiple owners with `SALTS_ENOTSUP`. WS/WSS delegates owner
+count and placement to CHttp; its single Flowie wrapper retains an aggregate
+mailbox, so the TCP/TLS per-owner byte-partition check does not apply.
 
 `network_policy` (`--network-policy`) selects `round-robin` (the default) or
 `least-connections`. The latter samples each owner's mutex-protected reservation
@@ -62,8 +66,9 @@ option preserves OS scheduling; duplicate CPUs deliberately allow sharing. The
 bounded list is copied into the endpoint and each connection configuration, with
 no caller-owned storage retained. Windows IDs are `group * 64 + processor` and
 Linux/Android IDs are OS logical CPU IDs below `CPU_SETSIZE`. Other platforms
-reject explicit binding with `SALTS_ENOTSUP`. Non-default policy or explicit CPU
-binding is supported only for TCP/TLS. The listener thread is not pinned.
+reject explicit binding with `SALTS_ENOTSUP`. Explicit CPU binding is supported
+only for TCP/TLS; WS/WSS accepts both placement policies but rejects CPU lists.
+The listener thread is not pinned.
 
 Each worker binds itself before polling or callbacks, then signals startup status
 under its mutex. Start waits for readiness before creating the multi-owner listener
@@ -131,6 +136,32 @@ protocol-neutral Salts executor wrapper, Salts CNet, and the independent Chttp s
 the dedicated `transport` and `connection` modules. Chttp is linked by role: `CHttp::Client` owns outbound HTTP/WebSocket operations,
 while `CHttp::Server` owns HTTP/WebSocket listeners. Salts remains the source of CNet, Core,
 Coroutine, and shared error codes.
+
+### Control dashboard rendering
+
+The dashboard uses `CHttp::App` with its Jinja renderer and read-only CMeta
+models, replacing the intermediate JSON/Mustache presentation model. This
+integration is built against SaltsUtils 4.3.0-rc.8 and CHTTP 2.1.0-rc.3. HTTP
+routes, session authority, authorization, database schema and browser forms
+remain owned by the existing Flowie Control services.
+
+Each dashboard view owns one renderer and serializes render calls with a mutex.
+Request models and borrowed strings remain alive until synchronous rendering
+returns. The renderer copies a fixed template bundle at startup, bounds template
+source to 512 KiB and HTML to the existing 16 MiB limit, and enables HTML
+autoescaping. Complete owned HTML passes to the existing copying response path.
+Seven fixed section templates keep individual templates within the SDK limits;
+request input cannot select arbitrary filesystem templates. Destruction follows
+HTTP worker shutdown so no model or renderer remains borrowed.
+
+Form decoding uses App's bounded parser while retaining Flowie's stricter
+command admission: explicit separators, unique decoded keys and no embedded
+NUL. Decoded password storage is wiped on both success and failure. Keeping the
+old renderer alongside App would duplicate presentation and escaping policy;
+rollback instead selects the previous complete image and its template bundle.
+No persisted-data migration is needed. Formal dashboard regressions cover
+concurrent models, attribute escaping, command forms, selectors and pagination;
+HTTPS integration exercises the same route and session boundaries.
 
 In standalone mode MQTT protocol facts have one source of truth: Flowie's typed protocol repository
 over `Orm::C`. Session, subscription, inflight, retained, and Will mutations commit to that

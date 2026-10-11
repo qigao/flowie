@@ -8,6 +8,10 @@
 #include <string.h>
 
 spec("Flowie standalone YAML configuration") {
+  static flowie_server_config_t *placement_config;
+  before_each() { placement_config = NULL; }
+  after_each() { flowie_server_config_destroy(placement_config); }
+
   it("loads network owner count and aggregate mailbox budget") {
     flowie_server_config_t *config = NULL;
     flowie_server_config_error_t error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
@@ -25,22 +29,43 @@ spec("Flowie standalone YAML configuration") {
     flowie_server_config_destroy(config);
   }
 
-  it("rejects network partitions larger than capacity and unsupported transports") {
+  it("rejects network partitions larger than capacity") {
     flowie_server_config_t *config = NULL;
     flowie_server_config_error_t error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
     check_equal(flowie_server_config_load(FLOWIE_TEST_MULTI_CONFIG, "too_many", 0,
                                            &config, &error), SALTS_ERANGE);
     check_null(config);
-    check_equal(flowie_server_config_load(FLOWIE_TEST_MULTI_CONFIG, "websocket", 0,
-                                           &config, &error), SALTS_ENOTSUP);
-    check_null(config);
+  }
+
+  it("loads CHttp WebSocket owner placement through the server YAML entry") {
+    static const struct {
+      const char *profile;
+      flowie_transport_t transport;
+      flowie_network_policy_t policy;
+    } cases[] = {
+      {"websocket", FLOWIE_TRANSPORT_WS, FLOWIE_NETWORK_LEAST_CONNECTIONS},
+      {"secure_websocket", FLOWIE_TRANSPORT_WSS, FLOWIE_NETWORK_ROUND_ROBIN}};
+    for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+      flowie_server_config_error_t error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
+      check_equal(flowie_server_config_load(FLOWIE_TEST_MULTI_CONFIG, cases[index].profile,
+                                            0, &placement_config, &error), SALTS_OK);
+      const flowie_endpoint_config_t *endpoint = flowie_server_config_endpoint(placement_config);
+      check_not_null(endpoint);
+      check_equal(endpoint->transport, cases[index].transport);
+      check_equal(endpoint->network_workers, 2u);
+      check_equal(endpoint->network_policy, cases[index].policy);
+      check_equal(endpoint->network_cpu_count, 0u);
+      flowie_server_config_destroy(placement_config);
+      placement_config = NULL;
+    }
   }
 
   it("validates YAML owner placement and accepts explicit OS scheduling") {
     static const struct { const char *profile; int status; } cases[] = {
       {"bad_policy", SALTS_EINVAL}, {"bad_cpu_count", SALTS_EINVAL},
       {"bad_cpu_value", SALTS_EINVAL}, {"bad_cpu_type", SALTS_EPROTO},
-      {"udp_placement", SALTS_ENOTSUP}};
+      {"udp_placement", SALTS_ENOTSUP}, {"udp_workers", SALTS_ENOTSUP},
+      {"websocket_cpu", SALTS_ENOTSUP}, {"secure_websocket_cpu", SALTS_ENOTSUP}};
     flowie_server_config_t *config = NULL;
     flowie_server_config_error_t error = FLOWIE_SERVER_CONFIG_ERROR_INIT;
     const flowie_endpoint_config_t *endpoint;

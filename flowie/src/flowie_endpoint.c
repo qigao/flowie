@@ -1577,11 +1577,15 @@ static int flowie_endpoint_config_validate(const flowie_endpoint_config_t *confi
       (config->network_cpu_count != 0u &&
        config->network_cpu_count != (config->network_workers ? config->network_workers : 1u)))
     return SALTS_EINVAL;
-  if ((config->network_workers > 1u || config->network_cpu_count != 0u ||
-       config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
-      !flowie_transport_retained_sg(config->transport))
+  if (config->network_cpu_count != 0u && !flowie_transport_retained_sg(config->transport))
     return SALTS_ENOTSUP;
-  if (config->network_workers > 1u) {
+  if ((config->network_workers > 1u ||
+       config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+      !flowie_transport_retained_sg(config->transport) &&
+      config->transport != FLOWIE_TRANSPORT_WS && config->transport != FLOWIE_TRANSPORT_WSS)
+    return SALTS_ENOTSUP;
+  /* CHttp owns WS/WSS lanes; Flowie's wrapper command storage is not partitioned. */
+  if (config->network_workers > 1u && flowie_transport_retained_sg(config->transport)) {
     const size_t packet_bytes = config->max_packet_size ? config->max_packet_size
                                                        : FLOWIE_DEFAULT_MAX_PACKET_SIZE;
     size_t command_bytes = config->network_command_bytes ? config->network_command_bytes

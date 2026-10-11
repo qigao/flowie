@@ -10,7 +10,7 @@ Flowie owns MQTT protocol behavior, broker core state, sessions, subscriptions, 
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-Flowie uses the installed Salts, SaltsUtils, Chttp, and TurboDB/Orm packages. TurboDB 2.3.1 or newer is required by both the build and the exported Flowie package. Optional cluster builds also use the installed FlowMQ and TurboRaft packages. Configure each profile root to the latest published SDK; configuration and compilation fail if a required API is unavailable.
+Flowie uses the installed Salts 2.3, SaltsUtils 4.3, Chttp, and TurboDB/Orm packages. TurboDB 2.3.1 or newer is required by both the build and the exported Flowie package. Optional cluster builds also use the installed FlowMQ and TurboRaft packages. Configure each profile root to the latest published SDK; configuration and compilation fail if a required API is unavailable.
 
 Flowie uses the canonical Salts headers and symbols (`cmeta_*.h`, `cmeta_*`,
 `coro.h`, and `coro_executor.h`). Rebuild Flowie and its dependent SDKs together
@@ -211,8 +211,10 @@ These keys belong inside the endpoint adapter's `config`. With `--config`, YAML
 provides endpoint tuning; the CLI tuning flags do not override it. CPU IDs are
 OS logical IDs on Linux/Android, and `group * 64 + processor` on Windows. Binding
 is applied before network progress; unavailable CPUs fail startup. Other platforms
-reject explicit binding. UDP/KCP remain single-owner; WS/WSS also reject these
-placement options. No throughput improvement is claimed without measurement.
+reject explicit binding. UDP/KCP remain single-owner. WS/WSS accepts owner counts
+and round-robin/least-connections placement through CHttp, with one aggregate
+Flowie wrapper mailbox; explicit CPU binding remains unsupported for WS/WSS.
+No throughput improvement is claimed without measurement.
 
 The C API copies the same settings during `flowie_endpoint_core_create`:
 
@@ -232,9 +234,9 @@ Explicit CPU binding occurs at `flowie_endpoint_core_start`; check its result
 before accepting the endpoint as running. Rebuild C API consumers for the expanded
 configuration struct; existing zero-initialized settings preserve the defaults.
 
-## Connection management candidate (#1001)
+## CNet 2.3 connection management and Server composition
 
-TCP/TLS owners use `Salts::CNetManager` for bounded attachment reservation,
+TCP/TLS owners use the Manager API in `Salts::CNet` for bounded attachment reservation,
 adoption and retirement. Each owner initializes, advances and destroys its
 manager on its worker thread. CNet owns transport terminal callbacks; peer
 storage is reused only by the manager recycle callback after callbacks return.
@@ -253,10 +255,14 @@ owners and the listener (including final wake) before destroy frees inboxes and
 clients. Timeout ownership, stale public handles, MQTT semantics, UDP/KCP and
 CHTTP WebSocket protocol ownership are preserved.
 
-This branch requires the unpublished Salts #1001 SDK with the GmSSL fixes.
-CI pins the candidate and runs formal CNet/Flowie CTest suites. Reverting this
-integration restores private admission bookkeeping without a configuration or
-wire-format migration. No performance gain is claimed.
+This branch requires a Salts 2.3 SDK, including the published 2.3.0 RC line,
+with GmSSL TLS, plus SaltsUtils 4.3 for the JWS Crypto adapter. The standalone Server composes Security, Repository and Endpoint
+through `Salts::Component`, and uses CMeta Interceptors for HTTP auth/ACL request
+admission and cleanup. `--check` assembles the same graph without opening the
+listener. Startup failure rolls back before publication; shutdown releases the
+Endpoint before its dependencies. WS/WSS placement remains owned by CHttp.
+See [the ACE/CNet decision](flowie/ADR_ACE_CNET_23_SERVER_CLIENT.md) for ownership,
+validation and rollback boundaries. No performance gain is claimed.
 
 ## CMake consumption
 

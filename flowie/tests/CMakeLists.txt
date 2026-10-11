@@ -56,6 +56,11 @@ cmake_add_test(
   LIBS flowie_orm_flow Salts::TinyTest
   DEFS FLOWIE_TEST_SQLITE_MODULE="${TurboDB_DRIVER_DIR}/turbodb_driver_sqlite${CMAKE_SHARED_MODULE_SUFFIX}"
   FOLDER "flowie/tests")
+if(TARGET TurboDB::TidesSQL)
+  target_compile_definitions(test_flowie_orm_runtime PRIVATE FLOWIE_TEST_TIDESDB_DRIVER=1)
+else()
+  target_compile_definitions(test_flowie_orm_runtime PRIVATE FLOWIE_TEST_TIDESDB_DRIVER=0)
+endif()
 set_tests_properties(test_flowie_orm_runtime PROPERTIES LABELS "flowie;flowie-release;storage")
 
 if(FLOWIE_TURBODB_LIVE_TESTS)

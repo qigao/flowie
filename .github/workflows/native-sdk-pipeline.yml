@@ -45,7 +45,7 @@ jobs:
           dotnet-version: "8.0.x"
 
       - id: producers
-        name: Resolve latest stable producer packages
+        name: Resolve producer packages including ACE/CNet release candidates
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -61,9 +61,11 @@ jobs:
           <Project Sdk="Microsoft.NET.Sdk">
             <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
             <ItemGroup>
-              <PackageReference Include="Salts.Native" Version="*" />
-              <PackageReference Include="SaltsUtils.Native" Version="*" />
-              <PackageReference Include="CHttp.Native" Version="*" />
+              <!-- Include the published RC SDKs used by the ACE/CNet integration.
+                   A stable-only wildcard can resolve the retired crypto ABI. -->
+              <PackageReference Include="Salts.Native" Version="*-*" />
+              <PackageReference Include="SaltsUtils.Native" Version="*-*" />
+              <PackageReference Include="CHttp.Native" Version="*-*" />
               <PackageReference Include="TurboDB.Native" Version="*" />
               <PackageReference Include="FlowMQ.Native" Version="*" />
               <PackageReference Include="TurboRaft.Native" Version="*" />
@@ -71,7 +73,7 @@ jobs:
           </Project>
           EOF
           dotnet restore "$project" --packages "$RUNNER_TEMP/flowie-producers-packages" \
-            --configfile "$config" --no-cache
+            --configfile "$config" --no-cache --force-evaluate
           python3 - "$RUNNER_TEMP/obj/project.assets.json" "$GITHUB_OUTPUT" <<'PY'
           import json
           import sys

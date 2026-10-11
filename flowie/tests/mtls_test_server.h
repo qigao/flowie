@@ -5,8 +5,8 @@
 #include "tls_test_support.h"
 #include "cmeta_thread.h"
 
-#include <openssl/pem.h>
-#include <openssl/ssl.h>
+#include <gmssl/tls.h>
+#include <gmssl/x509.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
@@ -39,66 +39,41 @@ typedef struct flow_mtls_test_server_s {
   int status;
   int require_peer_certificate;
   int peer_verified;
-  int sent_fatal_alert;
+  int handshake_rejected;
   int abrupt_close;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
 } flow_mtls_test_server_t;
 
-/* Metadata only, written by the server thread and read after join. */
-static void flow_mtls_test_message(int writing, int version, int content_type,
-                                    const void *data, size_t size, SSL *ssl, void *arg) {
-  flow_mtls_test_server_t *server = (flow_mtls_test_server_t *)arg;
-  const uint8_t *bytes = (const uint8_t *)data;
-  (void)version;
-  (void)ssl;
-  if (content_type == SSL3_RT_ALERT && size == 2u && bytes[0] == SSL3_AL_FATAL) {
-    if (writing) server->sent_fatal_alert = bytes[1];
-  }
+/* Test-only GmSSL peer. Material is consumed synchronously by TLS_CTX; the
+ * worker owns the context, connection and socket until it has joined. */
+static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certificate) {
+  static const int ciphers[] = {TLS_cipher_aes_128_gcm_sha256,
+      TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
+  static const int groups[] = {TLS_curve_secp256r1};
+  static const int signatures[] = {TLS_sig_ecdsa_secp256r1_sha256};
+  char cert_path[512] = {0}, key_path[512] = {0}, ca_path[512] = {0};
+  int rc = -1;
+  if (tls_ctx_init(ctx, TLS_protocol_tls13, TLS_server_mode) != 1 ||
+      tls_ctx_set_protocol_range(ctx, TLS_protocol_tls12, TLS_protocol_tls13) != 1 ||
+      tls_ctx_set_cipher_suites(ctx, ciphers, sizeof(ciphers) / sizeof(ciphers[0])) != 1 ||
+      tls_ctx_set_supported_groups(ctx, groups, 1u) != 1 ||
+      tls_ctx_set_signature_algorithms(ctx, signatures, 1u) != 1 ||
+      tls_test_write_server_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)) != 0 ||
+      tls_ctx_set_certificate_and_key(ctx, cert_path, key_path, "") != 1)
+    goto done;
+  if (require_peer_certificate &&
+      (tls_test_write_ca_file(ca_path, sizeof(ca_path)) != 0 ||
+       tls_ctx_set_ca_certificates(ctx, ca_path, 5) != 1 ||
+       tls_ctx_enable_certificate_request(ctx, 1) != 1))
+    goto done;
+  rc = 0;
+done:
+  tls_test_remove_file(ca_path);
+  tls_test_remove_file(key_path);
+  tls_test_remove_file(cert_path);
+  return rc;
 }
-
-static SSL_CTX *flow_mtls_test_server_context(int require_peer_certificate) {
-  SSL_CTX *ctx = NULL;
-  BIO *cert_bio = NULL;
-  BIO *key_bio = NULL;
-  BIO *ca_bio = NULL;
-  X509 *cert = NULL;
-  X509 *ca = NULL;
-  EVP_PKEY *key = NULL;
-  ctx = SSL_CTX_new(TLS_server_method());
-  cert_bio = BIO_new_mem_buf(s_tls_test_cert_pem, -1);
-  key_bio = BIO_new_mem_buf(s_tls_test_key_pem, -1);
-  ca_bio = BIO_new_mem_buf(s_tls_test_ca_pem, -1);
-  if (!ctx || !cert_bio || !key_bio || !ca_bio) goto fail;
-  cert = PEM_read_bio_X509(cert_bio, NULL, NULL, NULL);
-  ca = PEM_read_bio_X509(ca_bio, NULL, NULL, NULL);
-  key = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
-  if (!cert || !key || !ca || SSL_CTX_use_certificate(ctx, cert) != 1 ||
-      SSL_CTX_use_PrivateKey(ctx, key) != 1 || SSL_CTX_check_private_key(ctx) != 1 ||
-      (require_peer_certificate && X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), ca) != 1))
-    goto fail;
-  SSL_CTX_set_verify(ctx,
-                     require_peer_certificate ? SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
-                                              : SSL_VERIFY_NONE,
-                     NULL);
-  X509_free(cert);
-  X509_free(ca);
-  EVP_PKEY_free(key);
-  BIO_free(cert_bio);
-  BIO_free(key_bio);
-  BIO_free(ca_bio);
-  return ctx;
-fail:
-  X509_free(cert);
-  X509_free(ca);
-  EVP_PKEY_free(key);
-  BIO_free(cert_bio);
-  BIO_free(key_bio);
-  BIO_free(ca_bio);
-  SSL_CTX_free(ctx);
-  return NULL;
-}
-
 static int flow_mtls_test_wait_readable(flow_mtls_test_socket_t socket_handle) {
   fd_set readfds;
   struct timeval timeout;
@@ -138,50 +113,63 @@ static int flow_mtls_test_request_complete(const uint8_t *request, size_t size) 
 }
 
 static void flow_mtls_test_server_main(void *arg) {
-  flow_mtls_test_server_t *server = (flow_mtls_test_server_t *)arg;
+  flow_mtls_test_server_t *server = arg;
   flow_mtls_test_socket_t client = FLOW_MTLS_TEST_INVALID_SOCKET;
-  SSL_CTX *ctx = NULL;
-  SSL *ssl = NULL;
-  X509 *peer = NULL;
-  uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
-  size_t request_size = 0u;
+  TLS_CTX *ctx = calloc(1u, sizeof(*ctx));
+  TLS_CONNECT *tls = calloc(1u, sizeof(*tls));
+  const uint8_t *peer = NULL;
+  size_t peer_size = 0u, sent = 0u;
+  int verify_result = -1, initialized = 0, handshaken = 0;
   server->status = -1;
-  ctx = flow_mtls_test_server_context(server->require_peer_certificate);
-  if (!ctx || !flow_mtls_test_wait_readable(server->listener)) goto done;
+  if (!ctx || !tls || flow_mtls_test_server_context(ctx, server->require_peer_certificate) != 0 ||
+      !flow_mtls_test_wait_readable(server->listener)) goto done;
   client = accept(server->listener, NULL, NULL);
   if (client == FLOW_MTLS_TEST_INVALID_SOCKET) goto done;
-  ssl = SSL_new(ctx);
-  if (!ssl) goto done;
-  SSL_set_msg_callback(ssl, flow_mtls_test_message);
-  SSL_set_msg_callback_arg(ssl, server);
-  if (SSL_set_fd(ssl, (int)client) != 1 || SSL_accept(ssl) != 1) goto done;
-  peer = SSL_get_peer_certificate(ssl);
-  server->peer_verified = peer != NULL && SSL_get_verify_result(ssl) == X509_V_OK;
+#ifdef _WIN32
+  DWORD timeout = 5000u;
+#else
+  struct timeval timeout = {5, 0};
+#endif
+  if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) != 0 ||
+      setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout)) != 0 ||
+      tls_init(tls, ctx) != 1) goto done;
+  initialized = 1;
+  if (tls_set_socket(tls, client) != 1) goto done;
+  if (tls_do_handshake(tls) != 1) {
+    server->handshake_rejected = 1;
+    goto done;
+  }
+  handshaken = 1;
+  server->peer_verified = tls_get_peer_certificate(tls, &peer, &peer_size) == 1 &&
+      peer && peer_size != 0u && tls_get_verify_result(tls, &verify_result) == 1 &&
+      verify_result == X509_verify_ok;
   if (server->require_peer_certificate && !server->peer_verified) goto done;
   do {
-    int received =
-        SSL_read(ssl, request + request_size, (int)(sizeof(request) - 1u - request_size));
-    if (received <= 0) goto done;
-    request_size += (size_t)received;
-    request[request_size] = '\0';
-  } while (!flow_mtls_test_request_complete(request, request_size) &&
-           request_size < sizeof(request) - 1u);
-  if (!flow_mtls_test_request_complete(request, request_size)) goto done;
-  memcpy(server->request, request, request_size + 1u);
-  server->request_size = request_size;
+    size_t received = 0u;
+    if (tls_recv(tls, server->request + server->request_size,
+                 sizeof(server->request) - 1u - server->request_size, &received) != 1 ||
+        received == 0u) goto done;
+    server->request_size += received;
+    server->request[server->request_size] = '\0';
+  } while (!flow_mtls_test_request_complete(server->request, server->request_size) &&
+           server->request_size < sizeof(server->request) - 1u);
+  if (!flow_mtls_test_request_complete(server->request, server->request_size)) goto done;
   if (server->response_delay_ms != 0u) cmeta_sleep_ms(server->response_delay_ms);
-  if (server->response_size != 0u &&
-      SSL_write(ssl, server->response, (int)server->response_size) != (int)server->response_size)
-    goto done;
+  while (sent < server->response_size) {
+    size_t count = 0u;
+    if (tls_send(tls, server->response + sent, server->response_size - sent, &count) != 1 ||
+        count == 0u) goto done;
+    sent += count;
+  }
   server->status = 0;
 done:
-  X509_free(peer);
-  if (ssl && !server->abrupt_close) SSL_shutdown(ssl);
-  SSL_free(ssl);
+  if (handshaken && !server->abrupt_close) (void)tls_shutdown(tls);
+  if (initialized) tls_cleanup(tls);
   if (client != FLOW_MTLS_TEST_INVALID_SOCKET) flow_mtls_test_close_socket(client);
-  SSL_CTX_free(ctx);
+  if (ctx) tls_ctx_cleanup(ctx);
+  free(tls);
+  free(ctx);
 }
-
 static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
                                           size_t response_size, uint32_t response_delay_ms,
                                           int require_peer_certificate, int abrupt_close) {

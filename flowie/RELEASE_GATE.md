@@ -92,8 +92,8 @@ key-provider reference 注入。TLS 始终校验服务主机名；
 私有 CA 与 mTLS 客户端证书可按 provider 注入，私钥密码只能通过 key-provider reference 获取。生产网络还必须限制 Flowie 仅能出站到认证服务地址，
 认证数据库不得暴露到 Flowie 网段或公网。内置 HTTPS provider 当前把 MQTT 5 Authentication Data
 作为一次性 HTTPS credential 完成认证；需要多轮 challenge 的部署必须注入实现 enhanced provider ABI
-的认证模块。真实 mTLS gate 必须证明服务端以 `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` 要求证书并得到
-`X509_V_OK`；仅成功解析配置不算传输证据。多轮认证边界关闭或被产品契约明确排除前，不应把 bundled
+的认证模块。真实 mTLS gate 必须证明服务端通过 GmSSL 要求 client certificate，并得到
+`X509_verify_ok`；仅成功解析配置不算传输证据。多轮认证边界关闭或被产品契约明确排除前，不应把 bundled
 server 宣称为通用、完整 MQTT broker。
 
 PostgreSQL live test 不属于 Flowie gate；全量回归允许它在未提供测试数据库时保持 Disabled，但发布

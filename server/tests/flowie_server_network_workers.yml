@@ -6,6 +6,14 @@ profiles:
     endpoint: too_many
   websocket:
     endpoint: websocket
+  secure_websocket:
+    endpoint: secure_websocket
+  websocket_cpu:
+    endpoint: websocket_cpu
+  secure_websocket_cpu:
+    endpoint: secure_websocket_cpu
+  udp_workers:
+    endpoint: udp_workers
   bad_policy:
     endpoint: bad_policy
   bad_cpu_count:
@@ -47,6 +55,19 @@ adapters:
       host: 127.0.0.1
       port: 1883
       network_workers: 2
+      network_policy: least-connections
+  secure_websocket:
+    kind: flowie_endpoint
+    config: {transport: wss, host: 127.0.0.1, port: 1883, network_workers: 2, network_policy: round-robin}
+  websocket_cpu:
+    kind: flowie_endpoint
+    config: {transport: ws, host: 127.0.0.1, port: 1883, network_workers: 2, network_cpus: [0, 1]}
+  secure_websocket_cpu:
+    kind: flowie_endpoint
+    config: {transport: wss, host: 127.0.0.1, port: 1883, network_workers: 2, network_cpus: [0, 1]}
+  udp_workers:
+    kind: flowie_endpoint
+    config: {transport: udp, host: 127.0.0.1, port: 1883, network_workers: 2}
   bad_policy:
     kind: flowie_endpoint
     config: {transport: tcp, host: 127.0.0.1, port: 1883, network_policy: random}

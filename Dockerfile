@@ -15,12 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     flex \
     git \
-    libssl-dev \
     libtool \
     liburing-dev \
     linux-libc-dev \
     ninja-build \
-    openssl \
     pkg-config \
     python3 \
     re2c \

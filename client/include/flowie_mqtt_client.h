@@ -187,8 +187,10 @@ typedef int (*flowie_mqtt_client_auth_challenge_fn)(
  * Replace the retained CONNECT after an authentication rejection. The current
  * packet and all of its spans are borrowed for this callback. On SALTS_OK,
  * refreshed must be a complete valid CONNECT packet; the client deep-copies it
- * before the callback returns. This callback runs on the DLL worker thread
- * and must not perform blocking or heavyweight work.
+ * immediately after the callback returns. Its spans must remain valid until the
+ * next callback for this client begins. Use stable user_data storage or spans
+ * borrowed from current; callback-local buffers are not valid. This callback runs
+ * on the DLL worker thread and must not perform blocking or heavyweight work.
  */
 typedef int (*flowie_mqtt_client_refresh_connect_fn)(
     flowie_mqtt_client_t *client, uint8_t reason_code,
@@ -235,6 +237,10 @@ typedef struct flowie_mqtt_client_config_s {
   int port;
   /** Copied WS/WSS path; NULL selects "/mqtt". Ignored for TCP/TLS. */
   const char *path;
+  /** Whole executing command budget, including transport connect, AUTH and all
+   * response stages; queue wait and resource cleanup are excluded. Zero selects
+   * the default. Callbacks cannot be preempted and must not block. Also bounds
+   * the existing idle receive wait when no command is executing. */
   uint64_t timeout_ms;
   size_t max_packet_size;
   size_t max_inbound_qos2;
@@ -357,7 +363,8 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_is_connected(const flowie_mqtt_c
  * currently in progress. This is intended for on_error and failed operation
  * completion callbacks on the client worker thread. Returns SALTS_OK and
  * writes reason when present, SALTS_ENOENT when the failure did not originate
- * from an MQTT 5 DISCONNECT, SALTS_EBUSY outside a client callback, or
+ * from an MQTT 5 DISCONNECT, SALTS_EBUSY outside this client's worker callback
+ * (including another thread while the callback is running), or
  * SALTS_EINVAL for invalid arguments. The reason is borrowed event state and
  * must not be used to drive a second reconnect loop when create_ex resilience
  * already owns reconnection.
@@ -371,9 +378,9 @@ flowie_mqtt_client_server_disconnect_reason(const flowie_mqtt_client_t *client, 
  * matching config.on_xxx callback, except publish, which guarantees one
  * on_publish callback per topic in input order. A missing matching callback
  * returns SALTS_ENOTSUP.
- * Queue-full, shutdown, structurally invalid input, a selected-version mismatch,
- * and invalid client state fail immediately without invoking a callback. Other
- * protocol or network errors are delivered through the matching callback.
+ * Queue-full, shutdown, structurally invalid input and a selected-version mismatch
+ * fail immediately without invoking a callback. Connection state is checked by
+ * the worker; state, protocol and network errors reach the matching callback.
  */
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_connect(flowie_mqtt_client_t *client,
                                                         const flowie_mqtt_connect_packet_t *packet);

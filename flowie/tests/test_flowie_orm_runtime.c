@@ -113,8 +113,12 @@ spec("Flowie TurboDB driver runtime") {
     check_equal(error.status, ORM_STATUS_DRIVER_ID_MISMATCH);
   }
 
-  it("loads all four SDK drivers and the postgres alias before validating connect limits") {
-    const char *drivers[] = {"sqlite", "postgresql", "postgres", "mysql", "tidesdb"};
+  it("loads the enabled SDK drivers and the postgres alias before validating connect limits") {
+    const char *drivers[] = {"sqlite", "postgresql", "postgres", "mysql",
+#if FLOWIE_TEST_TIDESDB_DRIVER
+                             "tidesdb",
+#endif
+    };
     /* Invalid generic limits fail before a backend can contact a database. */
     config.max_parameters = 0u;
     for (size_t index = 0u; index < sizeof(drivers) / sizeof(drivers[0]); ++index) {
@@ -124,6 +128,18 @@ spec("Flowie TurboDB driver runtime") {
       check_contains(error.message, "configuration limits");
     }
   }
+
+#if !FLOWIE_TEST_TIDESDB_DRIVER
+  it("reports a missing TidesDB module when the SDK excludes TidesSQL") {
+    orm_status_t status;
+    config.driver = orm_view("tidesdb");
+    status = flowie_orm_connect(&config, &connection, &error);
+    check_true(status == ORM_STATUS_DRIVER_MODULE_NOT_FOUND || status == ORM_STATUS_DRIVER_LOAD_ERROR);
+    check_null(connection);
+    check_equal(error.status, status);
+    check_not_equal(error.message[0], '\0');
+  }
+#endif
 
   it("rejects unknown drivers and invalid or oversized option arrays before loading") {
     config.driver = orm_view("unregistered");

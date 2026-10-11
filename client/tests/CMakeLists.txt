@@ -7,8 +7,7 @@ cmake_add_test(
 
 target_include_directories(test_flowie_mqtt_client
                            PRIVATE ${PROJECT_SOURCE_DIR}/flowie/tests)
-target_link_libraries(test_flowie_mqtt_client PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-cmake_target_enable_boringssl_linkage(test_flowie_mqtt_client)
+target_link_libraries(test_flowie_mqtt_client PRIVATE GmSSL::GmSSL)
 set_tests_properties(
   test_flowie_mqtt_client
   PROPERTIES LABELS "flowie;flowie-release;mqtt;client;mqtt-security;mqtt-negative")
@@ -111,8 +110,7 @@ if(FLOWIE_BUILD_TESTS)
   target_include_directories(test_flowie_mqtt_client_close_full
                              PRIVATE ${PROJECT_SOURCE_DIR}/flowie/tests)
   target_link_libraries(test_flowie_mqtt_client_close_full
-                        PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-  cmake_target_enable_boringssl_linkage(test_flowie_mqtt_client_close_full)
+                        PRIVATE GmSSL::GmSSL)
   if(WIN32)
     target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE ws2_32)
   endif()

@@ -13,7 +13,10 @@ ARG FLOWIE_PROFILE
 ARG FLOWIE_ENABLE_ASAN
 ARG CMAKE_VERSION=3.31.0
 ARG CMAKE_SHA256=7cfdf4a411c71d13c027199952fd25e8245d85c932ff452e2b9a9e0f6dfe368a
+ARG RE2C_VERSION=4.6
+ARG RE2C_SHA256=75bf2696445e831d0d44e0d9f2909eeffc18c09757f222b2fb025f7e59fe130b
 ARG VCPKG_REF=b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01
+ARG VCPKG_CACHE_REF=0dc254695917bc180504d916240292e9096e9da5
 ENV DEBIAN_FRONTEND=noninteractive \
     FLOWIE_BUILD_PRESET=${FLOWIE_BUILD_PRESET} \
     FLOWIE_INSTALL_PRESET=${FLOWIE_INSTALL_PRESET} \
@@ -21,12 +24,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FLOWIE_ENABLE_ASAN=${FLOWIE_ENABLE_ASAN} \
     VCPKG_DISABLE_METRICS=1 \
     VCPKG_DEFAULT_BINARY_CACHE=/var/cache/vcpkg \
-    VCPKG_ROOT=/opt/vcpkg
+    VCPKG_ROOT=/opt/vcpkg \
+    PROJECT_ROOT=/opt/flowie-build \
+    RE2C_ROOT=/opt/re2c
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       autoconf bison build-essential ca-certificates curl flex git golang-go \
-      libssl-dev libtool liburing-dev linux-libc-dev nasm ninja-build openssl \
-      pkg-config python3 re2c tar unzip wget zip \
+      libtool liburing-dev linux-libc-dev nasm ninja-build \
+      mono-complete pkg-config python3 tar unzip wget xz-utils zip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL \
@@ -38,69 +45,98 @@ RUN curl -fsSL \
     && rm -f /tmp/cmake-install.sh \
     && git clone https://github.com/microsoft/vcpkg /opt/vcpkg \
     && git -C /opt/vcpkg checkout "${VCPKG_REF}" \
-    && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+    && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics \
+    && git clone https://github.com/qigao/vcpkg-cache /root/.cache/qigao/vcpkg-cache \
+    && git -C /root/.cache/qigao/vcpkg-cache checkout --detach "${VCPKG_CACHE_REF}"
+
+WORKDIR /tmp/re2c-source
+RUN curl -fsSL "https://github.com/skvadrik/re2c/releases/download/${RE2C_VERSION}/re2c-${RE2C_VERSION}.tar.xz" \
+      -o /tmp/re2c.tar.xz \
+    && echo "${RE2C_SHA256}  /tmp/re2c.tar.xz" | sha256sum -c - \
+    && tar -xf /tmp/re2c.tar.xz --strip-components=1 \
+    && ./configure --prefix="$RE2C_ROOT" --disable-dependency-tracking \
+    && make -j"$(nproc)" \
+    && make install \
+    && rm /tmp/re2c.tar.xz
+
+# Reject mixed profile arguments before any SDK is configured.
+RUN set -eu; \
+    case "$FLOWIE_PROFILE:$FLOWIE_BUILD_PRESET:$FLOWIE_INSTALL_PRESET" in \
+      release:linux-release-user:install-linux-release-user|debug:linux-dev-user:install-linux-dev-user) ;; \
+      *) echo 'FLOWIE profile and presets must select the same Debug/Release profile' >&2; exit 2 ;; \
+    esac
 
 FROM build_toolchain AS salts_builder
 COPY --from=salts . /src/salts
+WORKDIR /src/salts
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/salts; \
+    --mount=type=secret,id=github_token,required=true \
+    set -eu; GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export GITHUB_TOKEN; \
+    : "${GITHUB_TOKEN:?github_token must not be empty}"; parallel="$(nproc)"; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/salts/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
+      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
-
-FROM build_toolchain AS chttp_builder
-COPY --from=salts_builder /opt/salts/ /opt/salts/
-COPY --from=chttp . /src/chttp
-RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; \
-    case "$FLOWIE_PROFILE" in \
-      debug) chttp_build_type=Debug ;; \
-      release) chttp_build_type=Release ;; \
-      *) echo "unsupported FLOWIE_PROFILE: $FLOWIE_PROFILE" >&2; exit 2 ;; \
-    esac; \
-    SALTS_ROOT="/opt/salts/$FLOWIE_PROFILE" \
-      cmake -S /src/chttp -B /src/chttp/build/docker -G Ninja \
-        -DCMAKE_BUILD_TYPE="$chttp_build_type" \
-        -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
-        -DVCPKG_INSTALLED_DIR=/src/chttp/vcpkg_installed \
-        -DVCPKG_TARGET_TRIPLET=x64-linux \
-        -DVCPKG_MANIFEST_MODE=ON \
-        -DCMAKE_INSTALL_PREFIX="/opt/http-services/$FLOWIE_PROFILE" \
-        -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-        -DENABLE_TESTS=OFF -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF \
-        -DBUILD_EXAMPLES=OFF; \
-    cmake --build /src/chttp/build/docker --target install --parallel "$parallel"
 
 FROM build_toolchain AS salts_utils_builder
 COPY --from=salts_builder /opt/salts/ /opt/salts/
 COPY --from=salts_utils . /src/salts-utils
+COPY --from=salts_builder /opt/salts/${FLOWIE_PROFILE}/ /src/salts-utils/stage/dependencies/salts/linux-x64/
+WORKDIR /src/salts-utils
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/salts-utils; \
+    --mount=type=secret,id=github_token,required=true \
+    set -eu; GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export GITHUB_TOKEN; \
+    : "${GITHUB_TOKEN:?github_token must not be empty}"; parallel="$(nproc)"; \
+    export SALTS_ROOT="/opt/salts/$FLOWIE_PROFILE"; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/salts-utils/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
       -DSALTS_UTILS_ENABLE_CAPTURE=OFF \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
+      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"; \
     LD_LIBRARY_PATH="/opt/salts-utils/$FLOWIE_PROFILE/lib:/opt/salts/$FLOWIE_PROFILE/lib" \
-      ldd "/opt/salts-utils/$FLOWIE_PROFILE/bin/tbe_compiler" \
-      | tee "/opt/salts-utils/$FLOWIE_PROFILE/tbe-compiler.ldd"; \
-    ! grep -F 'not found' "/opt/salts-utils/$FLOWIE_PROFILE/tbe-compiler.ldd"
+      ldd "/opt/salts-utils/$FLOWIE_PROFILE/bin/salts-idlc" \
+      > "/opt/salts-utils/$FLOWIE_PROFILE/salts-idlc.ldd"; \
+    cat "/opt/salts-utils/$FLOWIE_PROFILE/salts-idlc.ldd"; \
+    if grep -Fq 'not found' "/opt/salts-utils/$FLOWIE_PROFILE/salts-idlc.ldd"; then exit 1; fi
+
+FROM build_toolchain AS chttp_builder
+COPY --from=salts_builder /opt/salts/ /opt/salts/
+COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
+COPY --from=chttp . /src/chttp
+WORKDIR /src/chttp
+RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
+    --mount=type=secret,id=github_token,required=true \
+    set -eu; GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export GITHUB_TOKEN; \
+    : "${GITHUB_TOKEN:?github_token must not be empty}"; parallel="$(nproc)"; \
+    export SALTS_ROOT="/opt/salts/$FLOWIE_PROFILE"; \
+    export SALTS_UTILS_ROOT="/opt/salts-utils/$FLOWIE_PROFILE"; \
+    cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
+      -DCMAKE_INSTALL_PREFIX="/opt/http-services/$FLOWIE_PROFILE" \
+      -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
+      -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF; \
+    cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
 FROM build_toolchain AS turbodb_builder
 COPY --from=salts_builder /opt/salts/ /opt/salts/
 COPY --from=salts_utils_builder /opt/salts-utils/ /opt/salts-utils/
 COPY --from=turbo_db . /src/turbodb
+COPY --from=salts_builder /opt/salts/${FLOWIE_PROFILE}/ /src/turbodb/stage/dependencies/salts/linux-x64/
+COPY --from=salts_utils_builder /opt/salts-utils/${FLOWIE_PROFILE}/ /src/turbodb/stage/dependencies/salts-utils/linux-x64/
+WORKDIR /src/turbodb
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/turbodb; \
+    --mount=type=secret,id=github_token,required=true \
+    set -eu; GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export GITHUB_TOKEN; \
+    : "${GITHUB_TOKEN:?github_token must not be empty}"; parallel="$(nproc)"; \
+    export SALTS_ROOT="/opt/salts/$FLOWIE_PROFILE"; \
+    export SALTS_UTILS_ROOT="/opt/salts-utils/$FLOWIE_PROFILE"; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/turbodb/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
-      -DORM_WITH_PGSQL=ON -DORM_BUILD_SHARED=ON \
+      -DTURBODB_BUILD_ORM=ON -DTURBODB_BUILD_TIDESSQL=OFF \
       -DTURBODB_BUILD_REDIS=OFF -DTURBODB_BUILD_DBTOOLS=OFF \
-      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF; \
+      -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF; \
     cmake --build --preset "$FLOWIE_INSTALL_PRESET" --parallel "$parallel"
 
 FROM build_toolchain AS builder
@@ -114,8 +150,11 @@ COPY --from=chttp_builder /src/chttp/vcpkg_installed/ /src/chttp/vcpkg_installed
 COPY --from=salts_utils_builder /src/salts-utils/vcpkg_installed/ /src/salts-utils/vcpkg_installed/
 COPY --from=turbodb_builder /src/turbodb/vcpkg_installed/ /src/turbodb/vcpkg_installed/
 COPY . /src/flowie
+WORKDIR /src/flowie
 RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
-    set -eux; parallel="$(nproc)"; cd /src/flowie; \
+    --mount=type=secret,id=github_token,required=true \
+    set -eu; GITHUB_TOKEN="$(cat /run/secrets/github_token)"; export GITHUB_TOKEN; \
+    : "${GITHUB_TOKEN:?github_token must not be empty}"; parallel="$(nproc)"; \
     cmake --fresh --preset "$FLOWIE_BUILD_PRESET" \
       -DCMAKE_INSTALL_PREFIX="/opt/flowie/$FLOWIE_PROFILE" \
       -DENABLE_SANITIZER_ADDRESS="$FLOWIE_ENABLE_ASAN" \
@@ -133,21 +172,20 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       /opt/flowie-runtime/bin/flowie-control; \
     install -m 0755 "/opt/flowie/$FLOWIE_PROFILE/bin/flowie-control-data" \
       /opt/flowie-runtime/bin/flowie-control-data; \
+    case "$FLOWIE_PROFILE" in \
+      debug) vcpkg_libdir=debug/lib ;; \
+      release) vcpkg_libdir=lib ;; \
+    esac; \
     for libdir in \
       "/opt/salts/$FLOWIE_PROFILE/lib" "/opt/http-services/$FLOWIE_PROFILE/lib" \
       "/opt/salts-utils/$FLOWIE_PROFILE/lib" \
       "/opt/turbodb/$FLOWIE_PROFILE/lib" \
       "/opt/flowie/$FLOWIE_PROFILE/lib" \
-      /src/salts/vcpkg_installed/x64-linux/debug/lib \
-      /src/salts/vcpkg_installed/x64-linux/lib \
-      /src/chttp/vcpkg_installed/x64-linux/debug/lib \
-      /src/chttp/vcpkg_installed/x64-linux/lib \
-      /src/salts-utils/vcpkg_installed/x64-linux/debug/lib \
-      /src/salts-utils/vcpkg_installed/x64-linux/lib \
-      /src/turbodb/vcpkg_installed/x64-linux/debug/lib \
-      /src/turbodb/vcpkg_installed/x64-linux/lib \
-      /src/flowie/vcpkg_installed/x64-linux/debug/lib \
-      /src/flowie/vcpkg_installed/x64-linux/lib; do \
+      "/src/salts/vcpkg_installed/x64-linux/$vcpkg_libdir" \
+      "/src/chttp/vcpkg_installed/x64-linux/$vcpkg_libdir" \
+      "/src/salts-utils/vcpkg_installed/x64-linux/$vcpkg_libdir" \
+      "/src/turbodb/vcpkg_installed/x64-linux/$vcpkg_libdir" \
+      "/src/flowie/vcpkg_installed/x64-linux/$vcpkg_libdir"; do \
       if [ -d "$libdir" ]; then \
         find "$libdir" -maxdepth 1 \( -type f -o -type l \) -name '*.so*' \
           -exec cp -a '{}' /opt/flowie-runtime/lib/ ';'; \
@@ -162,7 +200,7 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
       LD_LIBRARY_PATH=/opt/flowie-runtime/lib ldd "$module" \
         > /opt/flowie-runtime/driver.ldd; \
       cat /opt/flowie-runtime/driver.ldd; \
-      ! grep -F 'not found' /opt/flowie-runtime/driver.ldd; \
+      if grep -Fq 'not found' /opt/flowie-runtime/driver.ldd; then exit 1; fi; \
     done; \
     for executable in flowie_server flowie-control flowie-control-data; do \
       case "$executable" in \
@@ -170,18 +208,25 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
         *) manifest=$executable ;; \
       esac; \
       LD_LIBRARY_PATH=/opt/flowie-runtime/lib ldd "/opt/flowie-runtime/bin/$executable" \
-        | tee "/opt/flowie-runtime/$manifest.ldd"; \
-      ! grep -F 'not found' "/opt/flowie-runtime/$manifest.ldd"; \
+        > "/opt/flowie-runtime/$manifest.ldd"; \
+      cat "/opt/flowie-runtime/$manifest.ldd"; \
+      if grep -Fq 'not found' "/opt/flowie-runtime/$manifest.ldd"; then exit 1; fi; \
     done
 
 FROM debian:bookworm-slim AS runtime
 ARG SOURCE_REVISION=unknown
+ARG FLOWIE_ENABLE_ASAN
 LABEL org.opencontainers.image.title="Flowie server and control" \
       org.opencontainers.image.description="Flowie MQTT broker and HTTPS control runtime" \
       org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libgcc-s1 libstdc++6 netcat-openbsd \
+    && case "$FLOWIE_ENABLE_ASAN" in \
+         ON) apt-get install -y --no-install-recommends libasan8 ;; \
+         OFF) ;; \
+         *) echo 'FLOWIE_ENABLE_ASAN must be ON or OFF' >&2; exit 2 ;; \
+       esac \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 flowie \
     && useradd --uid 10001 --gid flowie --no-create-home --home-dir /var/lib/flowie \
@@ -206,15 +251,16 @@ COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh \
   /usr/local/bin/flowie-combined-entrypoint
 COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
 
-RUN ldconfig \
-    && for executable in flowie_server flowie-control flowie-control-data; do \
+RUN set -eu; ldconfig; \
+    for executable in flowie_server flowie-control flowie-control-data; do \
          case "$executable" in \
            flowie_server) manifest=flowie-server ;; \
            *) manifest=$executable ;; \
          esac; \
          ldd "/usr/local/bin/$executable" \
-           | tee "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
-         ! grep -F 'not found' "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
+           > "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
+         cat "/usr/share/doc/flowie/$manifest-runtime.ldd"; \
+         if grep -Fq 'not found' "/usr/share/doc/flowie/$manifest-runtime.ldd"; then exit 1; fi; \
        done
 
 ENV FLOWIE_HOST=127.0.0.1 \

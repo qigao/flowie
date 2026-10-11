@@ -8,8 +8,6 @@
 #include "tstr.h"
 #include <salts/error_codes.h>
 
-#include <openssl/ssl.h>
-
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -573,18 +571,12 @@ static chttp_client_config external_https_client_config(
 static int external_https_tls_files_validate(const flowie_control_external_https_tls_t *tls,
                                              const flowie_security_key_provider_t *key_provider) {
   flowie_security_secret_lease_t lease = FLOWIE_SECURITY_SECRET_LEASE_INIT;
-  SSL_CTX *context = NULL;
+  chttp_tls_profile profile = {0};
+  cnet_tls_client_config config = {.size = sizeof(config)};
   char *password = NULL;
   int rc = SALTS_EIO;
   if (!tls || !key_provider) return SALTS_EINVAL;
   if (!tls->ca_file && !tls->client_cert_file) return SALTS_OK;
-  context = SSL_CTX_new(TLS_client_method());
-  if (!context) goto done;
-  if (tls->ca_file && SSL_CTX_load_verify_locations(context, tls->ca_file, NULL) != 1) goto done;
-  if (!tls->client_cert_file) {
-    rc = SALTS_OK;
-    goto done;
-  }
   if (tls->client_key_password_ref) {
     rc = flowie_security_secret_acquire(key_provider, tls->client_key_password_ref, &lease);
     if (rc != SALTS_OK) goto done;
@@ -599,17 +591,16 @@ static int external_https_tls_files_validate(const flowie_control_external_https
     }
     memcpy(password, lease.bytes, lease.byte_count);
     password[lease.byte_count] = '\0';
-    SSL_CTX_set_default_passwd_cb_userdata(context, password);
   }
-  rc = SALTS_EIO;
-  if (SSL_CTX_use_certificate_chain_file(context, tls->client_cert_file) != 1 ||
-      SSL_CTX_use_PrivateKey_file(context, tls->client_key_file, SSL_FILETYPE_PEM) != 1 ||
-      SSL_CTX_check_private_key(context) != 1)
-    goto done;
-  rc = SALTS_OK;
+  config.ca_file = tls->ca_file;
+  config.cert_file = tls->client_cert_file;
+  config.key_file = tls->client_key_file;
+  config.key_password = password;
+  /* Preflight through the same provider that admits the actual HTTPS request. */
+  rc = chttp_tls_profile_init(&profile, &config);
 
 done:
-  SSL_CTX_free(context);
+  (void)chttp_tls_profile_destroy(&profile);
   if (password) {
     crypto_wipe(password, lease.byte_count);
     free(password);

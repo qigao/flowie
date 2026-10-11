@@ -254,10 +254,15 @@ static int flowie_server_parse_endpoint(const cyaml_doc_t *doc, cyaml_node_t *ma
   if (rc != SALTS_OK) return rc;
   if (config->endpoint.network_workers > config->endpoint.max_connections)
     return SALTS_ERANGE;
-  if ((config->endpoint.network_workers > 1u || config->endpoint.network_cpu_count != 0u ||
-       config->endpoint.network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+  if (config->endpoint.network_cpu_count != 0u &&
       config->endpoint.transport != FLOWIE_TRANSPORT_TCP &&
       config->endpoint.transport != FLOWIE_TRANSPORT_TLS) return SALTS_ENOTSUP;
+  if ((config->endpoint.network_workers > 1u ||
+       config->endpoint.network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_TCP &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_TLS &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_WS &&
+      config->endpoint.transport != FLOWIE_TRANSPORT_WSS) return SALTS_ENOTSUP;
   if (config->endpoint.port <= 0 || config->endpoint.max_packet_size < 2u ||
       config->endpoint.max_connections == 0u || config->endpoint.max_sessions == 0u ||
       config->endpoint.max_subscriptions_per_session == 0u ||

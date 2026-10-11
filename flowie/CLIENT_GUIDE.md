@@ -211,26 +211,32 @@ resilience.on_reconnect = on_reconnect;
 rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
 ```
 
-策略只保留最近一次已提交 CONNECT 的一份深拷贝，并由 client worker coroutine 单线程推进：
+策略保留当前重连所用 CONNECT 的一份深拷贝，并由 client worker thread 单线程推进。
+已连接时执行重复 CONNECT 会通过 `on_connect` 返回 `SALTS_EALREADY`，不会替换现有重连凭据或重置退避。
 
 - CONNACK `0x88`（Server unavailable）、`0x89`（Server busy）及瞬态网络错误按指数退避重连。
 - CONNACK 或 DISCONNECT `0x86`/`0x87` 先调用 `refresh_connect`；回调必须返回一份完整的新 CONNECT，
-  client 会在回调返回前深拷贝它，并拒绝与 client 选择冲突的版本。JWT bearer 放在 CONNECT password
+  client 会在回调返回后立即深拷贝它，并拒绝与 client 选择冲突的版本。输出 spans 必须来自稳定的
+  `user_data` 存储或当前 CONNECT，并保持到该 client 的下一次回调开始；不能使用回调局部缓冲区。JWT bearer 放在 CONNECT password
   时，在这里替换 token。
 - DISCONNECT `0x89` 普通重连；`0x8e`（Session taken over）、协议错误及永久认证拒绝不重连。
 - 初始公开 CONNECT 仍只产生一次 `on_connect`；每次内部 attempt 由 `on_reconnect` 报告。
 - `max_attempts` 是每次掉线后的自动 attempt 上限，0 表示不限制；成功连接会重置 attempt 和退避。
 
-`refresh_connect` 和 `on_reconnect` 都运行在 client worker coroutine。回调内的网络 I/O 必须使用
-coroutine API，并设置明确 timeout；密码学、文件扫描等重型工作应提交到有界 worker pool，不能阻塞
-owner lane。回调不能销毁同一个 client。缓存的 CONNECT password/token 在替换和销毁时会清零。
+`refresh_connect` 和 `on_reconnect` 都运行在 client worker thread。回调不能执行阻塞网络 I/O；
+刷新所需数据应提前准备，重型工作交给应用拥有的有界 worker pool。回调不能销毁同一个 client。
+缓存的 CONNECT password/token 在替换和销毁时会清零。
+
+`timeout_ms` 限制每条命令开始执行后的总时间，覆盖传输连接、AUTH、报文分片及 QoS 的所有响应阶段；
+其他入站消息不会重置截止时间。排队时间和资源清理预算独立计算。回调不能被抢占，返回后会重新检查
+剩余时间。无命令时仍沿用该值限制空闲接收等待。
 
 已有独立重连监督器的封装不应再启用 `create_ex`，否则会形成两个连接状态推进者。此类封装可在
 `on_error` 或失败的 operation completion 回调内调用
 `flowie_mqtt_client_server_disconnect_reason()`：MQTT 5 服务端 DISCONNECT 返回具体 reason，普通
 EOF/传输错误返回 `TURBO_ENOENT`。该事件状态仅在当前 worker callback 内有效；回调外返回
-`TURBO_EBUSY`。例如 `0x87` 可触发监督器重新 CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应
-按终止错误处理。
+`TURBO_EBUSY`，即使其他线程调用时该 worker 正在执行回调也一样。例如 `0x87` 可触发监督器重新
+CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应按终止错误处理。
 
 此机制与 MQTT enhanced authentication 不同：`flowie_mqtt_client_authenticate()` 的 AUTH `0x19`
 用于已协商 Authentication Method 的协议内 re-auth；JWT 作为普通 CONNECT password 时使用上述

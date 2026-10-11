@@ -71,14 +71,18 @@ done
 exit "${FLOWIE_TEST_CTEST_STATUS:-0}"
 EOF
 
-cat > "$FAKE_BIN/openssl" <<'EOF'
+cat > "$FAKE_BIN/od" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == rand && "${2:-}" == -hex && "${3:-}" == 24 ]]
-printf '%s\n' '0123456789abcdef0123456789abcdef0123456789abcdef'
+[[ "$*" == '-An -N24 -tx1 /dev/urandom' ]]
+if [[ "${FLOWIE_TEST_RANDOM_SHORT:-0}" == 1 ]]; then
+  printf ' 01 23\n'
+  exit 0
+fi
+printf '%s\n' ' 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef' ' 01 23 45 67 89 ab cd ef'
 EOF
 
-chmod +x "$FAKE_BIN/docker" "$FAKE_BIN/ctest" "$FAKE_BIN/openssl"
+chmod +x "$FAKE_BIN/docker" "$FAKE_BIN/ctest" "$FAKE_BIN/od"
 
 export FLOWIE_TEST_DOCKER_LOG="$DOCKER_LOG"
 export FLOWIE_TEST_CTEST_LOG="$CTEST_LOG"
@@ -161,5 +165,18 @@ if ((STATUS == 0)); then
   exit 1
 fi
 grep -Fq 'database crashed before readiness' "$CRASH_ARTIFACTS/postgres.log"
+
+# A short random read must fail before starting Docker or invoking CTest.
+: > "$DOCKER_LOG"
+: > "$CTEST_LOG"
+if FLOWIE_TEST_RANDOM_SHORT=1 bash "$RUNNER" \
+  --build-dir "$BUILD_DIR" --artifacts "$TEST_ROOT/short-random-artifacts" \
+  > "$TEST_ROOT/short-random.log" 2>&1; then
+  printf 'runner accepted a short random read\n' >&2
+  exit 1
+fi
+test ! -s "$DOCKER_LOG"
+test ! -s "$CTEST_LOG"
+grep -Fq 'OS random source returned an invalid password' "$TEST_ROOT/short-random.log"
 
 printf 'TurboDB PostgreSQL live runner contract: PASS\n'

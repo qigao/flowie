@@ -3,14 +3,28 @@ add_executable(
   flowie_server.c
   flowie_server_config.c
   flowie_server_http_security.c
+  flowie_server_runtime.c
   flowie_server_turbodb_config.c)
 target_link_libraries(
   flowie_server PRIVATE Flowie::App Orm::C CHttp::Client Salts::CmdParser
-                        Salts::CYaml Salts::JsonParser Salts::UriParser)
-cmake_target_enable_boringssl_linkage(flowie_server)
+                        Salts::CYaml Salts::JsonParser Salts::UriParser
+                        Salts::Component Salts::CMeta)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
 if(FLOWIE_BUILD_TESTS)
+  cmake_add_test(
+    test_flowie_server_runtime
+    SOURCES tests/test_flowie_server_runtime.c flowie_server_runtime.c
+            flowie_server_config.c flowie_server_http_security.c flowie_server_turbodb_config.c
+    LIBS Flowie::App Orm::C CHttp::Client Salts::Component Salts::CMeta
+         Salts::CYaml Salts::JsonParser Salts::UriParser Salts::TinyTest
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
+             ${PROJECT_SOURCE_DIR}/flowie/tests
+    DEFS FLOWIE_TEST_MULTI_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/tests/flowie_server_network_workers.yml"
+    FOLDER "flowie/server/tests")
+  set_tests_properties(test_flowie_server_runtime PROPERTIES
+      LABELS "flowie;flowie-release;product-contract;ownership;configurator;cnet")
+
   cmake_add_test(
     test_flowie_server_config
     SOURCES tests/test_flowie_server_config.c flowie_server_config.c
@@ -30,14 +44,14 @@ if(FLOWIE_BUILD_TESTS)
   cmake_add_test(
     test_flowie_server_http_security
     SOURCES tests/test_flowie_server_http_security.c flowie_server_http_security.c
-    LIBS Flowie::Protocol Orm::C CHttp::Client Salts::JsonParser Salts::UriParser
-         Salts::Core Salts::TinyTest
+    LIBS Flowie::Protocol Orm::C CHttp::Client CHttp::Server Salts::JsonParser Salts::UriParser
+         Salts::Core Salts::CMeta Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
+             ${PROJECT_SOURCE_DIR}/flowie/tests
     FOLDER "flowie/server/tests")
   set_tests_properties(
     test_flowie_server_http_security
     PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
-  cmake_target_enable_boringssl_linkage(test_flowie_server_http_security)
   if(WIN32)
     set_tests_properties(
       test_flowie_server_http_security

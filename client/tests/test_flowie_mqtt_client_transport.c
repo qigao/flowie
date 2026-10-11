@@ -1,4 +1,5 @@
 #include "flowie_mqtt_client.h"
+#include "flowie_mqtt_protocol.h"
 #if defined(FLOWIE_CLIENT_FAULT_TEST)
 #include "flowie_mqtt_client_fault_test.h"
 #endif
@@ -240,6 +241,9 @@ static cnet_client_config flowie_client_transport_network(void) {
                                      .event_capacity = 16u,
                                      .max_send_bytes = 8192u,
                                      .receive_buffer_bytes = 8192u,
+                                     .tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES,
+                                     .tls_handshake_timeout_ms =
+                                         FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
                                      .connect_timeout_ms =
                                          FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
                                      .read_timeout_ms =
@@ -358,6 +362,12 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
       check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);
       check_equal(atomic_load_explicit(&probe.disconnect_status, memory_order_relaxed), SALTS_OK);
       check_equal(atomic_load_explicit(&probe.submit_status, memory_order_relaxed), SALTS_OK);
+      /* Local command completion does not acknowledge peer processing. Wait
+       * for this episode's DISCONNECT before checking counts or reconnecting. */
+      while (atomic_load_explicit(&broker.disconnects, memory_order_relaxed) < round + 1 &&
+             atomic_load_explicit(&broker.error, memory_order_acquire) == SALTS_OK &&
+             cmeta_monotonic_ms() < deadline)
+        cmeta_sleep_ms(1u);
     }
     check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
     check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), round + 1);
@@ -990,6 +1000,486 @@ static void flowie_client_transport_ws_destroy_timeout_case(int use_tls) {
   }
 }
 
+#endif
+
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+typedef struct flowie_client_dial_admission_probe {
+  atomic_int done;
+  const char *expected_ca;
+  int expect_tls;
+  int inspected;
+  int physical_target_matches;
+  int tls_matches;
+  int status;
+} flowie_client_dial_admission_probe;
+
+static int flowie_client_inspect_dial(const cnet_connect_options *options, void *context) {
+  flowie_client_dial_admission_probe *probe = context;
+  probe->inspected++;
+  probe->physical_target_matches = strcmp(options->uri, probe->expect_tls
+      ? "tls://127.0.0.1:1883" : "tcp://127.0.0.1:1883") == 0;
+  if (!probe->expect_tls) probe->tls_matches = options->tls == NULL;
+  else if (options->tls) {
+    const cnet_tls_client_config *tls = options->tls;
+    probe->tls_matches = tls->size == sizeof(*tls) && tls->server_name &&
+        strcmp(tls->server_name, "broker.example") == 0 &&
+        ((probe->expected_ca && tls->ca_file &&
+          strcmp(tls->ca_file, probe->expected_ca) == 0) ||
+         (!probe->expected_ca && !tls->ca_file)) &&
+        !tls->cert_file && !tls->key_file && !tls->key_password;
+  }
+  /* Admission contract only: no trust-store mutation or remote connection. */
+  return SALTS_EINVAL;
+}
+
+static void flowie_client_dial_inspected(flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *context) {
+  flowie_client_dial_admission_probe *probe = context;
+  (void)client;
+  (void)response;
+  probe->status = status;
+  atomic_store_explicit(&probe->done, 1, memory_order_release);
+}
+
+spec("Flowie Client logical TLS authority admission") {
+  static flowie_mqtt_client_t *client;
+  static flowie_client_dial_admission_probe probe;
+  before_each() {
+    client = NULL;
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.done, 0);
+  }
+  after_each() { flowie_mqtt_client_destroy(client); }
+
+  static const struct { flowie_mqtt_client_transport_t transport; const char *ca; } cases[] = {
+      {FLOWIE_MQTT_CLIENT_TRANSPORT_TLS, NULL},
+      {FLOWIE_MQTT_CLIENT_TRANSPORT_TLS, "configured-ca.pem"},
+      {FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, NULL}};
+  for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+    it("keeps logical identity separate from physical destination, case %zu", index) {
+      flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+      flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+      const flowie_mqtt_client_remote_endpoint_t destination =
+          {10u, "127.0.0.1", 1883u, 1u, 0u, 1u};
+      const flowie_mqtt_client_destination_policy_t policy = {
+          sizeof(policy), FLOWIE_MQTT_CLIENT_DESTINATION_VERSION,
+          FLOWIE_MQTT_DESTINATION_EXPLICIT, &destination, 1u,
+          1u, UINT64_MAX, 0u, 10u, 0u, 0u};
+      probe.expect_tls = cases[index].transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
+      probe.expected_ca = cases[index].ca;
+      config.transport = cases[index].transport;
+      config.host = "broker.example";
+      config.port = 1883;
+      config.tls.ca_file = cases[index].ca;
+      config.on_connect = flowie_client_dial_inspected;
+      config.user_data = &probe;
+      check_equal(flowie_mqtt_client_create(&config, &client), SALTS_OK);
+      check_equal(flowie_mqtt_client_set_destination_policy(client, &policy), SALTS_OK);
+      check_equal(flowie_mqtt_client_test_set_dial_admission(client,
+          flowie_client_inspect_dial, &probe), SALTS_OK);
+      connect.version = FLOWIE_MQTT_VERSION_5;
+      connect.clean_start = 1u;
+      connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)"tls-admission", 13u};
+      check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+      const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+      while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
+             cmeta_monotonic_ms() < deadline) cmeta_sleep_ms(1u);
+      check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
+      check_equal(probe.inspected, 1);
+      check_equal(probe.status, SALTS_EINVAL);
+      check_true(probe.physical_target_matches);
+      check_true(probe.tls_matches);
+    }
+  }
+}
+#endif
+
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
+enum {
+  FLOWIE_CONTRACT_CONNECT,
+  FLOWIE_CONTRACT_PUBLISH,
+  FLOWIE_CONTRACT_RECONNECT,
+  FLOWIE_CONTRACT_CALLBACK_COUNT,
+  FLOWIE_CONTRACT_COMMAND_MS = 300u,
+  FLOWIE_CONTRACT_STAGE_MS = 180u
+};
+
+typedef struct flowie_client_contract_fixture {
+  flowie_server server;
+  flowie_mqtt_client_t *client;
+  int server_initialized;
+  int server_started;
+  int refresh;
+  int resilience_enabled;
+  int disconnect_first_publish;
+  int probe_reason;
+  uint32_t ack_delay_ms;
+  unsigned char input[FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES];
+  size_t input_size;
+  unsigned char password[16];
+  atomic_int completions[FLOWIE_CONTRACT_CALLBACK_COUNT];
+  atomic_int statuses[FLOWIE_CONTRACT_CALLBACK_COUNT];
+  atomic_int connects;
+  atomic_int publishes;
+  atomic_int pubrels;
+  atomic_int bad_passwords;
+  atomic_int closed_connections;
+  atomic_int errors;
+  atomic_int refreshes;
+  atomic_int reason_callback_entered;
+  atomic_int reason_callback_release;
+  atomic_int callback_reason_status;
+  atomic_int callback_reason;
+} flowie_client_contract_fixture;
+
+static void flowie_client_contract_complete(flowie_client_contract_fixture *f, int kind,
+                                             int status) {
+  atomic_store_explicit(&f->statuses[kind], status, memory_order_relaxed);
+  atomic_fetch_add_explicit(&f->completions[kind], 1, memory_order_release);
+}
+
+static void flowie_client_contract_connected(flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  (void)client;
+  (void)response;
+  flowie_client_contract_complete(user, FLOWIE_CONTRACT_CONNECT, status);
+}
+
+static void flowie_client_contract_published(flowie_mqtt_client_t *client, int status,
+    const flowie_mqtt_control_packet_view_t *response, void *user) {
+  flowie_client_contract_fixture *f = user;
+  (void)response;
+  if (f->probe_reason) {
+    uint8_t reason = 0u;
+    const int reason_status = flowie_mqtt_client_server_disconnect_reason(client, &reason);
+    atomic_store_explicit(&f->callback_reason_status, reason_status, memory_order_relaxed);
+    atomic_store_explicit(&f->callback_reason, reason, memory_order_relaxed);
+    atomic_store_explicit(&f->reason_callback_entered, 1, memory_order_release);
+    /* A bounded test barrier exposes the real callback's thread boundary. */
+    const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+    while (!atomic_load_explicit(&f->reason_callback_release, memory_order_acquire) &&
+           cmeta_monotonic_ms() < deadline) cmeta_sleep_ms(1u);
+  }
+  flowie_client_contract_complete(f, FLOWIE_CONTRACT_PUBLISH, status);
+}
+
+static void flowie_client_contract_error(flowie_mqtt_client_t *client, int status, void *user) {
+  flowie_client_contract_fixture *f = user;
+  (void)client;
+  (void)status;
+  atomic_fetch_add_explicit(&f->errors, 1, memory_order_relaxed);
+}
+
+static int flowie_client_contract_refresh(flowie_mqtt_client_t *client, uint8_t reason,
+    const flowie_mqtt_connect_packet_t *current, flowie_mqtt_connect_packet_t *out, void *user) {
+  flowie_client_contract_fixture *f = user;
+  (void)client;
+  if (reason != 0x87u) return SALTS_EPROTO;
+  *out = *current; /* The current packet's other spans are valid borrowed input. */
+  memcpy(f->password, "refreshed", 9u);
+  out->password = (flowie_mqtt_span_t){f->password, 9u};
+  atomic_fetch_add_explicit(&f->refreshes, 1, memory_order_relaxed);
+  return SALTS_OK;
+}
+
+static void flowie_client_contract_reconnected(flowie_mqtt_client_t *client, uint32_t attempt,
+    int status, const flowie_mqtt_control_packet_view_t *response, void *user) {
+  flowie_client_contract_fixture *f = user;
+  (void)client;
+  /* The next callback ends the refresh output's borrow; retained CONNECT must
+   * already own a copy for the subsequent ordinary Server Busy retry. */
+  if (attempt == 1u) memset(f->password, 'x', sizeof(f->password));
+  if (status == SALTS_OK && (!response || response->reason_code != 0u))
+    status = SALTS_ECONNREFUSED;
+  flowie_client_contract_complete(f, FLOWIE_CONTRACT_RECONNECT, status);
+}
+
+static int flowie_client_contract_open(void *user, flowie_connection connection,
+                                       const flowie_peer_info *peer) {
+  flowie_client_contract_fixture *f = user;
+  (void)connection;
+  (void)peer;
+  f->input_size = 0u;
+  return SALTS_OK;
+}
+
+static int flowie_client_contract_receive(void *user, flowie_connection connection,
+                                          const void *data, size_t size) {
+  flowie_client_contract_fixture *f = user;
+  flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
+  if (size > sizeof(f->input) - f->input_size) return SALTS_EMSGSIZE;
+  memcpy(f->input + f->input_size, data, size);
+  f->input_size += size;
+  options.version = FLOWIE_MQTT_VERSION_5;
+  while (f->input_size != 0u) {
+    flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+    flowie_mqtt_control_packet_t reply = FLOWIE_MQTT_CONTROL_PACKET_INIT;
+    size_t consumed = 0u, written = 0u;
+    unsigned char output[32];
+    int status = flowie_mqtt_packet_parse(f->input, f->input_size, &options,
+                                          &packet, &consumed, NULL);
+    if (status == FLOWIE_MQTT_PARSE_NEED_MORE) return SALTS_OK;
+    if (status != FLOWIE_MQTT_PARSE_OK) return SALTS_EPROTO;
+    reply.version = FLOWIE_MQTT_VERSION_5;
+    if (packet.type == FLOWIE_MQTT_PACKET_CONNECT) {
+      flowie_mqtt_connect_view_t connect = FLOWIE_MQTT_CONNECT_VIEW_INIT;
+      int episode = atomic_fetch_add_explicit(&f->connects, 1, memory_order_relaxed) + 1;
+      if (flowie_mqtt_connect_parse(&packet, &connect) != FLOWIE_MQTT_PARSE_OK)
+        return SALTS_EPROTO;
+      const char *password = f->refresh && episode >= 2 ? "refreshed" : "initial";
+      const size_t password_size = strlen(password);
+      if (connect.password.size != password_size ||
+          memcmp(connect.password.data, password, password_size))
+        atomic_fetch_add_explicit(&f->bad_passwords, 1, memory_order_relaxed);
+      reply.type = FLOWIE_MQTT_PACKET_CONNACK;
+      reply.reason_code = !f->refresh || episode >= 3 ? 0u : episode == 1 ? 0x87u : 0x89u;
+    } else if (packet.type == FLOWIE_MQTT_PACKET_PUBLISH) {
+      flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
+      if (flowie_mqtt_publish_parse(&packet, &publish) != FLOWIE_MQTT_PARSE_OK)
+        return SALTS_EPROTO;
+      atomic_fetch_add_explicit(&f->publishes, 1, memory_order_release);
+      if (publish.qos != 0u) {
+        reply.type = publish.qos == 1u ? FLOWIE_MQTT_PACKET_PUBACK : FLOWIE_MQTT_PACKET_PUBREC;
+        reply.packet_id = publish.packet_id;
+      }
+      if (f->disconnect_first_publish) {
+        f->disconnect_first_publish = 0;
+        reply.type = FLOWIE_MQTT_PACKET_DISCONNECT;
+        reply.packet_id = 0u;
+        reply.reason_code = 0x89u; /* A normal server-busy reconnect episode. */
+      }
+    } else if (packet.type == FLOWIE_MQTT_PACKET_PUBREL) {
+      flowie_mqtt_control_packet_view_t control = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
+      if (flowie_mqtt_control_packet_parse(&packet, &control) != FLOWIE_MQTT_PARSE_OK)
+        return SALTS_EPROTO;
+      atomic_fetch_add_explicit(&f->pubrels, 1, memory_order_release);
+      reply.type = FLOWIE_MQTT_PACKET_PUBCOMP;
+      reply.packet_id = control.packet_id;
+    } else return SALTS_EPROTO;
+    if (reply.type != 0) {
+      /* Two valid QoS2 response stages consume the same command budget. */
+      if (f->ack_delay_ms && packet.type != FLOWIE_MQTT_PACKET_CONNECT)
+        cmeta_sleep_ms(f->ack_delay_ms);
+      status = flowie_mqtt_control_packet_encode(&reply, output, sizeof(output), &written);
+      if (status != FLOWIE_MQTT_PARSE_OK) return SALTS_EPROTO;
+      status = flowie_server_send(&f->server, connection, output, written);
+      if (status != SALTS_OK && status != SALTS_ENOENT && status != SALTS_ESHUTDOWN)
+        return status;
+    }
+    memmove(f->input, f->input + consumed, f->input_size - consumed);
+    f->input_size -= consumed;
+  }
+  return SALTS_OK;
+}
+
+static void flowie_client_contract_closed(void *user, flowie_connection connection, int status) {
+  flowie_client_contract_fixture *f = user;
+  (void)connection;
+  (void)status;
+  atomic_fetch_add_explicit(&f->closed_connections, 1, memory_order_release);
+}
+
+static void flowie_client_contract_wait(atomic_int *value, int count) {
+  const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(value, memory_order_acquire) < count &&
+         cmeta_monotonic_ms() < deadline) cmeta_sleep_ms(1u);
+  check_equal(atomic_load_explicit(value, memory_order_acquire), count);
+}
+
+static flowie_mqtt_connect_packet_t flowie_client_contract_connect_packet(void) {
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  connect.clean_start = 1u;
+  connect.client_id = (flowie_mqtt_span_t){(const unsigned char *)"contract", 8u};
+  connect.has_username = 1u;
+  connect.has_password = 1u;
+  connect.username = (flowie_mqtt_span_t){(const unsigned char *)"test", 4u};
+  connect.password = (flowie_mqtt_span_t){(const unsigned char *)"initial", 7u};
+  return connect;
+}
+
+static void flowie_client_contract_start(flowie_client_contract_fixture *f,
+    flowie_mqtt_client_transport_t transport, uint64_t timeout_ms) {
+  flowie_server_config server = TF_NET_SERVER_CONFIG_INIT;
+  flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_client_resilience_config_t resilience = FLOWIE_MQTT_CLIENT_RESILIENCE_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = flowie_client_contract_connect_packet();
+  uint16_t port = 0u;
+  server.transport = transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WS
+                         ? TF_NET_TRANSPORT_WS : TF_NET_TRANSPORT_TCP;
+  server.host = "127.0.0.1";
+  server.port = 0u;
+  server.backlog = 4u;
+  server.command_capacity = 8u;
+  server.command_bytes_capacity = 8192u;
+  server.path = "/mqtt";
+  server.websocket_subprotocol = transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WS ? "mqtt" : NULL;
+  server.stream = flowie_client_transport_network();
+  server.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
+  server.poll_slice_ms = 1u;
+  server.observer = (flowie_observer){flowie_client_contract_open,
+      flowie_client_contract_receive, flowie_client_contract_closed, NULL, f};
+  check_equal(flowie_server_init(&f->server, &server), SALTS_OK);
+  f->server_initialized = 1;
+  check_equal(flowie_server_start(&f->server), SALTS_OK);
+  f->server_started = 1;
+  check_equal(flowie_server_port(&f->server, &port), SALTS_OK);
+  config.transport = transport;
+  config.host = "127.0.0.1";
+  config.port = port;
+  config.timeout_ms = timeout_ms;
+  config.on_connect = flowie_client_contract_connected;
+  config.on_publish = flowie_client_contract_published;
+  config.on_error = flowie_client_contract_error;
+  config.user_data = f;
+  resilience.initial_delay_ms = 10u;
+  resilience.max_delay_ms = 40u;
+  resilience.max_attempts = 2u;
+  resilience.refresh_connect = flowie_client_contract_refresh;
+  resilience.on_reconnect = flowie_client_contract_reconnected;
+  check_equal(flowie_mqtt_client_create_ex(&config,
+                                           f->refresh || f->resilience_enabled ? &resilience : NULL,
+                                           &f->client), SALTS_OK);
+  check_equal(flowie_mqtt_client_connect(f->client, &connect), SALTS_OK);
+  flowie_client_contract_wait(&f->completions[FLOWIE_CONTRACT_CONNECT], 1);
+  check_equal(atomic_load(&f->statuses[FLOWIE_CONTRACT_CONNECT]), SALTS_OK);
+}
+
+static void flowie_client_contract_publish(flowie_client_contract_fixture *f, uint8_t qos) {
+  flowie_mqtt_client_publish_topic_t topic = {0};
+  flowie_mqtt_client_publish_topic_vec_t topics = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
+  topic.qos = qos;
+  topic.topic = (flowie_mqtt_span_t){(const unsigned char *)"contract/topic", 14u};
+  topic.payload = (flowie_mqtt_span_t){(const unsigned char *)"value", 5u};
+  topics.data = &topic;
+  topics.count = 1u;
+  check_equal(flowie_mqtt_client_publish(f->client, &topics), SALTS_OK);
+}
+
+spec("Flowie client receive and command contracts") {
+  static flowie_client_contract_fixture f;
+  before_each() {
+    memset(&f, 0, sizeof(f));
+    for (int i = 0; i < FLOWIE_CONTRACT_CALLBACK_COUNT; ++i) {
+      atomic_init(&f.completions[i], 0);
+      atomic_init(&f.statuses[i], SALTS_EBUSY);
+    }
+    atomic_init(&f.connects, 0);
+    atomic_init(&f.publishes, 0);
+    atomic_init(&f.pubrels, 0);
+    atomic_init(&f.bad_passwords, 0);
+    atomic_init(&f.closed_connections, 0);
+    atomic_init(&f.errors, 0);
+    atomic_init(&f.refreshes, 0);
+    atomic_init(&f.reason_callback_entered, 0);
+    atomic_init(&f.reason_callback_release, 0);
+    atomic_init(&f.callback_reason_status, SALTS_EBUSY);
+    atomic_init(&f.callback_reason, 0);
+  }
+  after_each() {
+    atomic_store_explicit(&f.reason_callback_release, 1, memory_order_release);
+    if (f.client) check_equal(flowie_mqtt_client_try_destroy(
+        f.client, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    if (f.server_started) check_equal(flowie_server_stop(
+        &f.server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    if (f.server_initialized) check_equal(flowie_server_destroy(&f.server), SALTS_OK);
+    check_equal(atomic_load(&f.closed_connections), atomic_load(&f.connects));
+  }
+  it("allows only CONNACK and AUTH through the CONNECT packet gate") {
+    for (int type = 0; type <= 15; ++type)
+      check_equal(flowie_mqtt_client_test_connect_packet_admit((flowie_mqtt_packet_type_t)type),
+          type == FLOWIE_MQTT_PACKET_CONNACK || type == FLOWIE_MQTT_PACKET_AUTH
+              ? SALTS_OK : SALTS_EPROTO);
+  }
+  it("keeps one idle receive credit across sequential QoS0 commands") {
+    flowie_client_contract_start(&f, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                  FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS);
+    const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+    while (flowie_mqtt_client_test_receive_admissions(f.client) < 2u &&
+           cmeta_monotonic_ms() < deadline) cmeta_sleep_ms(1u);
+    check_equal(flowie_mqtt_client_test_receive_admissions(f.client), 2u);
+    for (int round = 1; round <= 6; ++round) {
+      flowie_client_contract_publish(&f, 0u);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], round);
+      flowie_client_contract_wait(&f.publishes, round);
+      cmeta_sleep_ms(15u); /* Let the worker resume its idle receive. */
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_OK);
+      check_equal(flowie_mqtt_client_test_receive_admissions(f.client), 2u);
+    }
+    /* The original pending read must still settle normally with this PUBACK. */
+    flowie_client_contract_publish(&f, 1u);
+    flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], 7);
+    check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_OK);
+    check_equal(atomic_load(&f.errors), 0);
+  }
+  for (int websocket = 0; websocket <= 1; ++websocket) {
+    it("shares one deadline across both QoS2 response stages, websocket=%d", websocket) {
+      f.ack_delay_ms = FLOWIE_CONTRACT_STAGE_MS;
+      flowie_client_contract_start(&f, websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WS
+                                               : FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                    FLOWIE_CONTRACT_COMMAND_MS);
+      flowie_client_contract_publish(&f, 2u);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], 1);
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_ETIMEDOUT);
+      check_equal(atomic_load(&f.publishes), 1);
+      check_equal(atomic_load(&f.pubrels), 1);
+      check_equal(atomic_load(&f.errors), 0);
+    }
+  }
+  it("owns refreshed credentials before the next reconnect callback reuses their storage") {
+    f.refresh = 1;
+    flowie_client_contract_start(&f, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                  FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS);
+    flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_RECONNECT], 2);
+    check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_RECONNECT]), SALTS_OK);
+    check_equal(atomic_load(&f.refreshes), 1);
+    check_equal(atomic_load(&f.connects), 3);
+    check_equal(atomic_load(&f.bad_passwords), 0);
+    check_equal(flowie_mqtt_client_is_connected(f.client), 1);
+  }
+  for (int websocket = 0; websocket <= 1; ++websocket) {
+    it("preserves reconnect credentials after a duplicate CONNECT, websocket=%d", websocket) {
+      f.resilience_enabled = 1;
+      f.disconnect_first_publish = 1;
+      flowie_client_contract_start(&f, websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WS
+                                               : FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                    FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS);
+      flowie_mqtt_connect_packet_t duplicate = flowie_client_contract_connect_packet();
+      duplicate.password = (flowie_mqtt_span_t){(const unsigned char *)"rejected", 8u};
+      check_equal(flowie_mqtt_client_connect(f.client, &duplicate), SALTS_OK);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_CONNECT], 2);
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_CONNECT]), SALTS_EALREADY);
+      check_equal(flowie_mqtt_client_is_connected(f.client), 1);
+      check_equal(atomic_load(&f.connects), 1);
+      flowie_client_contract_publish(&f, 1u);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], 1);
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_ECONNRESET);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_RECONNECT], 1);
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_RECONNECT]), SALTS_OK);
+      check_equal(atomic_load(&f.bad_passwords), 0);
+      check_equal(atomic_load(&f.connects), 2);
+      check_equal(atomic_load(&f.publishes), 1);
+      check_equal(flowie_mqtt_client_is_connected(f.client), 1);
+    }
+  }
+  it("keeps the active DISCONNECT reason private to its worker callback") {
+    f.probe_reason = 1;
+    f.disconnect_first_publish = 1;
+    flowie_client_contract_start(&f, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                  FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS);
+    flowie_client_contract_publish(&f, 1u);
+    flowie_client_contract_wait(&f.reason_callback_entered, 1);
+    uint8_t reason = 0u;
+    const int status = flowie_mqtt_client_server_disconnect_reason(f.client, &reason);
+    atomic_store_explicit(&f.reason_callback_release, 1, memory_order_release);
+    flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], 1);
+    check_equal(status, SALTS_EBUSY);
+    check_equal(reason, 0u);
+    check_equal(atomic_load(&f.callback_reason_status), SALTS_OK);
+    check_equal(atomic_load(&f.callback_reason), 0x89u);
+    check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_ECONNRESET);
+    check_equal(flowie_mqtt_client_server_disconnect_reason(f.client, &reason), SALTS_EBUSY);
+  }
+}
 #endif
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
