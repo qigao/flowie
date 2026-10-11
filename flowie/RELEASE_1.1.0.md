@@ -38,17 +38,24 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
   这是远程 VM 上独立 peer 经 loopback 到客户端回调的测量，包含服务端调度、队列、TLS/WS 与解析成本，
   不是纯 CNet wake 延迟，也不是生产或最坏情况保证。复现方法见 [Client Guide](CLIENT_GUIDE.md#10-空闲-cpu-与独立入站测量)。
 - 1.1.0 候选的精确 SHA 原生回归、三平台 SDK 打包及安装后消费验证：待完成。
+- [TurboDB 2.3.4 原生回归 38116979331](https://github.com/qigao/flowie/actions/runs/38116979331)：
+  验证提交 `a0a60a706a9d66c3e9c7fc375233d2e563e07650`，Windows/Linux 均确认恢复 2.3.4。
+  Linux 52 项通过、1 项公网 live 关闭，安装后的 C11/C++17 测试 2/2 通过。
+  Windows 编译通过、50 项测试通过、1 项失败、1 项公网 live 关闭；两平台 ORM 测试均通过。
+  原生 CI 的安装后测试使用版本化 user presets，并启用根目录 vcpkg manifest。
 
 ## 发布前阻塞与范围
 
-- HIGH：[原生 CI 38105842320](https://github.com/qigao/flowie/actions/runs/38105842320)
-  的 Linux job 成功；Windows 完成编译，50 项测试通过、1 项公网 live 关闭，
-  `test_flowie_control_runtime` 崩溃，安装后消费步骤未执行。此轮使用 TurboDB 2.3.2。
+- HIGH：上述 2.3.4 原生回归中，Windows 的 `test_flowie_control_runtime` 仍在
+  `composes JWT JWKS auth for management and broker endpoints` 用例中崩溃，
+  安装后消费步骤未执行。此问题也曾出现在 TurboDB 2.3.2 的
+  [原生 CI 38105842320](https://github.com/qigao/flowie/actions/runs/38105842320)，
+  尚无证据确定崩溃根因。
 - 已解除：TurboDB 2.3.4 包排除了 TidesDB/TidesSQL，下载包的三项正式包测试通过，SHA-256 为
   `cb47e45a07c80bbc6ffaa9a6aa06f50c4c24f1bce006caba73785e69e4889aba`。
   producer 为 Salts 2.3.0-rc.10 / SaltsUtils 4.3.0-rc.8。
   ORM 正式测试移除了已退役驱动的成功加载预期，保留缺失模块错误传播验证；
-  Flowie 使用此 SDK 的本轮原生回归待完成。
+  Flowie 两平台的 ORM 测试已通过；其他回归结果见上。
 - HIGH：[SDK qualification 38105843587](https://github.com/qigao/flowie/actions/runs/38105843587)
   在 Linux Cluster 链接失败：已发布 TurboRaft 0.3.1 仍引用 `salts_fs_write`、旧
   `tbe_typed_*` 等符号，并引入 `libcrypto.so`，不兼容当前 Salts/GmSSL 组合。
