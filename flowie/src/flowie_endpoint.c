@@ -14,6 +14,7 @@
 #include "flowie_connection.h"
 #include <cnet/websocket.h>
 #include "flowie_cluster_internal.h"
+#include "flowie_endpoint_owner_lane_internal.h"
 #include "flowie_ingress_internal.h"
 #include "flowie_proxy_protocol_internal.h"
 #include "flowie_security_internal.h"
@@ -66,16 +67,6 @@ static atomic_uint_fast64_t flowie_next_endpoint_instance_id = 0u;
 typedef struct flowie_endpoint_s flowie_endpoint_t;
 typedef struct flowie_endpoint_session_s flowie_endpoint_session_t;
 typedef struct flowie_endpoint_connection_s flowie_endpoint_connection_t;
-typedef struct flowie_endpoint_owner_lane_s flowie_endpoint_owner_lane_t;
-
-struct flowie_endpoint_owner_lane_s {
-  flowie_endpoint_t *endpoint;
-  tf_execution_t execution_storage;
-  flowie_server server_storage;
-  tf_execution_t *execution;
-  flowie_server *server;
-  size_t index;
-};
 
 typedef struct flowie_topic_alias_entry_s {
   uint16_t alias;
@@ -351,15 +342,12 @@ flowie_endpoint_primary_owner(flowie_endpoint_t *endpoint) {
 
 static int flowie_owner_lane_valid(const flowie_endpoint_owner_lane_t *owner) {
   flowie_endpoint_t *endpoint;
-  size_t index;
   if (owner == NULL || (endpoint = owner->endpoint) == NULL ||
       endpoint->owner_lanes == NULL || endpoint->owner_lane_count == 0u)
     return 0;
-  if (owner < endpoint->owner_lanes ||
-      owner >= endpoint->owner_lanes + endpoint->owner_lane_count)
+  if (!flowie_owner_lane_is_member(owner, endpoint->owner_lanes,
+                                  endpoint->owner_lane_count))
     return 0;
-  index = (size_t)(owner - endpoint->owner_lanes);
-  if (owner->index != index) return 0;
   return owner->execution == &owner->execution_storage &&
          owner->server == &owner->server_storage;
 }

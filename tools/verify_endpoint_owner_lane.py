@@ -2,6 +2,9 @@
 from pathlib import Path
 
 source = Path("flowie/src/flowie_endpoint.c").read_text(encoding="utf-8")
+source += "\n" + Path("flowie/src/flowie_endpoint_owner_lane_internal.h").read_text(
+    encoding="utf-8"
+)
 connection_header = Path("connection/include/flowie_connection.h").read_text(
     encoding="utf-8"
 )
@@ -13,7 +16,9 @@ required = {
     "single-lane allocation": "endpoint->owner_lanes = (flowie_endpoint_owner_lane_t *)calloc(",
     "single-lane count": "endpoint->owner_lane_count = 1u;",
     "primary owner index": "owner = &endpoint->owner_lanes[0];",
-    "array membership validation": "owner >= endpoint->owner_lanes + endpoint->owner_lane_count",
+    "array membership validation": "flowie_owner_lane_is_member(owner, endpoint->owner_lanes,",
+    "array index bounds": "owner->index < lane_count",
+    "array member identity": "owner == &lanes[owner->index]",
     "observer lane user": "flowie_net_close, NULL, runtime_owner",
     "connection lane admission": "connection->runtime_owner = runtime_owner;",
     "session bind lane guard": "session->runtime_owner != connection->runtime_owner",

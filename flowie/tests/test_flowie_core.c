@@ -1,7 +1,10 @@
 #include "flowie.h"
+#include "flowie_endpoint_owner_lane_internal.h"
 
 #include "tinytest.h"
 #include "salts_error.h"
+
+#include <stdint.h>
 
 static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
                                 flowie_publish_result_t *result, void *ctx) {
@@ -14,6 +17,45 @@ static int flowie_test_dispatch(flowie_endpoint_core_t *endpoint, flowie_message
 }
 
 suite("Flowie standalone core") {
+  group("runtime owner lane identity") {
+    it("accepts array members at their stable indices") {
+      flowie_endpoint_owner_lane_t lanes[2] = {{.index = 0u}, {.index = 1u}};
+
+      check_true(flowie_owner_lane_is_member(&lanes[0], lanes, 1u));
+      check_true(flowie_owner_lane_is_member(&lanes[0], lanes, 2u));
+      check_true(flowie_owner_lane_is_member(&lanes[1], lanes, 2u));
+    }
+
+    it("rejects a live copy of an owner outside its array") {
+      flowie_endpoint_owner_lane_t lanes[1] = {{.index = 0u}};
+      flowie_endpoint_owner_lane_t copy = lanes[0];
+
+      check_false(flowie_owner_lane_is_member(&copy, lanes, 1u));
+    }
+
+    it("rejects an array member claiming another lane index") {
+      flowie_endpoint_owner_lane_t lanes[2] = {{.index = 1u}, {.index = 1u}};
+
+      check_false(flowie_owner_lane_is_member(&lanes[0], lanes, 2u));
+    }
+
+    it("rejects out of range indices before indexing the array") {
+      flowie_endpoint_owner_lane_t lanes[1] = {{.index = 1u}};
+
+      check_false(flowie_owner_lane_is_member(&lanes[0], lanes, 1u));
+      lanes[0].index = SIZE_MAX;
+      check_false(flowie_owner_lane_is_member(&lanes[0], lanes, 1u));
+    }
+
+    it("rejects missing owners and empty lane storage") {
+      flowie_endpoint_owner_lane_t lanes[1] = {{.index = 0u}};
+
+      check_false(flowie_owner_lane_is_member(NULL, lanes, 1u));
+      check_false(flowie_owner_lane_is_member(&lanes[0], NULL, 1u));
+      check_false(flowie_owner_lane_is_member(&lanes[0], lanes, 0u));
+    }
+  }
+
   it("creates without an external product composition root") {
     flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
     flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
