@@ -7,7 +7,7 @@
 
 #include "flowie_topic_index_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdlib.h>

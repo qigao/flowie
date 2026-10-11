@@ -41,15 +41,15 @@ spec("Flowie Salts execution binding") {
   }
 
   it("validates a borrowed Salts executor shard") {
-    salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
-    salts_coro_executor_t *executor;
+    coro_executor_config_t config = CORO_EXECUTOR_CONFIG_DEFAULT;
+    coro_executor_t *executor;
     flowie_execution_binding_t binding = FLOWIE_EXECUTION_BINDING_INIT;
     tf_execution_t execution = {0};
 
     config.worker_count = 2u;
     config.queue_capacity_per_worker = 4u;
     config.coroutine_pool.max_capacity = 4u;
-    executor = salts_coro_executor_create(&config);
+    executor = coro_executor_create(&config);
     check_not_null(executor);
     binding.kind = FLOWIE_EXECUTION_BORROWED_EXECUTOR;
     binding.executor = executor;
@@ -57,6 +57,6 @@ spec("Flowie Salts execution binding") {
     check_equal(flowie_execution_binding_validate(&binding), SALTS_OK);
     check_equal(tf_execution_init(&execution, &binding, 4u, 0u), SALTS_OK);
     tf_execution_destroy(&execution);
-    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+    check_equal(coro_executor_destroy(executor), SALTS_OK);
   }
 }

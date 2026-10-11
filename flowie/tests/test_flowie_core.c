@@ -2,7 +2,7 @@
 #include "flowie_endpoint_owner_lane_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 

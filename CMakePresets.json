@@ -6,6 +6,38 @@
         "presets/AndroidPresets.json"
     ],
     "configurePresets": [
+    {
+      "name": "ci-release-options",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_MANIFEST_MODE": "ON",
+        "FLOWIE_BUILD_TESTS": "ON",
+        "BUILD_TESTS": "ON",
+        "FLOWIE_BUILD_CONTROL": "ON",
+        "FLOWIE_BUILD_SERVER": "ON",
+        "FLOWIE_BUILD_CLUSTER": "OFF",
+        "FLOWIE_MQTT_PUBLIC_LIVE_TESTS": "OFF",
+        "FLOWIE_TURBODB_LIVE_TESTS": "OFF",
+        "FLOWIE_MQTT_FIXED_INTEROP_TESTS": "OFF",
+        "FLOWIE_MQTT_SOAK_TESTS": "OFF",
+        "ENABLE_SANITIZER_ADDRESS": "OFF",
+        "ENABLE_SANITIZER_UNDEFINED": "OFF"
+      }
+    },
+    {
+      "name": "ci-base-sdk-options",
+      "hidden": true,
+      "inherits": "ci-release-options",
+      "cacheVariables": {
+        "FLOWIE_BUILD_TESTS": "OFF",
+        "BUILD_TESTS": "OFF",
+        "FLOWIE_BUILD_CONTROL": "OFF",
+        "FLOWIE_BUILD_SERVER": "OFF",
+        "FLOWIE_BUILD_CLUSTER": "OFF"
+      }
+    },
         {
             "name": "base-win-dev-user",
             "hidden": true,

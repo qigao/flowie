@@ -2,8 +2,8 @@
 
 #include "flowie.h"
 
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 #include <cyaml.h>
 
 #include <errno.h>
@@ -271,7 +271,7 @@ static int flowie_server_parse_security(const cyaml_doc_t *doc, cyaml_node_t *pr
 int flowie_server_config_load(const char *path, const char *profile_name, int require_security,
                               flowie_server_config_t **out,
                               flowie_server_config_error_t *error) {
-  salts_fs_buf_t bytes = {0};
+  cmeta_fs_buf_t bytes = {0};
   cyaml_doc_t *doc = NULL;
   cyaml_node_t *root;
   cyaml_node_t *profiles;
@@ -287,16 +287,16 @@ int flowie_server_config_load(const char *path, const char *profile_name, int re
     *error = (flowie_server_config_error_t)FLOWIE_SERVER_CONFIG_ERROR_INIT;
   if (!path || !path[0] || !profile_name || !profile_name[0] || !out)
     return flowie_server_config_fail(error, SALTS_EINVAL, "$", "path and profile are required");
-  rc = salts_fs_read_file(path, &bytes);
+  rc = cmeta_fs_read_file(path, &bytes);
   if (rc != SALTS_OK)
     return flowie_server_config_fail(error, rc, "$", "cannot read Flowie configuration");
   if (bytes.len == 0u || bytes.len > FLOWIE_SERVER_CONFIG_MAX_BYTES) {
-    salts_fs_buf_free(&bytes);
+    cmeta_fs_buf_free(&bytes);
     return flowie_server_config_fail(error, SALTS_ERANGE, "$", "configuration size is invalid");
   }
   doc = cyaml_parse(bytes.base, bytes.len, NULL, NULL);
   if (!doc) {
-    salts_fs_buf_free(&bytes);
+    cmeta_fs_buf_free(&bytes);
     return flowie_server_config_fail(error, SALTS_EPROTO, "$", "configuration is not valid YAML");
   }
   root = cyaml_root(doc);
@@ -342,7 +342,7 @@ int flowie_server_config_load(const char *path, const char *profile_name, int re
 done:
   free(config);
   cyaml_free(doc);
-  salts_fs_buf_free(&bytes);
+  cmeta_fs_buf_free(&bytes);
   return rc;
 }
 

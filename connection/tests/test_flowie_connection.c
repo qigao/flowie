@@ -99,10 +99,10 @@ static void flowie_connection_test_close(void *user, flowie_connection connectio
 }
 
 static int flowie_connection_test_wait(atomic_int *value) {
-  const uint64_t deadline = salts_monotonic_ms() + FLOWIE_CONNECTION_TEST_TIMEOUT_MS;
+  const uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_CONNECTION_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) == 0 &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   return atomic_load_explicit(value, memory_order_acquire) != 0 ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
@@ -354,7 +354,7 @@ spec("Flowie CNet and CHTTP transport connection") {
     check_equal(flowie_server_send(&server, first, stale_outbound,
                                    sizeof(stale_outbound)),
                 SALTS_OK);
-    salts_sleep_ms(20u);
+    cmeta_sleep_ms(20u);
 
     check_equal(flowie_server_send(&server, second, live_outbound,
                                    sizeof(live_outbound)),
@@ -368,7 +368,7 @@ spec("Flowie CNet and CHTTP transport connection") {
     check_equal(flowie_server_close(
                     &server, first, FLOWIE_CONNECTION_TEST_CLOSE_STATUS),
                 SALTS_OK);
-    salts_sleep_ms(20u);
+    cmeta_sleep_ms(20u);
     memset(received, 0, sizeof(received));
     check_equal(flowie_server_send(&server, second, live_outbound,
                                    sizeof(live_outbound)),

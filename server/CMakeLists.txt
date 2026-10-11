@@ -7,7 +7,6 @@ add_executable(
 target_link_libraries(
   flowie_server PRIVATE Flowie::App Orm::C CHttp::Client Salts::CmdParser
                         Salts::CYaml Salts::JsonParser Salts::UriParser)
-cmake_target_enable_boringssl_linkage(flowie_server)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
 if(FLOWIE_BUILD_TESTS)
@@ -36,7 +35,6 @@ if(FLOWIE_BUILD_TESTS)
   set_tests_properties(
     test_flowie_server_http_security
     PROPERTIES LABELS "flowie;flowie-release;product-contract;security-contract")
-  cmake_target_enable_boringssl_linkage(test_flowie_server_http_security)
   if(WIN32)
     set_tests_properties(
       test_flowie_server_http_security

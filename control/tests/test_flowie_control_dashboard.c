@@ -2,10 +2,10 @@
 #include "flowie_control_http_request_internal.h"
 #include "flowie_control_test_turbodb.h"
 
-#include "salts_coro.h"
+#include "coro.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -84,7 +84,7 @@ dashboard_executor_login(void *ctx, const char *domain_id, const char *principal
     return SALTS_EINVAL;
   atomic_fetch_add_explicit(&fixture->login_count, 1, memory_order_relaxed);
   while (!atomic_load_explicit(&fixture->release_login, memory_order_acquire))
-    salts_thread_yield();
+    cmeta_thread_yield();
   memset(token_out, 'a', FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE);
   token_out[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE] = '\0';
   return SALTS_OK;

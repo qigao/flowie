@@ -186,7 +186,6 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
               "${FLOWIE_CONTROL_STORE_POSTGRESQL_DDL}"
         DESTINATION share/turboflow/control)
 
-  find_package(OpenSSL REQUIRED)
   add_library(
     flowie_control_external_https_authenticator STATIC
     flowie_control_external_https_authenticator.c
@@ -199,12 +198,12 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
     flowie_control_external_https_authenticator
     PUBLIC flowie_control_core
     PRIVATE CHttp::Client Salts::Core Salts::JsonParser
-            Salts::UriParser OpenSSL::SSL OpenSSL::Crypto monocypher)
+            Salts::UriParser monocypher)
 
   add_library(
     flowie_control_cjwt STATIC
     ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/cjwt.c
-    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/jws_openssl_3.c
+    ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/jws_salts.c
     ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/jwe_disabled.c
     ${PROJECT_SOURCE_DIR}/vendor/cjwt/src/utils.c)
   cmake_config_target(flowie_control_cjwt NO_INSTALL
@@ -216,7 +215,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
             ${PROJECT_SOURCE_DIR}/vendor/cjwt/src)
   target_link_libraries(flowie_control_cjwt
                         PUBLIC Salts::JsonParser
-                        PRIVATE Salts::Core Salts::Crypto OpenSSL::Crypto)
+                        PRIVATE Salts::Core Salts::Crypto)
 
   add_library(
     flowie_control_jwt_jwks_authenticator STATIC
@@ -230,7 +229,7 @@ install(FILES "${FLOWIE_CONTROL_DATA_SQLITE_DDL}"
   target_link_libraries(
     flowie_control_jwt_jwks_authenticator
     PRIVATE flowie_control_cjwt CHttp::Client Salts::Core
-            Salts::JsonParser Salts::UriParser OpenSSL::SSL OpenSSL::Crypto)
+            Salts::JsonParser Salts::UriParser)
 
 add_library(flowie_control_startup STATIC flowie_control_config.c
                                           flowie_control_config_internal.h
@@ -327,7 +326,6 @@ target_link_libraries(flowie_control_startup
     add_executable(flowie-control flowie_control_main.c)
     cmake_config_target(flowie-control FOLDER "flowie/control")
     target_link_libraries(flowie-control PRIVATE flowie_control_runtime)
-    cmake_target_enable_boringssl_linkage(flowie-control)
     install(TARGETS flowie-control RUNTIME DESTINATION bin)
     add_executable(flowie-control-data flowie_control_data_main.c)
     cmake_config_target(flowie-control-data FOLDER "flowie/control")
@@ -337,7 +335,6 @@ target_link_libraries(flowie_control_startup
             DESTINATION share/turboflow/examples/flowie OPTIONAL)
 
     if(BUILD_TESTS)
-      find_package(OpenSSL REQUIRED)
       cmake_add_test(
         test_flowie_control_http
         SOURCES tests/test_flowie_control_http.c
@@ -352,7 +349,6 @@ target_link_libraries(flowie_control_startup
         LIBS flowie_control_runtime Salts::CNet Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
-      cmake_target_enable_boringssl_linkage(test_flowie_control_runtime)
       set_tests_properties(test_flowie_control_runtime
                            PROPERTIES LABELS "flowie;control-plane;security-contract")
       cmake_add_test(
@@ -361,17 +357,15 @@ target_link_libraries(flowie_control_startup
         LIBS flowie_control_runtime Salts::TinyTest
         INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
-      cmake_target_enable_boringssl_linkage(test_flowie_control_bootstrap_runtime)
       set_tests_properties(test_flowie_control_bootstrap_runtime
                            PROPERTIES LABELS "flowie;control-plane;security-contract")
       cmake_add_test(
         test_flowie_control_https_integration
         SOURCES tests/test_flowie_control_https_integration.c
         LIBS flowie_control_runtime flowie_control_core CHttp::Client CHttp::Server
-             Salts::Coroutine Salts::Core Salts::TinyTest OpenSSL::Crypto
-        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+             Salts::Coroutine Salts::Core Salts::TinyTest GmSSL::GmSSL
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
         FOLDER "flowie/control/tests")
-      cmake_target_enable_boringssl_linkage(test_flowie_control_https_integration)
       target_compile_definitions(
         test_flowie_control_https_integration
         PRIVATE FLOWIE_CONTROL_EXECUTABLE="$<TARGET_FILE:flowie-control>")
@@ -563,10 +557,8 @@ if(BUILD_TESTS)
            Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
-    find_package(OpenSSL REQUIRED)
     target_link_libraries(test_flowie_control_external_https_authenticator
-                          PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    cmake_target_enable_boringssl_linkage(test_flowie_control_external_https_authenticator)
+                          PRIVATE GmSSL::GmSSL)
     if(WIN32)
       target_link_libraries(test_flowie_control_external_https_authenticator PRIVATE ws2_32)
     endif()
@@ -575,6 +567,13 @@ if(BUILD_TESTS)
       PROPERTIES LABELS
                  "flowie;control-plane;security-contract;external-auth;https")
     cmake_add_test(
+      test_flowie_control_jws_algorithms
+      SOURCES tests/test_flowie_control_jws_algorithms.c
+      LIBS flowie_control_cjwt Salts::TinyTest
+      FOLDER "flowie/control/tests")
+    set_tests_properties(test_flowie_control_jws_algorithms
+                         PROPERTIES LABELS "flowie;control-plane;security-contract;jwt")
+    cmake_add_test(
       test_flowie_control_jwt_jwks_authenticator
       SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
       LIBS flowie_control_jwt_jwks_authenticator flowie_control_cjwt CHttp::Client
@@ -582,8 +581,7 @@ if(BUILD_TESTS)
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests
       FOLDER "flowie/control/tests")
     target_link_libraries(test_flowie_control_jwt_jwks_authenticator
-                          PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    cmake_target_enable_boringssl_linkage(test_flowie_control_jwt_jwks_authenticator)
+                          PRIVATE GmSSL::GmSSL)
     if(WIN32)
       target_link_libraries(test_flowie_control_jwt_jwks_authenticator PRIVATE ws2_32)
     endif()

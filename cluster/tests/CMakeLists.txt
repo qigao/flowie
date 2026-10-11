@@ -88,7 +88,6 @@ cmake_add_test(
   LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
-cmake_target_enable_boringssl_linkage(test_flowie_cluster_peer_authority)
 if(WIN32)
   target_link_libraries(test_flowie_cluster_peer_authority PRIVATE ws2_32)
 endif()
@@ -102,7 +101,6 @@ cmake_add_test(
   LIBS flowie_cluster_runtime Salts::TinyTest
   INCLUDES ${PROJECT_SOURCE_DIR}/cluster ${PROJECT_SOURCE_DIR}/flowie/src
   FOLDER "cluster/tests")
-cmake_target_enable_boringssl_linkage(test_flowie_cluster_owner_directory)
 if(WIN32)
   target_link_libraries(test_flowie_cluster_owner_directory PRIVATE ws2_32)
 endif()

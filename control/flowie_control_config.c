@@ -1,6 +1,6 @@
 #include "flowie_control_config_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cyaml.h>
 #include <cyaml_json_adapter.h>
 #include <json_parser.h>
@@ -830,17 +830,17 @@ done:
 
 int flowie_control_config_load(const char *path, flowie_control_config_t *out,
                                flowie_control_config_error_t *error) {
-  salts_fs_buf_t buffer = {0};
+  cmeta_fs_buf_t buffer = {0};
   int rc;
   if (!path || !path[0] || !out || out->size < sizeof(*out) || !error ||
       error->size < sizeof(*error))
     return SALTS_EINVAL;
   *out = (flowie_control_config_t)FLOWIE_CONTROL_CONFIG_INIT;
   *error = (flowie_control_config_error_t)FLOWIE_CONTROL_CONFIG_ERROR_INIT;
-  rc = salts_fs_read_file(path, &buffer);
+  rc = cmeta_fs_read_file(path, &buffer);
   if (rc != SALTS_OK)
     return control_config_error(error, rc, "$", "cannot read controller configuration file");
   rc = flowie_control_config_parse_yaml(buffer.base, buffer.len, out, error);
-  salts_fs_buf_free(&buffer);
+  cmeta_fs_buf_free(&buffer);
   return rc;
 }

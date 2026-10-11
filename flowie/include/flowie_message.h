@@ -4,7 +4,7 @@
 #include "flowie_export.h"
 #include "flowie_protocol_contract.h"
 #include "flowie_mqtt_protocol.h"
-#include "salts_buffer.h"
+#include "cmeta_buffer.h"
 #include "tstr.h"
 
 #include <stddef.h>

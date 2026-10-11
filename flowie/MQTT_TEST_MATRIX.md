@@ -170,7 +170,7 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 | MQTT-NET-006 | HIGH | `[🪟][🐧]` | WS/WSS 精确/错误 path，`mqtt`/缺失/错误 token，携带合法 CONNECT 的 text frame，单帧/累计分片超限，非法 close；每次拒绝后连接合法 binary client | 仅精确 path、`mqtt` token 和 binary data 成功；text 返回 1003，超限返回 1009，非法 close 关闭 | 拒绝发生在 MQTT admission 前，protocol resource 的 session load 保持 0；listener 继续服务 | `mqtt-transport;mqtt-negative;mqtt-security` / 90 s |
 
 `MQTT-NET-004` 已覆盖确定性 shutdown、Windows process handle 与 Linux `/proc/self/fd` 基线；TLS/WSS
-在取基线前先完成一次 OpenSSL warm-up，避免把全局一次性初始化误判为泄漏。
+在取基线前先完成一次 TLS provider warm-up，避免把全局一次性初始化误判为泄漏。
 
 当前 `test_flowie_transport_baseline` 已注册到 `flowie-release`，并提供 TCP/TLS/WS/WSS × MQTT
 3.1/3.1.1/5 × QoS 0/1/2 的真实 CONNECT、SUBSCRIBE、PUBLISH ACK、UNSUBSCRIBE、PING 和正常
@@ -203,7 +203,7 @@ Raft append/commit、snapshot/replay 边界，不能通过任意 sleep 猜测时
 | ID | 优先级 | 支持/环境标签 | 前置条件与事件序列 | 预期 wire/错误 | 权威终态、隔离 | 标签/超时 |
 |---|---|---|---|---|---|---|
 | MQTT-SEC-001 | HIGH | `[🪟][🐧]` | 错误 CA、SAN mismatch、expired cert、证书/私钥不匹配、TLS 版本/套件不允许 | 握手失败，MQTT parser 不收到 CONNECT | TLS connection 无 session；每例独立 listener | `mqtt-security;mqtt-negative` / 180 s |
-| MQTT-SEC-002 | HIGH | `[🪟][🐧]` | mTLS listener 分别接收无 client cert、非信任 cert、有效 cert | 前两者握手失败；有效证书得到 `X509_V_OK` 后才进入 CONNECT | verified identity 由 TLS owner 借给 auth；关闭后失效 | `mqtt-security` / 180 s |
+| MQTT-SEC-002 | HIGH | `[🪟][🐧]` | mTLS listener 分别接收无 client cert、非信任 cert、有效 cert | 前两者握手失败；有效证书得到 `X509_verify_ok` 后才进入 CONNECT | verified identity 由 TLS owner 借给 auth；关闭后失效 | `mqtt-security` / 180 s |
 | MQTT-SEC-003 | HIGH | `[🪟][🐧]` | HTTPS auth 返回 timeout、TLS error、非 2xx、错误 Content-Type、malformed/oversized JSON、错误 version/principal | MQTT 5 CONNACK `0x86` 或连接关闭；无 DB/anonymous fallback | SecurityRealm 不增加 principal；fixture 清空请求 | `mqtt-security;mqtt-negative` / 180 s |
 | MQTT-SEC-004 | HIGH | `[🪟][🐧]` | Enhanced AUTH 缺失/错误 method、challenge data 越界、provider callback 失败、re-auth 改变 principal | AUTH/CONNACK/DISCONNECT 返回匹配 reason；owner change 关闭 | 原 session identity 不被部分刷新 | `mqtt-security;mqtt-negative` / 180 s |
 | MQTT-SEC-005 | HIGH | `[🪟][🐧]` | default deny；publish/subscribe 每个 filter 混合 allow/deny，含 `#`、`+`、`$SYS` 与 containment 边界 | MQTT 5 返回逐操作 `0x87`；MQTT 3.x 按可表达能力拒绝/关闭；无 graph work | ACL generation + session principal 为判定输入 | `mqtt-security;mqtt-negative` / 120 s |

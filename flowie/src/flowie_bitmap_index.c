@@ -1,7 +1,7 @@
 #include "flowie_bitmap_index_internal.h"
 
 #include "roaring.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 

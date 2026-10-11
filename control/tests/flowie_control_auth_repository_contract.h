@@ -5,7 +5,7 @@
 #include "flowie_control_credential_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 

@@ -10,6 +10,7 @@ on:
       - "CMakeUserPresets.json"
       - "Dockerfile"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - "cmake/**"
       - "presets/**"
       - "tools/**"

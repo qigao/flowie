@@ -12,12 +12,10 @@ permissions:
   packages: read
 
 env:
-  SALTS_VERSION: "1.8.21"
-  SALTS_UTILS_VERSION: "4.1.18"
-  CHTTP_VERSION: "1.1.10"
-  TURBODB_VERSION: "2.1.0"
-  FLOWMQ_VERSION: "1.2.0"
-  TURBORAFT_VERSION: "0.3.1"
+  SALTS_VERSION: "2.3.0-rc.10"
+  SALTS_UTILS_VERSION: "4.3.0-rc.8"
+  CHTTP_VERSION: "2.1.0-rc.3"
+  TURBODB_VERSION: "2.3.4"
 
 jobs:
   metadata:
@@ -112,8 +110,6 @@ jobs:
               <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
               <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
               <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
-              <PackageReference Include="FlowMQ.Native" Version="[$FLOWMQ_VERSION]" />
-              <PackageReference Include="TurboRaft.Native" Version="[$TURBORAFT_VERSION]" />
             </ItemGroup>
           </Project>
           EOF
@@ -123,23 +119,17 @@ jobs:
           salts_utils_root="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
           chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
           turbodb_root="$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
-          flowmq_root="$packages/flowmq.native/$FLOWMQ_VERSION/sdk/linux-x64"
-          turboraft_root="$packages/turboraft.native/$TURBORAFT_VERSION/sdk/linux-x64"
 
           test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
           test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
           test -f "$turbodb_root/lib/cmake/TurboDB/TurboDBConfig.cmake"
-          test -f "$flowmq_root/lib/cmake/FlowMQ/FlowMQConfig.cmake"
-          test -f "$turboraft_root/lib/cmake/TurboRaft/TurboRaftConfig.cmake"
 
           {
             echo "SALTS_ROOT=$salts_root"
             echo "SALTS_UTILS_ROOT=$salts_utils_root"
             echo "HTTP_SERVICES_ROOT=$chttp_root"
             echo "TURBODB_ROOT=$turbodb_root"
-            echo "FLOWMQ_ROOT=$flowmq_root"
-            echo "TURBORAFT_ROOT=$turboraft_root"
             echo "RELEASE_PACKAGES=$packages"
           } >> "$GITHUB_ENV"
 
@@ -166,22 +156,21 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cmake -S . -B build/release-sdk -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF             -DFLOWIE_BUILD_TESTS=ON             -DFLOWIE_BUILD_CONTROL=ON             -DFLOWIE_BUILD_CLUSTER=ON             -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF             -DFLOWIE_TURBODB_LIVE_TESTS=OFF             -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=OFF             -DFLOWIE_MQTT_SOAK_TESTS=OFF             -DENABLE_SANITIZER_ADDRESS=OFF             -DENABLE_SANITIZER_UNDEFINED=OFF
+          cmake --preset ci-linux-release
 
       - name: Build and qualify complete release graph
         shell: bash
         run: |
           set -euxo pipefail
-          cmake --build build/release-sdk --parallel 2
-          export LD_LIBRARY_PATH="$TURBORAFT_ROOT/lib:$TURBORAFT_ROOT/bin:$FLOWMQ_ROOT/lib:$FLOWMQ_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
-          ctest --test-dir build/release-sdk             -R '^(flowie_server_docker_entrypoint_contract|test_flowie_mqtt_protocol|test_flowie_mqtt_protocol_matrix|test_flowie_mqtt_protocol_corpus|test_flowie_mqtt_client|test_flowie_connection|test_flow_execution|test_flowie_core|test_flowie_security|test_flowie_session_delivery_index|test_flowie_transport_baseline|test_flowie_cluster.*|test_flowie_topic_index|test_flowie_server_config|test_flowie_server_http_security|test_flowie_server_turbodb_config)$'             --no-tests=error --output-on-failure --timeout 180
+          cmake --build --preset ci-linux-release --parallel 2
+          ctest --preset ci-linux-release --timeout 180
 
       - name: Install release SDK
         shell: bash
         run: |
           set -euxo pipefail
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
-          cmake --install build/release-sdk --prefix "$prefix" --strip
+          cmake --build --preset install-ci-linux-release
           test -f "$prefix/lib/cmake/Flowie/FlowieConfig.cmake"
           test -f "$prefix/lib/cmake/Flowie/FlowieConfigVersion.cmake"
           test -f "$prefix/lib/cmake/Flowie/FlowieTargets.cmake"
@@ -200,9 +189,7 @@ jobs:
           saltsutils=$SALTS_UTILS_VERSION
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
-          orm=2.1.0
-          flowmq_qualification=$FLOWMQ_VERSION
-          turboraft_qualification=$TURBORAFT_VERSION
+          orm=$TURBODB_VERSION
           profile=Release
           qualification=runtime
           EOF
@@ -284,10 +271,10 @@ jobs:
           "@ | Set-Content -LiteralPath $project
           dotnet restore $project --packages $packages --configfile $config --no-cache
           if ($LASTEXITCODE -ne 0) { throw "failed to restore Windows producer SDKs" }
-          $salts = (Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\\','/')
-          $utils = (Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\\','/')
-          $chttp = (Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\\','/')
-          $turbodb = (Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\\','/')
+          $salts = (Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\','/')
+          $utils = (Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\','/')
+          $chttp = (Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\','/')
+          $turbodb = (Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\','/')
           foreach ($file in @(
             (Join-Path $salts "lib/cmake/Salts/SaltsConfig.cmake"),
             (Join-Path $utils "lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"),
@@ -317,20 +304,11 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "PATH=%SALTS_UTILS_ROOT%\bin;%SALTS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%VCPKG_INSTALLED_DIR%\x64-windows\bin;%PATH%"
-          cmake -S . -B build\windows-sdk -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
-            -DVCPKG_TARGET_TRIPLET=x64-windows ^
-            -DVCPKG_INSTALLED_DIR="%VCPKG_INSTALLED_DIR%" ^
-            -DVCPKG_MANIFEST_MODE=OFF ^
-            -DFLOWIE_BUILD_TESTS=OFF ^
-            -DFLOWIE_BUILD_CONTROL=OFF ^
-            -DFLOWIE_BUILD_CLUSTER=OFF ^
-            -DFLOWIE_BUILD_SERVER=OFF
+          cmake --preset ci-windows-release
           if errorlevel 1 exit /b 1
-          cmake --build build\windows-sdk --target flowie flowie_client flowie_protocol --parallel 2
+          cmake --build --preset ci-windows-release --parallel 2
           if errorlevel 1 exit /b 1
-          cmake --install build\windows-sdk --prefix "%GITHUB_WORKSPACE%\stage\sdk\windows-x64"
+          cmake --build --preset install-ci-windows-release
           if errorlevel 1 exit /b 1
 
       - name: Verify Windows SDK
@@ -363,7 +341,7 @@ jobs:
             "saltsutils=$env:SALTS_UTILS_VERSION",
             "chttp=$env:CHTTP_VERSION",
             "turbodb=$env:TURBODB_VERSION",
-            "orm=2.1.0",
+            "orm=$env:TURBODB_VERSION",
             "profile=Release",
             "qualification=runtime"
           ) | Set-Content -LiteralPath (Join-Path $prefix "flowie-sdk-manifest.txt") -Encoding ascii
@@ -470,24 +448,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cmake -S . -B build/android-sdk -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_SYSTEM_NAME=Android \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DVCPKG_TARGET_TRIPLET=arm64-android \
-            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
-            -DVCPKG_MANIFEST_MODE=OFF \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26 \
-            -DANDROID_STL=c++_shared \
-            -DFLOWIE_BUILD_TESTS=OFF \
-            -DFLOWIE_BUILD_CONTROL=OFF \
-            -DFLOWIE_BUILD_CLUSTER=OFF \
-            -DFLOWIE_BUILD_SERVER=OFF
-          cmake --build build/android-sdk --target flowie flowie_client flowie_protocol --parallel 2
+          cmake --preset ci-android-release
+          cmake --build --preset ci-android-release --parallel 2
           prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
-          cmake --install build/android-sdk --prefix "$prefix"
+          cmake --build --preset install-ci-android-release
           test -f "$prefix/lib/cmake/Flowie/FlowieConfig.cmake"
           test -f "$prefix/include/flowie.h"
           test -f "$prefix/include/flowie_mqtt_client.h"
@@ -505,7 +469,7 @@ jobs:
           saltsutils=$SALTS_UTILS_VERSION
           chttp=$CHTTP_VERSION
           turbodb=$TURBODB_VERSION
-          orm=2.1.0
+          orm=$TURBODB_VERSION
           profile=Release
           qualification=compile-link
           EOF
@@ -590,10 +554,10 @@ jobs:
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           grep -Fx "sdk/android-arm64-v8a/lib/libflowie_client.so" "$RUNNER_TEMP/flowie-nupkg.txt"
           unzip -p "$nupkg" "Flowie.Native.nuspec" > "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="Salts.Native" version="[1.8.21]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="SaltsUtils.Native" version="[4.1.18]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="CHttp.Native" version="[1.1.10]"' "$RUNNER_TEMP/flowie.nuspec"
-          grep -F 'id="TurboDB.Native" version="[2.1.0]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="Salts.Native" version="[2.3.0-rc.10]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="SaltsUtils.Native" version="[4.3.0-rc.8]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="CHttp.Native" version="[2.1.0-rc.3]"' "$RUNNER_TEMP/flowie.nuspec"
+          grep -F 'id="TurboDB.Native" version="[2.3.4]"' "$RUNNER_TEMP/flowie.nuspec"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -756,11 +720,11 @@ jobs:
           "@ | Set-Content -LiteralPath $project
           dotnet restore $project --packages $packages --configfile $config --no-cache
           if ($LASTEXITCODE -ne 0) { throw "failed to restore packed Flowie.Native on Windows" }
-          "FLOWIE_ROOT=$((Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
-          "SALTS_ROOT=$((Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
-          "SALTS_UTILS_ROOT=$((Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
-          "HTTP_SERVICES_ROOT=$((Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
-          "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\\','/'))" >> $env:GITHUB_ENV
+          "FLOWIE_ROOT=$((Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
+          "SALTS_ROOT=$((Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
+          "SALTS_UTILS_ROOT=$((Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
+          "HTTP_SERVICES_ROOT=$((Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
+          "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
 
       - name: Restore Windows consumer graph from shared cache only
         shell: pwsh

@@ -3,9 +3,9 @@
 #include "flowie_mqtt_client.h"
 #include "flowie_mqtt_protocol.h"
 #include "flowie_rule_internal.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -44,7 +44,7 @@ typedef struct flowie_client_source_s {
   uint32_t reconnect_initial_ms;
   uint32_t reconnect_max_ms;
   flowie_mqtt_client_t *client;
-  salts_thread_t supervisor;
+  cmeta_thread_t supervisor;
   int supervisor_started;
   turbo_flow_t *flow;
   tstr source_name;
@@ -298,7 +298,7 @@ static int flowie_client_source_wait(flowie_client_source_t *source, uint32_t de
     uint32_t step = delay_ms - elapsed;
     if (!atomic_load_explicit(&source->started, memory_order_acquire)) return SALTS_ESHUTDOWN;
     if (step > FLOWIE_CLIENT_SOURCE_POLL_MS) step = FLOWIE_CLIENT_SOURCE_POLL_MS;
-    salts_sleep_ms(step);
+    cmeta_sleep_ms(step);
     elapsed += step;
   }
   return SALTS_OK;
@@ -306,7 +306,7 @@ static int flowie_client_source_wait(flowie_client_source_t *source, uint32_t de
 
 static void flowie_client_source_wait_callbacks(flowie_client_source_t *source) {
   while (atomic_load_explicit(&source->callback_depth, memory_order_acquire) != 0u)
-    salts_thread_yield();
+    cmeta_thread_yield();
 }
 
 static void flowie_client_source_supervise(void *ctx) {
@@ -369,7 +369,7 @@ static int flowie_client_source_start(void *ctx, turbo_flow_t *flow,
   atomic_store_explicit(&source->started, 1, memory_order_release);
   rc = flowie_client_source_connect(source);
   if (rc != SALTS_OK) goto fail_started;
-  rc = salts_thread_create(&source->supervisor, flowie_client_source_supervise, source);
+  rc = cmeta_thread_create(&source->supervisor, flowie_client_source_supervise, source);
   if (rc != SALTS_OK) goto fail_started;
   source->supervisor_started = 1;
   return SALTS_OK;
@@ -393,7 +393,7 @@ static void flowie_client_source_stop(void *ctx, turbo_flow_t *flow,
   if (!source) return;
   atomic_store_explicit(&source->started, 0, memory_order_release);
   if (source->supervisor_started) {
-    (void)salts_thread_join(&source->supervisor);
+    (void)cmeta_thread_join(&source->supervisor);
     source->supervisor_started = 0;
   } else if (source->client) {
     flowie_client_source_wait_callbacks(source);

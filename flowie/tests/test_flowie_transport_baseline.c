@@ -4,8 +4,8 @@
 #include "tls_test_support.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -489,10 +489,10 @@ static int flowie_transport_baseline_case(flowie_transport_t transport,
   rc = flowie_mqtt_client_connect(client, &connect);
   if (rc != SALTS_OK) goto done;
 
-  deadline = salts_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
   while (!atomic_load_explicit(&state.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   rc = atomic_load_explicit(&state.done, memory_order_acquire)
            ? atomic_load_explicit(&state.status, memory_order_relaxed)
            : SALTS_ETIMEDOUT;

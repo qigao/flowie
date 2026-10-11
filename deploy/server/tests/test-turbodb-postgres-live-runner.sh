@@ -71,14 +71,14 @@ done
 exit "${FLOWIE_TEST_CTEST_STATUS:-0}"
 EOF
 
-cat > "$FAKE_BIN/openssl" <<'EOF'
+cat > "$FAKE_BIN/python3" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == rand && "${2:-}" == -hex && "${3:-}" == 24 ]]
+[[ "${1:-}" == -c && "${2:-}" == 'import secrets; print(secrets.token_hex(24))' ]]
 printf '%s\n' '0123456789abcdef0123456789abcdef0123456789abcdef'
 EOF
 
-chmod +x "$FAKE_BIN/docker" "$FAKE_BIN/ctest" "$FAKE_BIN/openssl"
+chmod +x "$FAKE_BIN/docker" "$FAKE_BIN/ctest" "$FAKE_BIN/python3"
 
 export FLOWIE_TEST_DOCKER_LOG="$DOCKER_LOG"
 export FLOWIE_TEST_CTEST_LOG="$CTEST_LOG"

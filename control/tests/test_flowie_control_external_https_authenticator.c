@@ -163,7 +163,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
   flowie_control_external_https_authenticator_t *authenticator = NULL;
   external_https_task_t task;
-  salts_thread_t worker = {0};
+  cmeta_thread_t worker = {0};
   int worker_started = 0;
   int rc = SALTS_EIO;
 
@@ -210,10 +210,10 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   task.request = external_https_request();
   task.assertion =
       (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-  rc = salts_thread_create(&worker, external_https_verify_task, &task);
+  rc = cmeta_thread_create(&worker, external_https_verify_task, &task);
   if (rc != SALTS_OK) goto done;
   worker_started = 1;
-  rc = salts_thread_join(&worker);
+  rc = cmeta_thread_join(&worker);
   worker_started = 0;
   if (rc != SALTS_OK) goto done;
   result->status = task.status;
@@ -221,7 +221,7 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   rc = SALTS_OK;
 
 done:
-  if (worker_started) (void)salts_thread_join(&worker);
+  if (worker_started) (void)cmeta_thread_join(&worker);
   if (authenticator &&
       flowie_control_external_https_authenticator_get_stats(authenticator, &result->stats) !=
           SALTS_OK &&
@@ -582,7 +582,7 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t task;
-    salts_thread_t worker = {0};
+    cmeta_thread_t worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
 
@@ -598,8 +598,8 @@ spec("Flowie control external HTTPS authenticator") {
     task.request = external_https_request();
     task.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    check_equal(salts_thread_create(&worker, external_https_verify_task, &task), SALTS_OK);
-    check_equal(salts_thread_join(&worker), SALTS_OK);
+    check_equal(cmeta_thread_create(&worker, external_https_verify_task, &task), SALTS_OK);
+    check_equal(cmeta_thread_join(&worker), SALTS_OK);
 
     check_equal(task.status, SALTS_EIO);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
@@ -624,8 +624,8 @@ spec("Flowie control external HTTPS authenticator") {
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t first;
     external_https_task_t second;
-    salts_thread_t first_worker = {0};
-    salts_thread_t second_worker = {0};
+    cmeta_thread_t first_worker = {0};
+    cmeta_thread_t second_worker = {0};
     flowie_control_external_https_authenticator_stats_t stats =
         FLOWIE_CONTROL_EXTERNAL_HTTPS_AUTHENTICATOR_STATS_INIT;
     int response_size;
@@ -665,17 +665,17 @@ spec("Flowie control external HTTPS authenticator") {
     second.request = external_https_request();
     second.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
-    check_equal(salts_thread_create(&first_worker, external_https_verify_task, &first), SALTS_OK);
+    check_equal(cmeta_thread_create(&first_worker, external_https_verify_task, &first), SALTS_OK);
     while (atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed) < 2 &&
            !atomic_load_explicit(&first.done, memory_order_acquire))
-      salts_thread_yield();
+      cmeta_thread_yield();
     check_false(atomic_load_explicit(&first.done, memory_order_acquire));
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
-    check_equal(salts_thread_create(&second_worker, external_https_verify_task, &second), SALTS_OK);
-    check_equal(salts_thread_join(&second_worker), SALTS_OK);
+    check_equal(cmeta_thread_create(&second_worker, external_https_verify_task, &second), SALTS_OK);
+    check_equal(cmeta_thread_join(&second_worker), SALTS_OK);
     check_equal(second.status, SALTS_EBUSY);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
-    check_equal(salts_thread_join(&first_worker), SALTS_OK);
+    check_equal(cmeta_thread_join(&first_worker), SALTS_OK);
     check_equal(first.status, SALTS_OK);
     check_true(server.peer_verified);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);

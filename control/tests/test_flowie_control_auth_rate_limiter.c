@@ -1,8 +1,8 @@
 #include "flowie_control_auth_rate_limiter_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -125,7 +125,7 @@ spec("Flowie control auth rate limiter") {
         FLOWIE_CONTROL_AUTH_RATE_LIMITER_CONFIG_INIT;
     flowie_control_auth_rate_limiter_t *limiter = NULL;
     rate_limiter_concurrent_task_t task;
-    salts_thread_t threads[4];
+    cmeta_thread_t threads[4];
     config.caller_capacity = 1u;
     config.identity_capacity = 1u;
     config.caller_per_second = 1u;
@@ -140,8 +140,8 @@ spec("Flowie control auth rate limiter") {
     atomic_init(&task.rejected, 0);
     atomic_init(&task.errors, 0);
     for (size_t index = 0u; index < 4u; ++index)
-      check_equal(salts_thread_create(&threads[index], rate_limiter_concurrent_acquire, &task), 0);
-    for (size_t index = 0u; index < 4u; ++index) salts_thread_join(&threads[index]);
+      check_equal(cmeta_thread_create(&threads[index], rate_limiter_concurrent_acquire, &task), 0);
+    for (size_t index = 0u; index < 4u; ++index) cmeta_thread_join(&threads[index]);
     check_equal(atomic_load_explicit(&task.accepted, memory_order_relaxed), 100);
     check_equal(atomic_load_explicit(&task.rejected, memory_order_relaxed), 100);
     check_equal(atomic_load_explicit(&task.errors, memory_order_relaxed), 0);

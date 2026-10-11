@@ -7,9 +7,9 @@
 
 #include "flowie_cluster_owner_directory_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 #include <cstl.h>
 
 #include <stdlib.h>
@@ -24,7 +24,7 @@ struct flowie_cluster_owner_directory_s {
   vec_t scratch;
   uint64_t revision;
   uint32_t last_revision_shard;
-  salts_mutex_t mutex;
+  cmeta_mutex_t mutex;
   int mutex_initialized;
   int active_initialized;
   int scratch_initialized;
@@ -105,7 +105,7 @@ static void flowie_cluster_owner_directory_free(flowie_cluster_owner_directory_t
   if (!directory) return;
   if (directory->scratch_initialized) vec_destroy(&directory->scratch);
   if (directory->active_initialized) vec_destroy(&directory->active);
-  if (directory->mutex_initialized) salts_mutex_destroy(&directory->mutex);
+  if (directory->mutex_initialized) cmeta_mutex_destroy(&directory->mutex);
   tstr_freep(&directory->listener_id);
   tstr_freep(&directory->cluster_id);
   free(directory);
@@ -136,7 +136,7 @@ int flowie_cluster_owner_directory_create(const flowie_cluster_owner_directory_c
     rc = SALTS_ENOMEM;
     goto fail;
   }
-  salts_mutex_init(&directory->mutex);
+  cmeta_mutex_init(&directory->mutex);
   directory->mutex_initialized = 1;
   rc = flowie_stl_error(vec_init_bytes(&directory->active, sizeof(flowie_cluster_owner_directory_entry_t), _Alignof(flowie_cluster_owner_directory_entry_t), SIZE_MAX));
   if (rc != SALTS_OK) goto fail;
@@ -171,19 +171,19 @@ int flowie_cluster_owner_directory_replace(
   size_t index;
   int rc;
   if (!directory || !entries || entry_count != directory->shard_count) return SALTS_EINVAL;
-  salts_mutex_lock(&directory->mutex);
+  cmeta_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     return SALTS_EBUSY;
   }
   if (revision == directory->revision && vec_size(&directory->active) != 0u) {
     rc = flowie_cluster_owner_directory_entries_equal(&directory->active, entries, entry_count)
              ? SALTS_OK
              : SALTS_EPROTO;
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     return rc;
   }
-  salts_mutex_unlock(&directory->mutex);
+  cmeta_mutex_unlock(&directory->mutex);
   vec_clear(&directory->scratch);
   for (index = 0u; index < entry_count; ++index) {
     if (!flowie_cluster_owner_directory_entry_valid(&entries[index], (uint32_t)index))
@@ -191,9 +191,9 @@ int flowie_cluster_owner_directory_replace(
     rc = flowie_stl_error(vec_push(&directory->scratch, &entries[index]));
     if (rc != SALTS_OK) return rc;
   }
-  salts_mutex_lock(&directory->mutex);
+  cmeta_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     vec_clear(&directory->scratch);
     return SALTS_EBUSY;
   }
@@ -201,7 +201,7 @@ int flowie_cluster_owner_directory_replace(
     rc = flowie_cluster_owner_directory_entries_equal(&directory->active, entries, entry_count)
              ? SALTS_OK
              : SALTS_EPROTO;
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     vec_clear(&directory->scratch);
     return rc;
   }
@@ -212,7 +212,7 @@ int flowie_cluster_owner_directory_replace(
     directory->revision = revision;
     directory->last_revision_shard = UINT32_MAX;
   }
-  salts_mutex_unlock(&directory->mutex);
+  cmeta_mutex_unlock(&directory->mutex);
   vec_clear(&directory->scratch);
   return SALTS_OK;
 }
@@ -226,15 +226,15 @@ int flowie_cluster_owner_directory_apply(
       entry->shard_id >= directory->shard_count ||
       !flowie_cluster_owner_directory_entry_valid(entry, entry->shard_id))
     return SALTS_EINVAL;
-  salts_mutex_lock(&directory->mutex);
+  cmeta_mutex_lock(&directory->mutex);
   if (revision < directory->revision) {
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     return SALTS_EBUSY;
   }
   current = (flowie_cluster_owner_directory_entry_t *)vec_at(
       &directory->active, entry->shard_id);
   if (!current) {
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     return SALTS_EPROTO;
   }
   if (revision == directory->revision) {
@@ -242,13 +242,13 @@ int flowie_cluster_owner_directory_apply(
             current->local_deadline_ns == entry->local_deadline_ns &&
             flowie_cluster_owner_directory_owner_equal(&current->owner,
                                                         &entry->owner);
-    salts_mutex_unlock(&directory->mutex);
+    cmeta_mutex_unlock(&directory->mutex);
     return equal ? SALTS_OK : SALTS_EPROTO;
   }
   *current = *entry;
   directory->revision = revision;
   directory->last_revision_shard = entry->shard_id;
-  salts_mutex_unlock(&directory->mutex);
+  cmeta_mutex_unlock(&directory->mutex);
   return SALTS_OK;
 }
 
@@ -260,8 +260,8 @@ int flowie_cluster_owner_directory_resolve_shard(flowie_cluster_owner_directory_
   int rc = SALTS_EBUSY;
   if (out) *out = (flowie_cluster_owner_token_t)FLOWIE_CLUSTER_OWNER_TOKEN_INIT;
   if (!directory || !out || shard_id >= directory->shard_count) return SALTS_EINVAL;
-  now_ns = salts_hrtime();
-  salts_mutex_lock(&directory->mutex);
+  now_ns = cmeta_hrtime();
+  cmeta_mutex_lock(&directory->mutex);
   entry = (const flowie_cluster_owner_directory_entry_t *)vec_at_const(&directory->active,
                                                                              shard_id);
   if (entry && entry->local_deadline_ns > now_ns &&
@@ -269,7 +269,7 @@ int flowie_cluster_owner_directory_resolve_shard(flowie_cluster_owner_directory_
     *out = entry->owner;
     rc = SALTS_OK;
   }
-  salts_mutex_unlock(&directory->mutex);
+  cmeta_mutex_unlock(&directory->mutex);
   return rc;
 }
 
@@ -292,9 +292,9 @@ int flowie_cluster_owner_directory_revision(flowie_cluster_owner_directory_t *di
                                             uint64_t *out_revision) {
   if (out_revision) *out_revision = 0u;
   if (!directory || !out_revision) return SALTS_EINVAL;
-  salts_mutex_lock(&directory->mutex);
+  cmeta_mutex_lock(&directory->mutex);
   *out_revision = directory->revision;
-  salts_mutex_unlock(&directory->mutex);
+  cmeta_mutex_unlock(&directory->mutex);
   return SALTS_OK;
 }
 

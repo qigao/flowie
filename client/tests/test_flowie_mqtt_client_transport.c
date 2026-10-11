@@ -302,22 +302,22 @@ static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_t
   connect.clean_start = 1u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
   check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
-  deadline = salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+  deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
 
   check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
               expected_connect_status);
   if (connack_mode == FLOWIE_CLIENT_TRANSPORT_CONNACK_ABRUPT_CLOSE) {
     const uint64_t server_deadline =
-        salts_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
+        cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
     while ((atomic_load_explicit(&broker.opens, memory_order_acquire) == 0 ||
             atomic_load_explicit(&broker.connects, memory_order_acquire) == 0 ||
             atomic_load_explicit(&broker.closes, memory_order_acquire) == 0) &&
-           salts_monotonic_ms() < server_deadline)
-      salts_sleep_ms(1u);
+           cmeta_monotonic_ms() < server_deadline)
+      cmeta_sleep_ms(1u);
   }
   if (expected_connect_status == SALTS_OK) {
     check_equal(atomic_load_explicit(&probe.ping_status, memory_order_relaxed), SALTS_OK);

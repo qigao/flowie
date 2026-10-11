@@ -22,7 +22,7 @@ credential 与正向 cache；出现时二者不参与该请求，第三方 HTTPS
 
 1. 保存明文或可逆密文：便于重放 secret，但数据库或密钥泄漏会直接暴露全部 credential，拒绝。
 2. SHA-2 等快速 hash：实现简单，但离线猜测成本过低，拒绝。
-3. OpenSSL PBKDF2：依赖已存在且适用于部分合规环境，但默认内存硬度不足。
+3. OpenSSL PBKDF2（历史候选，现已移除依赖）：评估时依赖已存在且适用于部分合规环境，但默认内存硬度不足。
 4. 复用仓库 Monocypher Argon2id，并用 TurboUtils CSPRNG 生成 Token entropy 和 salt：不新增依赖，提供内存
    硬度，并保持成熟密码实现边界。
 

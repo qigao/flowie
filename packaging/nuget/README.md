@@ -15,11 +15,16 @@ Prebuilt Flowie 1.0.2 native SDK package.
 
 ## Exact producer baseline
 
-- Salts.Native 1.8.21
-- SaltsUtils.Native 4.1.18
-- CHttp.Native 1.1.10
-- TurboDB.Native 2.1.0 / Orm 2.1.0
+- Salts.Native 2.3.0-rc.10
+- SaltsUtils.Native 4.3.0-rc.8
+- CHttp.Native 2.1.0-rc.3
+- TurboDB.Native 2.3.4 / Orm 2.3.4
 
-FlowMQ 1.2.0 and TurboRaft 0.3.1 are used to qualify Flowie's optional Cluster build, but are not dependencies of the installed base SDK targets.
+Cluster remains disabled in the release build. Its optional FlowMQ and TurboRaft
+dependencies are outside this SDK migration and are not qualified by this pipeline.
 
 The package is built from released producer SDKs and shared vcpkg binary cache artifacts; producer source builds are not used in the release pipeline.
+
+CMake dependency discovery accepts the SDKs at the configured roots without version
+constraints, including RC builds. The producer baseline above records the package
+build inputs; consumers are responsible for choosing ABI-compatible SDKs.

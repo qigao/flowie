@@ -5,8 +5,8 @@
 #include "flowie_control_database_internal.h"
 #include "flowie_control_management_service_internal.h"
 
-#include "salts_error.h"
-#include "salts_fs.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -461,9 +461,9 @@ int flowie_control_data_export(const flowie_control_repository_t *repository, co
       strlen(output_path) > FLOWIE_CONTROL_DATA_PATH_MAX - 16u)
     return SALTS_EINVAL;
   *result = value;
-  if (salts_fs_access(output_path, SALTS_FS_ACCESS_EXISTS) == SALTS_OK) return SALTS_EALREADY;
+  if (cmeta_fs_access(output_path, SALTS_FS_ACCESS_EXISTS) == SALTS_OK) return SALTS_EALREADY;
   (void)snprintf(temporary_path, sizeof(temporary_path), "%s.flowie.tmp", output_path);
-  if (salts_fs_access(temporary_path, SALTS_FS_ACCESS_EXISTS) == SALTS_OK) return SALTS_EALREADY;
+  if (cmeta_fs_access(temporary_path, SALTS_FS_ACCESS_EXISTS) == SALTS_OK) return SALTS_EALREADY;
   rc = flowie_control_repository_validate(repository);
   if (rc == SALTS_OK) rc = repository->user->domain_get(repository->ctx, domain_id, &domain);
   if (rc == SALTS_OK) rc = repository->audit->revision(repository->ctx, &value.source_revision);
@@ -497,8 +497,8 @@ int flowie_control_data_export(const flowie_control_repository_t *repository, co
   if (!published && database) (void)data_db_exec(database, "ROLLBACK");
   if (database && flowie_control_database_close(database) != FLOWIE_CONTROL_DB_OK && rc == SALTS_OK)
     rc = SALTS_EIO;
-  if (rc == SALTS_OK) rc = salts_fs_rename(temporary_path, output_path);
-  if (rc != SALTS_OK) (void)salts_fs_unlink(temporary_path);
+  if (rc == SALTS_OK) rc = cmeta_fs_rename(temporary_path, output_path);
+  if (rc != SALTS_OK) (void)cmeta_fs_unlink(temporary_path);
   if (rc == SALTS_OK) *result = value;
   return rc;
 }
