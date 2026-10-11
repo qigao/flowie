@@ -29,3 +29,4 @@ The package is built from released producer SDKs and shared vcpkg binary cache a
 The shared C11/C++17 installed-package tests live in `tests/installed-sdk`. Linux and Windows
 run them through CTest; Android compiles and links them. They call all three exported
 libraries to verify link/load closure rather than only checking header layouts.
+Native test CI invokes their versioned user presets with the root Flowie vcpkg manifest enabled.

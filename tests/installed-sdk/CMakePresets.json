@@ -1,0 +1,18 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "installed-sdk-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../../build/flowie-installed-consumer",
+      "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_MANIFEST_MODE": "ON",
+        "VCPKG_MANIFEST_DIR": "${sourceDir}/../..",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../../vcpkg_installed"
+      }
+    }
+  ]
+}

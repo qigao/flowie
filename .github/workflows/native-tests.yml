@@ -168,18 +168,11 @@ jobs:
           export HTTP_SERVICES_ROOT="$PKG_ROOT/http-services/release"
           export TURBODB_ROOT="$PKG_ROOT/turbodb/release"
           test -f "$FLOWIE_ROOT/lib/cmake/Flowie/FlowieConfig.cmake"
-          cmake -S tests/installed-sdk -B build/flowie-installed-consumer -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DFlowie_DIR="$FLOWIE_ROOT/lib/cmake/Flowie" \
-            -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed" \
-            -DVCPKG_MANIFEST_MODE=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake --build build/flowie-installed-consumer --parallel 2
+          cd tests/installed-sdk
+          cmake --preset ci-linux-release-user
+          cmake --build --preset ci-linux-release-user --parallel 2
           export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$SALTS_ROOT/lib:$SALTS_UTILS_ROOT/lib:$HTTP_SERVICES_ROOT/lib:$TURBODB_ROOT/lib:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
-          ctest --test-dir build/flowie-installed-consumer --timeout 45 --output-on-failure
+          ctest --preset ci-linux-release-user
       - name: Locate Windows compiler and install ccache
         if: runner.os == 'Windows'
         shell: pwsh
@@ -242,19 +235,12 @@ jobs:
           set "TURBODB_ROOT=%PKG_ROOT%\turbodb\release"
           if not exist "%FLOWIE_ROOT%\lib\cmake\Flowie\FlowieConfig.cmake" exit /b 1
           set "PATH=%FLOWIE_ROOT%\bin;%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
-          cmake -S tests/installed-sdk -B build/flowie-installed-consumer -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DFlowie_DIR="%FLOWIE_ROOT%/lib/cmake/Flowie" ^
-            -DCMAKE_TOOLCHAIN_FILE="%QIGAO_VCPKG_TOOLCHAIN_FILE%" ^
-            -DVCPKG_TARGET_TRIPLET=x64-windows ^
-            -DVCPKG_INSTALLED_DIR="%GITHUB_WORKSPACE%/vcpkg_installed" ^
-            -DVCPKG_MANIFEST_MODE=OFF ^
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache ^
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cd tests\installed-sdk
+          cmake --preset ci-win-release-user
           if errorlevel 1 exit /b 1
-          cmake --build build/flowie-installed-consumer --parallel 2
+          cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
-          ctest --test-dir build/flowie-installed-consumer --timeout 45 --output-on-failure
+          ctest --preset ci-win-release-user
           if errorlevel 1 exit /b 1
       - name: Report compiler cache statistics
         if: always()
