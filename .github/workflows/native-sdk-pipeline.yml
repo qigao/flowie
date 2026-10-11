@@ -395,7 +395,7 @@ jobs:
             $p = Join-Path $prefix $file
             if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "missing Windows SDK file: $p" }
           }
-          @(
+          $manifestLines = @(
             "package=Flowie.Native",
             "version=${{ needs.metadata.outputs.version }}",
             "source=${{ inputs.source_sha }}",
@@ -408,7 +408,9 @@ jobs:
             "cluster=OFF",
             "profile=Release",
             "qualification=runtime"
-          ) | Set-Content -LiteralPath (Join-Path $prefix "flowie-sdk-manifest.txt") -Encoding ascii
+          )
+          # Use LF on every platform for the Linux pack job's exact-line checks.
+          [IO.File]::WriteAllText((Join-Path $prefix "flowie-sdk-manifest.txt"), ($manifestLines -join "`n") + "`n", [Text.Encoding]::ASCII)
 
       - uses: actions/upload-artifact@v4
         with:
@@ -589,7 +591,7 @@ jobs:
       - name: Verify SDK payload
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           test -f package/sdk/linux-x64/lib/cmake/Flowie/FlowieConfig.cmake
           test -f package/sdk/linux-x64/lib/libflowie.so
           test -f package/sdk/linux-x64/lib/libflowie_client.so
