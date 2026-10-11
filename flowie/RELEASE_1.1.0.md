@@ -17,9 +17,10 @@
 ## 兼容与升级
 
 本轮准备不修改部署域名、用户数据或 password file。现有自建部署依赖的 TidesSQL 继续关闭；
-已检查最新 TurboDB 2.3.3 官方包：它移除了 TidesDB ORM driver，但五个平台仍包含
-TidesSQL 及其 TidesDB 引擎，`TurboDBConfig.cmake` 仍要求 TidesDB。
-因此不能将升级到 2.3.3 表述为已从发布包移除 TidesSQL/TidesDB，也不能直接替换现有关闭该功能的部署依赖。
+已检查 [TurboDB 2.3.4 官方包](https://github.com/qigao/turbodb/releases/tag/v2.3.4)：
+五个平台均不再包含 TidesDB/TidesSQL，相关 CMake 依赖查找与目标导入关闭。
+Flowie 源码构建及安装包要求 TurboDB 至少为 2.3.4，依赖恢复仍选择最新发布版本。
+升级应恢复到新的 SDK 目录，避免旧包文件残留。
 GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构建并一起更新相关 SDK，
 不能将新头文件与旧 OpenSSL 时代的二进制混用。具体 producer 版本以候选包 manifest 为准。
 
@@ -43,11 +44,11 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
 - HIGH：[原生 CI 38105842320](https://github.com/qigao/flowie/actions/runs/38105842320)
   的 Linux job 成功；Windows 完成编译，50 项测试通过、1 项公网 live 关闭，
   `test_flowie_control_runtime` 崩溃，安装后消费步骤未执行。此轮使用 TurboDB 2.3.2。
-- HIGH：官方 TurboDB 2.3.3 包仍包含 TidesSQL/TidesDB。已检查原始 nupkg，SHA-256 为
-  `55557c0b64c1846e384c962158b936bf6aeaa9e8e094309a9eb08aff9a0af423`。
-  [2.3.3 发布说明](https://github.com/qigao/turbodb/releases/tag/v2.3.3)
-  确认其 producer 为 Salts 2.3.0-rc.10 / SaltsUtils 4.3.0-rc.8。
-  需要符合关闭要求的 producer 包，不能把消费工程未使用目标等同于发布包未包含该依赖。
+- 已解除：TurboDB 2.3.4 包排除了 TidesDB/TidesSQL，下载包的三项正式包测试通过，SHA-256 为
+  `cb47e45a07c80bbc6ffaa9a6aa06f50c4c24f1bce006caba73785e69e4889aba`。
+  producer 为 Salts 2.3.0-rc.10 / SaltsUtils 4.3.0-rc.8。
+  ORM 正式测试移除了已退役驱动的成功加载预期，保留缺失模块错误传播验证；
+  Flowie 使用此 SDK 的本轮原生回归待完成。
 - HIGH：[SDK qualification 38105843587](https://github.com/qigao/flowie/actions/runs/38105843587)
   在 Linux Cluster 链接失败：已发布 TurboRaft 0.3.1 仍引用 `salts_fs_write`、旧
   `tbe_typed_*` 等符号，并引入 `libcrypto.so`，不兼容当前 Salts/GmSSL 组合。

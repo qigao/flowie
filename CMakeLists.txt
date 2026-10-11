@@ -89,12 +89,12 @@ file(TO_CMAKE_PATH "$ENV{TURBODB_ROOT}" FLOWIE_TURBODB_ROOT_PATH)
 if(NOT IS_DIRECTORY "${FLOWIE_TURBODB_ROOT_PATH}")
   message(FATAL_ERROR "TURBODB_ROOT is not a directory: $ENV{TURBODB_ROOT}")
 endif()
-find_package(TurboDB CONFIG REQUIRED
+find_package(TurboDB 2.3.4 CONFIG REQUIRED
              PATHS "${FLOWIE_TURBODB_ROOT_PATH}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(MSVC)
   # These SDK usage requirements carry the same atomics flag. Keep the requirement
   # and its language guard, using the spelling sccache can pass through and hash.
-  foreach(_flowie_atomic_target IN ITEMS Salts::Core Salts::Platform TidesDB::tidesdb)
+  foreach(_flowie_atomic_target IN ITEMS Salts::Core Salts::Platform)
     if(TARGET ${_flowie_atomic_target})
       get_target_property(_flowie_atomic_options ${_flowie_atomic_target} INTERFACE_COMPILE_OPTIONS)
       if(_flowie_atomic_options)
