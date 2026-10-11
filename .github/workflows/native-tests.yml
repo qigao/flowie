@@ -211,8 +211,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset ci-win-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
@@ -223,16 +225,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --build --preset install-ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
-          set "PKG_ROOT=%RUNNER_TEMP%\flowie-sdk"
-          set "FLOWIE_ROOT=%PKG_ROOT%\flowie\release"
-          set "SALTS_ROOT=%PKG_ROOT%\salts\release"
-          set "SALTS_UTILS_ROOT=%PKG_ROOT%\salts-utils\release"
-          set "HTTP_SERVICES_ROOT=%PKG_ROOT%\http-services\release"
-          set "TURBODB_ROOT=%PKG_ROOT%\turbodb\release"
+          set "PKG_ROOT=%RUNNER_TEMP:\=/%/flowie-sdk"
+          set "FLOWIE_ROOT=%PKG_ROOT%/flowie/release"
+          set "SALTS_ROOT=%PKG_ROOT%/salts/release"
+          set "SALTS_UTILS_ROOT=%PKG_ROOT%/salts-utils/release"
+          set "HTTP_SERVICES_ROOT=%PKG_ROOT%/http-services/release"
+          set "TURBODB_ROOT=%PKG_ROOT%/turbodb/release"
           if not exist "%FLOWIE_ROOT%\lib\cmake\Flowie\FlowieConfig.cmake" exit /b 1
           set "PATH=%FLOWIE_ROOT%\bin;%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
           cd tests\installed-sdk

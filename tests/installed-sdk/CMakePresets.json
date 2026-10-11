@@ -7,6 +7,9 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/../../build/flowie-installed-consumer",
       "toolchainFile": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoVcpkgToolchain.cmake",
+      "environment": {
+        "VCPKG_OVERLAY_PORTS": "$env{VCPKG_CACHE_REPOSITORY_ROOT}/ports"
+      },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_MANIFEST_MODE": "ON",
