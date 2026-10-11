@@ -47,6 +47,13 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
 - 默认关闭实验 Cluster 后，本机通过 `ci-win-release-user` 完成 configure、完整 build 和 CTest：
   51 项通过，1 项公网 live 按配置关闭；实际缓存为 `FLOWIE_BUILD_CLUSTER=OFF`、
   `VCPKG_MANIFEST_MODE=ON`。SDK 工作流通过 actionlint，三平台打包尚未重新运行。
+- [原生回归 38120933295](https://github.com/qigao/flowie/actions/runs/38120933295)：
+  提交 `8175bf23c0b919730cb4ca0f05ed032285e0a85c`，Windows 51 项、Linux 52 项通过，
+  各平台安装后 C11/C++17 测试均为 2/2，公网 live 保持关闭。
+  此前 Windows TLS EOF 用例曾收到 `SALTS_EIO` 而非 `SALTS_ECONNABORTED`；
+  原失败本机连续 30 次未复现，未捕获 CI 底层原生错误，不能将原因认定为已完全证实。
+  测试夹具现显式发送 TCP FIN、不发送 TLS close_notify，并持有 socket 至客户端处理完成；
+  断言前先回收线程，保留精确错误码断言并检查 FIN 已发送。调整后本机重复 30 次及完整回归通过。
 
 ## 发布前阻塞与范围
 
