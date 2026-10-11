@@ -4,9 +4,11 @@
 #include "platform.h"
 #include "tls_test_support.h"
 #include "cmeta_thread.h"
+#include <salts/clock.h>
 
 #include <gmssl/tls.h>
 #include <gmssl/x509.h>
+#include <stdatomic.h>
 
 #ifdef _WIN32
   #include <winsock2.h>
@@ -27,6 +29,7 @@ typedef int flow_mtls_test_socket_t;
 #endif
 
 #define FLOW_MTLS_TEST_REQUEST_CAPACITY 4096u
+#define FLOW_MTLS_TEST_EOF_HOLD_MS 5000u
 
 typedef struct flow_mtls_test_server_s {
   flow_mtls_test_socket_t listener;
@@ -41,6 +44,8 @@ typedef struct flow_mtls_test_server_s {
   int peer_verified;
   int handshake_rejected;
   int abrupt_close;
+  int eof_sent;
+  atomic_int release_socket;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
 } flow_mtls_test_server_t;
@@ -162,6 +167,30 @@ static void flow_mtls_test_server_main(void *arg) {
     sent += count;
   }
   server->status = 0;
+  if (server->abrupt_close) {
+    /* This case needs TCP FIN without TLS close_notify. A full close can race
+     * pending peer I/O and deliver a reset instead of the EOF under test.
+     * The worker keeps ownership until join releases it after the client has
+     * observed the result; a bounded wait still catches a missing teardown. */
+#ifdef _WIN32
+    const int send_direction = SD_SEND;
+#else
+    const int send_direction = SHUT_WR;
+#endif
+    const uint64_t deadline = cmeta_monotonic_ms() + FLOW_MTLS_TEST_EOF_HOLD_MS;
+    if (shutdown(client, send_direction) != 0) {
+      server->status = -1;
+      goto done;
+    }
+    server->eof_sent = 1;
+    while (!atomic_load_explicit(&server->release_socket, memory_order_acquire)) {
+      if (cmeta_monotonic_ms() >= deadline) {
+        server->status = -1;
+        break;
+      }
+      cmeta_sleep_ms(1u);
+    }
+  }
 done:
   if (handshaken && !server->abrupt_close) (void)tls_shutdown(tls);
   if (initialized) tls_cleanup(tls);
@@ -185,6 +214,7 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
 #endif
   if (!server || (!response && response_size != 0u)) return -1;
   memset(server, 0, sizeof(*server));
+  atomic_init(&server->release_socket, 0);
   server->require_peer_certificate = require_peer_certificate ? 1 : 0;
   server->abrupt_close = abrupt_close ? 1 : 0;
   server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
@@ -259,7 +289,10 @@ static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const ui
 
 static void flow_mtls_test_server_join(flow_mtls_test_server_t *server) {
   if (!server) return;
-  if (server->started) (void)cmeta_thread_join(&server->thread);
+  if (server->started) {
+    atomic_store_explicit(&server->release_socket, 1, memory_order_release);
+    (void)cmeta_thread_join(&server->thread);
+  }
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET)
     flow_mtls_test_close_socket(server->listener);
   server->listener = FLOW_MTLS_TEST_INVALID_SOCKET;

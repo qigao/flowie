@@ -402,6 +402,7 @@ static void flowie_client_transport_abrupt_tls_close(void) {
   flowie_mqtt_client_t *client = NULL;
   char ca_path[512] = {0};
   uint64_t deadline;
+  int setup_status;
 
   atomic_init(&probe.done, 0);
   atomic_init(&probe.connect_status, SALTS_EBUSY);
@@ -412,7 +413,12 @@ static void flowie_client_transport_abrupt_tls_close(void) {
   atomic_init(&probe.reconnect_attempts, 0);
 
   check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
-  check_equal(flow_tls_test_server_start_abrupt(&server), 0);
+  setup_status = flow_tls_test_server_start_abrupt(&server);
+  if (setup_status != 0) {
+    tls_test_remove_file(ca_path);
+    check_equal(setup_status, 0);
+    return;
+  }
 
   client_config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
   client_config.host = "localhost";
@@ -426,28 +432,37 @@ static void flowie_client_transport_abrupt_tls_close(void) {
   client_config.on_disconnect = flowie_client_transport_disconnect_complete;
   client_config.on_error = flowie_client_transport_error;
   client_config.user_data = &probe;
-  check_equal(flowie_mqtt_client_create(&client_config, &client), SALTS_OK);
+  setup_status = flowie_mqtt_client_create(&client_config, &client);
+  if (setup_status != SALTS_OK) goto cleanup;
 
   connect.version = FLOWIE_MQTT_VERSION_5;
   connect.clean_start = 1u;
   connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
-  check_equal(flowie_mqtt_client_connect(client, &connect), SALTS_OK);
+  setup_status = flowie_mqtt_client_connect(client, &connect);
+  if (setup_status != SALTS_OK) goto cleanup;
   deadline = cmeta_monotonic_ms() + FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS;
   while (!atomic_load_explicit(&probe.done, memory_order_acquire) &&
          cmeta_monotonic_ms() < deadline)
     cmeta_sleep_ms(1u);
 
+cleanup:
+  /* Join both workers before a fatal assertion can unwind their borrowed
+   * stack state. Keep the peer socket alive until the client is finished. */
+  flowie_mqtt_client_destroy(client);
+  flow_mtls_test_server_join(&server);
+  tls_test_remove_file(ca_path);
+  info("TLS EOF peer: status=%d, request_size=%zu, eof_sent=%d, connect_status=%d",
+       server.status, server.request_size, server.eof_sent,
+       atomic_load_explicit(&probe.connect_status, memory_order_relaxed));
+  check_equal(setup_status, SALTS_OK);
+  check_equal(server.status, 0);
+  check_greater(server.request_size, (size_t)0u);
+  check_equal(server.request[0] >> 4u, FLOWIE_MQTT_PACKET_CONNECT);
+  check_equal(server.eof_sent, 1);
   check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
   check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
               SALTS_ECONNABORTED);
   check_equal(atomic_load_explicit(&probe.errors, memory_order_relaxed), 0);
-  flow_mtls_test_server_join(&server);
-  check_equal(server.status, 0);
-  check_greater(server.request_size, (size_t)0u);
-  check_equal(server.request[0] >> 4u, FLOWIE_MQTT_PACKET_CONNECT);
-
-  flowie_mqtt_client_destroy(client);
-  tls_test_remove_file(ca_path);
 }
 
 
