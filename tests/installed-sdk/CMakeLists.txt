@@ -3,7 +3,8 @@ project(FlowieInstalledConsumer LANGUAGES C CXX)
 
 # All imports must resolve from the installed SDKs only. No source-tree
 # targets or fallback to an older Salts/CHttp/TurboDB ABI is allowed.
-find_package(Flowie CONFIG REQUIRED)
+find_package(Flowie CONFIG REQUIRED PATHS "$ENV{FLOWIE_ROOT}"
+             NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(NOT TARGET Flowie::Flowie OR NOT TARGET Flowie::Client OR
    NOT TARGET Flowie::Protocol OR NOT TARGET Salts::CNet)
   message(FATAL_ERROR "Flowie installed C11/C++17 SDK is missing canonical exports")
@@ -20,5 +21,7 @@ target_link_libraries(flowie_consumer_cpp17 PRIVATE
                       Flowie::Flowie Flowie::Client Flowie::Protocol Salts::CNet)
 
 enable_testing()
-add_test(NAME flowie_installed_c11 COMMAND flowie_consumer_c11)
-add_test(NAME flowie_installed_cpp17 COMMAND flowie_consumer_cpp17)
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME flowie_installed_c11 COMMAND flowie_consumer_c11)
+  add_test(NAME flowie_installed_cpp17 COMMAND flowie_consumer_cpp17)
+endif()

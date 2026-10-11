@@ -780,7 +780,7 @@ jobs:
         run: |
           set -euxo pipefail
           consumer="$RUNNER_TEMP/flowie-release-consumer"
-          cmake -S packaging/tests -B "$consumer/build" -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF
+          cmake -S tests/installed-sdk -B "$consumer/build" -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE"             -DVCPKG_TARGET_TRIPLET=x64-linux             -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR"             -DVCPKG_MANIFEST_MODE=OFF
           cmake --build "$consumer/build" --parallel 2
           export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           ctest --test-dir "$consumer/build" --no-tests=error --output-on-failure
@@ -870,7 +870,7 @@ jobs:
           call "$env:VSINSTALL\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "PATH=$env:FLOWIE_ROOT\bin;$env:HTTP_SERVICES_ROOT\bin;$env:TURBODB_ROOT\bin;$env:SALTS_UTILS_ROOT\bin;$env:SALTS_ROOT\bin;$env:VCPKG_INSTALLED_DIR\x64-windows\bin;%PATH%"
-          cmake -S packaging/tests -B "$consumer\build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:QIGAO_VCPKG_TOOLCHAIN_FILE" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_INSTALLED_DIR="$env:VCPKG_INSTALLED_DIR" -DVCPKG_MANIFEST_MODE=OFF
+          cmake -S tests/installed-sdk -B "$consumer\build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:QIGAO_VCPKG_TOOLCHAIN_FILE" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_INSTALLED_DIR="$env:VCPKG_INSTALLED_DIR" -DVCPKG_MANIFEST_MODE=OFF
           if errorlevel 1 exit /b 1
           cmake --build "$consumer\build" --parallel 2
           if errorlevel 1 exit /b 1
@@ -964,7 +964,7 @@ jobs:
         run: |
           set -euxo pipefail
           consumer="$RUNNER_TEMP/flowie-release-consumer-android"
-          cmake -S packaging/tests -B "$consumer/build" -G Ninja \
+          cmake -S tests/installed-sdk -B "$consumer/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=Android \
             -DCMAKE_TOOLCHAIN_FILE="$QIGAO_VCPKG_TOOLCHAIN_FILE" \

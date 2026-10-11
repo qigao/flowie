@@ -15,6 +15,8 @@ int main(void) {
   cnet_owner_placement_hint hints[2] = {{true, 4u}, {true, 1u}};
   cnet_owner_placement_input input = {0};
   size_t owner = SIZE_MAX;
+  static const uint8_t topic[] = "flowie/release";
+  const flowie_mqtt_span_t topic_span = {topic, sizeof(topic) - 1u};
   int (*set_destination)(flowie_mqtt_client_t *,
                          const flowie_mqtt_client_destination_policy_t *) =
       &flowie_mqtt_client_set_destination_policy;
@@ -28,5 +30,8 @@ int main(void) {
   if (set_destination(NULL, NULL) != SALTS_EINVAL) return 2;
   if (flowie_mqtt_client_try_destroy(NULL, 0u) != SALTS_EINVAL) return 4;
   if (cnet_owner_placement_choose(&input, &owner) != SALTS_OK || owner != 1u) return 3;
+  /* Exercise all installed library exports, not only header layout constants. */
+  if (flowie_endpoint_core_stop(NULL) != SALTS_EINVAL) return 5;
+  if (!flowie_mqtt_utf8_validate(topic_span)) return 6;
   return 0;
 }
