@@ -1,6 +1,6 @@
 # Flowie.Native
 
-Prebuilt Flowie 1.0.2 native SDK package.
+Prebuilt Flowie 1.0.4 native SDK package.
 
 ## Included SDK
 
@@ -13,18 +13,20 @@ Prebuilt Flowie 1.0.2 native SDK package.
   - `Flowie::Client`
   - `Flowie::Flowie`
 
-## Exact producer baseline
+## Producer dependencies
 
-- Salts.Native 2.3.0-rc.10
-- SaltsUtils.Native 4.3.0-rc.8
-- CHttp.Native 2.1.0-rc.3
-- TurboDB.Native 2.3.4 / Orm 2.3.4
+- Salts.Native
+- SaltsUtils.Native
+- CHttp.Native
+- TurboDB.Native 2.3.4 or newer (Orm)
 
-Cluster remains disabled in the release build. Its optional FlowMQ and TurboRaft
-dependencies are outside this SDK migration and are not qualified by this pipeline.
+The release pipeline resolves published producer packages (including the Salts 2.3, SaltsUtils 4.3 and CHttp 2.1 release candidates), uses the same resolved versions for every platform, and records them in each SDK manifest. TurboRaft-backed Cluster is experimental and disabled by default. Ordinary CI and SDK releases do not restore FlowMQ or TurboRaft, build Cluster, or require its qualification. Experimental Cluster remains available through explicit source-build opt-in with compatible SDKs.
+
+Flowie 1.0.4 uses GmSSL. Rebuild native consumers with a coherent SDK family; do not combine these binaries with the retired OpenSSL dependency family. TurboDB 2.3.4 excludes TidesDB/TidesSQL from all published SDKs. CMake discovery imposes no version constraints, including for RC SDKs; consumers must select ABI-compatible SDKs exposing the required APIs. Package restoration resolves compatible published releases. Restore into a fresh SDK directory to avoid retaining files from older packages. Remaining Flowie release blockers are recorded in `flowie/RELEASE_1.0.4.md`.
 
 The package is built from released producer SDKs and shared vcpkg binary cache artifacts; producer source builds are not used in the release pipeline.
 
-CMake dependency discovery accepts the SDKs at the configured roots without version
-constraints, including RC builds. The producer baseline above records the package
-build inputs; consumers are responsible for choosing ABI-compatible SDKs.
+The shared C11/C++17 installed-package tests live in `tests/installed-sdk`. Linux and Windows
+run them through CTest; Android compiles and links them. They call all three exported
+libraries to verify link/load closure rather than only checking header layouts.
+Native test CI invokes their versioned user presets with the root Flowie vcpkg manifest enabled.

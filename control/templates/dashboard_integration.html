@@ -1,0 +1,42 @@
+{% if sections.show_integration %}<section id="integration" class="dataset integration-page" aria-labelledby="integration-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">{% if capabilities.is_platform_workspace %}Runtime{% endif %}{% if capabilities.is_domain_workspace %}Backend connectivity{% endif %}</p><h2 id="integration-title">{% if capabilities.is_platform_workspace %}Platform configuration{% endif %}{% if capabilities.is_domain_workspace %}Integration{% endif %}</h2></div>
+      <span class="scope">{% if capabilities.is_platform_workspace %}Platform{% endif %}{% if capabilities.is_domain_workspace %}Domain: {{ identity.domain_id }}{% endif %}</span>
+    </div>
+    <p class="section-intro">{% if capabilities.is_platform_workspace %}Review the effective Management endpoint and copy configuration for platform automation. Runtime edits and process restarts remain with the deployment supervisor.{% endif %}{% if capabilities.is_domain_workspace %}Connect one backend to the current Domain through the authenticated Management RPC endpoint. Credentials stay server-side and are never embedded in this page.{% endif %}</p>
+    <section class="setup-console" aria-labelledby="integration-setup-title" data-integration-setup data-rpc-path="{{ navigation.rpc_path }}" data-domain="{{ identity.domain_id }}">
+      <div class="setup-console__intro">
+        <p class="eyebrow">Quick setup</p>
+        <h3 id="integration-setup-title">{% if capabilities.is_platform_workspace %}Management RPC{% endif %}{% if capabilities.is_domain_workspace %}Connect your backend{% endif %}</h3>
+        <p>Use the current Control origin and runtime RPC path. Authenticate from your service, keep the bearer session private, then send JSON-RPC 2.0 requests.</p>
+      </div>
+      <div class="setup-console__body">
+        <ol class="setup-steps" aria-label="Integration setup steps">
+          <li><span>1</span><div><strong>Sign in</strong><small>POST the domain, principal and password to <code>/v2/control/login</code>.</small></div></li>
+          <li><span>2</span><div><strong>Store the session</strong><small>Keep the returned bearer token in the backend only.</small></div></li>
+          <li><span>3</span><div><strong>Call Management RPC</strong><small>Send JSON-RPC 2.0 to the endpoint below.</small></div></li>
+        </ol>
+        <div class="setup-values">
+          <div class="setup-value">
+            <span>RPC endpoint</span>
+            <code id="integration-rpc-endpoint" data-runtime-endpoint>{{ navigation.rpc_path }}</code>
+            <button type="button" class="button--quiet button--copy" data-copy-target="integration-rpc-endpoint" aria-label="Copy RPC endpoint" aria-describedby="integration-copy-status">Copy</button>
+          </div>
+          <div class="setup-value">
+            <span>Current domain</span>
+            <code>{{ identity.domain_id }}</code>
+          </div>
+        </div>
+        <details class="setup-config">
+          <summary>Integration configuration</summary>
+          <p>Start with environment variables, then load them into your service configuration. No credential is written to this page.</p>
+          <pre><code id="integration-config" data-runtime-config>FLOWIE_CONTROL_BASE_URL=https://control.example.com
+FLOWIE_CONTROL_LOGIN_PATH=/v2/control/login
+FLOWIE_CONTROL_RPC_PATH={{ navigation.rpc_path }}
+FLOWIE_CONTROL_DOMAIN={{ identity.domain_id }}</code></pre>
+          <button type="button" class="button--secondary button--copy" data-copy-target="integration-config" aria-label="Copy integration configuration" aria-describedby="integration-copy-status">Copy configuration</button>
+        </details>
+        <output id="integration-copy-status" role="status" aria-live="polite"></output>
+      </div>
+    </section>
+  </section>{% endif %}

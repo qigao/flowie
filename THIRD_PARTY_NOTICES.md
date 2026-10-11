@@ -17,6 +17,11 @@ It uses the provider-neutral SaltsUtils Crypto API for RSA, ECDSA, EdDSA and HMA
 Flowie retains its existing disabled JWE backend; the adapter's upstream license
 notices remain in the vendored sources.
 
-JWS interoperability fixtures in `vendor/cjwt/tests/salts_vectors.h` and the
-adapted algorithm regression in `control/tests/test_flowie_control_jws_algorithms.c`
+JWS interoperability fixtures in `control/tests/jws_salts_vectors.h` and the
+adapted algorithm regression in `control/tests/test_flowie_control_jws_backend.c`
 come from the same CHttp revision. Only its JWS cases are used; JWE stays disabled.
+
+CI uses [sccache](https://github.com/mozilla/sccache/tree/v0.16.0) v0.16.0 and
+[Mozilla-Actions/sccache-action](https://github.com/Mozilla-Actions/sccache-action/tree/v0.0.11)
+v0.0.11, both Apache-2.0, without local modifications. They are build tools and are not
+included in Flowie's runtime packages.

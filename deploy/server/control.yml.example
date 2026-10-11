@@ -25,6 +25,8 @@ storage:
   turbodb:
     driver: postgresql
     options:
+      # Plaintext is limited to the bundled same-host loopback PostgreSQL service.
+      turbodb_pg_transport: disabled
       conninfo: env://FLOWIE_CONTROL_DB_CONNINFO
 
 management:

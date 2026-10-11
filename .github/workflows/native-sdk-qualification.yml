@@ -1,6 +1,7 @@
 name: Flowie native SDK qualification
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [master]
     paths:
@@ -35,7 +36,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: flowie-native-sdk-qualification-${{ github.event.pull_request.number }}
+  group: flowie-native-sdk-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,5 +44,5 @@ jobs:
     name: Qualify Flowie.Native
     uses: ./.github/workflows/native-sdk-pipeline.yml
     with:
-      source_sha: ${{ github.event.pull_request.head.sha }}
+      source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
     secrets: inherit

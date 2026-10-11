@@ -211,26 +211,32 @@ resilience.on_reconnect = on_reconnect;
 rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
 ```
 
-策略只保留最近一次已提交 CONNECT 的一份深拷贝，并由 client worker coroutine 单线程推进：
+策略保留当前重连所用 CONNECT 的一份深拷贝，并由 client worker thread 单线程推进。
+已连接时执行重复 CONNECT 会通过 `on_connect` 返回 `SALTS_EALREADY`，不会替换现有重连凭据或重置退避。
 
 - CONNACK `0x88`（Server unavailable）、`0x89`（Server busy）及瞬态网络错误按指数退避重连。
 - CONNACK 或 DISCONNECT `0x86`/`0x87` 先调用 `refresh_connect`；回调必须返回一份完整的新 CONNECT，
-  client 会在回调返回前深拷贝它，并拒绝与 client 选择冲突的版本。JWT bearer 放在 CONNECT password
+  client 会在回调返回后立即深拷贝它，并拒绝与 client 选择冲突的版本。输出 spans 必须来自稳定的
+  `user_data` 存储或当前 CONNECT，并保持到该 client 的下一次回调开始；不能使用回调局部缓冲区。JWT bearer 放在 CONNECT password
   时，在这里替换 token。
 - DISCONNECT `0x89` 普通重连；`0x8e`（Session taken over）、协议错误及永久认证拒绝不重连。
 - 初始公开 CONNECT 仍只产生一次 `on_connect`；每次内部 attempt 由 `on_reconnect` 报告。
 - `max_attempts` 是每次掉线后的自动 attempt 上限，0 表示不限制；成功连接会重置 attempt 和退避。
 
-`refresh_connect` 和 `on_reconnect` 都运行在 client worker coroutine。回调内的网络 I/O 必须使用
-coroutine API，并设置明确 timeout；密码学、文件扫描等重型工作应提交到有界 worker pool，不能阻塞
-owner lane。回调不能销毁同一个 client。缓存的 CONNECT password/token 在替换和销毁时会清零。
+`refresh_connect` 和 `on_reconnect` 都运行在 client worker thread。回调不能执行阻塞网络 I/O；
+刷新所需数据应提前准备，重型工作交给应用拥有的有界 worker pool。回调不能销毁同一个 client。
+缓存的 CONNECT password/token 在替换和销毁时会清零。
+
+`timeout_ms` 限制每条命令开始执行后的总时间，覆盖传输连接、AUTH、报文分片及 QoS 的所有响应阶段；
+其他入站消息不会重置截止时间。排队时间和资源清理预算独立计算。回调不能被抢占，返回后会重新检查
+剩余时间。无命令时仍沿用该值限制空闲接收等待。
 
 已有独立重连监督器的封装不应再启用 `create_ex`，否则会形成两个连接状态推进者。此类封装可在
 `on_error` 或失败的 operation completion 回调内调用
 `flowie_mqtt_client_server_disconnect_reason()`：MQTT 5 服务端 DISCONNECT 返回具体 reason，普通
 EOF/传输错误返回 `TURBO_ENOENT`。该事件状态仅在当前 worker callback 内有效；回调外返回
-`TURBO_EBUSY`。例如 `0x87` 可触发监督器重新 CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应
-按终止错误处理。
+`TURBO_EBUSY`，即使其他线程调用时该 worker 正在执行回调也一样。例如 `0x87` 可触发监督器重新
+CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应按终止错误处理。
 
 此机制与 MQTT enhanced authentication 不同：`flowie_mqtt_client_authenticate()` 的 AUTH `0x19`
 用于已协商 Authentication Method 的协议内 re-auth；JWT 作为普通 CONNECT password 时使用上述
@@ -300,4 +306,38 @@ MQTT 5 成功 CONNACK 中的 Maximum Packet Size、Maximum QoS、Retain Availabl
 内存设置 `command_queue_capacity`、`command_queue_max_bytes`、`max_packet_size` 和
 `max_inbound_qos2`，并将 queue-full 作为显式背压处理，不能无限重试。
 
-真实 client 回归参考 [test_flowie_mqtt_client.c](client/tests/test_flowie_mqtt_client.c)。
+真实 client 回归参考
+[test_flowie_mqtt_client_transport.c](../client/tests/test_flowie_mqtt_client_transport.c)。
+
+## 10. 空闲 CPU 与独立入站测量
+
+Linux 可启用正式 CTest benchmark，使用与产品相同的 Release preset 和 SDK：
+
+```sh
+cmake --preset linux-release-user -DFLOWIE_BUILD_TESTS=OFF -DFLOWIE_BUILD_BENCHMARKS=ON
+cmake --build --preset linux-release-user --parallel 2
+ctest --preset linux-release-user -LE '^$' -V -R '^benchmark_flowie_mqtt_progress$'
+```
+
+`-LE '^$'` 覆盖普通测试预设对 `benchmark` label 的排除。测试入口为
+[benchmark_flowie_mqtt_progress.c](../client/tests/benchmark_flowie_mqtt_progress.c)，
+发送端为单独启动的
+[flowie_mqtt_progress_peer.c](../client/tests/flowie_mqtt_progress_peer.c)。
+不需要外部 broker，TLS/WSS 使用既有测试 CA 并保持证书及主机名验证。
+
+- TCP、TLS、WS、WSS 各执行 3 轮。每轮先记录 1 秒无 client 的进程 CPU 对照，
+  CONNECT 完成并预热后记录 5 秒连接空闲 CPU。CPU 百分比为
+  `100 × 客户端进程 CPU 时间 / 单调时钟墙上时间`，100% 表示占满一个核心，
+  包括客户端的所有线程，不包括独立发送端进程。
+- 每轮随后按绝对计划、7 ms 间隔发送 512 个 MQTT 5 QoS0 PUBLISH，payload 为 64 字节。
+  CONNECT 后客户端不提交 PING、PUBLISH 或其他 MQTT 命令，入站进度完全由独立发送端触发。
+  `keep_alive=0`，client `timeout_ms=30000`，以覆盖空闲窗口；这不是默认超时配置的测量。
+- `SAMPLE` 行保留 transport、轮次、序号、计划发送、首次发送尝试、验证完成后的接收时间，
+  时间戳单位为单调时钟纳秒。接收端校验 topic、QoS、完整 payload 和 FIFO 序号。
+- `METRIC` 分别报告源端 release lag、首次尝试到接收、计划发送到接收的 P50/P95/P99/最大值。
+  发送接纳重试从首次尝试计时，重试有界且单独计数；源端迟到时按原计划追赶，可能形成短暂突发。
+
+首次尝试到接收包含 Flowie Server 的发送接纳和调度、loopback 传输、TLS/WS 处理以及
+MQTT Client 的解析和回调验证，不等同于单独的 CNet wake 开销。测量需同时记录 SDK/backend、
+CPU 拓扑和亲和设置，保留每轮分布及源端迟到；不能把短测的 P99 当成最坏延迟保证，
+也不能把计划发送速率当成吞吐容量。该测试不设置依赖机器速度的性能通过阈值。

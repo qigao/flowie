@@ -1,5 +1,23 @@
 # Flowie release gate
 
+## 当前实现状态（1.0.4 准备）
+
+本文件下文描述的是产品发布要求，并非当前 checkout 已实现的自动门禁。
+2026-10-11 核对发现 `LINUX_REMOTE_TEST_RUNBOOK.md`、
+`cmake/VerifyReleaseEvidence.cmake`、`cmake/VerifyNightlyEvidence.cmake` 与
+`flowie_release_gate_manifest` 的实现均缺失；`FLOWIE_MQTT_RELEASE_GATE` 目前只有选项声明。
+因此下文命令不能作为已通过证据，也不能以普通 CI 成功代替这些产品要求。
+
+当前可执行的 SDK 资格验证为
+[`native-sdk-qualification.yml`](../.github/workflows/native-sdk-qualification.yml)，
+支持对候选分支手动运行，调用
+[`native-sdk-pipeline.yml`](../.github/workflows/native-sdk-pipeline.yml)
+构建 Linux/Windows/Android SDK 并检查打包后的消费能力。
+[`native-tests.yml`](../.github/workflows/native-tests.yml) 单独执行 Linux/Windows 原生回归。
+发布准备状态与尚缺证据见 [1.0.4 发布说明](RELEASE_1.0.4.md)。
+
+下列产品门槛继续保留；补齐实现与对应证据前，不宣称完整产品 release gate 通过。
+
 本 gate 是 Flowie MQTT protocol/client、managed endpoint、产品 host 与持久化组合的最低可复验条件，
 不扩大 [ARCHITECTURE.md](ARCHITECTURE.md) 声明的产品边界。
 待补齐的协议、状态机、故障注入、安全、互操作与长稳场景统一记录在

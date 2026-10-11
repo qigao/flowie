@@ -275,6 +275,10 @@ struct flowie_endpoint_s {
   uint64_t recv_timeout_ms;
   size_t stream_recv_buffer_bytes;
   size_t network_command_bytes;
+  uint32_t network_workers;
+  flowie_network_policy_t network_policy;
+  uint32_t network_cpu_count;
+  uint32_t network_cpus[FLOWIE_MAX_NETWORK_WORKERS];
   size_t socket_recv_buffer_bytes;
   size_t socket_send_buffer_bytes;
   int tcp_keepalive;
@@ -1622,6 +1626,32 @@ static int flowie_endpoint_config_validate(const flowie_endpoint_config_t *confi
       config->max_packet_size > CNET_DATAGRAM_MAX_PAYLOAD_BYTES)
     return SALTS_ERANGE;
   if (config->max_connections > FLOWIE_MAX_CONNECTIONS_LIMIT) return SALTS_ERANGE;
+  if (config->network_workers > FLOWIE_MAX_NETWORK_WORKERS ||
+      config->network_workers > (config->max_connections ? config->max_connections
+                                                         : FLOWIE_DEFAULT_MAX_CONNECTIONS))
+    return SALTS_ERANGE;
+  if (config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN &&
+      config->network_policy != FLOWIE_NETWORK_LEAST_CONNECTIONS) return SALTS_EINVAL;
+  if (config->network_cpu_count > FLOWIE_MAX_NETWORK_WORKERS ||
+      (config->network_cpu_count != 0u &&
+       config->network_cpu_count != (config->network_workers ? config->network_workers : 1u)))
+    return SALTS_EINVAL;
+  if (config->network_cpu_count != 0u && !flowie_transport_retained_sg(config->transport))
+    return SALTS_ENOTSUP;
+  if ((config->network_workers > 1u ||
+       config->network_policy != FLOWIE_NETWORK_ROUND_ROBIN) &&
+      !flowie_transport_retained_sg(config->transport) &&
+      config->transport != FLOWIE_TRANSPORT_WS && config->transport != FLOWIE_TRANSPORT_WSS)
+    return SALTS_ENOTSUP;
+  /* CHttp owns WS/WSS lanes; Flowie's wrapper command storage is not partitioned. */
+  if (config->network_workers > 1u && flowie_transport_retained_sg(config->transport)) {
+    const size_t packet_bytes = config->max_packet_size ? config->max_packet_size
+                                                       : FLOWIE_DEFAULT_MAX_PACKET_SIZE;
+    size_t command_bytes = config->network_command_bytes ? config->network_command_bytes
+                                                        : FLOWIE_DEFAULT_NETWORK_COMMAND_BYTES;
+    if (command_bytes < packet_bytes) command_bytes = packet_bytes;
+    if (command_bytes / config->network_workers < packet_bytes) return SALTS_ERANGE;
+  }
   if ((config->coroutine_stack_size != 0u &&
        config->coroutine_stack_size < FLOWIE_MIN_COROUTINE_STACK_SIZE) ||
       config->coroutine_stack_size > FLOWIE_MAX_COROUTINE_STACK_SIZE)
@@ -6845,6 +6875,12 @@ static int flowie_listener_start_call(void *arg) {
   config.packet.kcp.max_message_bytes = endpoint->max_packet_size;
   config.command_capacity = command_target;
   config.command_bytes_capacity = endpoint->network_command_bytes;
+  config.network_workers = endpoint->network_workers;
+  config.network_policy = endpoint->network_policy == FLOWIE_NETWORK_LEAST_CONNECTIONS
+                              ? TF_NET_OWNER_LEAST_CONNECTIONS : TF_NET_OWNER_ROUND_ROBIN;
+  config.network_cpu_count = endpoint->network_cpu_count;
+  memcpy(config.network_cpus, endpoint->network_cpus,
+         endpoint->network_cpu_count * sizeof(config.network_cpus[0]));
   config.max_message_bytes = endpoint->max_packet_size;
   config.poll_slice_ms = FLOWIE_NET_POLL_SLICE_MS;
   {
@@ -7472,6 +7508,11 @@ static int flowie_register_endpoint_internal(
           ? FLOWIE_SLOW_SUBSCRIBER_DISCONNECT
           : config->slow_subscriber_policy;
   endpoint->reuse_port = config->reuse_port;
+  endpoint->network_workers = config->network_workers ? config->network_workers : 1u;
+  endpoint->network_policy = config->network_policy;
+  endpoint->network_cpu_count = config->network_cpu_count;
+  memcpy(endpoint->network_cpus, config->network_cpus,
+         config->network_cpu_count * sizeof(endpoint->network_cpus[0]));
   endpoint->host = config->host ? tstr_dup(config->host) : tstr_new();
   endpoint->path = config->path ? tstr_dup(config->path) : tstr_new();
   endpoint->tls_client_ca_file =

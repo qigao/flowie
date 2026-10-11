@@ -449,6 +449,7 @@ static int flowie_cluster_peer_link_send_bytes(flowie_cluster_peer_link_t *link,
   int rc;
   if (link == NULL || link->network == NULL || data == NULL || size == 0u)
     return SALTS_EINVAL;
+  if (size > link->max_frame_size) return SALTS_EMSGSIZE;
   buffer = mem_get_buffer(mem_global(), size);
   if (buffer == NULL) return SALTS_ENOMEM;
   memcpy(mem_buffer_data(buffer), data, size);

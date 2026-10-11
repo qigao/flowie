@@ -1,0 +1,88 @@
+{
+  "version": 6,
+  "include": [
+    "CMakePresets.json"
+  ],
+  "configurePresets": [
+    {
+      "name": "ci-linux-release-user",
+      "inherits": "installed-sdk-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "VCPKG_HOST_TRIPLET": "x64-linux",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/../../vcpkg_installed/x64-linux"
+      }
+    },
+    {
+      "name": "ci-win-release-user",
+      "inherits": "installed-sdk-base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_HOST_TRIPLET": "x64-windows",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/../../vcpkg_installed/x64-windows"
+      }
+    },
+    {
+      "name": "ci-android-release-user",
+      "inherits": "installed-sdk-base",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "Android",
+        "VCPKG_TARGET_TRIPLET": "arm64-android",
+        "VCPKG_HOST_TRIPLET": "x64-linux",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$penv{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+        "ANDROID_ABI": "arm64-v8a",
+        "ANDROID_PLATFORM": "android-26",
+        "ANDROID_STL": "c++_shared",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/../../vcpkg_installed/arm64-android"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ci-linux-release-user",
+      "configurePreset": "ci-linux-release-user"
+    },
+    {
+      "name": "ci-win-release-user",
+      "configurePreset": "ci-win-release-user"
+    },
+    {
+      "name": "ci-android-release-user",
+      "configurePreset": "ci-android-release-user"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "ci-linux-release-user",
+      "configurePreset": "ci-linux-release-user",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 45
+      }
+    },
+    {
+      "name": "ci-win-release-user",
+      "configurePreset": "ci-win-release-user",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 45
+      }
+    }
+  ]
+}

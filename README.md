@@ -12,12 +12,29 @@ Flowie is intentionally layered on the shared Salts foundation:
 
 **Package policy:** Flowie consumes the latest released first-party SDKs selected by the package-acquisition step. CMake does not pin exact Salts, SaltsUtils, CHTTP, TurboDB, FlowMQ, or TurboRaft versions; the configured install roots define the resolved package set and missing/incompatible packages fail fast.
 
+Flowie uses the canonical Salts headers and symbols (`cmeta_*.h`, `cmeta_*`,
+`coro.h`, and `coro_executor.h`). Rebuild Flowie and its dependent SDKs together
+after the Salts public-name migration; old binaries referencing `salts_*`
+symbols are incompatible. Error codes, ownership, executor placement, and MQTT
+behavior are unchanged.
+
+CNet 2.1 accepts retained buffers for stream sends. Flowie's byte-oriented
+send paths copy into an immutable `mem_buffer_t`, release their local reference
+after admission, and let CNet retain the payload until terminal completion.
+This preserves caller-buffer and mailbox reuse, including after a client
+timeout, without changing Flowie's public send API. Existing packet limits and
+bounded queues still govern admission; allocation failures return an error
+(or stop the server progress owner before consuming its pending command).
+Retained scatter/gather sends continue to use `cnet_send_slicev` directly.
+Flowie's public ORM header also references CFlow type descriptors, so
+`Flowie::Flowie` propagates `Salts::CFlow` to consumers.
+
 - **Salts::CNet** provides TCP/TLS transport and explicit connection/session progress.
 - **Salts Core / Coroutine / runtime primitives** provide common systems facilities.
 - **SaltsUtils** provides JSON/YAML/command-line/LTV and related parser components used by broker/server features.
 - **CHTTP** provides HTTP and WebSocket client/server infrastructure.
 - **TurboDB ORM** provides database integration through the configured installed profile.
-- optional cluster mode integrates with FlowMQ and TurboRaft through their public packages.
+- experimental cluster mode integrates with FlowMQ and TurboRaft through their public packages; it requires explicit opt-in.
 
 Flowie does not push MQTT-specific state back into Salts. Dependency direction remains one-way.
 
@@ -105,11 +122,32 @@ ctest --test-dir build/Msvc --output-on-failure
 
 All feature switches are declared centrally in `CMakeOptions.cmake`.
 
+The `native-tests.yml` workflow uses [sccache](https://github.com/mozilla/sccache)
+v0.16.0 through the CI presets' C/C++ compiler launchers. The pinned
+[Mozilla action](https://github.com/Mozilla-Actions/sccache-action) verifies the downloaded
+tool's checksum and supplies GitHub Actions cache credentials. Cache namespaces separate
+the runner platform, architecture, compiler family and build preset, and remain stable
+across commits. Compiler identity, flags, source and included headers participate in
+sccache's own cache keys; the build directory is not restored. SDK resolution, CMake
+configuration, the complete build graph and all enabled CTest tests still run each time.
+
+Cache statistics are recorded in the job summary and the `native-tests-<rid>` artifact,
+including when tests fail. Compare compile requests, hits, misses and non-cacheable calls
+between runs; dependency installation, code generation, linking and testing are outside
+this compiler cache. The current matrix exercises GCC and MSVC Release. The launcher
+interface also supports Clang, but no Clang job is currently registered. Developer presets
+remain independent of sccache. To discard the remote compiler cache namespace, increment
+the workflow's `SCCACHE_GHA_VERSION` prefix; do not add a commit SHA to it.
+MSVC's C11 atomics option uses the equivalent `-experimental:c11atomics` spelling,
+including the Salts/TidesDB imported target usage requirements: sccache 0.16 treats the
+unrecognized `/experimental:c11atomics` spelling as an input file and cannot cache it.
+The option and its language guards remain enabled; installed SDK files are not changed.
+
 Common options include:
 
 - `FLOWIE_BUILD_SERVER` — build the standalone MQTT server.
 - `FLOWIE_BUILD_TESTS` — build tests.
-- `FLOWIE_BUILD_CLUSTER` — enable optional cluster integration.
+- `FLOWIE_BUILD_CLUSTER` — enable experimental TurboRaft cluster integration (default `OFF`).
 - `FLOWIE_BUILD_CONTROL` — enable optional control-plane components.
 
 ## Required installed SDKs
@@ -121,9 +159,14 @@ The current top-level build resolves dependencies explicitly from configured pac
 - `HTTP_SERVICES_ROOT` — current CHTTP install root
 - `TURBODB_ROOT` — TurboDB/ORM profile
 
-Cluster builds additionally use the configured FlowMQ and TurboRaft roots.
+Ordinary CI and SDK releases keep Cluster disabled and do not restore FlowMQ or TurboRaft.
+To opt into an experimental source build, configure a user preset with
+`-DFLOWIE_BUILD_CLUSTER=ON` and provide compatible `FLOWMQ_ROOT` and `TURBORAFT_ROOT`
+SDKs. Explicitly enabled Cluster builds fail if either dependency is missing or incompatible.
 
 The build fails when the configured package roots are missing or invalid; it does not silently fall back to unrelated profiles.
+
+The package roots select the SDKs used for a build. `find_package` does not download or update them, so update each installed profile to the latest release before configuring Flowie.
 
 The historical variable name `HTTP_SERVICES_ROOT` currently points at the CHTTP package installation. It is a package-root name, not a separate runtime boundary.
 
@@ -167,6 +210,83 @@ Validate startup configuration without listening:
 ```powershell
 flowie_server --check
 ```
+
+TCP/TLS brokers can opt into multiple fixed CNet owners with `--network-workers 4`
+or `network_workers: 4` in the endpoint adapter's YAML `config`. Zero or one keeps
+the single-owner default. `network_command_bytes` (`--network-command-bytes`) is
+an aggregate mailbox budget, divided across owners; each partition must fit one
+maximum-sized packet. The default 16 MiB budget supports four owners with the
+default 1 MiB packet limit. MQTT session/topic state stays on its existing executor
+shard. See [network ownership and shutdown](flowie/ARCHITECTURE.md#tcptls-network-owners)
+for capacity, ABI, transport, and lifecycle constraints.
+
+Connection placement accepts `--network-policy round-robin` (default) or
+`--network-policy least-connections`, counting live connections and pending
+handoffs. Optional `--network-cpus 2,4` binds two owners to those logical CPUs;
+the list must contain one CPU per owner. Omit it to keep OS scheduling. YAML uses:
+
+```yaml
+network_workers: 2
+network_policy: least-connections
+network_cpus: [2, 4]
+```
+
+These keys belong inside the endpoint adapter's `config`. With `--config`, YAML
+provides endpoint tuning; the CLI tuning flags do not override it. CPU IDs are
+OS logical IDs on Linux/Android, and `group * 64 + processor` on Windows. Binding
+is applied before network progress; unavailable CPUs fail startup. Other platforms
+reject explicit binding. UDP/KCP remain single-owner. WS/WSS accepts owner counts
+and round-robin/least-connections placement through CHttp, with one aggregate
+Flowie wrapper mailbox; explicit CPU binding remains unsupported for WS/WSS.
+No throughput improvement is claimed without measurement.
+
+The C API copies the same settings during `flowie_endpoint_core_create`:
+
+```c
+flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+config.host = "127.0.0.1";
+config.port = 1883;
+config.network_workers = 2;
+config.network_policy = FLOWIE_NETWORK_LEAST_CONNECTIONS;
+config.network_cpu_count = 2;
+config.network_cpus[0] = 2;
+config.network_cpus[1] = 4;
+```
+
+Unknown policies or CPU-list length mismatches return `SALTS_EINVAL` at creation.
+Explicit CPU binding occurs at `flowie_endpoint_core_start`; check its result
+before accepting the endpoint as running. Rebuild C API consumers for the expanded
+configuration struct; existing zero-initialized settings preserve the defaults.
+
+## CNet 2.3 connection management and Server composition
+
+TCP/TLS owners use the Manager API in `Salts::CNet` for bounded attachment reservation,
+adoption and retirement. Each owner initializes, advances and destroys its
+manager on its worker thread. CNet owns transport terminal callbacks; peer
+storage is reused only by the manager recycle callback after callbacks return.
+MQTT context and retained send ownership remain with their existing owners.
+
+The multi-owner listener reserves a generation-checked `cnet_handoff` ticket
+before accepting. Publication moves the socket to its final owner's bounded
+inbox. On failure the listener closes the socket and releases the ticket;
+on success ownership transfers even if wake fails. Tickets remain charged
+through peer recycling. Round-robin and least-connections placement use the
+handoff snapshot as the single source of pending plus active occupancy.
+
+Shutdown seals inboxes before owners drain queued sockets and stop CNet.
+Managers recycle records and are destroyed on their worker threads. Stop joins
+owners and the listener (including final wake) before destroy frees inboxes and
+clients. Timeout ownership, stale public handles, MQTT semantics, UDP/KCP and
+CHTTP WebSocket protocol ownership are preserved.
+
+This branch requires a Salts 2.3 SDK, including the published 2.3.0 RC line,
+with GmSSL TLS, plus SaltsUtils 4.3 for the JWS Crypto adapter. The standalone Server composes Security, Repository and Endpoint
+through `Salts::Component`, and uses CMeta Interceptors for HTTP auth/ACL request
+admission and cleanup. `--check` assembles the same graph without opening the
+listener. Startup failure rolls back before publication; shutdown releases the
+Endpoint before its dependencies. WS/WSS placement remains owned by CHttp.
+See [the ACE/CNet decision](flowie/ADR_ACE_CNET_23_SERVER_CLIENT.md) for ownership,
+validation and rollback boundaries. No performance gain is claimed.
 
 ## CMake consumption
 

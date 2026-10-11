@@ -10,4 +10,4 @@ authenticator. Local changes replace TurboParser with Salts JsonParser, replace 
 helpers with SaltsUtils Crypto, and deliberately reject the unused JWE code path.
 The JWS adapter and independent JWS vectors are synchronized from
 `qigao/chttp` commit `a713d02bdbb19fa6f74bfb2293065d0771739ca0`.
-The adapted JWS regression lives in `control/tests/test_flowie_control_jws_algorithms.c`.
+The adapted JWS regression lives in `control/tests/test_flowie_control_jws_backend.c`.

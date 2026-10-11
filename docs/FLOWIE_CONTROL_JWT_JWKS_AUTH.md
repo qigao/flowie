@@ -47,7 +47,7 @@ snapshot，返回后借用失效。不存在第二份可独立推进的 key cach
 
 网络 fetch 通过 `CHttp::Client` 发起，使用 HTTPS、严格 peer verification、禁用 redirect/retry，并限制
 timeout、header 和 body。JWKS 解析及每次签名验证提交到 provider 拥有的有界
-`salts_threadpool`，不会阻塞 CHTTP 的网络所有者线程。
+`cmeta_threadpool`，不会阻塞 CHTTP 的网络所有者线程。
 
 任务 payload 由 job 自己复制并拥有；提交失败时创建方释放，提交成功后 worker 和等待调用线程
 各持一个引用。队列满立即返回 `SALTS_EBUSY`，等待超时返回 `SALTS_ETIMEDOUT`；worker 可安全

@@ -244,7 +244,7 @@ cmake_config_target(flowie_control_startup NO_INSTALL FOLDER "flowie/control/int
 target_include_directories(flowie_control_startup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
                                                         ${PROJECT_SOURCE_DIR}/flowie/include)
 target_link_libraries(flowie_control_startup
-                      PRIVATE Orm::C Salts::Core Salts::CmdParser Salts::CYaml
+                      PRIVATE Orm::C Salts::Core Salts::CFlow Salts::CmdParser Salts::CYaml
                               Salts::CYamlJsonAdapter Salts::JsonParser)
 
   set(FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR
@@ -259,8 +259,11 @@ target_link_libraries(flowie_control_startup
                    "${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}/assets/${resource}"
                    COPYONLY)
   endforeach()
-  foreach(resource IN ITEMS dashboard.mustache dashboard_content.mustache
-                            dashboard_error.mustache login.mustache password.mustache)
+  foreach(resource IN ITEMS dashboard.html dashboard_content.html
+                            dashboard_overview.html dashboard_integration.html
+                            dashboard_users.html dashboard_groups.html dashboard_roles.html
+                            dashboard_acls.html dashboard_audit.html
+                            dashboard_error.html login.html password.html)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/templates/${resource}"
                    "${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}/templates/${resource}"
                    COPYONLY)
@@ -290,7 +293,8 @@ target_link_libraries(flowie_control_startup
                                                  flowie_control_dashboard.c
                                                  flowie_control_dashboard_internal.h
                                                  flowie_control_dashboard_view.c
-                                                 flowie_control_dashboard_view_internal.h)
+                                                 flowie_control_dashboard_view_internal.h
+                                                 flowie_control_dashboard_model_internal.h)
     target_sources(flowie_control_iris_adapter
                    PRIVATE flowie_control_management_rpc.c
                            flowie_control_management_rpc_internal.h)
@@ -302,8 +306,8 @@ target_link_libraries(flowie_control_startup
     flowie_control_iris_adapter
     PRIVATE FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR="${FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR}")
   target_link_libraries(flowie_control_iris_adapter
-                        PRIVATE flowie_control_http CHttp::Server Salts::Core Salts::Coroutine Salts::JsonParser
-                                Salts::Mustache monocypher $<LINK_ONLY:flowie>
+                        PRIVATE flowie_control_http CHttp::App Salts::CMeta Salts::Core Salts::Coroutine Salts::JsonParser
+                                monocypher $<LINK_ONLY:flowie>
                         PUBLIC flowie_control_core Flowie::Protocol)
 
     add_library(flowie_control_runtime STATIC flowie_control_runtime.c
@@ -567,15 +571,9 @@ if(BUILD_TESTS)
       PROPERTIES LABELS
                  "flowie;control-plane;security-contract;external-auth;https")
     cmake_add_test(
-      test_flowie_control_jws_algorithms
-      SOURCES tests/test_flowie_control_jws_algorithms.c
-      LIBS flowie_control_cjwt Salts::TinyTest
-      FOLDER "flowie/control/tests")
-    set_tests_properties(test_flowie_control_jws_algorithms
-                         PROPERTIES LABELS "flowie;control-plane;security-contract;jwt")
-    cmake_add_test(
       test_flowie_control_jwt_jwks_authenticator
       SOURCES tests/test_flowie_control_jwt_jwks_authenticator.c
+              tests/test_flowie_control_jws_backend.c
       LIBS flowie_control_jwt_jwks_authenticator flowie_control_cjwt CHttp::Client
            Salts::JsonParser Salts::TinyTest
       INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/tests

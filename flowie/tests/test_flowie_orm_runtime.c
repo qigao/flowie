@@ -129,6 +129,16 @@ spec("Flowie TurboDB driver runtime") {
     }
   }
 
+  it("reports the retired TidesDB driver as a missing module") {
+    orm_status_t status;
+    config.driver = orm_view("tidesdb");
+    status = flowie_orm_connect(&config, &connection, &error);
+    check_true(status == ORM_STATUS_DRIVER_MODULE_NOT_FOUND || status == ORM_STATUS_DRIVER_LOAD_ERROR);
+    check_null(connection);
+    check_equal(error.status, status);
+    check_not_equal(error.message[0], '\0');
+  }
+
   it("rejects unknown drivers and invalid or oversized option arrays before loading") {
     config.driver = orm_view("unregistered");
     check_equal(flowie_orm_connect(&config, &connection, &error), ORM_STATUS_DRIVER_NOT_REGISTERED);

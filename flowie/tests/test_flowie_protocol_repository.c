@@ -6,6 +6,7 @@
 #include "cmeta_error.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 static flowie_mqtt_span_t repository_span(const void *data, size_t size) {
@@ -100,10 +101,27 @@ static int repository_execute_sqlite(const char *path, const char *sql) {
 }
 
 spec("flowie typed protocol repository") {
+  static flowie_protocol_repository_t *repository;
+  static char *path;
+
+  before_each() {
+    repository = NULL;
+    path = NULL;
+  }
+
+  after_each() {
+    flowie_protocol_repository_close(repository);
+    if (path) {
+      const int remove_status = tt_remove_file(path);
+      free(path);
+      path = NULL;
+      check_equal(remove_status, 0);
+    }
+  }
+
   it("rejects mismatched TurboDB configuration ABIs") {
     flowie_protocol_repository_config_t config = repository_config(1);
     orm_config_t database = *config.database;
-    flowie_protocol_repository_t *repository = NULL;
     config.database = &database;
 
     database.struct_size = sizeof(database) - 1u;
@@ -120,7 +138,6 @@ spec("flowie typed protocol repository") {
 
   it("rejects a database without the current typed schema") {
     flowie_protocol_repository_config_t config = repository_config(0);
-    flowie_protocol_repository_t *repository = NULL;
     check_equal(flowie_protocol_repository_open(&config, &repository), SALTS_EIO);
     check_null(repository);
   }
@@ -133,7 +150,6 @@ spec("flowie typed protocol repository") {
     static const uint8_t properties[] = {0x01u, 0x02u};
     static const uint8_t payload[] = {'o', 'n'};
     flowie_protocol_repository_config_t config = repository_config(1);
-    flowie_protocol_repository_t *repository = NULL;
     flowie_protocol_subscription_row_t subscription = {
         repository_span(filter, strlen(filter)), 1u, 0u, 1u, 0u, 17u};
     flowie_protocol_inflight_row_t inflight = {22u, 2u};
@@ -193,7 +209,6 @@ spec("flowie typed protocol repository") {
                 SALTS_OK);
     check_equal(flowie_protocol_repository_session_delete(repository, session.client_id, 1u),
                 SALTS_OK);
-    flowie_protocol_repository_close(repository);
   }
 
   it("reports retained rows beyond the configured limit as capacity exhaustion") {
@@ -203,9 +218,8 @@ spec("flowie typed protocol repository") {
         "INSERT INTO flowie_test_retained VALUES('topic-1',1,1,0,5,1,X'',X'01')";
     static const char second_row_sql[] =
         "INSERT INTO flowie_test_retained VALUES('topic-2',1,1,0,5,1,X'',X'02')";
-    char *path = tt_make_temp_file("flowie-protocol-limit", ".sqlite3");
+    path = tt_make_temp_file("flowie-protocol-limit", ".sqlite3");
     flowie_protocol_repository_config_t config = repository_config(1);
-    flowie_protocol_repository_t *repository = NULL;
     repository_visit_t visit = {0u, 0u};
 
     check_not_null(path);
@@ -227,13 +241,10 @@ spec("flowie typed protocol repository") {
                 SALTS_ENOSPC);
     check_equal(visit.retained, 1u);
 
-    flowie_protocol_repository_close(repository);
-    check_equal(tt_remove_file(path), 0);
   }
 
   it("rejects unrepresentable result row budgets") {
     flowie_protocol_repository_config_t config = repository_config(1);
-    flowie_protocol_repository_t *repository = NULL;
 
     config.limits.max_sessions = SIZE_MAX;
     check_equal(flowie_protocol_repository_open(&config, &repository), SALTS_EINVAL);

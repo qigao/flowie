@@ -1,36 +1,28 @@
 #include "flowie_control_acl_internal.h"
 #include "flowie_control_dashboard_view_internal.h"
 
-#include "fmt.h"
-#include "monocypher.h"
-#include <mustache/mustache_json.h>
+#include "cmeta_cmeta_data.h"
 #include "cmeta_error.h"
 #include "cmeta_fs.h"
-#include <json_parser.h>
+#include "cmeta_thread.h"
+#include "fmt.h"
+#include "monocypher.h"
+#include "tlog.h"
 #include "tstr.h"
+#include <chttp_app/app.h>
+#include <cmeta/data_reflect.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum {
-  FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE = 25,
-  FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT = 100,
-  FLOWIE_CONTROL_DASHBOARD_GROUP_SELECTOR_LIMIT = FLOWIE_CONTROL_PAGE_MAX,
-  FLOWIE_CONTROL_DASHBOARD_ROLE_SELECTOR_LIMIT = FLOWIE_CONTROL_PAGE_MAX,
-  FLOWIE_CONTROL_DASHBOARD_GROUP_LABEL_MAX =
-      FLOWIE_SECURITY_ID_MAX + FLOWIE_CONTROL_GROUP_MAX_DEPTH * 2 + 2,
-  FLOWIE_CONTROL_DASHBOARD_RESOURCE_PATH_MAX = 1024,
-  FLOWIE_CONTROL_DASHBOARD_TEMPLATE_MAX = 512 * 1024,
-  FLOWIE_CONTROL_DASHBOARD_ASSET_MAX = 1024 * 1024
-};
+#include "flowie_control_dashboard_model_internal.h"
 
-static const char FLOWIE_CONTROL_DASHBOARD_SHELL_TEMPLATE[] = "templates/dashboard.mustache";
-static const char FLOWIE_CONTROL_DASHBOARD_CONTENT_TEMPLATE[] =
-    "templates/dashboard_content.mustache";
-static const char FLOWIE_CONTROL_DASHBOARD_ERROR_TEMPLATE[] = "templates/dashboard_error.mustache";
-static const char FLOWIE_CONTROL_DASHBOARD_LOGIN_TEMPLATE[] = "templates/login.mustache";
-static const char FLOWIE_CONTROL_DASHBOARD_PASSWORD_TEMPLATE[] = "templates/password.mustache";
+static const char FLOWIE_CONTROL_DASHBOARD_SHELL_TEMPLATE[] = "templates/dashboard.html";
+static const char FLOWIE_CONTROL_DASHBOARD_CONTENT_TEMPLATE[] = "templates/dashboard_content.html";
+static const char FLOWIE_CONTROL_DASHBOARD_ERROR_TEMPLATE[] = "templates/dashboard_error.html";
+static const char FLOWIE_CONTROL_DASHBOARD_LOGIN_TEMPLATE[] = "templates/login.html";
+static const char FLOWIE_CONTROL_DASHBOARD_PASSWORD_TEMPLATE[] = "templates/password.html";
 static const char FLOWIE_CONTROL_DASHBOARD_CSS_ASSET[] = "assets/control.css";
 static const char FLOWIE_CONTROL_DASHBOARD_JS_ASSET[] = "assets/control.js";
 static const char FLOWIE_CONTROL_DASHBOARD_HTMX_ASSET[] = "assets/htmx-2.0.9.min.js";
@@ -114,59 +106,89 @@ flowie_control_dashboard_subject_kind_value(flowie_security_subject_kind_t subje
 }
 
 struct flowie_control_dashboard_view_s {
-  MUSTACHE_TEMPLATE *shell_template;
-  MUSTACHE_TEMPLATE *content_template;
-  MUSTACHE_TEMPLATE *error_template;
-  MUSTACHE_TEMPLATE *login_template;
-  MUSTACHE_TEMPLATE *password_template;
+  chttp_web_renderer renderer;
+  cmeta_mutex_t render_lock;
   cmeta_fs_buf_t css;
   cmeta_fs_buf_t javascript;
   cmeta_fs_buf_t htmx;
 };
 
-static void flowie_control_dashboard_json_free(json_value_t *value) {
-  json_value_t *document = value;
-  json_free(document);
-}
+/* Canonical Core borrowed-string operations; VIEW reflection grants no value
+ * ownership. Model bytes stay live until the synchronous App render returns. */
+static const cmeta_data_buffer_shape FLOWIE_CONTROL_DASHBOARD_STRING_SHAPE = {
+    .ownership = CMETA_DATA_BUFFER_BORROWED};
+static const cmeta_data_desc FLOWIE_CONTROL_DASHBOARD_STRING_DATA = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "flowie.control.dashboard.BorrowedString",
+    .display_name = "Dashboard borrowed string",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &cmeta_vstr_cmeta_type,
+    .shape = &FLOWIE_CONTROL_DASHBOARD_STRING_SHAPE,
+    .buffer_ops = &cmeta_vstr_cmeta_buffer_ops};
 
-static int flowie_control_dashboard_json_take(json_value_t *object, const char *key,
-                                              json_value_t *value) {
-  if (!object || !key || !value) {
-    flowie_control_dashboard_json_free(value);
+typedef struct flowie_control_dashboard_shell_model {
+  vstr page_title;
+  vstr content_url;
+} flowie_control_dashboard_shell_model;
+cmeta_reflect_data(flowie_control_dashboard_shell_model, "flowie.control.dashboard.Shell",
+                   cmeta_data_field(vstr, page_title, &FLOWIE_CONTROL_DASHBOARD_STRING_DATA,
+                                    &cmeta_vstr_cmeta_type)
+                       cmeta_data_field(vstr, content_url, &FLOWIE_CONTROL_DASHBOARD_STRING_DATA,
+                                        &cmeta_vstr_cmeta_type));
+
+typedef struct flowie_control_dashboard_login_model {
+  bool system_mode;
+  bool group_mode;
+  bool error;
+} flowie_control_dashboard_login_model;
+cmeta_reflect_data(flowie_control_dashboard_login_model, "flowie.control.dashboard.Login",
+                   cmeta_field(bool, system_mode) cmeta_field(bool, group_mode)
+                       cmeta_field(bool, error));
+
+typedef struct flowie_control_dashboard_password_model {
+  vstr csrf;
+} flowie_control_dashboard_password_model;
+cmeta_reflect_data(flowie_control_dashboard_password_model, "flowie.control.dashboard.Password",
+                   cmeta_data_field(vstr, csrf, &FLOWIE_CONTROL_DASHBOARD_STRING_DATA,
+                                    &cmeta_vstr_cmeta_type));
+
+typedef struct flowie_control_dashboard_error_model {
+  vstr message;
+} flowie_control_dashboard_error_model;
+cmeta_reflect_data(flowie_control_dashboard_error_model, "flowie.control.dashboard.Error",
+                   cmeta_data_field(vstr, message, &FLOWIE_CONTROL_DASHBOARD_STRING_DATA,
+                                    &cmeta_vstr_cmeta_type));
+
+static int flowie_control_dashboard_app_status(chttp_web_status status) {
+  switch (status) {
+  case CHTTP_WEB_OK:
+    return SALTS_OK;
+  case CHTTP_WEB_OUT_OF_MEMORY:
     return SALTS_ENOMEM;
+  case CHTTP_WEB_CAPACITY:
+    return SALTS_EMSGSIZE;
+  case CHTTP_WEB_INVALID_ARGUMENT:
+    return SALTS_EINVAL;
+  default:
+    return SALTS_EPROTO;
   }
-  if (!json_object_add_checked(object, key, value)) {
-    flowie_control_dashboard_json_free(value);
-    return SALTS_ENOMEM;
-  }
-  return SALTS_OK;
 }
 
-static int flowie_control_dashboard_json_array_take(json_value_t *array, json_value_t *value) {
-  if (!array || !value) {
-    flowie_control_dashboard_json_free(value);
-    return SALTS_ENOMEM;
-  }
-  if (!json_array_add_checked(array, value)) {
-    flowie_control_dashboard_json_free(value);
-    return SALTS_ENOMEM;
-  }
-  return SALTS_OK;
-}
-
-static int flowie_control_dashboard_json_string(json_value_t *object, const char *key,
-                                                const char *value) {
-  if (!value) return SALTS_EINVAL;
-  return flowie_control_dashboard_json_take(object, key, json_create_string(value));
-}
-
-static int flowie_control_dashboard_json_u64(json_value_t *object, const char *key,
-                                             uint64_t value) {
-  return flowie_control_dashboard_json_take(object, key, json_create_uint64(value));
-}
-
-static int flowie_control_dashboard_json_bool(json_value_t *object, const char *key, int value) {
-  return flowie_control_dashboard_json_take(object, key, json_create_bool(value != 0));
+static int flowie_control_dashboard_app_render(flowie_control_dashboard_view_t *view,
+                                               const char *name, const cmeta_data_desc *descriptor,
+                                               const void *model, char **html_out,
+                                               size_t *html_size_out) {
+  chttp_web_status status;
+  if (html_out) *html_out = NULL;
+  if (html_size_out) *html_size_out = 0u;
+  if (!view || !name || !descriptor || !model || !html_out || !html_size_out) return SALTS_EINVAL;
+  /* App's renderer is non-reentrant; request/model storage remains per worker. */
+  cmeta_mutex_lock(&view->render_lock);
+  status =
+      chttp_web_render(&view->renderer, name, descriptor, model, html_out, html_size_out, NULL);
+  cmeta_mutex_unlock(&view->render_lock);
+  return flowie_control_dashboard_app_status(status);
 }
 
 static int flowie_control_dashboard_read(const char *resource_directory, const char *relative_path,
@@ -186,43 +208,48 @@ static int flowie_control_dashboard_read(const char *resource_directory, const c
   return SALTS_OK;
 }
 
-static int flowie_control_dashboard_compile(const char *resource_directory,
-                                            const char *relative_path,
-                                            MUSTACHE_TEMPLATE **template_out) {
-  cmeta_fs_buf_t source = {0};
-  MUSTACHE_TEMPLATE *compiled;
-  int rc;
-  if (template_out) *template_out = NULL;
-  if (!template_out) return SALTS_EINVAL;
-  rc = flowie_control_dashboard_read(resource_directory, relative_path,
-                                     FLOWIE_CONTROL_DASHBOARD_TEMPLATE_MAX, &source);
-  if (rc != SALTS_OK) return rc;
-  compiled = mustache_compile(source.base, source.len, NULL, NULL, 0u);
-  cmeta_fs_buf_free(&source);
-  if (!compiled) return SALTS_EPROTO;
-  *template_out = compiled;
-  return SALTS_OK;
-}
-
-static int flowie_control_dashboard_render_template(const MUSTACHE_TEMPLATE *template_value,
-                                                    json_value_t *model, char **html_out,
-                                                    size_t *html_size_out) {
-  MUSTACHE_STRING_RENDERER renderer = {0};
-  char *html = NULL;
-  int rc = SALTS_ENOMEM;
-  if (html_out) *html_out = NULL;
-  if (html_size_out) *html_size_out = 0u;
-  if (!template_value || !model || !html_out || !html_size_out) return SALTS_EINVAL;
-  if (mustache_string_renderer_init(&renderer) != 0) return SALTS_ENOMEM;
-  if (mustache_render_json(template_value, model, &renderer.base, &renderer, NULL, NULL) != 0)
-    goto done;
-  html = mustache_string_renderer_get(&renderer);
-  if (!html) goto done;
-  *html_size_out = strlen(html);
-  *html_out = html;
-  rc = SALTS_OK;
-done:
-  mustache_string_renderer_free(&renderer);
+static int flowie_control_dashboard_app_init(flowie_control_dashboard_view_t *view,
+                                             const char *resource_directory) {
+  const char *names[] = {
+      FLOWIE_CONTROL_DASHBOARD_SHELL_TEMPLATE,   FLOWIE_CONTROL_DASHBOARD_ERROR_TEMPLATE,
+      FLOWIE_CONTROL_DASHBOARD_LOGIN_TEMPLATE,   FLOWIE_CONTROL_DASHBOARD_PASSWORD_TEMPLATE,
+      FLOWIE_CONTROL_DASHBOARD_CONTENT_TEMPLATE, "templates/dashboard_overview.html",
+      "templates/dashboard_integration.html",    "templates/dashboard_users.html",
+      "templates/dashboard_groups.html",         "templates/dashboard_roles.html",
+      "templates/dashboard_acls.html",           "templates/dashboard_audit.html"};
+  enum { TEMPLATE_COUNT = sizeof(names) / sizeof(names[0]) };
+  cmeta_fs_buf_t sources[TEMPLATE_COUNT] = {0};
+  chttp_web_template templates[TEMPLATE_COUNT] = {0};
+  chttp_web_renderer_config config = CHTTP_WEB_RENDERER_CONFIG_INIT;
+  chttp_web_error error = CHTTP_WEB_ERROR_INIT;
+  int rc = SALTS_OK;
+  if (!cmeta_data_desc_valid(cmeta_reflected_data(flowie_control_dashboard_shell_model)) ||
+      !cmeta_data_desc_valid(cmeta_reflected_data(flowie_control_dashboard_login_model)) ||
+      !cmeta_data_desc_valid(cmeta_reflected_data(flowie_control_dashboard_password_model)) ||
+      !cmeta_data_desc_valid(cmeta_reflected_data(flowie_control_dashboard_error_model)))
+    return SALTS_EPROTO;
+  if (!cmeta_data_desc_valid(cmeta_reflected_data(flowie_control_dashboard_content_model)))
+    return SALTS_EPROTO;
+  config.max_template_bytes = FLOWIE_CONTROL_DASHBOARD_TEMPLATE_MAX;
+  config.max_output_bytes = FLOWIE_CONTROL_DASHBOARD_HTML_MAX;
+  for (size_t index = 0u; rc == SALTS_OK && index < TEMPLATE_COUNT; ++index) {
+    rc = flowie_control_dashboard_read(resource_directory, names[index],
+                                       FLOWIE_CONTROL_DASHBOARD_TEMPLATE_MAX, &sources[index]);
+    if (rc == SALTS_OK)
+      templates[index] =
+          (chttp_web_template){names[index], sources[index].base, sources[index].len};
+  }
+  if (rc == SALTS_OK)
+    rc = flowie_control_dashboard_app_status(
+        chttp_web_renderer_init(&view->renderer, templates, TEMPLATE_COUNT, &config, &error));
+  if (error.status != CHTTP_WEB_OK)
+    SALTS_LOG_ERRORF(tlog_get_default(), "flowie.control.dashboard",
+                     "template-init status={} native={} template={} offset={} message={}",
+                     (int)error.status, error.native_status, error.template_name, error.offset,
+                     error.message);
+  /* App copies the fixed bundle. No request-controlled template loading. */
+  for (size_t index = 0u; index < TEMPLATE_COUNT; ++index)
+    cmeta_fs_buf_free(&sources[index]);
   return rc;
 }
 
@@ -371,16 +398,17 @@ static int flowie_control_dashboard_navigation_url(const char *base,
 }
 
 static int
-flowie_control_dashboard_add_domains(json_value_t *model,
+flowie_control_dashboard_add_domains(flowie_control_dashboard_content_model *model,
                                      flowie_control_management_service_t *service,
                                      const flowie_control_management_caller_t *authority_caller,
                                      const flowie_control_management_caller_t *scoped_caller) {
   flowie_control_domain_view_t roots[FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_domain_model *array = model->domains_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.domains = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_domain_model)};
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_DOMAIN_LIMIT; ++index)
     roots[index] = (flowie_control_domain_view_t)FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
   rc = flowie_control_management_domain_list(service, authority_caller, NULL, roots,
@@ -388,65 +416,55 @@ flowie_control_dashboard_add_domains(json_value_t *model,
                                              &has_more);
   (void)has_more;
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
+    flowie_control_dashboard_domain_model *item = &array[model->collections.domains.count];
     if (strcmp(roots[index].domain_id, FLOWIE_CONTROL_MANAGEMENT_SYSTEM_DOMAIN) == 0) {
-      flowie_control_dashboard_json_free(item);
       continue;
     }
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_string(item, "domain_id", roots[index].domain_id);
+
+    rc = flowie_control_dashboard_model_string(&item->domain_id, roots[index].domain_id);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(
-          item, "selected", strcmp(roots[index].domain_id, scoped_caller->domain_id) == 0);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+      item->selected = (strcmp(roots[index].domain_id, scoped_caller->domain_id) == 0) != 0;
+    if (rc == SALTS_OK) ++model->collections.domains.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "domains", array);
-  else flowie_control_dashboard_json_free(array);
+
   return rc;
 }
 
-static int flowie_control_dashboard_add_pager(json_value_t *model, const char *key,
+static int flowie_control_dashboard_add_pager(flowie_control_dashboard_pager_model *pager,
                                               const flowie_control_dashboard_page_t *page,
                                               flowie_control_dashboard_cursor_kind_t kind,
                                               size_t count, int has_more, const char *next_text,
                                               uint64_t next_number) {
   flowie_control_dashboard_page_t target = *page;
-  json_value_t *pager = json_create_object();
   char *url = NULL;
   int has_first = flowie_control_dashboard_page_has_cursor(page, kind);
-  int rc;
-  if (!pager) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_json_u64(pager, "count", count);
+  int rc = SALTS_OK;
+  if (!pager) return SALTS_EINVAL;
+  pager->count = count;
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_url(FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH, page, &url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(pager, "refresh_url", url);
+  if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&pager->refresh_url, url);
   tstr_free(url);
   url = NULL;
   target = *page;
   flowie_control_dashboard_page_clear_cursor(&target, kind);
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_url(FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH, &target, &url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(pager, "query_url", url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(pager, "first", has_first);
+  if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&pager->query_url, url);
+  if (rc == SALTS_OK) pager->first = (has_first) != 0;
   if (rc == SALTS_OK && has_first)
-    rc = flowie_control_dashboard_json_string(pager, "first_url", url);
+    rc = flowie_control_dashboard_model_string(&pager->first_url, url);
   tstr_free(url);
   url = NULL;
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(pager, "more", has_more);
+  if (rc == SALTS_OK) pager->more = (has_more) != 0;
   if (rc == SALTS_OK && has_more) {
     target = *page;
     rc = flowie_control_dashboard_page_set_cursor(&target, kind, next_text, next_number);
     if (rc == SALTS_OK)
       rc = flowie_control_dashboard_url(FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH, &target, &url);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(pager, "more_url", url);
+    if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&pager->more_url, url);
     tstr_free(url);
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, key, pager);
-  else flowie_control_dashboard_json_free(pager);
   return rc;
 }
 
@@ -470,39 +488,35 @@ flowie_control_dashboard_group_label(const flowie_control_group_view_t *group,
   return SALTS_OK;
 }
 
-static int flowie_control_dashboard_add_group_option(json_value_t *array,
+static int flowie_control_dashboard_add_group_option(flowie_control_dashboard_content_model *model,
                                                      const flowie_control_group_view_t *group,
                                                      size_t row_index, int has_children) {
   char label[FLOWIE_CONTROL_DASHBOARD_GROUP_LABEL_MAX];
-  json_value_t *item;
+  flowie_control_dashboard_group_model *item;
   int rc;
-  if (!array || !group) return SALTS_EINVAL;
+  if (!model || !group) return SALTS_EINVAL;
   rc = flowie_control_dashboard_group_label(group, label);
   if (rc != SALTS_OK) return rc;
-  item = json_create_object();
-  if (!item) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_json_u64(item, "row_index", row_index);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(item, "group_id", group->group_id);
+  if (model->collections.group_options.count >= FLOWIE_CONTROL_DASHBOARD_GROUP_SELECTOR_LIMIT)
+    return SALTS_ENOBUFS;
+  item = &model->group_options_storage[model->collections.group_options.count];
+  item->row_index = row_index;
+  if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&item->group_id, group->group_id);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_string(item, "parent_group_id", group->parent_group_id);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(item, "tree_label", label);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_u64(item, "depth", group->depth);
+    rc = flowie_control_dashboard_model_string(&item->parent_group_id, group->parent_group_id);
+  if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&item->tree_label, label);
+  if (rc == SALTS_OK) item->depth = group->depth;
+  if (rc == SALTS_OK) item->aria_level = (uint64_t)group->depth + 1u;
+  if (rc == SALTS_OK) item->enabled = (group->enabled) != 0;
+  if (rc == SALTS_OK) item->is_root = (0) != 0;
+  if (rc == SALTS_OK) item->member_allowed = (group->enabled) != 0;
+  if (rc == SALTS_OK) item->delete_candidate = (!has_children) != 0;
+  if (rc == SALTS_OK) item->add_disabled = (!group->enabled) != 0;
+  if (rc == SALTS_OK) item->remove_disabled = (0) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_u64(item, "aria_level", (uint64_t)group->depth + 1u);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(item, "enabled", group->enabled);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(item, "is_root", 0);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(item, "member_allowed", group->enabled);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(item, "delete_candidate", !has_children);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(item, "add_disabled", !group->enabled);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(item, "remove_disabled", 0);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        item, "parent_disabled", !group->enabled || group->depth >= FLOWIE_CONTROL_GROUP_MAX_DEPTH);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-  else flowie_control_dashboard_json_free(item);
+    item->parent_disabled =
+        (!group->enabled || group->depth >= FLOWIE_CONTROL_GROUP_MAX_DEPTH) != 0;
+  if (rc == SALTS_OK) ++model->collections.group_options.count;
   return rc;
 }
 
@@ -515,38 +529,38 @@ static int flowie_control_dashboard_group_has_children(const flowie_control_grou
   return 0;
 }
 
-static int flowie_control_dashboard_add_group_children(json_value_t *array,
-                                                       const flowie_control_group_view_t *groups,
-                                                       size_t count, const char *parent_group_id,
-                                                       uint32_t depth, size_t *emitted) {
+static int flowie_control_dashboard_add_group_children(
+    flowie_control_dashboard_content_model *model, const flowie_control_group_view_t *groups,
+    size_t count, const char *parent_group_id, uint32_t depth, size_t *emitted) {
   int rc = SALTS_OK;
-  if (!array || !groups || !parent_group_id || !emitted || depth > FLOWIE_CONTROL_GROUP_MAX_DEPTH)
+  if (!model || !groups || !parent_group_id || !emitted || depth > FLOWIE_CONTROL_GROUP_MAX_DEPTH)
     return SALTS_EINVAL;
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
     if (groups[index].depth != depth || strcmp(groups[index].parent_group_id, parent_group_id) != 0)
       continue;
     rc = flowie_control_dashboard_add_group_option(
-        array, &groups[index], *emitted + 1u,
+        model, &groups[index], *emitted + 1u,
         flowie_control_dashboard_group_has_children(groups, count, groups[index].group_id));
     if (rc == SALTS_OK) ++*emitted;
     if (rc == SALTS_OK && depth < FLOWIE_CONTROL_GROUP_MAX_DEPTH)
-      rc = flowie_control_dashboard_add_group_children(array, groups, count, groups[index].group_id,
+      rc = flowie_control_dashboard_add_group_children(model, groups, count, groups[index].group_id,
                                                        depth + 1u, emitted);
   }
   return rc;
 }
 
 static int
-flowie_control_dashboard_add_group_options(json_value_t *model,
+flowie_control_dashboard_add_group_options(flowie_control_dashboard_content_model *model,
                                            flowie_control_management_service_t *service,
                                            const flowie_control_management_caller_t *caller) {
   flowie_control_group_view_t groups[FLOWIE_CONTROL_DASHBOARD_GROUP_SELECTOR_LIMIT];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_group_model *array = model->group_options_storage;
   size_t count = 0u;
   size_t emitted = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.group_options = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_group_model)};
   memset(groups, 0, sizeof(groups));
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_GROUP_SELECTOR_LIMIT; ++index)
     groups[index].size = sizeof(groups[index]);
@@ -557,189 +571,163 @@ flowie_control_dashboard_add_group_options(json_value_t *model,
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
     if (groups[index].depth != 0u || groups[index].parent_group_id[0]) continue;
     rc = flowie_control_dashboard_add_group_option(
-        array, &groups[index], emitted + 1u,
+        model, &groups[index], emitted + 1u,
         flowie_control_dashboard_group_has_children(groups, count, groups[index].group_id));
     if (rc == SALTS_OK) ++emitted;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_add_group_children(array, groups, count, groups[index].group_id,
+      rc = flowie_control_dashboard_add_group_children(model, groups, count, groups[index].group_id,
                                                        1u, &emitted);
   }
   if (rc == SALTS_OK && emitted != count) rc = SALTS_EPROTO;
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "group_options", array);
-  else flowie_control_dashboard_json_free(array);
+
   return rc;
 }
 
 static int
-flowie_control_dashboard_add_user_options(json_value_t *model,
+flowie_control_dashboard_add_user_options(flowie_control_dashboard_content_model *model,
                                           flowie_control_management_service_t *service,
                                           const flowie_control_management_caller_t *caller) {
   flowie_control_user_view_t users[FLOWIE_CONTROL_PAGE_MAX];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_user_model *array = model->user_options_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.user_options = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_user_model)};
   for (size_t index = 0u; index < FLOWIE_CONTROL_PAGE_MAX; ++index)
     users[index] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
   rc = flowie_control_management_user_list(service, caller, NULL, users, FLOWIE_CONTROL_PAGE_MAX,
                                            &count, &has_more);
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_string(item, "principal_id", users[index].principal_id);
+    flowie_control_dashboard_user_model *item = &array[model->collections.user_options.count];
+
+    rc = flowie_control_dashboard_model_string(&item->principal_id, users[index].principal_id);
     if (rc == SALTS_OK)
       rc =
-          flowie_control_dashboard_json_string(item, "principal_type", users[index].principal_type);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "enabled", users[index].enabled);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+          flowie_control_dashboard_model_string(&item->principal_type, users[index].principal_type);
+    if (rc == SALTS_OK) item->enabled = (users[index].enabled) != 0;
+    if (rc == SALTS_OK) ++model->collections.user_options.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "user_options", array);
-  else flowie_control_dashboard_json_free(array);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "user_options_truncated", has_more);
+
+  if (rc == SALTS_OK) model->capabilities.user_options_truncated = (has_more) != 0;
   return rc;
 }
 
 static int
-flowie_control_dashboard_add_role_options(json_value_t *model,
+flowie_control_dashboard_add_role_options(flowie_control_dashboard_content_model *model,
                                           flowie_control_management_service_t *service,
                                           const flowie_control_management_caller_t *caller) {
   flowie_control_role_view_t roles[FLOWIE_CONTROL_DASHBOARD_ROLE_SELECTOR_LIMIT];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_role_model *array = model->role_options_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.role_options = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_role_model)};
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_ROLE_SELECTOR_LIMIT; ++index)
     roles[index] = (flowie_control_role_view_t)FLOWIE_CONTROL_ROLE_VIEW_INIT;
   rc = flowie_control_management_role_list(service, caller, NULL, roles,
                                            FLOWIE_CONTROL_DASHBOARD_ROLE_SELECTOR_LIMIT, &count,
                                            &has_more);
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_string(item, "role_id", roles[index].role_id);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "enabled", roles[index].enabled);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+    flowie_control_dashboard_role_model *item = &array[model->collections.role_options.count];
+
+    rc = flowie_control_dashboard_model_string(&item->role_id, roles[index].role_id);
+    if (rc == SALTS_OK) item->enabled = (roles[index].enabled) != 0;
+    if (rc == SALTS_OK) ++model->collections.role_options.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "role_options", array);
-  else flowie_control_dashboard_json_free(array);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "role_options_truncated", has_more);
+
+  if (rc == SALTS_OK) model->capabilities.role_options_truncated = (has_more) != 0;
   return rc;
 }
 
-static int flowie_control_dashboard_add_users(json_value_t *model,
+static int flowie_control_dashboard_add_users(flowie_control_dashboard_content_model *model,
                                               flowie_control_management_service_t *service,
                                               const flowie_control_management_caller_t *caller,
                                               const flowie_control_dashboard_page_t *page) {
   flowie_control_user_view_t users[FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_user_model *array = model->users_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.users = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_user_model)};
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE; ++index)
     users[index] = (flowie_control_user_view_t)FLOWIE_CONTROL_USER_VIEW_INIT;
   rc = flowie_control_management_user_list(service, caller,
                                            page->users_after[0] ? page->users_after : NULL, users,
                                            FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE, &count, &has_more);
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_u64(item, "row_index", index + 1u);
+    flowie_control_dashboard_user_model *item = &array[model->collections.users.count];
+
+    item->row_index = index + 1u;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "principal_id", users[index].principal_id);
+      rc = flowie_control_dashboard_model_string(&item->principal_id, users[index].principal_id);
     if (rc == SALTS_OK)
       rc =
-          flowie_control_dashboard_json_string(item, "principal_type", users[index].principal_type);
+          flowie_control_dashboard_model_string(&item->principal_type, users[index].principal_type);
+    if (rc == SALTS_OK) item->enabled = (users[index].enabled) != 0;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "enabled", users[index].enabled);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "is_service",
-                                              strcmp(users[index].principal_type, "service") == 0);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "is_human",
-                                              strcmp(users[index].principal_type, "human") == 0);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+      item->is_service = (strcmp(users[index].principal_type, "service") == 0) != 0;
+    if (rc == SALTS_OK) item->is_human = (strcmp(users[index].principal_type, "human") == 0) != 0;
+    if (rc == SALTS_OK) ++model->collections.users.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "users", array);
-  else flowie_control_dashboard_json_free(array);
+
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_add_pager(
-        model, "users_pager", page, FLOWIE_CONTROL_DASHBOARD_USERS_CURSOR, count,
+        &model->pagination.users_pager, page, FLOWIE_CONTROL_DASHBOARD_USERS_CURSOR, count,
         has_more && count > 0u, count > 0u ? users[count - 1u].principal_id : NULL, 0u);
   return rc;
 }
 
-static int flowie_control_dashboard_add_roles(json_value_t *model,
+static int flowie_control_dashboard_add_roles(flowie_control_dashboard_content_model *model,
                                               flowie_control_management_service_t *service,
                                               const flowie_control_management_caller_t *caller,
                                               const flowie_control_dashboard_page_t *page) {
   flowie_control_role_view_t roles[FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE];
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_role_model *array = model->roles_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.roles = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_role_model)};
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE; ++index)
     roles[index] = (flowie_control_role_view_t)FLOWIE_CONTROL_ROLE_VIEW_INIT;
   rc = flowie_control_management_role_list(service, caller,
                                            page->roles_after[0] ? page->roles_after : NULL, roles,
                                            FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE, &count, &has_more);
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_u64(item, "row_index", index + 1u);
+    flowie_control_dashboard_role_model *item = &array[model->collections.roles.count];
+
+    item->row_index = index + 1u;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "role_id", roles[index].role_id);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "enabled", roles[index].enabled);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+      rc = flowie_control_dashboard_model_string(&item->role_id, roles[index].role_id);
+    if (rc == SALTS_OK) item->enabled = (roles[index].enabled) != 0;
+    if (rc == SALTS_OK) ++model->collections.roles.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "roles", array);
-  else flowie_control_dashboard_json_free(array);
+
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_add_pager(
-        model, "roles_pager", page, FLOWIE_CONTROL_DASHBOARD_ROLES_CURSOR, count,
+        &model->pagination.roles_pager, page, FLOWIE_CONTROL_DASHBOARD_ROLES_CURSOR, count,
         has_more && count > 0u, count > 0u ? roles[count - 1u].role_id : NULL, 0u);
   return rc;
 }
 
-static int flowie_control_dashboard_add_rules(json_value_t *model,
+static int flowie_control_dashboard_add_rules(flowie_control_dashboard_content_model *model,
                                               flowie_control_management_service_t *service,
                                               const flowie_control_management_caller_t *caller,
                                               const flowie_control_dashboard_page_t *page) {
   flowie_control_policy_subject_rule_view_t *rules = NULL;
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_rule_model *array = model->rules_storage;
   size_t count = 0u;
   uint64_t last_ordinal = 0u;
   int has_more = 0;
   int rc = SALTS_OK;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.rules = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_rule_model)};
   rules = (flowie_control_policy_subject_rule_view_t *)calloc(FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE,
                                                               sizeof(*rules));
   if (!rules) {
-    flowie_control_dashboard_json_free(array);
     return SALTS_ENOMEM;
   }
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE; ++index)
@@ -758,11 +746,8 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
     size_t expanded_topic_count = 0u;
     int uses_username = 0;
     int uses_client_id = 0;
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
+    flowie_control_dashboard_rule_model *item = &array[model->collections.rules.count];
+
     subject_kind_label = flowie_control_dashboard_subject_kind_label(document->subject_kind);
     subject_kind_value = flowie_control_dashboard_subject_kind_value(document->subject_kind);
     if (!subject_kind_label || !subject_kind_value) rc = SALTS_EPROTO;
@@ -779,57 +764,50 @@ static int flowie_control_dashboard_add_rules(json_value_t *model,
       uses_username |= document->entries[entry].uses_username;
       uses_client_id |= document->entries[entry].uses_client_id;
     }
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_u64(item, "row_index", index + 1u);
+    if (rc == SALTS_OK) item->row_index = index + 1u;
+    if (rc == SALTS_OK) item->ordinal = rules[index].ordinal;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_u64(item, "ordinal", rules[index].ordinal);
+      rc = flowie_control_dashboard_model_string(&item->rule_document, rule_document);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "rule_document", rule_document);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(
-          item, "connection_label",
+      rc = flowie_control_dashboard_model_string(
+          &item->connection_label,
           document->connection_effect == FLOWIE_SECURITY_ALLOW ? "Allow" : "Deny");
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "subject_label", document->subject);
+      rc = flowie_control_dashboard_model_string(&item->subject_label, document->subject);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "subject_kind_label", subject_kind_label);
+      rc = flowie_control_dashboard_model_string(&item->subject_kind_label, subject_kind_label);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "subject_kind", subject_kind_value);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_u64(item, "entry_count", document->entry_count);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_u64(item, "expanded_topic_count", expanded_topic_count);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "uses_username", uses_username);
-    if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_bool(item, "uses_client_id", uses_client_id);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+      rc = flowie_control_dashboard_model_string(&item->subject_kind, subject_kind_value);
+    if (rc == SALTS_OK) item->entry_count = document->entry_count;
+    if (rc == SALTS_OK) item->expanded_topic_count = expanded_topic_count;
+    if (rc == SALTS_OK) item->uses_username = (uses_username) != 0;
+    if (rc == SALTS_OK) item->uses_client_id = (uses_client_id) != 0;
+    if (rc == SALTS_OK) ++model->collections.rules.count;
   }
   if (count > 0u) last_ordinal = rules[count - 1u].ordinal;
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "rules", array);
-  else flowie_control_dashboard_json_free(array);
+
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_add_pager(model, "policy_pager", page,
+    rc = flowie_control_dashboard_add_pager(&model->pagination.policy_pager, page,
                                             FLOWIE_CONTROL_DASHBOARD_POLICY_CURSOR, count,
                                             has_more && count > 0u, NULL, last_ordinal);
   free(rules);
   return rc;
 }
 
-static int flowie_control_dashboard_add_audits(json_value_t *model,
+static int flowie_control_dashboard_add_audits(flowie_control_dashboard_content_model *model,
                                                flowie_control_management_service_t *service,
                                                const flowie_control_management_caller_t *caller,
                                                const flowie_control_dashboard_page_t *page) {
   flowie_control_audit_view_t *audits = NULL;
-  json_value_t *array = json_create_array();
+  flowie_control_dashboard_audit_model *array = model->audits_storage;
   size_t count = 0u;
   int has_more = 0;
   int rc = SALTS_OK;
-  if (!array) return SALTS_ENOMEM;
+  model->collections.audits = (chttp_web_sequence_view){
+      array, 0u, sizeof(*array), cmeta_reflected_data(flowie_control_dashboard_audit_model)};
   audits =
       (flowie_control_audit_view_t *)calloc(FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE, sizeof(*audits));
   if (!audits) {
-    flowie_control_dashboard_json_free(array);
     return SALTS_ENOMEM;
   }
   for (size_t index = 0u; index < FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE; ++index)
@@ -837,26 +815,21 @@ static int flowie_control_dashboard_add_audits(json_value_t *model,
   rc = flowie_control_management_audit_list(service, caller, page->audit_after, audits,
                                             FLOWIE_CONTROL_DASHBOARD_PAGE_SIZE, &count, &has_more);
   for (size_t index = 0u; rc == SALTS_OK && index < count; ++index) {
-    json_value_t *item = json_create_object();
-    if (!item) {
-      rc = SALTS_ENOMEM;
-      break;
-    }
-    rc = flowie_control_dashboard_json_u64(item, "cursor", audits[index].revision);
+    flowie_control_dashboard_audit_model *item = &array[model->collections.audits.count];
+
+    item->cursor = audits[index].revision;
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "actor", audits[index].actor);
+      rc = flowie_control_dashboard_model_string(&item->actor, audits[index].actor);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "operation", audits[index].operation);
+      rc = flowie_control_dashboard_model_string(&item->operation, audits[index].operation);
     if (rc == SALTS_OK)
-      rc = flowie_control_dashboard_json_string(item, "target_id", audits[index].target_id);
-    if (rc == SALTS_OK) rc = flowie_control_dashboard_json_array_take(array, item);
-    else flowie_control_dashboard_json_free(item);
+      rc = flowie_control_dashboard_model_string(&item->target_id, audits[index].target_id);
+    if (rc == SALTS_OK) ++model->collections.audits.count;
   }
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_take(model, "audits", array);
-  else flowie_control_dashboard_json_free(array);
+
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_add_pager(
-        model, "audit_pager", page, FLOWIE_CONTROL_DASHBOARD_AUDIT_CURSOR, count,
+        &model->pagination.audit_pager, page, FLOWIE_CONTROL_DASHBOARD_AUDIT_CURSOR, count,
         has_more && count > 0u, NULL, count > 0u ? audits[count - 1u].revision : 0u);
   free(audits);
   return rc;
@@ -870,20 +843,12 @@ int flowie_control_dashboard_view_create(const char *resource_directory,
   if (!resource_directory || !out) return SALTS_EINVAL;
   view = (flowie_control_dashboard_view_t *)calloc(1u, sizeof(*view));
   if (!view) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_compile(resource_directory, FLOWIE_CONTROL_DASHBOARD_SHELL_TEMPLATE,
-                                        &view->shell_template);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_compile(
-        resource_directory, FLOWIE_CONTROL_DASHBOARD_CONTENT_TEMPLATE, &view->content_template);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_compile(
-        resource_directory, FLOWIE_CONTROL_DASHBOARD_ERROR_TEMPLATE, &view->error_template);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_compile(
-        resource_directory, FLOWIE_CONTROL_DASHBOARD_LOGIN_TEMPLATE, &view->login_template);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_compile(
-        resource_directory, FLOWIE_CONTROL_DASHBOARD_PASSWORD_TEMPLATE, &view->password_template);
+  cmeta_mutex_init(&view->render_lock);
+  if (!view->render_lock) {
+    free(view);
+    return SALTS_ENOMEM;
+  }
+  rc = flowie_control_dashboard_app_init(view, resource_directory);
   if (rc == SALTS_OK)
     rc = flowie_control_dashboard_read(resource_directory, FLOWIE_CONTROL_DASHBOARD_CSS_ASSET,
                                        FLOWIE_CONTROL_DASHBOARD_ASSET_MAX, &view->css);
@@ -903,11 +868,8 @@ int flowie_control_dashboard_view_create(const char *resource_directory,
 
 void flowie_control_dashboard_view_destroy(flowie_control_dashboard_view_t *view) {
   if (!view) return;
-  mustache_release(view->error_template);
-  mustache_release(view->password_template);
-  mustache_release(view->login_template);
-  mustache_release(view->content_template);
-  mustache_release(view->shell_template);
+  chttp_web_renderer_destroy(&view->renderer);
+  cmeta_mutex_destroy(&view->render_lock);
   cmeta_fs_buf_free(&view->htmx);
   cmeta_fs_buf_free(&view->javascript);
   cmeta_fs_buf_free(&view->css);
@@ -918,60 +880,44 @@ void flowie_control_dashboard_view_destroy(flowie_control_dashboard_view_t *view
 int flowie_control_dashboard_view_render_shell(flowie_control_dashboard_view_t *view,
                                                const flowie_control_dashboard_page_t *page,
                                                char **html_out, size_t *html_size_out) {
-  json_value_t *model = NULL;
+  flowie_control_dashboard_shell_model model;
   char *content_url = NULL;
   int rc;
   if (!view || !page) return SALTS_EINVAL;
   rc = flowie_control_dashboard_url(FLOWIE_CONTROL_DASHBOARD_CONTENT_PATH, page, &content_url);
   if (rc != SALTS_OK) return rc;
-  model = json_create_object();
-  if (!model) rc = SALTS_ENOMEM;
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_string(
-        model, "page_title", flowie_control_dashboard_section_title(page->section));
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "content_url", content_url);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_render_template(view->shell_template, model, html_out,
-                                                  html_size_out);
+  model.page_title = vstr_from_cstr(flowie_control_dashboard_section_title(page->section));
+  model.content_url = vstr_from_cstr(content_url);
+  rc = flowie_control_dashboard_app_render(
+      view, FLOWIE_CONTROL_DASHBOARD_SHELL_TEMPLATE,
+      cmeta_reflected_data(flowie_control_dashboard_shell_model), &model, html_out, html_size_out);
   tstr_free(content_url);
-  flowie_control_dashboard_json_free(model);
   return rc;
 }
 
 int flowie_control_dashboard_view_render_login(flowie_control_dashboard_view_t *view,
                                                int group_mode, int show_error, char **html_out,
                                                size_t *html_size_out) {
-  json_value_t *model;
-  int rc;
+  flowie_control_dashboard_login_model model;
   if (!view || (group_mode != 0 && group_mode != 1) || (show_error != 0 && show_error != 1))
     return SALTS_EINVAL;
-  model = json_create_object();
-  if (!model) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_json_bool(model, "system_mode", !group_mode);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "group_mode", group_mode);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "error", show_error);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_render_template(view->login_template, model, html_out,
-                                                  html_size_out);
-  flowie_control_dashboard_json_free(model);
-  return rc;
+  model = (flowie_control_dashboard_login_model){!group_mode, group_mode != 0, show_error != 0};
+  return flowie_control_dashboard_app_render(
+      view, FLOWIE_CONTROL_DASHBOARD_LOGIN_TEMPLATE,
+      cmeta_reflected_data(flowie_control_dashboard_login_model), &model, html_out, html_size_out);
 }
 
 int flowie_control_dashboard_view_render_password(
     flowie_control_dashboard_view_t *view,
     const char csrf_token[FLOWIE_CONTROL_DASHBOARD_CSRF_SIZE + 1u], char **html_out,
     size_t *html_size_out) {
-  json_value_t *model;
-  int rc;
+  flowie_control_dashboard_password_model model;
   if (!view || !csrf_token) return SALTS_EINVAL;
-  model = json_create_object();
-  if (!model) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_json_string(model, "csrf", csrf_token);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_render_template(view->password_template, model, html_out,
-                                                  html_size_out);
-  flowie_control_dashboard_json_free(model);
-  return rc;
+  model.csrf = vstr_from_cstr(csrf_token);
+  return flowie_control_dashboard_app_render(
+      view, FLOWIE_CONTROL_DASHBOARD_PASSWORD_TEMPLATE,
+      cmeta_reflected_data(flowie_control_dashboard_password_model), &model, html_out,
+      html_size_out);
 }
 
 int flowie_control_dashboard_view_render_content(
@@ -983,7 +929,7 @@ int flowie_control_dashboard_view_render_content(
     const flowie_control_dashboard_action_result_t *action_result, char **html_out,
     size_t *html_size_out) {
   flowie_control_management_status_t status = FLOWIE_CONTROL_MANAGEMENT_STATUS_INIT;
-  json_value_t *model = NULL;
+  flowie_control_dashboard_content_model *model = NULL;
   char *action_url = NULL;
   char *overview_url = NULL;
   char *users_url = NULL;
@@ -1067,95 +1013,85 @@ int flowie_control_dashboard_view_render_content(
     rc = flowie_control_dashboard_navigation_url(FLOWIE_CONTROL_DASHBOARD_INTEGRATION_PATH, page,
                                                  &integration_url);
   if (rc != SALTS_OK) goto done;
-  model = json_create_object();
+  model = calloc(1u, sizeof(*model));
   if (!model) rc = SALTS_ENOMEM;
+  else flowie_control_dashboard_content_model_init(model);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_string(model, "domain_id", caller->domain_id);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "actor", caller->actor);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "csrf", csrf_token);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "rpc_path", rpc_path);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "action_url", action_url);
+    rc = flowie_control_dashboard_model_string(&model->identity.domain_id, caller->domain_id);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_u64(model, "policy_version", status.policy.policy_version);
+    rc = flowie_control_dashboard_model_string(&model->identity.actor, caller->actor);
+  if (rc == SALTS_OK) rc = flowie_control_dashboard_model_string(&model->identity.csrf, csrf_token);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_u64(model, "draft_rule_count",
-                                           status.policy.draft_rule_count);
+    rc = flowie_control_dashboard_model_string(&model->navigation.rpc_path, rpc_path);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_u64(model, "published_rule_count",
-                                           status.policy.published_rule_count);
+    rc = flowie_control_dashboard_model_string(&model->navigation.action_url, action_url);
+  if (rc == SALTS_OK) model->identity.policy_version = status.policy.policy_version;
+  if (rc == SALTS_OK) model->identity.draft_rule_count = status.policy.draft_rule_count;
+  if (rc == SALTS_OK) model->identity.published_rule_count = status.policy.published_rule_count;
+  if (rc == SALTS_OK) model->capabilities.can_user_admin = (can_user_admin) != 0;
+  if (rc == SALTS_OK) model->capabilities.can_security_admin = (can_security_admin) != 0;
+  if (rc == SALTS_OK) model->capabilities.can_policy_admin = (can_policy_admin) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_user_admin", can_user_admin);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_security_admin", can_security_admin);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_policy_admin", can_policy_admin);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_manage_access",
-                                            can_user_admin || can_security_admin);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_audit_read", can_audit_read);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "can_create_domain", can_create_domain);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "is_platform_workspace", is_platform_workspace);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "is_domain_workspace", is_domain_workspace);
+    model->capabilities.can_manage_access = (can_user_admin || can_security_admin) != 0;
+  if (rc == SALTS_OK) model->capabilities.can_audit_read = (can_audit_read) != 0;
+  if (rc == SALTS_OK) model->capabilities.can_create_domain = (can_create_domain) != 0;
+  if (rc == SALTS_OK) model->capabilities.is_platform_workspace = (is_platform_workspace) != 0;
+  if (rc == SALTS_OK) model->capabilities.is_domain_workspace = (is_domain_workspace) != 0;
   if (rc == SALTS_OK && can_create_domain)
     rc = flowie_control_dashboard_add_domains(model, service, authority_caller, caller);
   if (rc == SALTS_OK && action_result &&
       action_result->kind == FLOWIE_CONTROL_DASHBOARD_ACTION_CREDENTIAL_ISSUED) {
     if (strcmp(action_result->domain_id, caller->domain_id) != 0) rc = SALTS_EPROTO;
     else {
-      rc = flowie_control_dashboard_json_bool(model, "credential_issued", 1);
+      model->capabilities.credential_issued = (1) != 0;
       if (rc == SALTS_OK)
-        rc = flowie_control_dashboard_json_string(model, "credential_domain",
-                                                  action_result->domain_id);
+        rc = flowie_control_dashboard_model_string(&model->identity.credential_domain,
+                                                   action_result->domain_id);
       if (rc == SALTS_OK)
-        rc = flowie_control_dashboard_json_string(model, "credential_principal",
-                                                  action_result->principal_id);
+        rc = flowie_control_dashboard_model_string(&model->identity.credential_principal,
+                                                   action_result->principal_id);
       if (rc == SALTS_OK)
-        rc = flowie_control_dashboard_json_string(model, "credential_token", action_result->token);
+        rc = flowie_control_dashboard_model_string(&model->identity.credential_token,
+                                                   action_result->token);
     }
   }
+  if (rc == SALTS_OK) model->sections.show_overview = (show_overview) != 0;
+  if (rc == SALTS_OK) model->sections.show_users = (show_users) != 0;
+  if (rc == SALTS_OK) model->sections.show_groups = (show_groups) != 0;
+  if (rc == SALTS_OK) model->sections.show_roles = (show_roles) != 0;
+  if (rc == SALTS_OK) model->sections.show_acls = (show_acls) != 0;
+  if (rc == SALTS_OK) model->sections.show_audit = (show_audit) != 0;
+  if (rc == SALTS_OK) model->sections.show_integration = (show_integration) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "show_overview", show_overview);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "show_users", show_users);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "show_groups", show_groups);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "show_roles", show_roles);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "show_acls", show_acls);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_bool(model, "show_audit", show_audit);
+    model->sections.is_overview = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_OVERVIEW) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "show_integration", show_integration);
+    model->sections.is_users = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_USERS) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_overview", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_OVERVIEW);
+    model->sections.is_groups = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_users", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_USERS);
+    model->sections.is_roles = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_groups", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_GROUPS);
+    model->sections.is_acls = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_roles", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ROLES);
+    model->sections.is_audit = (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(model, "is_acls",
-                                            page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_ACLS);
+    model->sections.is_integration =
+        (page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION) != 0;
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_audit", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_AUDIT);
+    rc = flowie_control_dashboard_model_string(&model->navigation.overview_path, overview_url);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_bool(
-        model, "is_integration", page->section == FLOWIE_CONTROL_DASHBOARD_SECTION_INTEGRATION);
+    rc = flowie_control_dashboard_model_string(&model->navigation.users_path, users_url);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_string(model, "overview_path", overview_url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "users_path", users_url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "groups_path", groups_url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "roles_path", roles_url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "acls_path", acls_url);
-  if (rc == SALTS_OK) rc = flowie_control_dashboard_json_string(model, "audit_path", audit_url);
+    rc = flowie_control_dashboard_model_string(&model->navigation.groups_path, groups_url);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_json_string(model, "integration_path", integration_url);
+    rc = flowie_control_dashboard_model_string(&model->navigation.roles_path, roles_url);
+  if (rc == SALTS_OK)
+    rc = flowie_control_dashboard_model_string(&model->navigation.acls_path, acls_url);
+  if (rc == SALTS_OK)
+    rc = flowie_control_dashboard_model_string(&model->navigation.audit_path, audit_url);
+  if (rc == SALTS_OK)
+    rc =
+        flowie_control_dashboard_model_string(&model->navigation.integration_path, integration_url);
   if (rc == SALTS_OK && (show_groups || show_acls || (show_users && can_user_admin)))
     rc = flowie_control_dashboard_add_group_options(model, service, caller);
   if (rc == SALTS_OK &&
@@ -1172,14 +1108,12 @@ int flowie_control_dashboard_view_render_content(
   if (rc == SALTS_OK && show_audit)
     rc = flowie_control_dashboard_add_audits(model, service, caller, page);
   if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_render_template(view->content_template, model, html_out,
-                                                  html_size_out);
+    rc = flowie_control_dashboard_app_render(
+        view, FLOWIE_CONTROL_DASHBOARD_CONTENT_TEMPLATE,
+        cmeta_reflected_data(flowie_control_dashboard_content_model), model, html_out,
+        html_size_out);
 done:
-  if (model) {
-    json_value_t *secret = json_object_get(model, "credential_token");
-    const char *secret_text = secret ? json_string(secret) : NULL;
-    if (secret_text) crypto_wipe((void *)secret_text, json_string_len(secret));
-  }
+
   tstr_free(action_url);
   tstr_free(overview_url);
   tstr_free(users_url);
@@ -1188,24 +1122,22 @@ done:
   tstr_free(acls_url);
   tstr_free(audit_url);
   tstr_free(integration_url);
-  flowie_control_dashboard_json_free(model);
+  if (model) {
+    flowie_control_dashboard_content_model_clear(model);
+    free(model);
+  }
   return rc;
 }
 
 int flowie_control_dashboard_view_render_error(flowie_control_dashboard_view_t *view,
                                                const char *message, char **html_out,
                                                size_t *html_size_out) {
-  json_value_t *model;
-  int rc;
+  flowie_control_dashboard_error_model model;
   if (!view || !message) return SALTS_EINVAL;
-  model = json_create_object();
-  if (!model) return SALTS_ENOMEM;
-  rc = flowie_control_dashboard_json_string(model, "message", message);
-  if (rc == SALTS_OK)
-    rc = flowie_control_dashboard_render_template(view->error_template, model, html_out,
-                                                  html_size_out);
-  flowie_control_dashboard_json_free(model);
-  return rc;
+  model.message = vstr_from_cstr(message);
+  return flowie_control_dashboard_app_render(
+      view, FLOWIE_CONTROL_DASHBOARD_ERROR_TEMPLATE,
+      cmeta_reflected_data(flowie_control_dashboard_error_model), &model, html_out, html_size_out);
 }
 
 int flowie_control_dashboard_view_asset(const flowie_control_dashboard_view_t *view,
