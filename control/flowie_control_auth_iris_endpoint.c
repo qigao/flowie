@@ -3,8 +3,8 @@
 
 #include "base64_utils.h"
 #include "monocypher.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 #include <json_parser.h>
 
 #include <ctype.h>
@@ -35,7 +35,7 @@ struct flowie_control_auth_iris_endpoint_s {
   flowie_control_service_credential_resolver_t *service_credentials;
   size_t max_request_body_size;
   size_t max_secret_size;
-  salts_threadpool_t *local_executor;
+  cmeta_threadpool_t *local_executor;
   uint32_t local_executor_deadline_ms;
   flowie_control_http_app_t *bound_app;
 };
@@ -517,7 +517,7 @@ int flowie_control_auth_iris_endpoint_authenticate_verified(
   job->result = SALTS_EIO;
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(endpoint->local_executor, flowie_control_auth_local_job_run,
+  if (cmeta_threadpool_try_submit(endpoint->local_executor, flowie_control_auth_local_job_run,
                                   job) != SALTS_OK) {
     flowie_control_auth_local_job_release(job);
     flowie_control_auth_local_job_release(job);
@@ -657,9 +657,9 @@ int flowie_control_auth_iris_endpoint_create(
   endpoint->max_secret_size = config->max_secret_size;
   endpoint->local_executor_deadline_ms = config->local_executor_deadline_ms;
   if (config->local_executor_enabled) {
-    salts_threadpool_config_t executor_config = {(int)config->local_executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->local_executor_workers,
                                                  config->local_executor_queue_capacity};
-    endpoint->local_executor = salts_threadpool_create_with_config(&executor_config);
+    endpoint->local_executor = cmeta_threadpool_create_with_config(&executor_config);
     if (!endpoint->local_executor) {
       crypto_wipe(endpoint, sizeof(*endpoint));
       free(endpoint);
@@ -678,7 +678,7 @@ void flowie_control_auth_iris_endpoint_destroy(flowie_control_auth_iris_endpoint
     (void)flowie_control_http_app_unbind_context(endpoint->bound_app,
                                                  FLOWIE_CONTROL_AUTH_HTTP_PATH, endpoint);
   }
-  salts_threadpool_destroy(endpoint->local_executor);
+  cmeta_threadpool_destroy(endpoint->local_executor);
   endpoint->local_executor = NULL;
   crypto_wipe(endpoint, sizeof(*endpoint));
   free(endpoint);

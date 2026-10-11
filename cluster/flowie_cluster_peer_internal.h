@@ -3,7 +3,7 @@
 
 #include "flowie_cluster_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "flowie_security.h"
 #include "tstr.h"
 #include <cnet/cnet.h>

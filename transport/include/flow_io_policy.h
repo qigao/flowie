@@ -1,7 +1,7 @@
 #ifndef FLOW_IO_POLICY_H
 #define FLOW_IO_POLICY_H
 
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -39,8 +39,8 @@ typedef struct tf_io_budget_snapshot_s {
  * the two limits. The owner must close admission before destroying the budget.
  */
 typedef struct tf_io_budget_s {
-  salts_mutex_t mutex;
-  salts_cond_t changed;
+  cmeta_mutex_t mutex;
+  cmeta_cond_t changed;
   size_t messages;
   size_t bytes;
   size_t max_messages;

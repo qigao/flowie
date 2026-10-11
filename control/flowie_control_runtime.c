@@ -17,8 +17,8 @@
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_service_credential_internal.h"
 #include "monocypher.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -75,7 +75,7 @@ static int flowie_control_runtime_external_auth_enabled(const flowie_control_con
 
 static uint64_t flowie_control_runtime_clock(void *ctx) {
   (void)ctx;
-  return salts_realtime_ms() / 1000u;
+  return cmeta_realtime_ms() / 1000u;
 }
 
 static int flowie_control_runtime_external_https_stats(
@@ -807,7 +807,7 @@ int flowie_control_runtime_run(flowie_control_runtime_t *runtime) {
     return SALTS_EIO;
   }
   rc = flowie_control_runtime_start(runtime);
-  while (rc == SALTS_OK && !flowie_control_runtime_stop_requested) salts_sleep_ms(100u);
+  while (rc == SALTS_OK && !flowie_control_runtime_stop_requested) cmeta_sleep_ms(100u);
   if (rc == SALTS_OK) rc = flowie_control_runtime_stop(runtime);
   (void)signal(SIGTERM, previous_term);
   (void)signal(SIGINT, previous_int);

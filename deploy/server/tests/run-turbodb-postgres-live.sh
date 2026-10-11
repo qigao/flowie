@@ -131,15 +131,16 @@ is_positive_integer "$HEALTH_ATTEMPTS" || fail '--health-attempts must be a posi
 is_positive_integer "$HEALTH_INTERVAL_SECONDS" ||
   fail '--health-interval-seconds must be a positive integer'
 
-for command in ctest docker openssl; do
+for command in ctest docker od tr; do
   command -v "$command" >/dev/null 2>&1 || fail "required command not found: $command"
 done
 
 mkdir -p -- "$ARTIFACT_ROOT"
 PASSWORD_FILE=$(mktemp)
 chmod 0600 "$PASSWORD_FILE"
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-[[ "$POSTGRES_PASSWORD" =~ ^[0-9a-f]{48}$ ]] || fail 'openssl returned an invalid password'
+# Read 192 bits from the OS CSPRNG; pipefail and the length check reject short reads.
+POSTGRES_PASSWORD=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+[[ "$POSTGRES_PASSWORD" =~ ^[0-9a-f]{48}$ ]] || fail 'OS random source returned an invalid password'
 printf '%s\n' "$POSTGRES_PASSWORD" > "$PASSWORD_FILE"
 
 CONTAINER_NAME="flowie-turbodb-postgres-$(date -u +%Y%m%dT%H%M%SZ)-$$"

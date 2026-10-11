@@ -3,8 +3,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,7 +70,7 @@ spec("flowie TurboDB live protocol repository") {
     const char *conninfo = getenv("FLOWIE_TURBODB_TEST_CONNINFO");
     char prefix[96];
     orm_config_t database;
-    orm_option_t option;
+    orm_option_t options[2];
     flowie_protocol_repository_config_t config = FLOWIE_PROTOCOL_REPOSITORY_CONFIG_INIT;
     flowie_protocol_repository_t *repository = NULL;
     flowie_protocol_subscription_row_t subscription = {
@@ -86,13 +86,14 @@ spec("flowie TurboDB live protocol repository") {
       return;
     }
     orm_config(&database);
-    option.keyword = orm_view("conninfo");
-    option.value = orm_view(conninfo);
+    /* This suite uses an isolated plaintext PostgreSQL test service. */
+    options[0] = (orm_option_t){orm_view("turbodb_pg_transport"), orm_view("disabled")};
+    options[1] = (orm_option_t){orm_view("conninfo"), orm_view(conninfo)};
     database.driver = orm_view("postgresql");
-    database.options = &option;
-    database.option_count = 1u;
+    database.options = options;
+    database.option_count = 2u;
     (void)snprintf(prefix, sizeof(prefix), "flowie_protocol_turbodb_%llu",
-                   (unsigned long long)salts_hrtime());
+                   (unsigned long long)cmeta_hrtime());
     config.database = &database;
     config.namespace_name = prefix;
     config.create_schema = 1;

@@ -2,8 +2,9 @@
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
 option(FLOWIE_BUILD_TESTS "Build and register Flowie tests" ON)
+option(FLOWIE_BUILD_BENCHMARKS "Build Flowie network and send-path benchmarks" OFF)
 option(FLOWIE_BUILD_CONTROL "Build the restored Flowie control plane" ON)
-option(FLOWIE_BUILD_CLUSTER "Build the TurboRaft-backed Flowie cluster runtime" OFF)
+option(FLOWIE_BUILD_CLUSTER "Build the experimental TurboRaft-backed Flowie cluster runtime" OFF)
 option(FLOWIE_BUILD_SERVER "Build the Flowie server executable" ON)
 option(ENABLE_SANITIZER_ADDRESS "Enable AddressSanitizer" OFF)
 option(ENABLE_SANITIZER_UNDEFINED "Enable UndefinedBehaviorSanitizer" OFF)

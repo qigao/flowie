@@ -1,8 +1,8 @@
 #include "flowie_control_principal_cache_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -54,7 +54,7 @@ spec("Flowie control principal snapshot cache") {
         principal_cache_snapshot("root-a", "device-c", 5u);
     flowie_control_principal_snapshot_t out = FLOWIE_CONTROL_PRINCIPAL_SNAPSHOT_INIT;
     principal_cache_reader_t reader;
-    salts_thread_t threads[4];
+    cmeta_thread_t threads[4];
     int hit = 0;
 
     config.capacity = 2u;
@@ -97,8 +97,8 @@ spec("Flowie control principal snapshot cache") {
     reader.cache = cache;
     atomic_init(&reader.failures, 0);
     for (size_t index = 0u; index < 4u; ++index)
-      check_equal(salts_thread_create(&threads[index], principal_cache_reader, &reader), 0);
-    for (size_t index = 0u; index < 4u; ++index) salts_thread_join(&threads[index]);
+      check_equal(cmeta_thread_create(&threads[index], principal_cache_reader, &reader), 0);
+    for (size_t index = 0u; index < 4u; ++index) cmeta_thread_join(&threads[index]);
     check_equal(atomic_load_explicit(&reader.failures, memory_order_relaxed), 0);
     flowie_control_principal_cache_destroy(cache);
   }

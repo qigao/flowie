@@ -3,7 +3,7 @@
 #include "flowie_mqtt_security.h"
 #include "monocypher.h"
 #include "platform.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
 
 #include <stdlib.h>
@@ -358,7 +358,7 @@ int flowie_control_acl_iris_endpoint_process(flowie_control_acl_iris_endpoint_t 
   rc = flowie_control_acl_decode_request(req->body, req->body_len, &document, &principal, &request,
                                          &mqtt);
   if (rc != SALTS_OK) goto done;
-  now = salts_realtime_ms() / 1000u;
+  now = cmeta_realtime_ms() / 1000u;
   if (now == 0u) {
     rc = SALTS_EIO;
     goto done;

@@ -5,8 +5,10 @@
 
 #include "platform.h"
 #include "monocypher.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
+#include <chttp_app/app.h>
+#include "tstr.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -25,8 +27,8 @@ static const char FLOWIE_CONTROL_DASHBOARD_LOGIN_CSP[] =
     "base-uri 'none'";
 
 typedef struct flowie_control_dashboard_form_field_s {
-  char *key;
-  char *value;
+  tstr key;
+  tstr value;
 } flowie_control_dashboard_form_field_t;
 
 typedef struct flowie_control_dashboard_form_s {
@@ -81,7 +83,7 @@ struct flowie_control_dashboard_s {
   void *session_ctx;
   uint64_t session_ttl_seconds;
   char rpc_path[FLOWIE_CONTROL_DASHBOARD_RPC_PATH_MAX + 1u];
-  salts_threadpool_t *login_executor;
+  cmeta_threadpool_t *login_executor;
   uint32_t login_executor_deadline_ms;
   flowie_control_dashboard_view_t *view;
   flowie_control_http_app_t *bound_app;
@@ -103,7 +105,7 @@ static void flowie_control_dashboard_login_job_run(void *arg) {
   atomic_store_explicit(&job->completed, 1, memory_order_release);
   while ((owner_state = atomic_load_explicit(&job->owner_state, memory_order_acquire)) ==
          FLOWIE_CONTROL_DASHBOARD_LOGIN_ARMED)
-    salts_thread_yield();
+    cmeta_thread_yield();
   if (owner_state == FLOWIE_CONTROL_DASHBOARD_LOGIN_ABANDONED && job->result == SALTS_OK)
     (void)job->dashboard->logout(job->dashboard->session_ctx, job->token);
   flowie_control_dashboard_login_job_release(job);
@@ -147,7 +149,7 @@ int flowie_control_dashboard_execute_login(
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
   atomic_init(&job->owner_state, FLOWIE_CONTROL_DASHBOARD_LOGIN_ARMED);
-  if (salts_threadpool_try_submit(dashboard->login_executor, flowie_control_dashboard_login_job_run,
+  if (cmeta_threadpool_try_submit(dashboard->login_executor, flowie_control_dashboard_login_job_run,
                                   job) != SALTS_OK) {
     atomic_store_explicit(&job->owner_state, FLOWIE_CONTROL_DASHBOARD_LOGIN_ABANDONED,
                           memory_order_release);
@@ -239,7 +241,7 @@ static int flowie_control_dashboard_execute_domain_admin_initialize(
   job->command.request_id = job->request_id;
   atomic_init(&job->references, 2u);
   atomic_init(&job->completed, 0);
-  if (salts_threadpool_try_submit(dashboard->login_executor,
+  if (cmeta_threadpool_try_submit(dashboard->login_executor,
                                   flowie_control_dashboard_domain_admin_job_run, job) != SALTS_OK) {
     flowie_control_dashboard_domain_admin_job_release(job);
     flowie_control_dashboard_domain_admin_job_release(job);
@@ -452,64 +454,71 @@ void flowie_control_dashboard_html_free(char *html) { free(html); }
 static void flowie_control_dashboard_form_destroy(flowie_control_dashboard_form_t *form) {
   if (!form) return;
   for (size_t index = 0u; index < form->count; ++index) {
-    free(form->fields[index].key);
-    free(form->fields[index].value);
+    tstr_free(form->fields[index].key);
+    if (form->fields[index].value)
+      crypto_wipe(form->fields[index].value, tstr_len(form->fields[index].value));
+    tstr_free(form->fields[index].value);
   }
   memset(form, 0, sizeof(*form));
 }
 
 static int flowie_control_dashboard_form_parse(const char *body, size_t body_size,
                                                flowie_control_dashboard_form_t *form) {
-  char *copy;
-  char *cursor;
+  chttp_web_form_pair pairs[FLOWIE_CONTROL_DASHBOARD_FORM_FIELDS];
+  chttp_web_form parsed = {0};
+  chttp_web_form_parse_options options = CHTTP_WEB_FORM_PARSE_OPTIONS_INIT;
+  tstr storage;
+  size_t input_size = body_size;
+  size_t begin = 0u;
   int rc = SALTS_EPROTO;
   if (!body || body_size == 0u || body_size > FLOWIE_CONTROL_DASHBOARD_BODY_MAX || !form ||
       memchr(body, '\0', body_size))
     return SALTS_EINVAL;
   memset(form, 0, sizeof(*form));
-  copy = (char *)malloc(body_size + 1u);
-  if (!copy) return SALTS_ENOMEM;
-  memcpy(copy, body, body_size);
-  copy[body_size] = '\0';
-  cursor = copy;
-  while (*cursor) {
-    char *pair = cursor;
-    char *separator = strchr(pair, '&');
-    char *equals;
-    char *key;
-    char *value;
-    if (separator) {
-      *separator = '\0';
-      cursor = separator + 1;
-    } else {
-      cursor += strlen(cursor);
+  /* Keep the existing command admission: explicit '=' exactly once per pair,
+   * unique decoded names and no NUL. App's general parser permits more forms.
+   * The legacy endpoint accepts one final '&'; normalize only that case. */
+  if (input_size > 0u && body[input_size - 1u] == '&') --input_size;
+  if (input_size == 0u) return SALTS_EPROTO;
+  for (size_t end = 0u; end <= input_size; ++end) {
+    if (end == input_size || body[end] == '&') {
+      const char *equals = (const char *)memchr(body + begin, '=', end - begin);
+      if (!equals || memchr(equals + 1, '=', (size_t)(body + end - equals - 1)))
+        return SALTS_EPROTO;
+      begin = end + 1u;
     }
-    if (form->count >= FLOWIE_CONTROL_DASHBOARD_FORM_FIELDS || !(equals = strchr(pair, '=')) ||
-        strchr(equals + 1, '='))
+  }
+  storage = tstr_new_len(NULL, body_size);
+  if (!storage) return SALTS_ENOMEM;
+  options.max_input_bytes = FLOWIE_CONTROL_DASHBOARD_BODY_MAX;
+  options.max_pairs = FLOWIE_CONTROL_DASHBOARD_FORM_FIELDS;
+  options.max_decoded_bytes = body_size;
+  options.pair_storage = pairs;
+  options.pair_capacity = FLOWIE_CONTROL_DASHBOARD_FORM_FIELDS;
+  options.byte_storage = storage;
+  options.byte_capacity = body_size;
+  if (chttp_web_form_parse(body, input_size, &options, &parsed, NULL) != CHTTP_WEB_OK)
+    goto done;
+  for (size_t index = 0u; index < parsed.pair_count; ++index) {
+    const chttp_web_form_pair *pair = &parsed.pairs[index];
+    flowie_control_dashboard_form_field_t *field = &form->fields[form->count++];
+    if (pair->name.size == 0u || memchr(pair->name.data, '\0', pair->name.size) ||
+        memchr(pair->value.data, '\0', pair->value.size))
       goto done;
-    *equals = '\0';
-    key = flowie_control_http_url_decode(pair);
-    value = flowie_control_http_url_decode(equals + 1);
-    if (!key || !value || !key[0]) {
-      free(key);
-      free(value);
+    field->key = tstr_new_len(pair->name.data, pair->name.size);
+    field->value = tstr_new_len(pair->value.data, pair->value.size);
+    if (!field->key || !field->value) {
+      rc = SALTS_ENOMEM;
       goto done;
     }
-    for (size_t index = 0u; index < form->count; ++index) {
-      if (strcmp(form->fields[index].key, key) == 0) {
-        free(key);
-        free(value);
-        goto done;
-      }
-    }
-    form->fields[form->count].key = key;
-    form->fields[form->count].value = value;
-    ++form->count;
+    if (chttp_web_form_count(&parsed, field->key) != 1u) goto done;
   }
   rc = form->count > 0u ? SALTS_OK : SALTS_EPROTO;
 
 done:
-  free(copy);
+  /* Decoded scratch may contain passwords even when admission fails. */
+  crypto_wipe(storage, body_size);
+  tstr_free(storage);
   if (rc != SALTS_OK) flowie_control_dashboard_form_destroy(form);
   return rc;
 }
@@ -1535,7 +1544,7 @@ static void flowie_control_dashboard_password_post_handler(Req *request, Res *re
     rc = SALTS_EINVAL;
     goto done;
   }
-  rc = salts_secure_random(random, sizeof(random));
+  rc = cmeta_secure_random(random, sizeof(random));
   for (size_t index = 0u; rc == SALTS_OK && index < sizeof(random); ++index) {
     request_id[sizeof("password-change-") - 1u + index * 2u] = hex[random[index] >> 4u];
     request_id[sizeof("password-change-") + index * 2u] = hex[random[index] & 0x0fu];
@@ -1640,9 +1649,9 @@ int flowie_control_dashboard_create(const flowie_control_dashboard_config_t *con
   memcpy(dashboard->rpc_path, config->rpc_path, rpc_path_size + 1u);
   dashboard->login_executor_deadline_ms = config->login_executor_deadline_ms;
   if (config->login_executor_enabled) {
-    salts_threadpool_config_t executor_config = {(int)config->login_executor_workers,
+    cmeta_threadpool_config_t executor_config = {(int)config->login_executor_workers,
                                                  config->login_executor_queue_capacity};
-    dashboard->login_executor = salts_threadpool_create_with_config(&executor_config);
+    dashboard->login_executor = cmeta_threadpool_create_with_config(&executor_config);
     if (!dashboard->login_executor) {
       flowie_control_dashboard_view_destroy(dashboard->view);
       memset(dashboard, 0, sizeof(*dashboard));
@@ -1774,7 +1783,7 @@ void flowie_control_dashboard_unbind(flowie_control_dashboard_t *dashboard) {
 void flowie_control_dashboard_destroy(flowie_control_dashboard_t *dashboard) {
   if (!dashboard) return;
   flowie_control_dashboard_unbind(dashboard);
-  salts_threadpool_destroy(dashboard->login_executor);
+  cmeta_threadpool_destroy(dashboard->login_executor);
   dashboard->login_executor = NULL;
   flowie_control_dashboard_view_destroy(dashboard->view);
   memset(dashboard, 0, sizeof(*dashboard));

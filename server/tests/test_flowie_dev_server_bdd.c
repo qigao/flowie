@@ -3,9 +3,9 @@
 
 #include "platform.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_process.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_process.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -53,7 +53,7 @@ typedef struct flowie_dev_client_state_s {
 } flowie_dev_client_state_t;
 
 typedef struct flowie_dev_server_fixture_s {
-  salts_process_t *process;
+  cmeta_process_t *process;
   char *config_path;
   unsigned short port;
 } flowie_dev_server_fixture_t;
@@ -188,10 +188,10 @@ static int flowie_dev_message(flowie_mqtt_client_t *client,
 }
 
 static int flowie_dev_wait_for(const atomic_int *value, int expected) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_DEV_TEST_TIMEOUT_MS;
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_DEV_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   return atomic_load_explicit(value, memory_order_acquire) >= expected ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
@@ -218,7 +218,7 @@ static int flowie_dev_expect_message_flags(flowie_dev_client_state_t *state, int
 
 static int flowie_dev_expect_message_count_quiet(flowie_dev_client_state_t *state,
                                                  int expected_count) {
-  salts_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
+  cmeta_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
   return atomic_load_explicit(&state->message_count, memory_order_acquire) == expected_count
              ? SALTS_OK
              : SALTS_EPROTO;
@@ -282,12 +282,12 @@ cleanup:
   return rc;
 }
 
-static int flowie_dev_wait_until_listening(salts_process_t *process, unsigned short port) {
-  uint64_t deadline = salts_monotonic_ms() + FLOWIE_DEV_TEST_TIMEOUT_MS;
-  while (salts_monotonic_ms() < deadline) {
-    salts_process_result_t result;
+static int flowie_dev_wait_until_listening(cmeta_process_t *process, unsigned short port) {
+  uint64_t deadline = cmeta_monotonic_ms() + FLOWIE_DEV_TEST_TIMEOUT_MS;
+  while (cmeta_monotonic_ms() < deadline) {
+    cmeta_process_result_t result;
     flowie_test_cnet_client_t *client_handle;
-    int rc = salts_process_poll(process, &result);
+    int rc = cmeta_process_poll(process, &result);
     if (rc == SALTS_OK) return SALTS_ECONNREFUSED;
     if (rc != SALTS_EBUSY) return rc;
     client_handle = flowie_test_cnet_connect(port);
@@ -295,7 +295,7 @@ static int flowie_dev_wait_until_listening(salts_process_t *process, unsigned sh
       flowie_test_cnet_close(client_handle);
       return SALTS_OK;
     }
-    salts_sleep_ms(10u);
+    cmeta_sleep_ms(10u);
   }
   return SALTS_ETIMEDOUT;
 }
@@ -421,12 +421,12 @@ static int flowie_dev_disconnect_client(flowie_mqtt_client_t *client,
   return atomic_load_explicit(&state->disconnect_status, memory_order_relaxed);
 }
 
-static void flowie_dev_print_child_stderr(salts_process_t *process) {
+static void flowie_dev_print_child_stderr(cmeta_process_t *process) {
   char diagnostic[FLOWIE_DEV_TEST_DIAGNOSTIC_CAPACITY];
   size_t size = 0u;
   int rc;
   if (!process) return;
-  rc = salts_process_read_stderr(process, diagnostic, sizeof(diagnostic) - 1u, &size);
+  rc = cmeta_process_read_stderr(process, diagnostic, sizeof(diagnostic) - 1u, &size);
   if ((rc == SALTS_OK || rc == SALTS_EOF) && size != 0u) {
     diagnostic[size] = '\0';
     (void)fprintf(stderr, "flowie dev server stderr: %s\n", diagnostic);
@@ -434,7 +434,7 @@ static void flowie_dev_print_child_stderr(salts_process_t *process) {
 }
 
 static int flowie_dev_server_start(flowie_dev_server_fixture_t *fixture) {
-  salts_process_options_t options;
+  cmeta_process_options_t options;
   const char *args[] = {NULL, FLOWIE_DEV_GRAPH_PATH, NULL};
   int rc;
   if (!fixture) return SALTS_EINVAL;
@@ -444,33 +444,33 @@ static int flowie_dev_server_start(flowie_dev_server_fixture_t *fixture) {
   rc = flowie_dev_write_config(fixture->port, &fixture->config_path);
   if (rc != SALTS_OK) return rc;
   args[0] = fixture->config_path;
-  salts_process_options_init(&options);
+  cmeta_process_options_init(&options);
   options.program = FLOWIE_DEV_SERVER_EXECUTABLE;
   options.args = args;
   options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
   options.max_output_bytes = 65536u;
-  rc = salts_process_spawn(&options, &fixture->process);
+  rc = cmeta_process_spawn(&options, &fixture->process);
   if (rc != SALTS_OK) return rc;
   return flowie_dev_wait_until_listening(fixture->process, fixture->port);
 }
 
 static int flowie_dev_server_stop(flowie_dev_server_fixture_t *fixture, int scenario_status) {
-  salts_process_result_t result;
+  cmeta_process_result_t result;
   int stop_rc = SALTS_OK;
   if (!fixture) return scenario_status == SALTS_OK ? SALTS_EINVAL : scenario_status;
   if (fixture->process) {
-    stop_rc = salts_process_poll(fixture->process, &result);
+    stop_rc = cmeta_process_poll(fixture->process, &result);
     if (stop_rc == SALTS_EBUSY) {
-      stop_rc = salts_process_terminate(fixture->process);
-      if (stop_rc == SALTS_OK) stop_rc = salts_process_wait(fixture->process, &result);
+      stop_rc = cmeta_process_terminate(fixture->process);
+      if (stop_rc == SALTS_OK) stop_rc = cmeta_process_wait(fixture->process, &result);
     } else if (stop_rc == SALTS_OK && scenario_status == SALTS_OK) {
       scenario_status = SALTS_EIO;
       (void)fprintf(stderr, "flowie dev server exited early: child state=%s\n",
-                    salts_process_state_name(result.state));
+                    cmeta_process_state_name(result.state));
     }
     if (stop_rc != SALTS_OK && scenario_status == SALTS_OK) scenario_status = stop_rc;
     if (scenario_status != SALTS_OK) flowie_dev_print_child_stderr(fixture->process);
-    salts_process_destroy(fixture->process);
+    cmeta_process_destroy(fixture->process);
   }
   if (fixture->config_path) {
     (void)tt_remove_file(fixture->config_path);
@@ -612,7 +612,7 @@ static int flowie_dev_run_scenario(flowie_mqtt_version_t version) {
   if (rc != SALTS_OK) goto cleanup;
   rc = flowie_dev_expect_message(&subscriber_b_state, 3, topic, after_unsubscribe_payload);
   if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
+  cmeta_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
   if (atomic_load_explicit(&subscriber_a_state.message_count, memory_order_acquire) != 2) {
     rc = SALTS_EPROTO;
     goto cleanup;
@@ -771,7 +771,7 @@ static int flowie_dev_run_qos2_scenario(void) {
   if (rc != SALTS_OK) goto cleanup;
   rc = flowie_dev_ping_client(subscriber_b, &subscriber_b_state, 1);
   if (rc != SALTS_OK) goto cleanup;
-  salts_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
+  cmeta_sleep_ms(FLOWIE_DEV_TEST_QUIET_MS);
   if (atomic_load_explicit(&subscriber_a_state.message_count, memory_order_acquire) != 1 ||
       atomic_load_explicit(&subscriber_b_state.message_count, memory_order_acquire) != 1) {
     rc = SALTS_EPROTO;

@@ -44,7 +44,11 @@ pool 容量上界为 `2 × max_connections + 8`，每个 coroutine 都有独立 
 则按连接配置。因此提高连接数、stack 或 receive buffer 前必须计算内存上界并用 RSS
 实测校验。socket buffer 只是向内核提出的请求，内核可能按平台策略调整实际值。
 
-`reuse-port` 只改变单 listener 的端口复用选项，不会创建 worker。独立 broker 没有可调 worker 数。建议先用
+`reuse-port` 只改变 listener 的端口复用选项，不会创建 worker。endpoint 的 YAML `config` 可用
+`network_workers` 设置 TCP/TLS 或 WS/WSS 的网络 owner 数，`0/1` 保持单 owner；
+`network_policy` 选择 `round-robin` 或 `least-connections`。TCP/TLS 还可用 `network_cpus`
+提供与 owner 数量一致的 CPU 列表；WS/WSS 不支持显式 CPU 绑定，UDP/KCP 不支持多个 owner。
+MQTT 协议状态仍由 endpoint execution shard 管理。建议先用
 `flowie_server --check --require-security --config /etc/flowie/flowie.yml --profile flowie
 --protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}'`
 校验 YAML、安全装配和 TurboDB schema，
@@ -91,11 +95,11 @@ credential 与对应 Role。
 
 ```text
 cpp/
-  turbodb/
   turbonet/
     chttp/
     salts/
     salts-utils/
+    turbodb/
     flowie/
 ```
 
@@ -104,24 +108,44 @@ cpp/
 ```sh
 export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
+: "${GITHUB_TOKEN:?provide a GitHub Packages read token}"
 
 docker buildx build \
   --file deploy/server/Dockerfile \
+  --secret id=github_token,env=GITHUB_TOKEN \
   --build-context salts=../salts \
   --build-context chttp=../chttp \
   --build-context salts_utils=../salts-utils \
-  --build-context turbo_db=../../turbodb \
+  --build-context turbo_db=../turbodb \
   --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
   --tag "${FLOWIE_SERVER_IMAGE}" \
   --load \
   .
 ```
 
-Dockerfile 分别构建并安装 Salts、Chttp、SaltsUtils 和 TurboDB，然后从当前 Flowie 源码安装 `flowie_server`、
+Dockerfile 先构建并安装 Salts、SaltsUtils，再向 Chttp 提供这两个 SDK；TurboDB 同样使用已安装的
+Salts 与 SaltsUtils。随后从当前 Flowie 源码安装 `flowie_server`、
 `flowie-control` 和 `flowie-control-data`。Standalone 镜像固定使用 `FLOWIE_BUILD_CLUSTER=OFF`，构建图和
 运行层均不引用 FlowMQ/TurboRaft。构建层与最终运行层分别对三个 executable 执行 `ldd`，任一动态库缺失
 都会使镜像构建失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest
 或不可变 tag 部署。
+
+源码上下文须提供 Salts 2.3、SaltsUtils 4.3、CHttp 2.1 和 TurboDB 2.3.1 以上对应的
+已发布源码及其版本化 user presets；目录名称不同时调整 `--build-context` 路径。所有阶段使用
+同一组 Debug/Release configure/install presets。Release 生产方要求的
+`stage/dependencies/<package>/linux-x64` 从本轮构建的 SDK 显式填充；Debug 使用同轮
+`/opt/<package>/debug`，不会回退到宿主安装或修改依赖仓库的 presets。
+
+本镜像固定使用 `TURBODB_BUILD_ORM=ON`、`TURBODB_BUILD_TIDESSQL=OFF`，保留
+SQLite/PostgreSQL/MySQL 驱动，排除 TidesSQL 引擎及 TidesDB 驱动。TurboDB 源码必须支持这一组合；
+原始 `v2.3.2` 会在配置阶段拒绝它，需要先合入 TurboDB 的 ORM/TidesSQL 可选构建修复，
+再将该源码目录传给 `--build-context turbo_db=...`。该依赖修复尚未包含在 `v2.3.2` 发布源码中。
+
+构建层安装带 Unicode 数据文件的 re2c 4.6（下载后检查 SHA-256）、Mono 和固定 revision 的
+共享 vcpkg 工具链。`VCPKG_CACHE_REF` 可显式调整；构建时记录它与各源码 revision。
+缓存保持共享 NuGet feed 只读、本地 BuildKit cache 可写。`github_token` 仅在需要它的 RUN 中
+通过 [BuildKit secret](https://docs.docker.com/build/building/secrets/) 注入，需有 `read:packages`
+权限；不通过 build argument、镜像 ENV 或命令跟踪输出传递。
 
 需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
 
@@ -135,10 +159,15 @@ docker buildx build \
 ```
 
 前三个 profile 参数必须成组切换，不能把 Debug/Release SDK 混在同一构建中。原生日志排查默认关闭
-ASan；需要 sanitizer 时显式设为 `ON` 并确保运行镜像提供匹配 runtime。运行排查时设置
+ASan；`FLOWIE_ENABLE_ASAN` 接受 `ON` 或 `OFF`。设为 `ON` 时，运行镜像安装与 Bookworm GCC 12
+匹配的 [libasan8](https://packages.debian.org/bookworm/libasan8)，并继续执行动态库完整性检查。运行排查时设置
 `FLOWIE_LOG_LEVEL=DEBUG`；Debug 输出包含 source，INFO 生产输出不逐包记录 MQTT 数据。慢订阅者隔离只记录
 第 1 次及累计次数为 2 的幂次的摘要；QoS 2 满窗/释放每连接各最多一条。两者均不包含 client ID、用户名、
 topic 或 payload。
+
+镜像只收集所选 profile 的 vcpkg 动态库，避免 Release 文件覆盖 Debug 文件。`ldd` 命令失败或
+报告缺失库均终止构建。上述入口需要在 Linux BuildKit 中完成构建后才能作为镜像验收结果；
+Dockerfile lint 不替代编译、链接和容器运行验证。
 
 ## Compose 部署
 
@@ -146,6 +175,11 @@ topic 或 payload。
 Nginx/HAProxy 后端。MQTT 默认绑定
 `127.0.0.1:18883`，Control 默认绑定 `127.0.0.1:8443`。需要对外监听时必须修改对应配置，并在外部代理
 或防火墙处配置访问边界。
+
+TurboDB 的 PostgreSQL 驱动要求显式指定 `turbodb_pg_transport`。随附 `.env.example` 和
+`control.yml.example` 使用 `disabled`，仅适用于本 Compose 的同机 loopback 数据库；这不会禁用
+Control 的 HTTPS。跨主机 PostgreSQL 应配置 GmSSL `direct_tls` 及其 remote host/port、server name
+和 CA 参数，不能只在 `conninfo` 中设置 `sslmode` 来代替 TurboDB 的传输策略。
 
 首次启动前准备部署材料。`config/`、`certs/` 与 `secrets/` 已同时从 Git 和 Docker build context
 排除，不会进入镜像层：

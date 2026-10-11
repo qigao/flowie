@@ -4,9 +4,9 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_fs.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_fs.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -325,8 +325,8 @@ spec("Flowie control authentication cache") {
     backup_path = tt_make_temp_file("flowie-auth-cache-backup", ".sqlite3");
     check_not_null(backup_path);
     check_equal(tt_remove_file(backup_path), 0);
-    check_equal(salts_fs_rename(path, backup_path), SALTS_OK);
-    check_equal(salts_fs_mkdir(path, 0700), SALTS_OK);
+    check_equal(cmeta_fs_rename(path, backup_path), SALTS_OK);
+    check_equal(cmeta_fs_mkdir(path, 0700), SALTS_OK);
 
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
                                                  generated.token, generated.token_size, &verified,
@@ -341,8 +341,8 @@ spec("Flowie control authentication cache") {
     check_false(cache_hit);
     check_equal(flowie_control_auth_cache_size(cache), 0u);
 
-    check_equal(salts_fs_rmdir(path), SALTS_OK);
-    check_equal(salts_fs_rename(backup_path, path), SALTS_OK);
+    check_equal(cmeta_fs_rmdir(path), SALTS_OK);
+    check_equal(cmeta_fs_rename(backup_path, path), SALTS_OK);
     check_equal(flowie_control_auth_cache_verify(cache, repository, "root-a", "device-a",
                                                  generated.token, generated.token_size, &verified,
                                                  &cache_hit),
@@ -369,7 +369,7 @@ spec("Flowie control authentication cache") {
     flowie_control_auth_cache_config_t config = FLOWIE_CONTROL_AUTH_CACHE_CONFIG_INIT;
     flowie_control_auth_cache_t *cache = NULL;
     auth_cache_concurrent_task_t task;
-    salts_thread_t threads[THREAD_COUNT] = {0};
+    cmeta_thread_t threads[THREAD_COUNT] = {0};
 
     check_equal(auth_cache_user_create(store, "device-a", "request-user-a", 1u), SALTS_OK);
     check_equal(
@@ -384,10 +384,10 @@ spec("Flowie control authentication cache") {
     atomic_init(&task.failures, 0);
     atomic_init(&task.hits, 0);
     for (int index = 0; index < THREAD_COUNT; ++index)
-      check_equal(salts_thread_create(&threads[index], auth_cache_concurrent_verify, &task), 0);
+      check_equal(cmeta_thread_create(&threads[index], auth_cache_concurrent_verify, &task), 0);
     for (int index = 0; index < THREAD_COUNT; ++index) {
-      check_equal(salts_thread_join(&threads[index]), 0);
-      salts_thread_destroy(&threads[index]);
+      check_equal(cmeta_thread_join(&threads[index]), 0);
+      cmeta_thread_destroy(&threads[index]);
     }
     check_equal(atomic_load_explicit(&task.failures, memory_order_relaxed), 0);
     check_equal(atomic_load_explicit(&task.hits, memory_order_relaxed),

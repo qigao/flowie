@@ -4,18 +4,18 @@
 `FLOWIE_MQTT_FIXED_INTEROP_TESTS` 提供 TCP、TLS、WS 和 WSS listener。测试不接受匿名降级到
 其他 endpoint；TLS/WSS 始终验证本地测试 CA。
 
-先在仓库外创建一次性证书目录。以下命令生成仅用于 loopback 的 CA 与 server identity：
+先用 GmSSL 或已有 PKI 在仓库外准备一次性证书目录，包含 `ca.pem`、`server.pem`、
+`server.key`。CA 必须具备证书签发用途；server identity 必须由该 CA 签发，具备
+serverAuth 用途和 SAN `DNS:localhost`、`IP:127.0.0.1`。Mosquitto 使用未加密的 PEM 私钥；
+这些材料只用于 loopback 互操作测试。Flowie 的构建和测试不依赖 OpenSSL 命令行工具。
+
+将证书目录挂载到固定 broker：
 
 ```powershell
 $certDir = Join-Path $env:TEMP "flowie-mqtt-interop-certs"
-New-Item -ItemType Directory -Force -Path $certDir | Out-Null
-openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Flowie MQTT Test CA" `
-  -keyout "$certDir/ca.key" -out "$certDir/ca.pem"
-openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" `
-  -keyout "$certDir/server.key" -out "$certDir/server.csr"
-openssl x509 -req -days 2 -in "$certDir/server.csr" -CA "$certDir/ca.pem" `
-  -CAkey "$certDir/ca.key" -CAcreateserial -out "$certDir/server.pem" `
-  -extfile flowie/interop/mosquitto-2.0.22/server.ext
+foreach ($name in @("ca.pem", "server.pem", "server.key")) {
+  if (-not (Test-Path -LiteralPath (Join-Path $certDir $name))) { throw "Missing $name" }
+}
 $env:FLOWIE_MQTT_INTEROP_CERT_DIR = $certDir
 docker compose -f flowie/interop/mosquitto-2.0.22/compose.yml up -d --wait
 ```

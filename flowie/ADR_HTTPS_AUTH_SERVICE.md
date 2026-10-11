@@ -342,6 +342,28 @@ audit 完整身份确认；无法确认则 fail closed，不猜测成功。
 旧 Broker 与新 ACL endpoint 不兼容，协议不自动降级。回滚必须成组恢复旧 Broker/Control 二进制和
 旧配置；不得让新旧进程同时写不同授权事实。
 
+## TLS 与 JWT provider 统一
+
+Flowie 移除 BoringSSL/OpenSSL 的直接构建和运行依赖。HTTPS 证书预检原先使用
+OpenSSL，而实际请求已经使用 CHttp/CNet 的 GmSSL provider，两套解析器可能对同一
+证书或私钥给出不同结果。预检现在复用请求的 `chttp_tls_profile`，包括 key-provider
+lease 的释放和密码清零。TLS 校验、hostname、信任根和 mTLS 身份要求保持启用。
+
+JWT/JWKS 复用 CHttp 的 Salts Crypto JWS adapter，保留 RS256/384/512、PS256/384/512、
+ES256/384/512、ES256K 和 EdDSA；不因移除 provider 缩减已接受的算法。未选择直接在
+Flowie 中实现签名或 ASN.1 解析，也不保留隐式切回旧 provider 的路径。JWE 仍不启用。
+算法实现和密钥所有权由 SaltsUtils Crypto 负责，Flowie 继续负责 issuer、audience、
+algorithm、kid、时效和授权语义。独立签名向量、修改签名拒绝和 JWKS 集成用例覆盖迁移。
+
+TLS 测试的动态 PKI 和阻塞测试服务端使用 GmSSL，动态证书为 P-256。测试仍区分
+信任根、服务端身份、客户端身份、过期证书、不匹配私钥和不受信客户端。
+测试 provider 统一后，独立实现的互操作性仍由固定 Mosquitto gate 验证。
+
+这次迁移要求升级 SDK，并适配其 `cmeta_*`/`coro_*` 入口。CI 和 NuGet 记录构建所用
+SDK（包括 RC）版本；`FlowieConfig.cmake` 不限制版本号，按消费方指定的 SDK 根发现依赖。
+无版本限制不承诺跨版本 ABI 兼容。升级时须成组重建 Flowie 及消费方；回滚时恢复整套
+旧二进制与 SDK，不混用旧静态库和新头文件。用户配置、凭据数据格式不因本次迁移改变。
+
 ## 验证范围与剩余风险
 
 当前自动化覆盖：

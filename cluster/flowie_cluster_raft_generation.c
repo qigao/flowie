@@ -1,6 +1,6 @@
 #include "flowie_cluster_raft_generation_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdlib.h>
 

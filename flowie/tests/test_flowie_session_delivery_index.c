@@ -2,7 +2,7 @@
 
 #include "tinytest.h"
 #include <salts/clock.h>
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -53,12 +53,12 @@ spec("flowie session delivery packet-id index") {
 
     check_not_null(owner);
     check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    started_at = salts_monotonic_ms();
+    started_at = cmeta_monotonic_ms();
     for (; reserved < FLOWIE_TEST_DELIVERY_SCALE_COUNT; ++reserved) {
       rc = flowie_session_owner_delivery_reserve(owner, 1u, &packet_id);
       if (rc != SALTS_OK) break;
     }
-    elapsed_ms = salts_monotonic_ms() - started_at;
+    elapsed_ms = cmeta_monotonic_ms() - started_at;
     info("reserved=%zu elapsed_ms=%llu budget_ms=%u", reserved,
          (unsigned long long)elapsed_ms, FLOWIE_TEST_DELIVERY_SCALE_MAX_MS);
     check_equal(rc, SALTS_OK);

@@ -2,7 +2,7 @@
 #include "flowie_rule_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include "tstr.h"
 
 #include <stdio.h>

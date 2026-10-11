@@ -2,8 +2,8 @@
 
 #include "orm.h"
 #include "tinytest.h"
-#include "salts_error.h"
-#include "salts_thread.h"
+#include "cmeta_error.h"
+#include "cmeta_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +23,7 @@ spec("Flowie Control TurboDB live contract") {
     char request_id[96];
     char rule_line[256];
     orm_config_t database;
-    orm_option_t option;
+    orm_option_t options[2];
     flowie_control_store_config_t store_config = FLOWIE_CONTROL_STORE_CONFIG_INIT;
     flowie_control_store_t *store = NULL;
     flowie_control_command_result_t result = FLOWIE_CONTROL_COMMAND_RESULT_INIT;
@@ -65,18 +65,19 @@ spec("Flowie Control TurboDB live contract") {
       return;
     }
     orm_config(&database);
-    option.keyword = orm_view("conninfo");
-    option.value = orm_view(conninfo);
+    /* This suite uses an isolated plaintext PostgreSQL test service. */
+    options[0] = (orm_option_t){orm_view("turbodb_pg_transport"), orm_view("disabled")};
+    options[1] = (orm_option_t){orm_view("conninfo"), orm_view(conninfo)};
     database.driver = orm_view("postgresql");
-    database.options = &option;
-    database.option_count = 1u;
+    database.options = options;
+    database.option_count = 2u;
     store_config.database = &database;
     check_equal(flowie_control_store_open(&store_config, &store), SALTS_OK);
     if (!store) return;
     check_equal(flowie_control_store_current_revision(store, &revision), SALTS_OK);
 
     (void)snprintf(domain_id, sizeof(domain_id), "live-%llu",
-                   (unsigned long long)salts_hrtime());
+                   (unsigned long long)cmeta_hrtime());
     live_request(request_id, sizeof(request_id), domain_id, "domain");
     domain.domain_id = domain_id;
     domain.actor = "live-test";
@@ -188,7 +189,7 @@ spec("Flowie Control TurboDB live contract") {
     check_equal(bundle.rule_count, 2u);
     flowie_control_store_policy_bundle_release(&bundle);
 
-    session_nonce = salts_hrtime();
+    session_nonce = cmeta_hrtime();
     for (size_t index = 0u; index < sizeof(session.token_digest); ++index)
       session.token_digest[index] =
           (uint8_t)((session_nonce >> ((index % sizeof(session_nonce)) * 8u)) ^ index);

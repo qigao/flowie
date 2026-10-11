@@ -1,7 +1,7 @@
 #include "flowie_cluster_peer_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdint.h>
 #include <string.h>

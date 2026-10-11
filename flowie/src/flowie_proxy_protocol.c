@@ -7,7 +7,7 @@
 
 #include "flowie_proxy_protocol_internal.h"
 
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <cstl.h>
 
 #include <stdio.h>

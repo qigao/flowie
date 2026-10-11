@@ -148,6 +148,11 @@ typedef int (*flowie_protocol_retained_visit_fn)(void *ctx,
 /**
  * Open a V2 ORM repository. Unknown or non-V2 schema data is rejected; it is never migrated.
  * The returned repository and all calls belong to one caller-serialized thread domain.
+ * database borrows at most 16 options for this call. The reserved string option
+ * "flowie.driver_module" selects an absolute TurboDB driver module path; absent
+ * that option, the module comes from the SDK selected when Flowie was built.
+ * Driver load/connect errors fail open without switching backends. The repository
+ * owns its connection, which retains the driver runtime until final release.
  */
 FLOWIE_C_API int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *config,
                                                  flowie_protocol_repository_t **out);

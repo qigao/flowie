@@ -1,7 +1,7 @@
 #include "flowie_supervisor_runtime_internal.h"
 
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <string.h>
 
@@ -51,7 +51,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[256];
     char profile[sizeof("missing")] = "flowie";
 
@@ -78,7 +78,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -101,7 +101,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
     char output[512];
 
     config.worker_program = FLOWIE_TEST_WORKER_PROGRAM;
@@ -124,7 +124,7 @@ spec("flowie supervisor runtime") {
     flowie_supervisor_runtime_config_t config = FLOWIE_SUPERVISOR_RUNTIME_CONFIG_INIT;
     flowie_supervisor_error_t error = FLOWIE_SUPERVISOR_ERROR_INIT;
     flowie_supervisor_runtime_t *runtime = NULL;
-    salts_process_result_t child;
+    cmeta_process_result_t child;
 
     config.worker_program = FLOWIE_TEST_LONG_RUNNING_WORKER_PROGRAM;
     config.config_path = "unused.yml";

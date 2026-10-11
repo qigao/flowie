@@ -31,3 +31,23 @@ install(FILES ${FLOWIE_CLIENT_HEADERS} DESTINATION include)
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+if(FLOWIE_BUILD_BENCHMARKS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # The peer is a separate process so its owner/acceptor CPU is not charged to
+  # the measured Client. Linux process clocks and spawn plumbing stay test-only.
+  cmake_add_executable(flowie_mqtt_progress_peer
+    SOURCES tests/flowie_mqtt_progress_peer.c
+    INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
+    LIBS Flowie::Connection Flowie::Protocol Salts::Core
+    FOLDER "client/benchmarks")
+  cmake_add_benchmark(benchmark_flowie_mqtt_progress
+    SOURCES tests/benchmark_flowie_mqtt_progress.c
+    INCLUDES ${PROJECT_SOURCE_DIR}/flowie/tests
+    LIBS Flowie::Client Flowie::Protocol Salts::Core Salts::TinyTest
+    DEFS FLOWIE_PROGRESS_PEER_PATH="$<TARGET_FILE:flowie_mqtt_progress_peer>"
+    FOLDER "client/benchmarks")
+  add_dependencies(benchmark_flowie_mqtt_progress flowie_mqtt_progress_peer)
+  add_test(NAME benchmark_flowie_mqtt_progress COMMAND benchmark_flowie_mqtt_progress)
+  set_tests_properties(benchmark_flowie_mqtt_progress PROPERTIES
+    LABELS "benchmark;flowie;mqtt;client;poll-wake" RUN_SERIAL TRUE TIMEOUT 240)
+endif()

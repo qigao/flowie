@@ -4,7 +4,7 @@
 
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -5,7 +5,7 @@
 #include "flowie_test_cnet.h"
 #include "tinytest.h"
 #include "tls_test_support.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,6 +161,14 @@ static void runtime_jwt_jwks_composition_test(void) {
 }
 
 spec("Flowie controller runtime") {
+  /* TinyTest cases share one function. Keep the large configuration out of
+   * its stack frame and reset it before every case. Runtime creation copies it. */
+  static flowie_control_config_t config;
+
+  before_each() {
+    memcpy(&config, &RUNTIME_TEST_DEFAULT_CONFIG, sizeof(config));
+  }
+
   it("resolves a logged-in principal to current reserved roles") {
     control_runtime_fixture_t fixture = runtime_fixture_open();
     flowie_control_management_caller_t caller = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
@@ -204,7 +212,6 @@ spec("Flowie controller runtime") {
   }
 
   it("fails closed when TLS identity files cannot be validated") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     memcpy(config.listener.tls.cert_file, "missing-control-cert.pem",
@@ -229,7 +236,6 @@ spec("Flowie controller runtime") {
         "/v2/control/logout"};
     char cert_file[512] = {0};
     char key_file[512] = {0};
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
 
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     check_equal(
@@ -252,7 +258,6 @@ spec("Flowie controller runtime") {
   }
 
   it("rejects incomplete local auth configuration") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     config.auth.enabled = 1;
 
@@ -260,7 +265,6 @@ spec("Flowie controller runtime") {
   }
 
   it("rejects invalid local executor bounds before TLS startup") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     config.auth.enabled = 1;
     config.auth.local_executor.workers = 0u;
@@ -269,7 +273,6 @@ spec("Flowie controller runtime") {
   }
 
   it("rejects simultaneous local executor and external HTTPS modes") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     memcpy(config.management.rpc_path, "/v2/control/rpc", sizeof("/v2/control/rpc"));
     config.auth.enabled = 1;
     config.auth.local_executor.configured = 1;
@@ -279,14 +282,12 @@ spec("Flowie controller runtime") {
   }
 
   it("requires a configured TurboDB driver") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
     check_equal(flowie_control_runtime_validate(&config), SALTS_EINVAL);
   }
 
   it("rejects programmatic plaintext and malformed TurboDB secret options") {
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     (void)snprintf(config.management.rpc_path, sizeof(config.management.rpc_path), "%s",
                    "/v2/control/rpc");
@@ -306,7 +307,6 @@ spec("Flowie controller runtime") {
   it("validates the configured external HTTPS identity and secrets before startup") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
 
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     check_equal(
@@ -354,7 +354,6 @@ spec("Flowie controller runtime") {
   it("validates JWT JWKS trust and bounded executor configuration before startup") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
 
     check_equal(flowie_control_test_runtime_turbodb(&config, ":memory:"), 0);
     check_equal(
@@ -402,7 +401,6 @@ spec("Flowie controller runtime") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
     control_runtime_fixture_t fixture = runtime_fixture_open();
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     flowie_control_runtime_t *runtime = NULL;
 
     check_equal(runtime_role_create(fixture.store, FLOWIE_CONTROL_MANAGEMENT_ROLE_VIEWER,
@@ -461,7 +459,6 @@ spec("Flowie controller runtime") {
     char cert_file[512] = {0};
     char key_file[512] = {0};
     control_runtime_fixture_t fixture = runtime_fixture_open();
-    flowie_control_config_t config = FLOWIE_CONTROL_CONFIG_INIT;
     flowie_control_runtime_t *runtime = NULL;
 
     flowie_control_store_destroy(fixture.store);

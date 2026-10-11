@@ -1,0 +1,41 @@
+{% if sections.show_overview %}<section id="overview" class="summary" aria-labelledby="summary-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">Current state</p><h2 id="summary-title">{% if capabilities.is_platform_workspace %}Platform overview{% endif %}{% if capabilities.is_domain_workspace %}Policy overview{% endif %}</h2></div>
+      <div class="dataset-toolbar">
+        <span class="scope">{% if capabilities.is_platform_workspace %}Platform operator{% endif %}{% if capabilities.is_domain_workspace %}Domain: {{ identity.domain_id }}{% endif %} · User: {{ identity.actor }}</span>
+        {% if capabilities.can_create_domain %}<button type="button" class="button--quiet" popovertarget="domain-admin-initialize">Initialize admin</button><button type="button" popovertarget="domain-add">Add domain</button>{% endif %}
+      </div>
+    </div>
+    {% if capabilities.can_create_domain %}<div id="domain-add" class="control-popover" popover>
+      <div class="popover-heading"><div><p class="eyebrow">Domains</p><h3>Create a domain</h3></div><button type="button" class="button--close" popovertarget="domain-add" popovertargetaction="hide" aria-label="Close" title="Close"></button></div>
+      <p class="task-hint">Create the isolation boundary here. Domain-owned identities and access policy are managed by that Domain's administrator.</p>
+      <div class="command command--compact">
+        <input type="hidden" name="csrf" value="{{ identity.csrf }}"><input type="hidden" name="operation" value="domain.create">
+        <label>Domain ID<input name="domain_id" required maxlength="255" autocomplete="off"></label>
+        <input type="hidden" name="request_id" data-request-id>
+        <button type="button" hx-post="{{ navigation.action_url }}" hx-include="closest .command" hx-target="#dashboard" hx-swap="innerHTML" hx-disabled-elt="this">Create domain</button>
+      </div>
+    </div>{% endif %}
+    {% if capabilities.can_create_domain %}<div id="domain-admin-initialize" class="control-popover" popover>
+      <div class="popover-heading"><div><p class="eyebrow">Domain lifecycle</p><h3>Initialize Domain admin</h3></div><button type="button" class="button--close" popovertarget="domain-admin-initialize" popovertargetaction="hide" aria-label="Close" title="Close"></button></div>
+      <p class="task-hint">Creates or resumes the first human security administrator. The initial password must be changed at first sign-in.</p>
+      <div class="command command--compact">
+        <input type="hidden" name="csrf" value="{{ identity.csrf }}"><input type="hidden" name="operation" value="domain.admin.initialize">
+        <label>Domain ID<input name="domain_id" required maxlength="255" autocomplete="off"></label>
+        <label>Administrator ID<input name="principal_id" required maxlength="255" autocomplete="username"></label>
+        <label>Initial password<input type="password" name="new_password" required minlength="16" maxlength="255" autocomplete="new-password"></label>
+        <label>Confirm password<input type="password" name="confirm_password" required minlength="16" maxlength="255" autocomplete="new-password"></label>
+        <input type="hidden" name="request_id" data-request-id>
+        <button type="button" hx-post="{{ navigation.action_url }}" hx-include="closest .command" hx-target="#dashboard" hx-swap="innerHTML" hx-disabled-elt="this">Initialize administrator</button>
+      </div>
+    </div>{% endif %}
+    {% if capabilities.is_platform_workspace %}<aside class="onboarding" aria-labelledby="domain-lifecycle-title">
+      <div class="onboarding__heading"><p class="eyebrow">Isolation boundaries</p><h3 id="domain-lifecycle-title">Domain lifecycle</h3><p>The Platform can create and enumerate Domains, but it cannot enter their users, roles, groups, ACL rules, integrations, or audit records.</p></div>
+      <ul class="domain-list">{% for row_2 in collections.domains %}<li><code>{{ row_2.domain_id }}</code></li>{% endfor %}{% if not collections.domains %}<li class="empty">No Domains created yet.</li>{% endif %}</ul>
+    </aside>{% endif %}
+    {% if capabilities.is_domain_workspace %}<dl class="metrics">
+      <div><dt>Policy version</dt><dd>{{ identity.policy_version }}</dd></div>
+      <div><dt>Draft rules</dt><dd>{{ identity.draft_rule_count }}</dd></div>
+      <div><dt>Published rules</dt><dd>{{ identity.published_rule_count }}</dd></div>
+    </dl>{% endif %}
+  </section>{% endif %}

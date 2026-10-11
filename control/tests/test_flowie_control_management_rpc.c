@@ -2,12 +2,12 @@
 #include "flowie_control_test_turbodb.h"
 
 #include "platform.h"
-#include "salts_coro.h"
+#include "coro.h"
 #include "flowie_control_credential_internal.h"
 #include "tinytest.h"
-#include "salts_error.h"
+#include "cmeta_error.h"
 #include <json_parser.h>
-#include "salts_thread.h"
+#include "cmeta_thread.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -47,7 +47,7 @@ static int management_rpc_policy_gate_wait(management_rpc_policy_operation_t ope
   if (!gate || gate->operation != operation) return SALTS_EINVAL;
   atomic_store_explicit(&gate->entered, 1, memory_order_release);
   while (!atomic_load_explicit(&gate->release, memory_order_acquire))
-    salts_sleep_ms(1u);
+    cmeta_sleep_ms(1u);
   atomic_store_explicit(&gate->completed, 1, memory_order_release);
   return SALTS_OK;
 }
@@ -285,10 +285,10 @@ static void management_rpc_status_task(coro_t *co, void *arg) {
 
 static void management_rpc_watchdog(void *arg) {
   management_rpc_policy_gate_t *gate = (management_rpc_policy_gate_t *)arg;
-  uint64_t deadline = salts_monotonic_ms() + 750u;
+  uint64_t deadline = cmeta_monotonic_ms() + 750u;
   while (!atomic_load_explicit(&gate->status_completed, memory_order_acquire) &&
-         salts_monotonic_ms() < deadline)
-    salts_sleep_ms(1u);
+         cmeta_monotonic_ms() < deadline)
+    cmeta_sleep_ms(1u);
   atomic_store_explicit(&gate->release, 1, memory_order_release);
 }
 
@@ -304,7 +304,7 @@ static void management_rpc_run_responsiveness_scenario(management_rpc_policy_ope
   management_rpc_policy_gate_t gate;
   management_rpc_responsiveness_scenario_t scenario;
   coro_scheduler_t *scheduler;
-  salts_thread_t watchdog = NULL;
+  cmeta_thread_t watchdog = NULL;
 
   memset(&fixture, 0, sizeof(fixture));
   memset(&gate, 0, sizeof(gate));
@@ -332,10 +332,10 @@ static void management_rpc_run_responsiveness_scenario(management_rpc_policy_ope
   scenario.policy_body = policy_body;
   check_not_null(coro_spawn(scheduler, management_rpc_policy_task, &scenario, NULL));
   check_not_null(coro_spawn(scheduler, management_rpc_status_task, &scenario, NULL));
-  check_equal(salts_thread_create(&watchdog, management_rpc_watchdog, &gate), SALTS_OK);
+  check_equal(cmeta_thread_create(&watchdog, management_rpc_watchdog, &gate), SALTS_OK);
   coro_scheduler_run(scheduler);
-  check_equal(salts_thread_join(&watchdog), SALTS_OK);
-  salts_thread_destroy(&watchdog);
+  check_equal(cmeta_thread_join(&watchdog), SALTS_OK);
+  cmeta_thread_destroy(&watchdog);
 
   check_true(scenario.policy_ok);
   check_true(scenario.status_ok);
