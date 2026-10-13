@@ -7,25 +7,29 @@ set -euo pipefail
 : "${SALTS_SOURCE_REF:?}"
 : "${SALTS_UTILS_SOURCE_REF:?}"
 : "${CHTTP_SOURCE_REF:?}"
+: "${TURBODB_SOURCE_REF:?}"
 root="$GITHUB_WORKSPACE/build/dependencies"
 sdk="$RUNNER_TEMP/flowie-sdk"
 su_src="$root/salts-utils"
 chttp_src="$root/chttp"
+turbodb_src="$root/turbodb"
 salts="$sdk/salts/release"
 su_sdk="$sdk/salts-utils/release"
 chttp_sdk="$sdk/http-services/release"
+turbodb_sdk="$sdk/turbodb/release"
 provider="0e3139d209b20e7bb95b29b4ee8ff9323a531cbe"
 
 test "$(git -C "$root/salts" rev-parse HEAD)" = "$SALTS_SOURCE_REF"
 test "$(git -C "$su_src" rev-parse HEAD)" = "$SALTS_UTILS_SOURCE_REF"
 test "$(git -C "$chttp_src" rev-parse HEAD)" = "$CHTTP_SOURCE_REF"
+test "$(git -C "$turbodb_src" rev-parse HEAD)" = "$TURBODB_SOURCE_REF"
 test -f "$salts/lib/cmake/Salts/SaltsConfig.cmake"
 
 # The source rebuilt SaltsUtils and CHttp both must resolve the same
 # GmSSL candidate as Salts. SaltsUtils already has a separate *zstd* registry:
 # preserve that exact existing entry and add/override ONLY the gmssl package.
 # Both files live in disposable source checkouts, never the Flowie manifest.
-python3 - "$su_src/vcpkg-configuration.json" "$chttp_src/vcpkg-configuration.json" "$provider" <<'PY'
+python3 - "$su_src/vcpkg-configuration.json" "$chttp_src/vcpkg-configuration.json" "$turbodb_src/vcpkg-configuration.json" "$provider" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -68,8 +72,8 @@ done
 echo "::endgroup::"
 
 # Strict source replacement: a failure must not silently use the published DSO.
-rm -rf "$su_sdk" "$chttp_sdk"
-mkdir -p "$su_sdk" "$chttp_sdk"
+rm -rf "$su_sdk" "$chttp_sdk" "$turbodb_sdk"
+mkdir -p "$su_sdk" "$chttp_sdk" "$turbodb_sdk"
 export SALTS_ROOT="$salts"
 export QIGAO_SDK_RID="linux-x64"
 export QIGAO_TARGET_TRIPLET="x64-linux"
@@ -124,8 +128,22 @@ export PKG_ROOT="$sdk"
 test -f "$chttp_sdk/lib/cmake/Chttp/ChttpConfig.cmake"
 echo "::endgroup::"
 
+# Published TurboDB::Orm imports the same hidden vec_at/vec_push ABI.
+# It must come from this exact Salts+SaltsUtils source graph; no old DSO.
+echo "::group::Source-build TurboDB ${TURBODB_SOURCE_REF} against matched SDKs"
+export TURBODB_CI_PKG_ROOT="$sdk"
+(
+  cd "$turbodb_src"
+  cmake --preset ci-linux-release -DBUILD_TESTS=OFF -DBUILD_E2E_TESTS=OFF     -DBUILD_EXAMPLES=OFF -DTURBODB_BUILD_DBTOOLS=OFF     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  cmake --build --preset ci-linux-release --parallel 2
+  cmake --install build/ci-linux-release --prefix "$turbodb_sdk"
+)
+test -f "$turbodb_sdk/lib/cmake/TurboDB/TurboDBConfig.cmake"
+test -f "$turbodb_sdk/lib/libturbo_orm.so"
+echo "::endgroup::"
+
 echo "::group::Verify no private CSTL dependency is left undefined in rebuilt DSOs"
-for lib in "$su_sdk/lib/libdata_bind.so" "$chttp_sdk/lib/libchttp_client.so" "$chttp_sdk/lib/libchttp_server.so"; do
+for lib in "$su_sdk/lib/libdata_bind.so" "$su_sdk/lib/libsalts_serial.so"   "$chttp_sdk/lib/libchttp_client.so" "$chttp_sdk/lib/libchttp_server.so"   "$turbodb_sdk/lib/libturbo_orm.so"; do
   test -f "$lib"
   if readelf -W --dyn-syms "$lib" | grep -E 'UND.*(vec_at|vec_at_const|vec_size|vec_push)'; then
     echo "Unresolved private CSTL from exact-source rebuilt DSO: $lib" >&2
@@ -139,6 +157,7 @@ echo "::endgroup::"
   echo "- Salts: $SALTS_SOURCE_REF"
   echo "- SaltsUtils: $SALTS_UTILS_SOURCE_REF"
   echo "- CHttp: $CHTTP_SOURCE_REF"
+  echo "- TurboDB: $TURBODB_SOURCE_REF"
   echo "- GmSSL registry SHA: $provider"
   echo "- Released SDK DSOs were replaced; no fallback or topology change"
 } >> "$GITHUB_STEP_SUMMARY"
