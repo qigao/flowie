@@ -260,11 +260,12 @@ static cnet_client_config flowie_client_transport_network(void) {
   return config;
 }
 
-static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t client_transport,
-                                         flowie_transport server_transport,
-                                         flowie_client_transport_connack_mode connack_mode,
-                                         uint64_t client_timeout_ms, int expected_connect_status,
-                                         int with_destination_policy, int round_trips) {
+static void flowie_client_transport_case_ex_fixture(
+    flowie_mqtt_client_transport_t client_transport, flowie_transport server_transport,
+    flowie_client_transport_connack_mode connack_mode, uint64_t client_timeout_ms,
+    int expected_connect_status, int with_destination_policy, int round_trips,
+    const char *test_ca, const char *test_cert, const char *test_key,
+    const char *test_client_ca, int expect_tls_reject) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -308,13 +309,18 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   server_config.stream = flowie_client_transport_network();
   if (server_transport == TF_NET_TRANSPORT_TLS ||
       server_transport == TF_NET_TRANSPORT_WSS) {
-    check_equal(tls_test_write_server_files(cert_path, sizeof(cert_path),
-                                            key_path, sizeof(key_path)), 0);
-    check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
+    if (test_ca == NULL) {
+      check_equal(tls_test_write_server_files(cert_path, sizeof(cert_path),
+                                              key_path, sizeof(key_path)), 0);
+      check_equal(tls_test_write_ca_file(ca_path, sizeof(ca_path)), 0);
+    } else {
+      check_not_null(test_cert);
+      check_not_null(test_key);
+    }
     tls_config = (cnet_tls_server_config){
         .size = sizeof(tls_config),
-        .cert_file = cert_path,
-        .key_file = key_path,
+        .cert_file = test_ca ? test_cert : cert_path,
+        .key_file = test_ca ? test_key : key_path,
         .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
     server_config.tls = &tls_config;
     server_config.stream.tls_io_buffer_bytes =
@@ -327,7 +333,8 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   server_config.backlog = 4u;
   server_config.path = "/mqtt";
   server_config.websocket_subprotocol =
-      server_transport == TF_NET_TRANSPORT_WS ? "mqtt" : NULL;
+      (server_transport == TF_NET_TRANSPORT_WS ||
+       server_transport == TF_NET_TRANSPORT_WSS) ? "mqtt" : NULL;
   server_config.command_capacity = 8u;
   server_config.command_bytes_capacity = 8192u;
   server_config.max_message_bytes = FLOWIE_CLIENT_TRANSPORT_TEST_BUFFER_BYTES;
@@ -348,7 +355,8 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   client_config.socket_send_buffer_bytes = 32768u;
   if (client_transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ||
       client_transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS)
-    client_config.tls.ca_file = ca_path;
+    client_config.tls.ca_file = test_ca
+        ? (test_client_ca ? test_client_ca : test_ca) : ca_path;
   client_config.on_connect = flowie_client_transport_connect_complete;
   client_config.on_ping = flowie_client_transport_ping_complete;
   client_config.on_disconnect = flowie_client_transport_disconnect_complete;
@@ -392,6 +400,19 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
       cmeta_sleep_ms(1u);
 
     check_equal(atomic_load_explicit(&probe.done, memory_order_acquire), 1);
+    if (expect_tls_reject) {
+      /* A bad issuing CA must not be treated as an MQTT CONNACK refusal. */
+      check_not_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
+                      SALTS_OK);
+      check_not_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
+                      SALTS_EBUSY);
+      check_equal(flowie_mqtt_client_is_connected(client), 0);
+      check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), 0);
+      check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 0);
+      check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed), 0);
+      check_equal(atomic_load_explicit(&probe.reconnect_attempts, memory_order_relaxed), 0);
+      break;
+    }
     check_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
                 expected_connect_status);
     if (expected_connect_status == SALTS_OK) {
@@ -419,9 +440,20 @@ static void flowie_client_transport_case_ex(flowie_mqtt_client_transport_t clien
   flowie_mqtt_client_destroy(client);
   check_equal(flowie_server_stop(&server, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
   check_equal(flowie_server_destroy(&server), SALTS_OK);
-  tls_test_remove_file(ca_path);
-  tls_test_remove_file(key_path);
-  tls_test_remove_file(cert_path);
+  if (test_ca == NULL) {
+    tls_test_remove_file(ca_path);
+    tls_test_remove_file(key_path);
+    tls_test_remove_file(cert_path);
+  }
+}
+
+static void flowie_client_transport_case_ex(
+    flowie_mqtt_client_transport_t client_transport, flowie_transport server_transport,
+    flowie_client_transport_connack_mode connack_mode, uint64_t client_timeout_ms,
+    int expected_connect_status, int with_destination_policy, int round_trips) {
+  flowie_client_transport_case_ex_fixture(client_transport, server_transport,
+      connack_mode, client_timeout_ms, expected_connect_status,
+      with_destination_policy, round_trips, NULL, NULL, NULL, NULL, 0);
 }
 
 static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_transport,
