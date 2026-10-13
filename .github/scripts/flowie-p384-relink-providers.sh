@@ -21,26 +21,36 @@ test "$(git -C "$su_src" rev-parse HEAD)" = "$SALTS_UTILS_SOURCE_REF"
 test "$(git -C "$chttp_src" rev-parse HEAD)" = "$CHTTP_SOURCE_REF"
 test -f "$salts/lib/cmake/Salts/SaltsConfig.cmake"
 
-# Prevent source-built CHttp from using a different GmSSL than source Salts.
-# This config exists ONLY in the ephemeral CI checkout.
-python3 - "$chttp_src/vcpkg-configuration.json" "$provider" <<'PY'
+# The source rebuilt SaltsUtils and CHttp both must resolve the same
+# GmSSL candidate as Salts. SaltsUtils already has a separate *zstd* registry:
+# preserve that exact existing entry and add/override ONLY the gmssl package.
+# Both files live in disposable source checkouts, never the Flowie manifest.
+python3 - "$su_src/vcpkg-configuration.json" "$chttp_src/vcpkg-configuration.json" "$provider" <<'PY'
 import json
 import sys
 from pathlib import Path
-path, sha = Path(sys.argv[1]), sys.argv[2]
-data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
-registries = list(data.get("registries", []))
-matches = [r for r in registries if "gmssl" in r.get("packages", [])]
-if len(matches) > 1:
-    raise SystemExit("Multiple gmssl registries")
-if matches:
-    matches[0].update(reference=sha, baseline=sha)
-else:
-    registries.append({
-        "kind": "git", "repository": "https://github.com/qigao/vcpkg-cache",
-        "reference": sha, "baseline": sha, "packages": ["gmssl"]})
-data["registries"] = registries
-path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+*paths, sha = sys.argv[1:]
+for path_text in paths:
+    path = Path(path_text)
+    data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    registries = list(data.get("registries", []))
+    matches = [r for r in registries if "gmssl" in r.get("packages", [])]
+    if len(matches) > 1:
+        raise SystemExit(f"Multiple gmssl registries in {path}")
+    if matches:
+        reg = matches[0]
+        reg.update(reference=sha, baseline=sha)
+        if reg.get("kind") != "git" or reg.get("repository") != "https://github.com/qigao/vcpkg-cache":
+            raise SystemExit(f"Unexpected gmssl Registry: {path}")
+    else:
+        registries.append({
+            "kind": "git", "repository": "https://github.com/qigao/vcpkg-cache",
+            "reference": sha, "baseline": sha, "packages": ["gmssl"]})
+    data["registries"] = registries
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    reread = json.loads(path.read_text(encoding="utf-8"))
+    assert len([r for r in reread["registries"] if "gmssl" in r["packages"]]) == 1
+    print(f"Exact provider pinned: {path.name} {sha}")
 PY
 
 echo "::group::Mixed released DSO CSTL unresolved symbol audit"
