@@ -1735,6 +1735,30 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
                                  FLOWIE_CLIENT_TRANSPORT_SHORT_TIMEOUT_MS, SALTS_EPROTO);
   }
 
+
+#if defined(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
+  for (int secure_websocket = 0; secure_websocket <= 1; ++secure_websocket) {
+    it("authenticates P-384 SHA-384 issuing CA and P-256 leaf over MQTT TLS/WSS, websocket=%d",
+       secure_websocket) {
+      flowie_client_transport_case_ex_fixture(
+          secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+          secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+          FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+          SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
+          FLOWIE_P384_SHA384_KEY, NULL, 0);
+    }
+    it("rejects wrong P-384 SHA-384 issuing CA before MQTT CONNECT over TLS/WSS, websocket=%d",
+       secure_websocket) {
+      flowie_client_transport_case_ex_fixture(
+          secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+          secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+          FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+          SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
+          FLOWIE_P384_SHA384_KEY, FLOWIE_P384_SHA384_WRONG_CA, 1);
+    }
+  }
+#endif
+
   it("classifies a TLS authority mismatch as SECURITY without automatic MQTT retry") {
     flowie_client_transport_tls_identity_fail_closed();
   }
