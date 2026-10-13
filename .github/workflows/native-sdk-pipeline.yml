@@ -113,7 +113,16 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
@@ -277,7 +286,16 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
@@ -439,7 +457,16 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
@@ -690,7 +717,16 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
@@ -772,7 +808,16 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
@@ -867,7 +912,16 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
+      # PR #71 is a non-production *released-package* ABI regression gate.
+      # Those already published SDKs predate the P384 #12 struct layout.
+      # Use the immutable #11 provider action for this branch; the separate
+      # native-tests.yml exact-source candidate gate deliberately uses #12.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: github.head_ref == 'test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: github.head_ref != 'test/flowie-p384-sha384-tls-70'
         with:
           mode: read
 
