@@ -1,0 +1,36 @@
+name: Flowie P384/SHA384 independent X509 fixture oracle
+
+'on':
+  pull_request:
+    paths:
+      - 'client/tests/generate_le_sha384_fixtures.py'
+      - 'client/tests/CMakeLists.txt'
+      - 'control/CMakeLists.txt'
+      - '.github/workflows/flowie-p384-sha384-oracle.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  x509-oracle:
+    name: Linux OpenSSL 3 X509 reference contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate independent test-only P384 issuer/P256 leaf SHA384
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl version
+          python3 client/tests/generate_le_sha384_fixtures.py \
+            --openssl "$(command -v openssl)" \
+            --out "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/ca.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/leaf.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/tampered.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/leaf.key"
+          echo 'X509 reference oracle passed; no product TLS/WSS/HTTPS success is claimed'
