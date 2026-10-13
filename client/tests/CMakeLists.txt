@@ -12,6 +12,45 @@ set_tests_properties(
   test_flowie_mqtt_client
   PROPERTIES LABELS "flowie;flowie-release;mqtt;client;mqtt-security;mqtt-negative")
 
+# #70: acceptance tests are activated only when the exact GmSSL/Salt SDK
+# candidate has been installed and independently qualified. Do not silently
+# claim LE/SHA384 compatibility using the older production SDK.
+option(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS
+  "Enable exact P384-issuer/P256-leaf SHA384 MQTT TLS and WSS acceptance" OFF)
+if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(FLOWIE_SHA384_TEST_OPENSSL NAMES openssl REQUIRED)
+  set(_flowie_p384_pki "${CMAKE_CURRENT_BINARY_DIR}/p384-sha384-fixtures")
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/generate_le_sha384_fixtures.py"
+      --openssl "${FLOWIE_SHA384_TEST_OPENSSL}" --out "${_flowie_p384_pki}"
+    RESULT_VARIABLE _flowie_p384_pki_rc
+    OUTPUT_VARIABLE _flowie_p384_pki_output
+    ERROR_VARIABLE _flowie_p384_pki_error)
+  if(NOT _flowie_p384_pki_rc EQUAL 0)
+    message(FATAL_ERROR
+      "Flowie P384/SHA384 independent test PKI generation failed:"
+      "\\n${_flowie_p384_pki_output}\\n${_flowie_p384_pki_error}")
+  endif()
+  foreach(_fixture IN ITEMS ca.pem leaf.pem leaf.key wrong-ca.pem)
+    if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
+      message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
+    endif()
+  endforeach()
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/ca.pem" _p384_ca)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.pem" _p384_leaf)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.key" _p384_key)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/wrong-ca.pem" _p384_wrong_ca)
+  target_compile_definitions(test_flowie_mqtt_client PRIVATE
+    FLOWIE_P384_SHA384_ACCEPTANCE_TESTS=1
+    "FLOWIE_P384_SHA384_CA=\\\"${_p384_ca}\\\""
+    "FLOWIE_P384_SHA384_LEAF=\\\"${_p384_leaf}\\\""
+    "FLOWIE_P384_SHA384_KEY=\\\"${_p384_key}\\\""
+    "FLOWIE_P384_SHA384_WRONG_CA=\\\"${_p384_wrong_ca}\\\"")
+  message(STATUS "Flowie #70 P384/SHA384 MQTT TLS+WSS acceptance enabled; GmSSL remains private CNet runtime")
+endif()
+
 cmake_add_test(
   test_flowie_mqtt_client_live
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
