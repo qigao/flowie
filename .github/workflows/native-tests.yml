@@ -28,6 +28,7 @@ env:
   # No production branch uses these test-only rebuilds or private GmSSL candidate.
   SALTS_UTILS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '1410c9fd479f9faab31503523d8e31cc506b5b25' || '' }}
   CHTTP_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '251d9ca60b1526ceab9d02f7f68e18fe060ce6f5' || '' }}
+  TURBODB_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'a8f849e7cd7193b89a8ade596bf9ef072a0533fc' || '' }}
 
 jobs:
   test:
@@ -88,6 +89,13 @@ jobs:
           repository: qigao/chttp
           ref: ${{ env.CHTTP_SOURCE_REF }}
           path: build/dependencies/chttp
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.TURBODB_SOURCE_REF != ''
+        with:
+          repository: qigao/turbodb
+          ref: ${{ env.TURBODB_SOURCE_REF }}
+          path: build/dependencies/turbodb
           persist-credentials: false
       - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
         if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
@@ -188,8 +196,8 @@ jobs:
           cmake --build --preset install-linux-release-ci --parallel 2
           mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
           cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
-      - name: Rebuild exact source SaltsUtils and CHttp against Salts candidate
-        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != '' && env.CHTTP_SOURCE_REF != ''
+      - name: Rebuild exact source SaltsUtils, CHttp and TurboDB against Salts candidate
+        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != '' && env.CHTTP_SOURCE_REF != '' && env.TURBODB_SOURCE_REF != ''
         shell: bash
         run: bash .github/scripts/flowie-p384-relink-providers.sh
       - name: Configure, build and test Linux
