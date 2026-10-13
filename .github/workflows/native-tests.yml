@@ -24,6 +24,10 @@ env:
   # Only this Draft #70 test branch builds the exact unreleased CNet candidate.
   # Every other branch and tag retains its published production SDK contract.
   SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || inputs.salts_ref || '' }}
+  # Source-relinked provider DSOs, required by the private static CSTL owner.
+  # No production branch uses these test-only rebuilds or private GmSSL candidate.
+  SALTS_UTILS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '1410c9fd479f9faab31503523d8e31cc506b5b25' || '' }}
+  CHTTP_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '251d9ca60b1526ceab9d02f7f68e18fe060ce6f5' || '' }}
 
 jobs:
   test:
@@ -70,6 +74,20 @@ jobs:
           repository: qigao/salts
           ref: ${{ env.SALTS_SOURCE_REF }}
           path: build/dependencies/salts
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != ''
+        with:
+          repository: qigao/salts-utils
+          ref: ${{ env.SALTS_UTILS_SOURCE_REF }}
+          path: build/dependencies/salts-utils
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.CHTTP_SOURCE_REF != ''
+        with:
+          repository: qigao/chttp
+          ref: ${{ env.CHTTP_SOURCE_REF }}
+          path: build/dependencies/chttp
           persist-credentials: false
       - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
         if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
@@ -170,6 +188,10 @@ jobs:
           cmake --build --preset install-linux-release-ci --parallel 2
           mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
           cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
+      - name: Rebuild exact source SaltsUtils and CHttp against Salts candidate
+        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != '' && env.CHTTP_SOURCE_REF != ''
+        shell: bash
+        run: bash .github/scripts/flowie-p384-relink-providers.sh
       - name: Configure, build and test Linux
         if: runner.os == 'Linux'
         shell: bash
