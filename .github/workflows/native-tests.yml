@@ -21,7 +21,9 @@ concurrency:
 # Published 2.3/4.3/2.1 release candidates form one native SDK ABI epoch.
 # A manual source SHA is a qualification override only; push CI consumes packages.
 env:
-  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '' }}
+  # Only this Draft #70 test branch builds the exact unreleased CNet candidate.
+  # Every other branch and tag retains its published production SDK contract.
+  SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || inputs.salts_ref || '' }}
 
 jobs:
   test:
@@ -69,6 +71,27 @@ jobs:
           ref: ${{ env.SALTS_SOURCE_REF }}
           path: build/dependencies/salts
           persist-credentials: false
+      - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
+        if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = '0e3139d209b20e7bb95b29b4ee8ff9323a531cbe'
+          $path = 'vcpkg-configuration.json'
+          $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          $registries = @($config.registries | Where-Object { $_.packages -contains 'gmssl' })
+          if ($registries.Count -ne 1) {
+            throw "Expected exactly one GmSSL Registry; got $($registries.Count)"
+          }
+          $registries[0].reference = $candidate
+          $registries[0].baseline = $candidate
+          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
+          $check = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          if (($check.registries | Where-Object { $_.packages -contains 'gmssl' }).reference -ne $candidate) {
+            throw 'Candidate provider Registry SHA pin failed'
+          }
+          "Test-only GmSSL Provider Git SHA: $candidate" >> $env:GITHUB_STEP_SUMMARY
+
       - name: Restore one coherent published native SDK family
         shell: pwsh
         env:
@@ -152,7 +175,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          candidate_flags=()
+          if [[ "${GITHUB_REF}" == refs/heads/test/flowie-p384-sha384-tls-70 &&
+                -n "${SALTS_SOURCE_REF:-}" ]]; then
+            unset VCPKG_OVERLAY_PORTS
+            candidate_flags+=(-DFLOWIE_P384_SHA384_ACCEPTANCE_TESTS=ON)
+            echo "Flowie #70 product TLS/WSS/HTTPS testing against Salts ${SALTS_SOURCE_REF}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cmake --preset ci-linux-release-user "${candidate_flags[@]}" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
