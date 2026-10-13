@@ -55,6 +55,9 @@ typedef struct external_https_network_options_s {
   size_t creation_token_size;
   const uint8_t *request_token;
   size_t request_token_size;
+  const char *test_server_cert_file; /* Ephemeral test-only SHA384 leaf. */
+  const char *test_server_key_file;
+  const char *test_ca_file;
 } external_https_network_options_t;
 
 static const char EXTERNAL_HTTPS_RESPONSE_BODY[] =
@@ -191,15 +194,27 @@ static int external_https_run_mtls(const external_https_network_options_t *optio
   task.status = SALTS_EBUSY;
   if (tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)) != 0)
     goto done;
-  if (flow_mtls_test_server_start_delayed(&server, (const uint8_t *)options->response,
-                                          options->response_size, options->response_delay_ms) != 0)
+  if (options->test_server_cert_file != NULL) {
+    /* HTTPS server authentication, not client mTLS, is under test here:
+     * preserve test-only generated material but use the real CHttp client. */
+    if (options->test_server_key_file == NULL ||
+        flow_mtls_test_server_start_ex_identity(
+            &server, (const uint8_t *)options->response, options->response_size,
+            options->response_delay_ms, 0, 0, options->test_server_cert_file,
+            options->test_server_key_file) != 0)
+      goto done;
+  } else if (flow_mtls_test_server_start_delayed(
+                 &server, (const uint8_t *)options->response,
+                 options->response_size, options->response_delay_ms) != 0) {
     goto done;
+  }
   if (snprintf(url, sizeof(url), "https://localhost:%u/v1/authenticate", server.port) <= 0)
     goto done;
   config.url = url;
   config.timeout_ms = options->timeout_ms;
   config.max_in_flight = options->max_in_flight;
-  config.tls.ca_file = options->configure_ca ? cert_file : NULL;
+  config.tls.ca_file = options->configure_ca
+      ? (options->test_ca_file ? options->test_ca_file : cert_file) : NULL;
   config.tls.client_cert_file = options->configure_client_identity ? cert_file : NULL;
   config.tls.client_key_file = options->configure_client_identity ? key_file : NULL;
   rc = flowie_control_external_https_authenticator_create(&config, &authenticator);
@@ -541,6 +556,47 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
   }
+
+
+#if defined(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
+  it("accepts P384 issuer SHA384 signed P256 HTTPS external authentication") {
+    char response[4096];
+    external_https_network_result_t result;
+    external_https_network_options_t options;
+    int response_size = external_https_http_response(
+        response, sizeof(response), 200, "OK", "application/json",
+        EXTERNAL_HTTPS_RESPONSE_BODY);
+    check_greater(response_size, 0);
+    options = external_https_network_options(response, (size_t)response_size);
+    options.test_server_cert_file = FLOWIE_P384_SHA384_LEAF;
+    options.test_server_key_file = FLOWIE_P384_SHA384_KEY;
+    options.test_ca_file = FLOWIE_P384_SHA384_CA;
+    options.configure_client_identity = 0;
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_OK);
+    check_greater(result.request_size, (size_t)0u);
+    check_contains((const char *)result.request, "Authorization: Bearer service-token");
+  }
+
+  it("rejects an untrusted P384 issuer SHA384 HTTPS peer before HTTP auth") {
+    char response[4096];
+    external_https_network_result_t result;
+    external_https_network_options_t options;
+    int response_size = external_https_http_response(
+        response, sizeof(response), 200, "OK", "application/json",
+        EXTERNAL_HTTPS_RESPONSE_BODY);
+    check_greater(response_size, 0);
+    options = external_https_network_options(response, (size_t)response_size);
+    options.test_server_cert_file = FLOWIE_P384_SHA384_LEAF;
+    options.test_server_key_file = FLOWIE_P384_SHA384_KEY;
+    options.test_ca_file = FLOWIE_P384_SHA384_WRONG_CA;
+    options.configure_client_identity = 0;
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_EIO);
+    check_equal(result.request_size, (size_t)0u);
+    check_equal(result.stats.transport_failures, 1u);
+  }
+#endif
 
   it("fails the handshake when the third-party server certificate is untrusted") {
     char response[4096];
