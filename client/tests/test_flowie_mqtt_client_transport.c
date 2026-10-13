@@ -265,7 +265,8 @@ static void flowie_client_transport_case_ex_fixture(
     flowie_client_transport_connack_mode connack_mode, uint64_t client_timeout_ms,
     int expected_connect_status, int with_destination_policy, int round_trips,
     const char *test_ca, const char *test_cert, const char *test_key,
-    const char *test_client_ca, int expect_tls_reject) {
+    const char *test_client_ca, const char *test_logical_host,
+    int expect_tls_reject) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -347,7 +348,7 @@ static void flowie_client_transport_case_ex_fixture(
   check_equal(flowie_server_port(&server, &port), SALTS_OK);
 
   client_config.transport = client_transport;
-  client_config.host = "127.0.0.1";
+  client_config.host = test_logical_host ? test_logical_host : "127.0.0.1";
   client_config.port = with_destination_policy ? 1 : (int)port;
   client_config.path = "/mqtt";
   client_config.timeout_ms = client_timeout_ms;
@@ -453,7 +454,7 @@ static void flowie_client_transport_case_ex(
     int expected_connect_status, int with_destination_policy, int round_trips) {
   flowie_client_transport_case_ex_fixture(client_transport, server_transport,
       connack_mode, client_timeout_ms, expected_connect_status,
-      with_destination_policy, round_trips, NULL, NULL, NULL, NULL, 0);
+      with_destination_policy, round_trips, NULL, NULL, NULL, NULL, NULL, 0);
 }
 
 static void flowie_client_transport_case(flowie_mqtt_client_transport_t client_transport,
@@ -1745,7 +1746,7 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
           secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
           FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
           SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
-          FLOWIE_P384_SHA384_KEY, NULL, 0);
+          FLOWIE_P384_SHA384_KEY, NULL, NULL, 0);
     }
     it("rejects wrong P-384 SHA-384 issuing CA before MQTT CONNECT over TLS/WSS, websocket=%d",
        secure_websocket) {
@@ -1754,7 +1755,18 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
           secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
           FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
           SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
-          FLOWIE_P384_SHA384_KEY, FLOWIE_P384_SHA384_WRONG_CA, 1);
+          FLOWIE_P384_SHA384_KEY, FLOWIE_P384_SHA384_WRONG_CA, NULL, 1);
+    }
+    it("rejects a mismatched P-384 SHA-384 TLS/WSS identity before MQTT CONNECT, websocket=%d",
+       secure_websocket) {
+      /* The authoritative DNS name is deliberately different from SAN.
+       * CNet destination policy still connects to the real loopback server. */
+      flowie_client_transport_case_ex_fixture(
+          secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+          secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+          FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+          SALTS_OK, 1, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
+          FLOWIE_P384_SHA384_KEY, NULL, "wrong.example", 1);
     }
   }
 #endif
