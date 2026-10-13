@@ -74,7 +74,24 @@ export SALTS_ROOT="$salts"
 export QIGAO_SDK_RID="linux-x64"
 export QIGAO_TARGET_TRIPLET="x64-linux"
 export PROJECT_ROOT="$GITHUB_WORKSPACE"
-unset VCPKG_OVERLAY_PORTS
+
+# SaltsUtils's QuickJS binding strictly requires quickjs-ng 0.16.2.
+# The builtin vcpkg baseline is 0.10.1; dropping all overlay ports broke
+# the unrelated binding API before the CNet integration could link. Import
+# ONLY the exact QuickJS overlay, never the mutable GmSSL overlay port:
+# GmSSL remains resolved from the 0e3139d immutable custom Registry above.
+test -d "$VCPKG_CACHE_REPOSITORY_ROOT/ports/quickjs-ng"
+quickjs_overlay="$RUNNER_TEMP/flowie-quickjs-ng-only"
+mkdir -p "$quickjs_overlay"
+cp -a "$VCPKG_CACHE_REPOSITORY_ROOT/ports/quickjs-ng" "$quickjs_overlay/quickjs-ng"
+python3 - "$quickjs_overlay/quickjs-ng/vcpkg.json" <<'PY'
+import json,sys
+from pathlib import Path
+port = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert port["name"] == "quickjs-ng" and port["version"] == "0.16.2", port
+print("Pinned test-only QuickJS overlay 0.16.2, GmSSL excluded")
+PY
+export VCPKG_OVERLAY_PORTS="$quickjs_overlay"
 
 echo "::group::Source-build SaltsUtils against candidate Salts"
 (
