@@ -19,6 +19,17 @@ chttp_sdk="$sdk/http-services/release"
 turbodb_sdk="$sdk/turbodb/release"
 provider="0e3139d209b20e7bb95b29b4ee8ff9323a531cbe"
 
+# Resolve the toolchain from the action's immutable materialized cache contract.
+# Older runner images may retain QIGAO_VCPKG_TOOLCHAIN_FILE pointing at the
+# legacy ~/.cache/qigao/vcpkg-cache path, which is not guaranteed to exist.
+: "${VCPKG_CACHE_REPOSITORY_ROOT:?shared vcpkg cache contract root is unavailable}"
+export QIGAO_VCPKG_TOOLCHAIN_FILE="$VCPKG_CACHE_REPOSITORY_ROOT/cmake/QigaoVcpkgToolchain.cmake"
+test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
+command -v ninja >/dev/null 2>&1 || {
+  echo "Ninja is required for the source-relinked CHttp/TurboDB builds" >&2
+  exit 1
+}
+
 test "$(git -C "$root/salts" rev-parse HEAD)" = "$SALTS_SOURCE_REF"
 test "$(git -C "$su_src" rev-parse HEAD)" = "$SALTS_UTILS_SOURCE_REF"
 test "$(git -C "$chttp_src" rev-parse HEAD)" = "$CHTTP_SOURCE_REF"
