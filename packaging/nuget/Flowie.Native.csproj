@@ -4,7 +4,7 @@
     <IsPackable>true</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <PackageId>Flowie.Native</PackageId>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">1.0.4</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">1.0.5</PackageVersion>
     <Authors>qigao</Authors>
     <Description>Flowie native MQTT server/client C/C++ SDK for Linux x64, Windows x64, and Android arm64-v8a.</Description>
     <PackageTags>flowie;mqtt;broker;client;native;c;cpp;cmake;windows;android</PackageTags>
