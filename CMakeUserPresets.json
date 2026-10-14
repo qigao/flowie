@@ -22,7 +22,7 @@
     {
       "name": "ci-linux-release",
       "inherits": [
-        "ci-release-options",
+        "ci-base-sdk-options",
         "ci-paths"
       ],
       "binaryDir": "${sourceDir}/build/release-sdk",

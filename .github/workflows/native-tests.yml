@@ -152,7 +152,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --preset ci-linux-release-user -DFLOWIE_BUILD_CONTROL=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
@@ -215,7 +215,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset ci-win-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --preset ci-win-release-user -DFLOWIE_BUILD_CONTROL=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1

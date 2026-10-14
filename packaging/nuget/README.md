@@ -13,6 +13,9 @@ Prebuilt Flowie 1.0.5 native SDK package.
   - `Flowie::Client`
   - `Flowie::Flowie`
 
+The standalone control-plane executable is outside this SDK package and is not
+built by the native package qualification jobs.
+
 ## Producer dependencies
 
 - Salts.Native
