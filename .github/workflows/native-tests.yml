@@ -106,9 +106,20 @@ jobs:
             $assets = @($release.assets | Where-Object { $_.name -like ($sdk.Package + '.*.nupkg') })
             if ($assets.Count -ne 1) { throw "Expected one SDK asset for $($sdk.Package) at $tag" }
             $asset = $assets[0]
-            & gh release download $tag --repo $repository --pattern $asset.name --dir $downloads
-            if ($LASTEXITCODE -ne 0) { throw "Cannot download $($sdk.Package) at $tag" }
             $archive = Join-Path $downloads $asset.name
+            $downloaded = $false
+            foreach ($attempt in 1..3) {
+              if (Test-Path -LiteralPath $archive) {
+                Remove-Item -LiteralPath $archive -Force
+              }
+              & gh release download $tag --repo $repository --pattern $asset.name --dir $downloads --clobber
+              if ($LASTEXITCODE -eq 0) {
+                $downloaded = $true
+                break
+              }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+            if (-not $downloaded) { throw "Cannot download $($sdk.Package) at $tag after 3 attempts" }
             $digest = 'sha256:' + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($digest -ne $asset.digest) { throw "Digest mismatch for $($sdk.Package)" }
             $unpacked = Join-Path $downloads $sdk.Directory
@@ -252,6 +263,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path build/native-ci -Force | Out-Null
+          if (-not (Get-Command ccache -ErrorAction SilentlyContinue)) {
+            'ccache was not installed before the primary job failure.' |
+              Set-Content -Path build/native-ci/ccache-stats.txt
+            exit 0
+          }
           $statistics = & ccache --show-stats
           if ($LASTEXITCODE -ne 0) { throw 'Cannot read ccache statistics' }
           $statistics | Set-Content -Path build/native-ci/ccache-stats.txt
