@@ -23,7 +23,9 @@ concurrency:
 env:
   # Only this Draft #70 test branch builds the exact unreleased CNet candidate.
   # Every other branch and tag retains its published production SDK contract.
-  SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || inputs.salts_ref || '' }}
+  # Only Linux currently source-relinks the complete dependent DSO graph against candidate GmSSL #12.
+  # Windows remains on the released #11 SDK graph until equivalent source rebuilds exist.
+  SALTS_SOURCE_REF: ${{ runner.os == 'Linux' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || (github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
   # Source-relinked provider DSOs, required by the private static CSTL owner.
   # No production branch uses these test-only rebuilds or private GmSSL candidate.
   SALTS_UTILS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '1410c9fd479f9faab31503523d8e31cc506b5b25' || '' }}
@@ -65,7 +67,15 @@ jobs:
           key: flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
+      # The released Windows producer DSOs still use the GmSSL #11 public
+      # struct layout. Do not load them with candidate GmSSL #12 until the
+      # complete dependent source graph is rebuilt on Windows as it is on Linux.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: runner.os != 'Windows' || github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
@@ -98,7 +108,7 @@ jobs:
           path: build/dependencies/turbodb
           persist-credentials: false
       - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
-        if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
