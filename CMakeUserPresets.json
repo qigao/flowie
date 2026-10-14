@@ -22,12 +22,13 @@
     {
       "name": "ci-linux-release",
       "inherits": [
-        "ci-base-sdk-options",
+        "ci-release-options",
         "ci-paths"
       ],
       "binaryDir": "${sourceDir}/build/release-sdk",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "FLOWIE_BUILD_CONTROL": "OFF",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/sdk/linux-x64"
       },
       "environment": {
