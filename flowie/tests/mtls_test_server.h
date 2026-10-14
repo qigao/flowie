@@ -45,6 +45,8 @@ typedef struct flow_mtls_test_server_s {
   int handshake_rejected;
   int abrupt_close;
   int eof_sent;
+  const char *test_cert_file; /* Test-only alternate P-256 leaf identity. */
+  const char *test_key_file;  /* Owned externally until server join. */
   atomic_int release_socket;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
@@ -52,7 +54,8 @@ typedef struct flow_mtls_test_server_s {
 
 /* Test-only GmSSL peer. Material is consumed synchronously by TLS_CTX; the
  * worker owns the context, connection and socket until it has joined. */
-static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certificate) {
+static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certificate,
+                                         const char *test_cert_file, const char *test_key_file) {
   static const int ciphers[] = {TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
   static const int groups[] = {TLS_curve_secp256r1};
@@ -63,10 +66,17 @@ static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certific
       tls_ctx_set_protocol_range(ctx, TLS_protocol_tls12, TLS_protocol_tls13) != 1 ||
       tls_ctx_set_cipher_suites(ctx, ciphers, sizeof(ciphers) / sizeof(ciphers[0])) != 1 ||
       tls_ctx_set_supported_groups(ctx, groups, 1u) != 1 ||
-      tls_ctx_set_signature_algorithms(ctx, signatures, 1u) != 1 ||
-      tls_test_write_server_files(cert_path, sizeof(cert_path), key_path, sizeof(key_path)) != 0 ||
-      tls_ctx_set_certificate_and_key(ctx, cert_path, key_path, "") != 1)
+      tls_ctx_set_signature_algorithms(ctx, signatures, 1u) != 1)
     goto done;
+  if ((test_cert_file == NULL) != (test_key_file == NULL)) goto done;
+  if (test_cert_file != NULL) {
+    if (tls_ctx_set_certificate_and_key(ctx, test_cert_file, test_key_file, "") != 1)
+      goto done;
+  } else if (tls_test_write_server_files(cert_path, sizeof(cert_path), key_path,
+                                         sizeof(key_path)) != 0 ||
+             tls_ctx_set_certificate_and_key(ctx, cert_path, key_path, "") != 1) {
+    goto done;
+  }
   if (require_peer_certificate &&
       (tls_test_write_ca_file(ca_path, sizeof(ca_path)) != 0 ||
        tls_ctx_set_ca_certificates(ctx, ca_path, 5) != 1 ||
@@ -126,7 +136,9 @@ static void flow_mtls_test_server_main(void *arg) {
   size_t peer_size = 0u, sent = 0u;
   int verify_result = -1, initialized = 0, handshaken = 0;
   server->status = -1;
-  if (!ctx || !tls || flow_mtls_test_server_context(ctx, server->require_peer_certificate) != 0 ||
+  if (!ctx || !tls ||
+      flow_mtls_test_server_context(ctx, server->require_peer_certificate,
+                                    server->test_cert_file, server->test_key_file) != 0 ||
       !flow_mtls_test_wait_readable(server->listener)) goto done;
   client = accept(server->listener, NULL, NULL);
   if (client == FLOW_MTLS_TEST_INVALID_SOCKET) goto done;
@@ -199,9 +211,13 @@ done:
   free(tls);
   free(ctx);
 }
-static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
-                                          size_t response_size, uint32_t response_delay_ms,
-                                          int require_peer_certificate, int abrupt_close) {
+static int flow_mtls_test_server_start_ex_identity(flow_mtls_test_server_t *server,
+                                                   const uint8_t *response, size_t response_size,
+                                                   uint32_t response_delay_ms,
+                                                   int require_peer_certificate,
+                                                   int abrupt_close,
+                                                   const char *test_cert_file,
+                                                   const char *test_key_file) {
   struct sockaddr_storage address;
   int family = AF_INET6;
 #ifdef _WIN32
@@ -217,6 +233,9 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   atomic_init(&server->release_socket, 0);
   server->require_peer_certificate = require_peer_certificate ? 1 : 0;
   server->abrupt_close = abrupt_close ? 1 : 0;
+  if ((test_cert_file == NULL) != (test_key_file == NULL)) return -1;
+  server->test_cert_file = test_cert_file;
+  server->test_key_file = test_key_file;
   server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET) {
     int ipv6_only = 0;
@@ -265,6 +284,18 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   }
   server->started = 1;
   return 0;
+}
+
+
+/* Preserve existing test-call signatures: only opt-in HTTPS issuer-chain
+ * scenarios borrow an externally generated ephemeral server identity. */
+static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server,
+                                          const uint8_t *response, size_t response_size,
+                                          uint32_t response_delay_ms,
+                                          int require_peer_certificate, int abrupt_close) {
+  return flow_mtls_test_server_start_ex_identity(
+      server, response, response_size, response_delay_ms,
+      require_peer_certificate, abrupt_close, NULL, NULL);
 }
 
 static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,

@@ -18,10 +18,7 @@ concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
 
-# Published 2.3/4.3/2.1 release candidates form one native SDK ABI epoch.
-# A manual source SHA is a qualification override only; push CI consumes packages.
-env:
-  SALTS_SOURCE_REF: ${{ inputs.salts_ref || '' }}
+# Candidate source refs are scoped per matrix OS below so Windows never mixes #12 with #11 DSOs.
 
 jobs:
   test:
@@ -47,6 +44,11 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 750M
+      # Candidate source relink is Linux-only until Windows can rebuild every dependent DSO.
+      SALTS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || (matrix.os == 'ubuntu-24.04' && github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
+      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '1410c9fd479f9faab31503523d8e31cc506b5b25' || '' }}
+      CHTTP_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '251d9ca60b1526ceab9d02f7f68e18fe060ce6f5' || '' }}
+      TURBODB_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'a8f849e7cd7193b89a8ade596bf9ef072a0533fc' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +60,15 @@ jobs:
           key: flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
+      # The released Windows producer DSOs still use the GmSSL #11 public
+      # struct layout. Do not load them with candidate GmSSL #12 until the
+      # complete dependent source graph is rebuilt on Windows as it is on Linux.
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
+        with:
+          mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        if: runner.os != 'Windows' || github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
@@ -69,6 +79,48 @@ jobs:
           ref: ${{ env.SALTS_SOURCE_REF }}
           path: build/dependencies/salts
           persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != ''
+        with:
+          repository: qigao/salts-utils
+          ref: ${{ env.SALTS_UTILS_SOURCE_REF }}
+          path: build/dependencies/salts-utils
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.CHTTP_SOURCE_REF != ''
+        with:
+          repository: qigao/chttp
+          ref: ${{ env.CHTTP_SOURCE_REF }}
+          path: build/dependencies/chttp
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux' && env.TURBODB_SOURCE_REF != ''
+        with:
+          repository: qigao/turbodb
+          ref: ${{ env.TURBODB_SOURCE_REF }}
+          path: build/dependencies/turbodb
+          persist-credentials: false
+      - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
+        if: runner.os == 'Linux' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = '0e3139d209b20e7bb95b29b4ee8ff9323a531cbe'
+          $path = 'vcpkg-configuration.json'
+          $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          $registries = @($config.registries | Where-Object { $_.packages -contains 'gmssl' })
+          if ($registries.Count -ne 1) {
+            throw "Expected exactly one GmSSL Registry; got $($registries.Count)"
+          }
+          $registries[0].reference = $candidate
+          $registries[0].baseline = $candidate
+          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
+          $check = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          if (($check.registries | Where-Object { $_.packages -contains 'gmssl' }).reference -ne $candidate) {
+            throw 'Candidate provider Registry SHA pin failed'
+          }
+          "Test-only GmSSL Provider Git SHA: $candidate" >> $env:GITHUB_STEP_SUMMARY
+
       - name: Restore one coherent published native SDK family
         shell: pwsh
         env:
@@ -147,12 +199,23 @@ jobs:
           cmake --build --preset install-linux-release-ci --parallel 2
           mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
           cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
+      - name: Rebuild exact source SaltsUtils, CHttp and TurboDB against Salts candidate
+        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != '' && env.CHTTP_SOURCE_REF != '' && env.TURBODB_SOURCE_REF != ''
+        shell: bash
+        run: bash .github/scripts/flowie-p384-relink-providers.sh
       - name: Configure, build and test Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          candidate_flags=()
+          if [[ "${GITHUB_REF}" == refs/heads/test/flowie-p384-sha384-tls-70 &&
+                -n "${SALTS_SOURCE_REF:-}" ]]; then
+            unset VCPKG_OVERLAY_PORTS
+            candidate_flags+=(-DFLOWIE_P384_SHA384_ACCEPTANCE_TESTS=ON)
+            echo "Flowie #70 product TLS/WSS/HTTPS testing against Salts ${SALTS_SOURCE_REF}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cmake --preset ci-linux-release-user "${candidate_flags[@]}" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
