@@ -45,10 +45,10 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 750M
       # Candidate source relink is Linux-only until Windows can rebuild every dependent DSO.
-      SALTS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '04acc695e8623d9ab2879865ac0425ca216d478a' || (matrix.os == 'ubuntu-24.04' && github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
-      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '1410c9fd479f9faab31503523d8e31cc506b5b25' || '' }}
-      CHTTP_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '251d9ca60b1526ceab9d02f7f68e18fe060ce6f5' || '' }}
-      TURBODB_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'a8f849e7cd7193b89a8ade596bf9ef072a0533fc' || '' }}
+      SALTS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '259a353eeda78d81c3d72cb18bae2d83d2a00f94' || (matrix.os == 'ubuntu-24.04' && github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
+      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '0b847c5b399c8c2776f25dd33cedef09dff6e065' || '' }}
+      CHTTP_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '51802da8029304109954674755dd4ea3d573a1b7' || '' }}
+      TURBODB_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'ad60d6060d0f91179a1ae6c7687dfb497e70ab52' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +61,7 @@ jobs:
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
       # The released Windows producer DSOs still use the GmSSL #11 public
-      # struct layout. Do not load them with candidate GmSSL #12 until the
+      # struct layout. Do not load them with candidate GmSSL #13 until the
       # complete dependent source graph is rebuilt on Windows as it is on Linux.
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
         if: runner.os == 'Windows' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
@@ -100,12 +100,12 @@ jobs:
           ref: ${{ env.TURBODB_SOURCE_REF }}
           path: build/dependencies/turbodb
           persist-credentials: false
-      - name: Pin exact GmSSL 3.2.0#12 draft Registry for the Flowie #70 candidate
+      - name: Pin exact unpublished GmSSL 3.2.0#13 Registry for the Flowie #70 candidate
         if: runner.os == 'Linux' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $candidate = '0e3139d209b20e7bb95b29b4ee8ff9323a531cbe'
+          $candidate = '2e214ae44a3e3244eded5db6361194576356fc9e'
           $path = 'vcpkg-configuration.json'
           $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
           $registries = @($config.registries | Where-Object { $_.packages -contains 'gmssl' })
