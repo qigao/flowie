@@ -17,7 +17,7 @@ salts="$sdk/salts/release"
 su_sdk="$sdk/salts-utils/release"
 chttp_sdk="$sdk/http-services/release"
 turbodb_sdk="$sdk/turbodb/release"
-provider="0e3139d209b20e7bb95b29b4ee8ff9323a531cbe"
+provider="2e214ae44a3e3244eded5db6361194576356fc9e"
 
 # Resolve the toolchain from the action's immutable materialized cache contract.
 # Older runner images may retain QIGAO_VCPKG_TOOLCHAIN_FILE pointing at the
@@ -94,7 +94,7 @@ export PROJECT_ROOT="$GITHUB_WORKSPACE"
 # The builtin vcpkg baseline is 0.10.1; dropping all overlay ports broke
 # the unrelated binding API before the CNet integration could link. Import
 # ONLY the exact QuickJS overlay, never the mutable GmSSL overlay port:
-# GmSSL remains resolved from the 0e3139d immutable custom Registry above.
+# GmSSL remains resolved from the 2e214ae immutable GmSSL #13 Registry above.
 test -d "$VCPKG_CACHE_REPOSITORY_ROOT/ports/quickjs-ng"
 quickjs_overlay="$RUNNER_TEMP/flowie-quickjs-ng-only"
 mkdir -p "$quickjs_overlay"
