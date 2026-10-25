@@ -46,7 +46,7 @@ jobs:
       CCACHE_MAXSIZE: 750M
       # Candidate source relink is Linux-only until Windows can rebuild every dependent DSO.
       SALTS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '259a353eeda78d81c3d72cb18bae2d83d2a00f94' || (matrix.os == 'ubuntu-24.04' && github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
-      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '0b847c5b399c8c2776f25dd33cedef09dff6e065' || '' }}
+      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'fbb5f3ee19589836ced0f3b98414e71e6dcc1388' || '' }}
       CHTTP_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '51802da8029304109954674755dd4ea3d573a1b7' || '' }}
       TURBODB_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'ad60d6060d0f91179a1ae6c7687dfb497e70ab52' || '' }}
     steps:
