@@ -24,7 +24,7 @@ The release pipeline resolves published producer packages (including the Salts 2
 
 Flowie 1.0.4 uses GmSSL. Rebuild native consumers with a coherent SDK family; do not combine these binaries with the retired OpenSSL dependency family. TurboDB 2.3.4 excludes TidesDB/TidesSQL from all published SDKs; 2.3.5 additionally closes the released shared-library CSTL dependency graph. CMake discovery imposes no version constraints, including for RC SDKs; consumers must select ABI-compatible SDKs exposing the required APIs. Package restoration resolves compatible published releases. Restore into a fresh SDK directory to avoid retaining files from older packages. Remaining Flowie release blockers are recorded in `flowie/RELEASE_1.0.4.md`.
 
-The package is built from released producer SDKs and shared vcpkg binary cache artifacts; producer source builds are not used in the release pipeline.
+The package is built from released producer SDKs and the version-locked vcpkg manifest. The shared binary cache is a read-only accelerator; a cache miss rebuilds that exact manifest dependency from its pinned source. Producer SDK source builds are not used in the release pipeline.
 
 The shared C11/C++17 installed-package tests live in `tests/installed-sdk`. Linux and Windows
 run them through CTest; Android compiles and links them. They call all three exported

@@ -383,14 +383,14 @@ jobs:
           "HTTP_SERVICES_ROOT=$chttp" >> $env:GITHUB_ENV
           "TURBODB_ROOT=$turbodb" >> $env:GITHUB_ENV
 
-      - name: Restore Windows third-party graph from shared cache only
+      - name: Restore Windows third-party graph with shared-cache acceleration
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $installRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed"
           if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" "--host-triplet=$env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET" --only-binarycaching
-          if ($LASTEXITCODE -ne 0) { throw "Flowie $env:QIGAO_VCPKG_WINDOWS_TRIPLET cache-only restore failed" }
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" "--host-triplet=$env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET"
+          if ($LASTEXITCODE -ne 0) { throw "Flowie $env:QIGAO_VCPKG_WINDOWS_TRIPLET dependency restore failed" }
           "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
 
       - name: Configure, build and install Windows SDK
@@ -884,14 +884,14 @@ jobs:
           "HTTP_SERVICES_ROOT=$((Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
           "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
 
-      - name: Restore Windows consumer graph from shared cache only
+      - name: Restore Windows consumer graph with shared-cache acceleration
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $installRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed"
           if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" "--host-triplet=$env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET" --only-binarycaching
-          if ($LASTEXITCODE -ne 0) { throw "Windows consumer $env:QIGAO_VCPKG_WINDOWS_TRIPLET cache-only restore failed" }
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" "--host-triplet=$env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET"
+          if ($LASTEXITCODE -ne 0) { throw "Windows consumer $env:QIGAO_VCPKG_WINDOWS_TRIPLET dependency restore failed" }
           "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
 
       - name: Configure, build and run Windows external consumer
