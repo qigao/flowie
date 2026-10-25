@@ -302,6 +302,10 @@ jobs:
           set "TURBODB_ROOT=%PKG_ROOT%/turbodb/release"
           if not exist "%FLOWIE_ROOT%\lib\cmake\Flowie\FlowieConfig.cmake" exit /b 1
           set "PATH=%FLOWIE_ROOT%\bin;%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
+          rem This workflow deliberately validates the released VS 2022/x64-windows graph.
+          rem The SDK-release workflow separately qualifies the shared v145 triplet on Windows 2025.
+          set "QIGAO_VCPKG_WINDOWS_TRIPLET=x64-windows"
+          set "QIGAO_VCPKG_WINDOWS_HOST_TRIPLET=x64-windows"
           cd tests\installed-sdk
           cmake --preset ci-win-release-user
           if errorlevel 1 exit /b 1
