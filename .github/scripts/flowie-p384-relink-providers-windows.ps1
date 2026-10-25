@@ -56,7 +56,13 @@ if (-not (Test-Path -LiteralPath (Join-Path $saltsSdk 'lib/cmake/Salts/SaltsConf
 
 foreach ($source in @($saltsUtilsSource, $chttpSource, $turbodbSource)) {
   $path = Join-Path $source 'vcpkg-configuration.json'
-  $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+  if (Test-Path -LiteralPath $path) {
+    $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+  } else {
+    # CHttp intentionally has no repository configuration. Match the Linux
+    # exact-source lane by creating one only in this disposable checkout.
+    $config = [PSCustomObject]@{}
+  }
   $registries = @($config.registries)
   $matches = @($registries | Where-Object { $_.packages -contains 'gmssl' })
   if ($matches.Count -gt 1) {
@@ -77,7 +83,11 @@ foreach ($source in @($saltsUtilsSource, $chttpSource, $turbodbSource)) {
       baseline = $provider
       packages = @('gmssl')
     }
+  }
+  if ($config.PSObject.Properties.Name -contains 'registries') {
     $config.registries = $registries
+  } else {
+    $config | Add-Member -NotePropertyName registries -NotePropertyValue $registries
   }
   $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
   $check = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
