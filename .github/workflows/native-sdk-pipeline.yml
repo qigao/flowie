@@ -189,6 +189,21 @@ jobs:
             echo "TURBODB_CMAKE_VERSION=$turbodb_cmake_version"
           } >> "$GITHUB_ENV"
 
+      - name: Audit released producer DSO closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' library; do
+            if readelf --dyn-syms --wide "$library" | grep -Eq '[[:space:]]UND[[:space:]].*\bvec_at($|@)'; then
+              echo "released producer DSO has unresolved private CSTL symbol: $library" >&2
+              readelf --dyn-syms --wide "$library" | grep -E '[[:space:]]UND[[:space:]].*\bvec_at($|@)' >&2
+              found=1
+            fi
+          done < <(find "$SALTS_UTILS_ROOT/lib" "$HTTP_SERVICES_ROOT/lib" "$TURBODB_ROOT/lib" \
+            -type f -name '*.so*' -print0)
+          test "$found" -eq 0
+
       - name: Restore Flowie third-party graph from shared cache only
         shell: bash
         run: |
