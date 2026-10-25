@@ -1771,6 +1771,15 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
           secure_websocket ? FLOWIE_P384_SHA384_DNS_ONLY_LEAF : FLOWIE_P384_SHA384_LEAF,
           FLOWIE_P384_SHA384_KEY, NULL, secure_websocket ? NULL : "wrong.example", 1);
     }
+    it("rejects a tampered P-384 SHA-384 TLS/WSS leaf before MQTT CONNECT, websocket=%d",
+       secure_websocket) {
+      flowie_client_transport_case_ex_fixture(
+          secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+          secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+          FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+          SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_TAMPERED_LEAF,
+          FLOWIE_P384_SHA384_KEY, NULL, NULL, 1);
+    }
   }
 #endif
 
