@@ -569,7 +569,9 @@ if(BUILD_TESTS)
     # a second TLS provider or smuggling an OpenSSL runtime into Flowie.
     if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
       set(_flowie_p384_https_pki "${CMAKE_BINARY_DIR}/client/tests/p384-sha384-fixtures")
-      foreach(_name IN ITEMS ca.pem leaf.pem expired-leaf.pem future-leaf.pem
+      foreach(_name IN ITEMS ca.pem leaf.pem intermediate-leaf.pem intermediate-chain.pem
+                             invalid-basic-ca-chain.pem invalid-key-usage-chain.pem
+                             invalid-eku-leaf.pem expired-leaf.pem future-leaf.pem
                              leaf.key wrong-ca.pem tampered.pem)
         if(NOT EXISTS "${_flowie_p384_https_pki}/${_name}")
           message(FATAL_ERROR "Flowie #70 HTTPS test-PKI missing ${_name}")
@@ -577,6 +579,16 @@ if(BUILD_TESTS)
       endforeach()
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/ca.pem" _p384_https_ca)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/leaf.pem" _p384_https_leaf)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/intermediate-leaf.pem"
+                        _p384_https_intermediate_leaf)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/intermediate-chain.pem"
+                        _p384_https_intermediate_chain)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/invalid-basic-ca-chain.pem"
+                        _p384_https_invalid_basic_ca_chain)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/invalid-key-usage-chain.pem"
+                        _p384_https_invalid_key_usage_chain)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/invalid-eku-leaf.pem"
+                        _p384_https_invalid_eku_leaf)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/leaf.key" _p384_https_key)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/wrong-ca.pem" _p384_https_wrong)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/tampered.pem" _p384_https_tampered)
@@ -586,6 +598,11 @@ if(BUILD_TESTS)
         FLOWIE_P384_SHA384_ACCEPTANCE_TESTS=1
         "FLOWIE_P384_SHA384_CA=\"${_p384_https_ca}\""
         "FLOWIE_P384_SHA384_LEAF=\"${_p384_https_leaf}\""
+        "FLOWIE_P384_SHA384_INTERMEDIATE_LEAF=\"${_p384_https_intermediate_leaf}\""
+        "FLOWIE_P384_SHA384_INTERMEDIATE_CHAIN=\"${_p384_https_intermediate_chain}\""
+        "FLOWIE_P384_SHA384_INVALID_BASIC_CA_CHAIN=\"${_p384_https_invalid_basic_ca_chain}\""
+        "FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN=\"${_p384_https_invalid_key_usage_chain}\""
+        "FLOWIE_P384_SHA384_INVALID_EKU_LEAF=\"${_p384_https_invalid_eku_leaf}\""
         "FLOWIE_P384_SHA384_KEY=\"${_p384_https_key}\""
         "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_https_wrong}\""
         "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_https_tampered}\""

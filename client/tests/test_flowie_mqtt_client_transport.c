@@ -1748,6 +1748,39 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
           SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
           FLOWIE_P384_SHA384_KEY, NULL, NULL, 0);
     }
+    it("authenticates a P-384 root/intermediate and P-256 leaf over MQTT TLS/WSS, websocket=%d",
+       secure_websocket) {
+      flowie_client_transport_case_ex_fixture(
+          secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+          secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+          FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+          SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA,
+          FLOWIE_P384_SHA384_INTERMEDIATE_CHAIN, FLOWIE_P384_SHA384_KEY,
+          NULL, NULL, 0);
+    }
+    const char *const invalid_chains[] = {
+        FLOWIE_P384_SHA384_INTERMEDIATE_LEAF,
+        FLOWIE_P384_SHA384_INVALID_BASIC_CA_CHAIN,
+        FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN,
+        FLOWIE_P384_SHA384_INVALID_EKU_LEAF};
+    const char *const chain_failures[] = {
+        "an omitted intermediate", "invalid intermediate basic constraints",
+        "invalid intermediate key usage", "invalid leaf extended key usage"};
+    for (size_t chain_case = 0u;
+         chain_case < sizeof(invalid_chains) / sizeof(invalid_chains[0]); ++chain_case) {
+      const char *chain = invalid_chains[chain_case];
+      const char *failure = chain_failures[chain_case];
+      it("rejects %s before MQTT CONNECT over TLS/WSS, websocket=%d",
+         failure, secure_websocket) {
+        flowie_client_transport_case_ex_fixture(
+            secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS
+                             : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+            secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+            FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+            SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, chain, FLOWIE_P384_SHA384_KEY,
+            NULL, NULL, 1);
+      }
+    }
     it("rejects wrong P-384 SHA-384 issuing CA before MQTT CONNECT over TLS/WSS, websocket=%d",
        secure_websocket) {
       flowie_client_transport_case_ex_fixture(

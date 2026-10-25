@@ -31,6 +31,11 @@ jobs:
             --out "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/ca.pem"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/leaf.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/intermediate-leaf.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/intermediate-chain.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/invalid-basic-ca-chain.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/invalid-key-usage-chain.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/invalid-eku-leaf.pem"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/tampered.pem"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/leaf.key"
           echo 'X509 reference oracle passed; no product TLS/WSS/HTTPS success is claimed'

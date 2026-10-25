@@ -578,6 +578,57 @@ spec("Flowie control external HTTPS authenticator") {
     check_contains((const char *)result.request, "Authorization: Bearer service-token");
   }
 
+  it("accepts a complete P384 root/intermediate P256 leaf HTTPS chain") {
+    char response[4096];
+    external_https_network_result_t result;
+    external_https_network_options_t options;
+    int response_size = external_https_http_response(
+        response, sizeof(response), 200, "OK", "application/json",
+        EXTERNAL_HTTPS_RESPONSE_BODY);
+    check_greater(response_size, 0);
+    options = external_https_network_options(response, (size_t)response_size);
+    options.test_server_cert_file = FLOWIE_P384_SHA384_INTERMEDIATE_CHAIN;
+    options.test_server_key_file = FLOWIE_P384_SHA384_KEY;
+    options.test_ca_file = FLOWIE_P384_SHA384_CA;
+    options.configure_client_identity = 0;
+    check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+    check_equal(result.status, SALTS_OK);
+    check_greater(result.request_size, (size_t)0u);
+    check_contains((const char *)result.request, "Authorization: Bearer service-token");
+  }
+
+  const char *const invalid_chains[] = {
+      FLOWIE_P384_SHA384_INTERMEDIATE_LEAF,
+      FLOWIE_P384_SHA384_INVALID_BASIC_CA_CHAIN,
+      FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN,
+      FLOWIE_P384_SHA384_INVALID_EKU_LEAF};
+  const char *const chain_failures[] = {
+      "an omitted intermediate", "invalid intermediate basic constraints",
+      "invalid intermediate key usage", "invalid leaf extended key usage"};
+  for (size_t chain_case = 0u;
+       chain_case < sizeof(invalid_chains) / sizeof(invalid_chains[0]); ++chain_case) {
+    const char *chain = invalid_chains[chain_case];
+    const char *failure = chain_failures[chain_case];
+    it("rejects %s before external HTTPS auth", failure) {
+      char response[4096];
+      external_https_network_result_t result;
+      external_https_network_options_t options;
+      int response_size = external_https_http_response(
+          response, sizeof(response), 200, "OK", "application/json",
+          EXTERNAL_HTTPS_RESPONSE_BODY);
+      check_greater(response_size, 0);
+      options = external_https_network_options(response, (size_t)response_size);
+      options.test_server_cert_file = chain;
+      options.test_server_key_file = FLOWIE_P384_SHA384_KEY;
+      options.test_ca_file = FLOWIE_P384_SHA384_CA;
+      options.configure_client_identity = 0;
+      check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+      check_equal(result.status, SALTS_EIO);
+      check_equal(result.request_size, (size_t)0u);
+      check_equal(result.stats.transport_failures, 1u);
+    }
+  }
+
   it("rejects an untrusted P384 issuer SHA384 HTTPS peer before HTTP auth") {
     char response[4096];
     external_https_network_result_t result;

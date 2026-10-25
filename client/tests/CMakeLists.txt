@@ -33,7 +33,9 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
       "Flowie P384/SHA384 independent test PKI generation failed:"
       "\n${_flowie_p384_pki_output}\n${_flowie_p384_pki_error}")
   endif()
-  foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem expired-leaf.pem
+  foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem intermediate-leaf.pem
+                            intermediate-chain.pem invalid-basic-ca-chain.pem
+                            invalid-key-usage-chain.pem invalid-eku-leaf.pem expired-leaf.pem
                             future-leaf.pem leaf.key wrong-ca.pem tampered.pem)
     if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
       message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
@@ -42,6 +44,13 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/ca.pem" _p384_ca)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.pem" _p384_leaf)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/dns-only-leaf.pem" _p384_dns_only_leaf)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/intermediate-leaf.pem" _p384_intermediate_leaf)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/intermediate-chain.pem" _p384_intermediate_chain)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/invalid-basic-ca-chain.pem"
+                     _p384_invalid_basic_ca_chain)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/invalid-key-usage-chain.pem"
+                     _p384_invalid_key_usage_chain)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/invalid-eku-leaf.pem" _p384_invalid_eku_leaf)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.key" _p384_key)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/wrong-ca.pem" _p384_wrong_ca)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/tampered.pem" _p384_tampered)
@@ -52,6 +61,11 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
     "FLOWIE_P384_SHA384_CA=\"${_p384_ca}\""
     "FLOWIE_P384_SHA384_LEAF=\"${_p384_leaf}\""
     "FLOWIE_P384_SHA384_DNS_ONLY_LEAF=\"${_p384_dns_only_leaf}\""
+    "FLOWIE_P384_SHA384_INTERMEDIATE_LEAF=\"${_p384_intermediate_leaf}\""
+    "FLOWIE_P384_SHA384_INTERMEDIATE_CHAIN=\"${_p384_intermediate_chain}\""
+    "FLOWIE_P384_SHA384_INVALID_BASIC_CA_CHAIN=\"${_p384_invalid_basic_ca_chain}\""
+    "FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN=\"${_p384_invalid_key_usage_chain}\""
+    "FLOWIE_P384_SHA384_INVALID_EKU_LEAF=\"${_p384_invalid_eku_leaf}\""
     "FLOWIE_P384_SHA384_KEY=\"${_p384_key}\""
     "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_wrong_ca}\""
     "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_tampered}\""
