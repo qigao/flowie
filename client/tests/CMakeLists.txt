@@ -33,19 +33,21 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
       "Flowie P384/SHA384 independent test PKI generation failed:"
       "\n${_flowie_p384_pki_output}\n${_flowie_p384_pki_error}")
   endif()
-  foreach(_fixture IN ITEMS ca.pem leaf.pem leaf.key wrong-ca.pem)
+  foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem leaf.key wrong-ca.pem)
     if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
       message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
     endif()
   endforeach()
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/ca.pem" _p384_ca)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.pem" _p384_leaf)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/dns-only-leaf.pem" _p384_dns_only_leaf)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.key" _p384_key)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/wrong-ca.pem" _p384_wrong_ca)
   target_compile_definitions(test_flowie_mqtt_client PRIVATE
     FLOWIE_P384_SHA384_ACCEPTANCE_TESTS=1
     "FLOWIE_P384_SHA384_CA=\"${_p384_ca}\""
     "FLOWIE_P384_SHA384_LEAF=\"${_p384_leaf}\""
+    "FLOWIE_P384_SHA384_DNS_ONLY_LEAF=\"${_p384_dns_only_leaf}\""
     "FLOWIE_P384_SHA384_KEY=\"${_p384_key}\""
     "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_wrong_ca}\"")
   message(STATUS "Flowie #70 P384/SHA384 MQTT TLS+WSS acceptance enabled; GmSSL remains private CNet runtime")

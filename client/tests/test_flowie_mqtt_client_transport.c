@@ -1759,14 +1759,17 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
     }
     it("rejects a mismatched P-384 SHA-384 TLS/WSS identity before MQTT CONNECT, websocket=%d",
        secure_websocket) {
-      /* The authoritative DNS name is deliberately different from SAN.
-       * CNet destination policy still connects to the real loopback server. */
+      /* TCP/TLS separates the logical authority from the loopback destination
+       * through CNet policy. WSS has no destination-policy API, so its server
+       * certificate deliberately omits the 127.0.0.1 IP SAN. Both paths reach
+       * a real TLS handshake and reject identity before MQTT CONNECT. */
       flowie_client_transport_case_ex_fixture(
           secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
           secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
           FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
-          SALTS_OK, 1, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_LEAF,
-          FLOWIE_P384_SHA384_KEY, NULL, "wrong.example", 1);
+          SALTS_OK, secure_websocket ? 0 : 1, 1, FLOWIE_P384_SHA384_CA,
+          secure_websocket ? FLOWIE_P384_SHA384_DNS_ONLY_LEAF : FLOWIE_P384_SHA384_LEAF,
+          FLOWIE_P384_SHA384_KEY, NULL, secure_websocket ? NULL : "wrong.example", 1);
     }
   }
 #endif

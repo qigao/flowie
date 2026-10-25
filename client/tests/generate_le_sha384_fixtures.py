@@ -30,6 +30,7 @@ def create(exe, folder):
     wrong = folder / "wrong-ca.pem"
     wrong_key = folder / "wrong-ca.key"
     leaf = folder / "leaf.pem"
+    dns_only_leaf = folder / "dns-only-leaf.pem"
     leaf_key = folder / "leaf.key"
     request = folder / "leaf.csr"
     extensions = folder / "leaf.ext"
@@ -56,6 +57,16 @@ def create(exe, folder):
     openssl(exe, "x509", "-req", "-in", request, "-CA", root, "-CAkey", root_key,
             "-set_serial", "0x1001", "-days", "30", "-sha384",
             "-extfile", extensions, "-out", leaf)
+
+    extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=DNS:localhost\n",
+        encoding="ascii")
+    openssl(exe, "x509", "-req", "-in", request, "-CA", root, "-CAkey", root_key,
+            "-set_serial", "0x1002", "-days", "30", "-sha384",
+            "-extfile", extensions, "-out", dns_only_leaf)
 
     openssl(exe, "genpkey", "-algorithm", "EC",
             "-pkeyopt", "ec_paramgen_curve:secp384r1", "-out", wrong_key)
@@ -89,6 +100,8 @@ def create(exe, folder):
             "-verify_hostname", "localhost", leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "wrong.example", leaf, expect=1)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
+            "-verify_ip", "127.0.0.1", dns_only_leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", tampered, expect=1)
     print("P384 issuer/P256 leaf SHA384 test-only PKI and fail-closed oracle: PASS")
