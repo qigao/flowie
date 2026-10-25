@@ -18,6 +18,23 @@ su_sdk="$sdk/salts-utils/release"
 chttp_sdk="$sdk/http-services/release"
 turbodb_sdk="$sdk/turbodb/release"
 provider="2e214ae44a3e3244eded5db6361194576356fc9e"
+sanitizer_mode="${FLOWIE_EXACT_SOURCE_SANITIZERS:-OFF}"
+case "$sanitizer_mode" in
+  ON)
+    sanitizer_args=(
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      -DENABLE_SANITIZER_ADDRESS=ON
+      -DENABLE_SANITIZER_UNDEFINED=ON
+    )
+    ;;
+  OFF)
+    sanitizer_args=()
+    ;;
+  *)
+    echo "FLOWIE_EXACT_SOURCE_SANITIZERS must be ON or OFF, got: $sanitizer_mode" >&2
+    exit 1
+    ;;
+esac
 
 # Resolve the toolchain from the action's immutable materialized cache contract.
 # Older runner images may retain QIGAO_VCPKG_TOOLCHAIN_FILE pointing at the
@@ -114,6 +131,7 @@ echo "::group::Source-build SaltsUtils against candidate Salts"
   cmake --preset ci-linux-release-user \
     -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
     -DCMAKE_INSTALL_PREFIX="$su_sdk" \
+    "${sanitizer_args[@]}" \
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   cmake --build --preset ci-linux-release-user --parallel 2
   ctest --preset ci-linux-release-user --no-tests=error --output-on-failure \
@@ -132,6 +150,7 @@ export PKG_ROOT="$sdk"
   cd "$chttp_src"
   cmake --preset linux-sdk-package -DBUILD_TESTS=OFF \
     -DCMAKE_INSTALL_PREFIX="$chttp_sdk" \
+    "${sanitizer_args[@]}" \
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   cmake --build --preset linux-sdk-package --parallel 2
   cmake --install build/linux-gcc-sdk-package --prefix "$chttp_sdk"
@@ -145,7 +164,11 @@ echo "::group::Source-build TurboDB ${TURBODB_SOURCE_REF} against matched SDKs"
 export TURBODB_CI_PKG_ROOT="$sdk"
 (
   cd "$turbodb_src"
-  cmake --preset ci-linux-release -DBUILD_TESTS=OFF -DBUILD_E2E_TESTS=OFF     -DBUILD_EXAMPLES=OFF -DTURBODB_BUILD_DBTOOLS=OFF     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  cmake --preset ci-linux-release \
+    -DBUILD_TESTS=OFF -DBUILD_E2E_TESTS=OFF -DBUILD_EXAMPLES=OFF \
+    -DTURBODB_BUILD_DBTOOLS=OFF \
+    "${sanitizer_args[@]}" \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   cmake --build --preset ci-linux-release --parallel 2
   cmake --install build/ci-linux-release --prefix "$turbodb_sdk"
 )
@@ -170,5 +193,6 @@ echo "::endgroup::"
   echo "- CHttp: $CHTTP_SOURCE_REF"
   echo "- TurboDB: $TURBODB_SOURCE_REF"
   echo "- GmSSL registry SHA: $provider"
+  echo "- ASan/UBSan first-party graph: $sanitizer_mode"
   echo "- Released SDK DSOs were replaced; no fallback or topology change"
 } >> "$GITHUB_STEP_SUMMARY"

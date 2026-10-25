@@ -1,0 +1,161 @@
+name: Flowie P384/SHA384 exact-candidate sanitizers
+
+on:
+  push:
+    branches:
+      - test/flowie-p384-sha384-tls-70
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-p384-sha384-sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asan-ubsan:
+    name: Linux exact-source ASan and UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 750M
+      SALTS_SOURCE_REF: 259a353eeda78d81c3d72cb18bae2d83d2a00f94
+      SALTS_UTILS_SOURCE_REF: fbb5f3ee19589836ced0f3b98414e71e6dcc1388
+      CHTTP_SOURCE_REF: 51802da8029304109954674755dd4ea3d573a1b7
+      TURBODB_SOURCE_REF: ad60d6060d0f91179a1ae6c7687dfb497e70ab52
+      FLOWIE_EXACT_SOURCE_SANITIZERS: ON
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: flowie-p384-sanitizers-v1-linux-x64-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
+          restore-keys: |
+            flowie-p384-sanitizers-v1-linux-x64-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: ${{ env.SALTS_SOURCE_REF }}
+          path: build/dependencies/salts
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: ${{ env.SALTS_UTILS_SOURCE_REF }}
+          path: build/dependencies/salts-utils
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/chttp
+          ref: ${{ env.CHTTP_SOURCE_REF }}
+          path: build/dependencies/chttp
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/turbodb
+          ref: ${{ env.TURBODB_SOURCE_REF }}
+          path: build/dependencies/turbodb
+          persist-credentials: false
+      - name: Pin exact unpublished GmSSL 3.2.0#13 Registry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = '2e214ae44a3e3244eded5db6361194576356fc9e'
+          $path = 'vcpkg-configuration.json'
+          $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          $registries = @($config.registries | Where-Object { $_.packages -contains 'gmssl' })
+          if ($registries.Count -ne 1) {
+            throw "Expected exactly one GmSSL Registry; got $($registries.Count)"
+          }
+          $registries[0].reference = $candidate
+          $registries[0].baseline = $candidate
+          $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
+          $check = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          if (($check.registries | Where-Object { $_.packages -contains 'gmssl' }).reference -ne $candidate) {
+            throw 'Candidate provider Registry SHA pin failed'
+          }
+          "GmSSL Provider Git SHA: $candidate" >> $env:GITHUB_STEP_SUMMARY
+      - name: Prepare Linux host
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          ccache --version
+      - name: Build, test and install instrumented Salts candidate
+        shell: bash
+        working-directory: build/dependencies/salts
+        run: |
+          set -euo pipefail
+          unset VCPKG_OVERLAY_PORTS
+          export PROJECT_ROOT="$GITHUB_WORKSPACE"
+          cmake --preset linux-release-ci \
+            -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build --preset linux-release-ci --parallel 2
+          ctest --preset linux-release-ci -R '^cnet_.*test$' \
+            --no-tests=error --timeout 240 --output-on-failure
+          cmake --build --preset install-linux-release-ci --parallel 2
+          mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
+          cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
+      - name: Build instrumented exact-source dependent graph
+        shell: bash
+        run: bash .github/scripts/flowie-p384-relink-providers.sh
+      - name: Build and test instrumented Flowie product graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset VCPKG_OVERLAY_PORTS
+          cmake --preset ci-linux-release-user \
+            -DFLOWIE_P384_SHA384_ACCEPTANCE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build --preset ci-linux-release-user --parallel 2
+          ctest --preset ci-linux-release-user --timeout 240 \
+            --output-on-failure --output-junit build/native-ci/results.xml
+          {
+            echo '### Exact-source ASan/UBSan product qualification'
+            echo "- Flowie: $GITHUB_SHA"
+            echo "- Salts: $SALTS_SOURCE_REF"
+            echo "- SaltsUtils: $SALTS_UTILS_SOURCE_REF"
+            echo "- CHttp: $CHTTP_SOURCE_REF"
+            echo "- TurboDB: $TURBODB_SOURCE_REF"
+            echo '- GmSSL Registry: 2e214ae44a3e3244eded5db6361194576356fc9e'
+            echo '- Sanitizers: address, undefined; leak detection enabled'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report compiler cache statistics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/native-ci
+          ccache --show-stats | tee build/native-ci/ccache-stats-sanitizers.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p384-sha384-exact-source-asan-ubsan
+          path: |
+            build/native-ci/results.xml
+            build/native-ci/Testing/Temporary/LastTest.log
+            build/native-ci/CMakeFiles/CMakeConfigureLog.yaml
+            build/native-ci/ccache-stats-sanitizers.txt
+            build/dependencies/salts/build/**/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
