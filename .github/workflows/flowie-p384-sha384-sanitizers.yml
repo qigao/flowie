@@ -111,7 +111,11 @@ jobs:
             -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset linux-release-ci --parallel 2
+          # The installed-SDK meta-test deliberately links an uninstrumented
+          # external consumer. The normal Release lane covers that boundary;
+          # keep this lane focused on instrumented CNet source tests.
           ctest --preset linux-release-ci -R '^cnet_.*test$' \
+            -E '^cnet_installed_sdk_test$' \
             --no-tests=error --timeout 240 --output-on-failure
           cmake --build --preset install-linux-release-ci --parallel 2
           mkdir -p "$RUNNER_TEMP/flowie-sdk/salts"
@@ -141,6 +145,7 @@ jobs:
             echo "- TurboDB: $TURBODB_SOURCE_REF"
             echo '- GmSSL Registry: 2e214ae44a3e3244eded5db6361194576356fc9e'
             echo '- Sanitizers: address, undefined; leak detection enabled'
+            echo '- Salts CNet: instrumented source tests (installed-SDK consumer covered by the normal Release lane)'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Report compiler cache statistics
         if: always()
