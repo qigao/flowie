@@ -61,11 +61,11 @@ jobs:
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
-        if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        if: github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
+        if: runner.os != 'Windows' || github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
