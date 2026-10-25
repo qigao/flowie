@@ -20,7 +20,7 @@ are implemented; mixed Server/Client SG hosting and general recovery remain open
 | MQTT fanout and retained/session index | Flowie endpoint | owner-local delivery, bounded cross-Owner descriptors |
 | WS/WSS transport | CHttp 2.1 | owns fixed Owners, CNet placement, Manager and Handoff |
 | Cluster peer and consensus | FlowMQ/TurboRaft | independent transport peer and committed facts |
-| Static service composition | Salts::Component + CMeta | Component Configurator, typed Strategy/Factory/Adapter |
+| Static service composition | Salts::Configurator + CMeta | Component Configurator, typed Strategy/Factory/Adapter |
 | Dynamic provider lifetime | Salts::Plugin | outer ComponentPlugin generation Scope |
 
 Do not create a Flowie Reactor, CNet-Actor bridge, global connection pool,
@@ -127,7 +127,7 @@ Flowie host YAML contains deployment facts, not an embedded `.flow` DAG.
 A single validated typed representation feeds three explicit configured
 Components: Security, Repository and Endpoint. The Endpoint requires typed
 Security and Repository Interfaces. The private `flowie_server_runtime` calls
-`salts_component_context_init/resolve/start/stop`, binds those Interfaces
+`salts_configurator_context_init/resolve/start/stop`, binds those Interfaces
 once, and stops/releases the Endpoint before its dependencies. CNet builtin enum policies are
 typed fields of network service configuration, **not** separately instantiated
 Components. Static-only composition needs no Plugin DSO; dynamic providers

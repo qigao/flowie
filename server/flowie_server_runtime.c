@@ -2,7 +2,25 @@
 #include "flowie_server_http_security_internal.h"
 
 #include <cmeta/data_reflect.h>
+#if FLOWIE_SALTS_CONFIGURATOR_CANONICAL
+#include <salts/configurator.h>
+#else
 #include <salts/component.h>
+
+/* Private source compatibility for Salts.Native <= 2.3.0-rc.17. */
+typedef salts_component_context salts_configurator_context;
+typedef salts_component_deployment salts_configurator_deployment;
+typedef salts_component_instance salts_configurator_instance;
+typedef salts_component_failure salts_configurator_failure;
+typedef salts_component_service salts_configurator_service;
+#define SALTS_CONFIGURATOR_CONTEXT_INIT SALTS_COMPONENT_CONTEXT_INIT
+#define salts_configurator_context_init salts_component_context_init
+#define salts_configurator_context_resolve salts_component_context_resolve
+#define salts_configurator_context_start salts_component_context_start
+#define salts_configurator_context_stop salts_component_context_stop
+#define salts_configurator_context_find_service salts_component_context_find_service
+#define salts_configurator_context_failure salts_component_context_failure
+#endif
 #include <salts/error_codes.h>
 
 #include <stdlib.h>
@@ -254,10 +272,10 @@ static void SALTS_COMPONENT_CALL flowie_server_endpoint_deactivate(void *context
 
 struct flowie_server_runtime_s {
   flowie_server_runtime_config config;
-  salts_component_context context;
+  salts_configurator_context context;
   salts_component_provider_binding providers[FLOWIE_SERVER_COMPONENT_COUNT];
-  salts_component_deployment deployments[FLOWIE_SERVER_COMPONENT_COUNT];
-  salts_component_instance instances[FLOWIE_SERVER_COMPONENT_COUNT];
+  salts_configurator_deployment deployments[FLOWIE_SERVER_COMPONENT_COUNT];
+  salts_configurator_instance instances[FLOWIE_SERVER_COMPONENT_COUNT];
   salts_component_dependency dependencies[FLOWIE_SERVER_DEPENDENCY_COUNT];
   size_t order[FLOWIE_SERVER_COMPONENT_COUNT];
   flowie_server_component_state states[FLOWIE_SERVER_COMPONENT_COUNT];
@@ -269,7 +287,7 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
     const flowie_endpoint_core_options_t *options, int check_only,
     flowie_server_runtime_t **out, const char **operation) {
   flowie_server_runtime_t *runtime;
-  salts_component_service service;
+  salts_configurator_service service;
   salts_component_status status;
   const cmeta_component_desc *components[] = {
       cmeta_component_meta(FlowieServerSecurity), cmeta_component_meta(FlowieServerRepository),
@@ -281,7 +299,7 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
     return SALTS_EINVAL;
   runtime = calloc(1u, sizeof(*runtime));
   if (!runtime) return SALTS_ENOMEM;
-  runtime->context = (salts_component_context)SALTS_COMPONENT_CONTEXT_INIT;
+  runtime->context = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
   runtime->config = (flowie_server_runtime_config){config, endpoint_config, database, options,
                                                   check_only};
   for (size_t index = 0u; index < FLOWIE_SERVER_COMPONENT_COUNT; ++index) {
@@ -290,19 +308,19 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
         sizeof(salts_component_provider_binding), SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
         components[index], &runtime->states[index], &flowie_server_services,
         flowie_server_component_create, NULL, NULL};
-    runtime->deployments[index] = (salts_component_deployment){&runtime->providers[index],
+    runtime->deployments[index] = (salts_configurator_deployment){&runtime->providers[index],
         cmeta_reflected_data(flowie_server_runtime_config), &runtime->config};
   }
   runtime->providers[FLOWIE_SERVER_ENDPOINT_COMPONENT].activate = flowie_server_endpoint_activate;
   runtime->providers[FLOWIE_SERVER_ENDPOINT_COMPONENT].deactivate = flowie_server_endpoint_deactivate;
-  status = salts_component_context_init(&runtime->context, runtime->deployments,
+  status = salts_configurator_context_init(&runtime->context, runtime->deployments,
       FLOWIE_SERVER_COMPONENT_COUNT, NULL, 0u, runtime->instances, FLOWIE_SERVER_COMPONENT_COUNT,
       runtime->dependencies, FLOWIE_SERVER_DEPENDENCY_COUNT, runtime->order,
       FLOWIE_SERVER_COMPONENT_COUNT);
-  if (status == SALTS_COMPONENT_OK) status = salts_component_context_resolve(&runtime->context);
-  if (status == SALTS_COMPONENT_OK) status = salts_component_context_start(&runtime->context);
+  if (status == SALTS_COMPONENT_OK) status = salts_configurator_context_resolve(&runtime->context);
+  if (status == SALTS_COMPONENT_OK) status = salts_configurator_context_start(&runtime->context);
   if (status != SALTS_COMPONENT_OK) {
-    const salts_component_failure *failure = salts_component_context_failure(&runtime->context);
+    const salts_configurator_failure *failure = salts_configurator_context_failure(&runtime->context);
     if (failure && failure->component_index < FLOWIE_SERVER_COMPONENT_COUNT) {
       const flowie_server_component_state *failed = &runtime->states[failure->component_index];
       if (failed->status != SALTS_OK) rc = failed->status;
@@ -311,11 +329,11 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
     free(runtime); /* start rolls back valid partial ObjectRefs before returning. */
     return rc;
   }
-  status = salts_component_context_find_service(&runtime->context,
+  status = salts_configurator_context_find_service(&runtime->context,
       flowie_server_endpoint_service_interface(), &service);
   if (status != SALTS_COMPONENT_OK || flowie_server_endpoint_service_borrow_from_object(
           service.object, service.interfaces, &runtime->endpoint) != CMETA_OK) {
-    (void)salts_component_context_stop(&runtime->context);
+    (void)salts_configurator_context_stop(&runtime->context);
     free(runtime);
     return SALTS_EIO;
   }
@@ -331,7 +349,7 @@ int flowie_server_runtime_destroy(flowie_server_runtime_t **runtime) {
   int rc;
   if (!runtime) return SALTS_EINVAL;
   if (!*runtime) return SALTS_OK;
-  if (salts_component_context_stop(&(*runtime)->context) != SALTS_COMPONENT_OK)
+  if (salts_configurator_context_stop(&(*runtime)->context) != SALTS_COMPONENT_OK)
     return SALTS_EIO;
   rc = (*runtime)->states[FLOWIE_SERVER_ENDPOINT_COMPONENT].status;
   free(*runtime);

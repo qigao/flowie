@@ -281,7 +281,7 @@ CHTTP WebSocket protocol ownership are preserved.
 
 This branch requires a Salts 2.3 SDK, including the published 2.3.0 RC line,
 with GmSSL TLS, plus SaltsUtils 4.3 for the JWS Crypto adapter. The standalone Server composes Security, Repository and Endpoint
-through `Salts::Component`, and uses CMeta Interceptors for HTTP auth/ACL request
+through `Salts::Configurator`, and uses CMeta Interceptors for HTTP auth/ACL request
 admission and cleanup. `--check` assembles the same graph without opening the
 listener. Startup failure rolls back before publication; shutdown releases the
 Endpoint before its dependencies. WS/WSS placement remains owned by CHttp.

@@ -9,6 +9,7 @@ target_link_libraries(
   flowie_server PRIVATE Flowie::App Orm::C CHttp::Client Salts::CmdParser
                         Salts::CYaml Salts::JsonParser Salts::UriParser
                         ${FLOWIE_SALTS_COMPONENT_TARGET} Salts::CMeta)
+target_compile_definitions(flowie_server PRIVATE ${FLOWIE_SALTS_COMPONENT_DEFINITION})
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
 if(FLOWIE_BUILD_TESTS)
@@ -22,6 +23,8 @@ if(FLOWIE_BUILD_TESTS)
              ${PROJECT_SOURCE_DIR}/flowie/tests
     DEFS FLOWIE_TEST_MULTI_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/tests/flowie_server_network_workers.yml"
     FOLDER "flowie/server/tests")
+  target_compile_definitions(test_flowie_server_runtime
+                             PRIVATE ${FLOWIE_SALTS_COMPONENT_DEFINITION})
   set_tests_properties(test_flowie_server_runtime PROPERTIES
       LABELS "flowie;flowie-release;product-contract;ownership;configurator;cnet")
 
