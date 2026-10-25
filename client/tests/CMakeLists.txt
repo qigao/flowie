@@ -36,7 +36,8 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
   foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem intermediate-leaf.pem
                             intermediate-chain.pem invalid-basic-ca-chain.pem
                             invalid-key-usage-chain.pem invalid-eku-leaf.pem expired-leaf.pem
-                            future-leaf.pem leaf.key wrong-ca.pem tampered.pem)
+                            future-leaf.pem leaf.key client-leaf.pem client.key
+                            wrong-ca.pem tampered.pem)
     if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
       message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
     endif()

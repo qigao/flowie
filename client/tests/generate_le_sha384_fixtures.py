@@ -55,6 +55,10 @@ def create(exe, folder):
     leaf_key = folder / "leaf.key"
     request = folder / "leaf.csr"
     extensions = folder / "leaf.ext"
+    client_leaf = folder / "client-leaf.pem"
+    client_key = folder / "client.key"
+    client_request = folder / "client.csr"
+    client_extensions = folder / "client.ext"
     tampered = folder / "tampered.pem"
     ca_config = folder / "ca.cnf"
 
@@ -89,6 +93,19 @@ def create(exe, folder):
     openssl(exe, "x509", "-req", "-in", request, "-CA", root, "-CAkey", root_key,
             "-set_serial", "0x1002", "-days", "30", "-sha384",
             "-extfile", extensions, "-out", dns_only_leaf)
+
+    openssl(exe, "genpkey", "-algorithm", "EC",
+            "-pkeyopt", "ec_paramgen_curve:prime256v1", "-out", client_key)
+    openssl(exe, "req", "-new", "-key", client_key,
+            "-subj", "/CN=flowie-client", "-out", client_request)
+    client_extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature\n"
+        "extendedKeyUsage=clientAuth\n",
+        encoding="ascii")
+    openssl(exe, "x509", "-req", "-in", client_request, "-CA", root, "-CAkey", root_key,
+            "-set_serial", "0x1003", "-days", "30", "-sha384",
+            "-extfile", client_extensions, "-out", client_leaf)
 
     openssl(exe, "genpkey", "-algorithm", "EC",
             "-pkeyopt", "ec_paramgen_curve:secp384r1", "-out", intermediate_key)
@@ -240,6 +257,8 @@ def create(exe, folder):
 
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", leaf)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslclient", client_leaf)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslclient", leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-untrusted", intermediate,
             "-purpose", "sslserver", "-verify_hostname", "localhost", intermediate_leaf)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",

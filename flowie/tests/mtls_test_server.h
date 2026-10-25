@@ -47,6 +47,7 @@ typedef struct flow_mtls_test_server_s {
   int eof_sent;
   const char *test_cert_file; /* Test-only alternate P-256 leaf identity. */
   const char *test_key_file;  /* Owned externally until server join. */
+  const char *test_client_ca_file; /* Optional borrowed mTLS trust anchor. */
   atomic_int release_socket;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
   size_t request_size;
@@ -55,7 +56,8 @@ typedef struct flow_mtls_test_server_s {
 /* Test-only GmSSL peer. Material is consumed synchronously by TLS_CTX; the
  * worker owns the context, connection and socket until it has joined. */
 static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certificate,
-                                         const char *test_cert_file, const char *test_key_file) {
+                                         const char *test_cert_file, const char *test_key_file,
+                                         const char *test_client_ca_file) {
   static const int ciphers[] = {TLS_cipher_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
   static const int groups[] = {TLS_curve_secp256r1};
@@ -77,11 +79,16 @@ static int flow_mtls_test_server_context(TLS_CTX *ctx, int require_peer_certific
              tls_ctx_set_certificate_and_key(ctx, cert_path, key_path, "") != 1) {
     goto done;
   }
-  if (require_peer_certificate &&
-      (tls_test_write_ca_file(ca_path, sizeof(ca_path)) != 0 ||
-       tls_ctx_set_ca_certificates(ctx, ca_path, 5) != 1 ||
-       tls_ctx_enable_certificate_request(ctx, 1) != 1))
-    goto done;
+  if (require_peer_certificate) {
+    const char *client_ca = test_client_ca_file;
+    if (client_ca == NULL) {
+      if (tls_test_write_ca_file(ca_path, sizeof(ca_path)) != 0) goto done;
+      client_ca = ca_path;
+    }
+    if (tls_ctx_set_ca_certificates(ctx, client_ca, 5) != 1 ||
+        tls_ctx_enable_certificate_request(ctx, 1) != 1)
+      goto done;
+  }
   rc = 0;
 done:
   tls_test_remove_file(ca_path);
@@ -138,7 +145,8 @@ static void flow_mtls_test_server_main(void *arg) {
   server->status = -1;
   if (!ctx || !tls ||
       flow_mtls_test_server_context(ctx, server->require_peer_certificate,
-                                    server->test_cert_file, server->test_key_file) != 0 ||
+                                    server->test_cert_file, server->test_key_file,
+                                    server->test_client_ca_file) != 0 ||
       !flow_mtls_test_wait_readable(server->listener)) goto done;
   client = accept(server->listener, NULL, NULL);
   if (client == FLOW_MTLS_TEST_INVALID_SOCKET) goto done;
@@ -211,13 +219,11 @@ done:
   free(tls);
   free(ctx);
 }
-static int flow_mtls_test_server_start_ex_identity(flow_mtls_test_server_t *server,
-                                                   const uint8_t *response, size_t response_size,
-                                                   uint32_t response_delay_ms,
-                                                   int require_peer_certificate,
-                                                   int abrupt_close,
-                                                   const char *test_cert_file,
-                                                   const char *test_key_file) {
+static int flow_mtls_test_server_start_ex_identity_and_client_ca(
+    flow_mtls_test_server_t *server, const uint8_t *response, size_t response_size,
+    uint32_t response_delay_ms, int require_peer_certificate, int abrupt_close,
+    const char *test_cert_file, const char *test_key_file,
+    const char *test_client_ca_file) {
   struct sockaddr_storage address;
   int family = AF_INET6;
 #ifdef _WIN32
@@ -236,6 +242,7 @@ static int flow_mtls_test_server_start_ex_identity(flow_mtls_test_server_t *serv
   if ((test_cert_file == NULL) != (test_key_file == NULL)) return -1;
   server->test_cert_file = test_cert_file;
   server->test_key_file = test_key_file;
+  server->test_client_ca_file = test_client_ca_file;
   server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET) {
     int ipv6_only = 0;
@@ -286,9 +293,21 @@ static int flow_mtls_test_server_start_ex_identity(flow_mtls_test_server_t *serv
   return 0;
 }
 
+static int flow_mtls_test_server_start_ex_identity(flow_mtls_test_server_t *server,
+                                                   const uint8_t *response, size_t response_size,
+                                                   uint32_t response_delay_ms,
+                                                   int require_peer_certificate,
+                                                   int abrupt_close,
+                                                   const char *test_cert_file,
+                                                   const char *test_key_file) {
+  return flow_mtls_test_server_start_ex_identity_and_client_ca(
+      server, response, response_size, response_delay_ms, require_peer_certificate,
+      abrupt_close, test_cert_file, test_key_file, NULL);
+}
 
-/* Preserve existing test-call signatures: only opt-in HTTPS issuer-chain
- * scenarios borrow an externally generated ephemeral server identity. */
+
+/* Preserve existing test-call signatures: opt-in HTTPS certificate scenarios
+ * borrow generated identities and trust anchors through the extended helper. */
 static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server,
                                           const uint8_t *response, size_t response_size,
                                           uint32_t response_delay_ms,

@@ -572,7 +572,7 @@ if(BUILD_TESTS)
       foreach(_name IN ITEMS ca.pem leaf.pem intermediate-leaf.pem intermediate-chain.pem
                              invalid-basic-ca-chain.pem invalid-key-usage-chain.pem
                              invalid-eku-leaf.pem expired-leaf.pem future-leaf.pem
-                             leaf.key wrong-ca.pem tampered.pem)
+                             leaf.key client-leaf.pem client.key wrong-ca.pem tampered.pem)
         if(NOT EXISTS "${_flowie_p384_https_pki}/${_name}")
           message(FATAL_ERROR "Flowie #70 HTTPS test-PKI missing ${_name}")
         endif()
@@ -590,6 +590,9 @@ if(BUILD_TESTS)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/invalid-eku-leaf.pem"
                         _p384_https_invalid_eku_leaf)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/leaf.key" _p384_https_key)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/client-leaf.pem"
+                        _p384_https_client_leaf)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/client.key" _p384_https_client_key)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/wrong-ca.pem" _p384_https_wrong)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/tampered.pem" _p384_https_tampered)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/expired-leaf.pem" _p384_https_expired)
@@ -604,6 +607,8 @@ if(BUILD_TESTS)
         "FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN=\"${_p384_https_invalid_key_usage_chain}\""
         "FLOWIE_P384_SHA384_INVALID_EKU_LEAF=\"${_p384_https_invalid_eku_leaf}\""
         "FLOWIE_P384_SHA384_KEY=\"${_p384_https_key}\""
+        "FLOWIE_P384_SHA384_CLIENT_LEAF=\"${_p384_https_client_leaf}\""
+        "FLOWIE_P384_SHA384_CLIENT_KEY=\"${_p384_https_client_key}\""
         "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_https_wrong}\""
         "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_https_tampered}\""
         "FLOWIE_P384_SHA384_EXPIRED_LEAF=\"${_p384_https_expired}\""
