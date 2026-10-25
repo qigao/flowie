@@ -533,7 +533,11 @@ spec("Flowie control external HTTPS authenticator") {
     options.timeout_ms = 50u;
     check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
     check_equal(result.status, SALTS_EIO);
-    check_true(result.peer_verified);
+    /* Prove this is the response-wait timeout, not an earlier TLS failure.
+     * The server can receive HTTP bytes only after the mutual-TLS handshake;
+     * its peer_verified diagnostic is recorded later by the server thread and
+     * may race the client's deliberately short deadline. */
+    check_greater(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
   }
 
