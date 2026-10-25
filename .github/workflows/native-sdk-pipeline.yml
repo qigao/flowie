@@ -284,7 +284,8 @@ jobs:
   windows:
     name: Windows x64 SDK
     needs: metadata
-    runs-on: windows-2022
+    # The shared-cache Windows ABI is pinned to MSVC v145/SDK 10.0.26100.
+    runs-on: windows-2025
     timeout-minutes: 60
     env:
       SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
@@ -810,7 +811,8 @@ jobs:
   qualify_windows:
     name: Qualify packed Flowie.Native (Windows x64)
     needs: [metadata, pack]
-    runs-on: windows-2022
+    # Match the producer build's shared-cache ABI and toolset exactly.
+    runs-on: windows-2025
     timeout-minutes: 30
     env:
       SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
