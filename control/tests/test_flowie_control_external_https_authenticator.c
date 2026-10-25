@@ -664,10 +664,13 @@ spec("Flowie control external HTTPS authenticator") {
       FLOWIE_P384_SHA384_INTERMEDIATE_LEAF,
       FLOWIE_P384_SHA384_INVALID_BASIC_CA_CHAIN,
       FLOWIE_P384_SHA384_INVALID_KEY_USAGE_CHAIN,
-      FLOWIE_P384_SHA384_INVALID_EKU_LEAF};
+      FLOWIE_P384_SHA384_INVALID_EKU_LEAF,
+      FLOWIE_P384_SHA384_UNSUPPORTED_SIGNATURE_OID,
+      FLOWIE_P384_SHA384_MALFORMED_SAN_LEAF};
   const char *const chain_failures[] = {
       "an omitted intermediate", "invalid intermediate basic constraints",
-      "invalid intermediate key usage", "invalid leaf extended key usage"};
+      "invalid intermediate key usage", "invalid leaf extended key usage",
+      "an unsupported certificate signature OID", "malformed subjectAltName DER"};
   for (size_t chain_case = 0u;
        chain_case < sizeof(invalid_chains) / sizeof(invalid_chains[0]); ++chain_case) {
     const char *chain = invalid_chains[chain_case];

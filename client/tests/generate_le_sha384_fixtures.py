@@ -60,6 +60,9 @@ def create(exe, folder):
     client_request = folder / "client.csr"
     client_extensions = folder / "client.ext"
     tampered = folder / "tampered.pem"
+    unsupported_signature_oid = folder / "unsupported-signature-oid.pem"
+    malformed_san_leaf = folder / "malformed-san-leaf.pem"
+    malformed_san_extensions = folder / "malformed-san.ext"
     ca_config = folder / "ca.cnf"
 
     openssl(exe, "genpkey", "-algorithm", "EC",
@@ -191,6 +194,19 @@ def create(exe, folder):
             "-set_serial", "0x5001", "-days", "30", "-sha384",
             "-extfile", extensions, "-out", invalid_eku_leaf)
 
+    # Sign a structurally valid certificate that carries a malformed, critical
+    # subjectAltName value. The server can transmit it, while a conforming peer
+    # must reject the broken GeneralNames DER before accepting the identity.
+    malformed_san_extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature\n"
+        "extendedKeyUsage=serverAuth\n"
+        "2.5.29.17=critical,DER:30:03:82:02:61\n",
+        encoding="ascii")
+    openssl(exe, "x509", "-req", "-in", request, "-CA", root, "-CAkey", root_key,
+            "-set_serial", "0x5002", "-days", "30", "-sha384",
+            "-extfile", malformed_san_extensions, "-out", malformed_san_leaf)
+
     # `openssl x509 -req` cannot set an absolute validity window. Use the
     # reference CA command for deterministic expired and not-yet-valid leaves.
     # These files are test inputs only and never enter Flowie's runtime graph.
@@ -248,12 +264,28 @@ def create(exe, folder):
     # and public key intact: a verifier must fail its signature check.
     pem_lines = [x for x in leaf.read_text(encoding="ascii").splitlines()
                  if x and not x.startswith("-----")]
-    der = bytearray(base64.b64decode("".join(pem_lines)))
+    original_der = bytearray(base64.b64decode("".join(pem_lines)))
+    der = bytearray(original_der)
     der[-1] ^= 0x01
     encoded = base64.b64encode(der).decode("ascii")
     tampered.write_text("-----BEGIN CERTIFICATE-----\n"
                         + "\n".join(textwrap.wrap(encoded, 64))
                         + "\n-----END CERTIFICATE-----\n", encoding="ascii")
+
+    # Preserve the DER shape but replace both ecdsa-with-SHA384 AlgorithmIdentifier
+    # OIDs (TBSCertificate and outer Certificate) with an unknown sibling OID.
+    # This remains wire-parseable and isolates fail-closed algorithm admission.
+    ecdsa_sha384_oid = bytes.fromhex("06082a8648ce3d040303")
+    unknown_signature_oid = bytes.fromhex("06082a8648ce3d04037f")
+    if original_der.count(ecdsa_sha384_oid) != 2:
+        raise RuntimeError("Expected two ecdsa-with-SHA384 identifiers")
+    unsupported_der = bytes(original_der).replace(
+        ecdsa_sha384_oid, unknown_signature_oid)
+    unsupported_encoded = base64.b64encode(unsupported_der).decode("ascii")
+    unsupported_signature_oid.write_text(
+        "-----BEGIN CERTIFICATE-----\n"
+        + "\n".join(textwrap.wrap(unsupported_encoded, 64))
+        + "\n-----END CERTIFICATE-----\n", encoding="ascii")
 
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", leaf)
@@ -279,6 +311,10 @@ def create(exe, folder):
             "-verify_ip", "127.0.0.1", dns_only_leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", tampered, expect=1)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
+            "-verify_hostname", "localhost", unsupported_signature_oid, expect=1)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
+            "-verify_hostname", "localhost", malformed_san_leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", expired_leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",

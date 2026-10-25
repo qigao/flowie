@@ -39,5 +39,7 @@ jobs:
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/client-leaf.pem"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/client.key"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/tampered.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/unsupported-signature-oid.pem"
+          test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/malformed-san-leaf.pem"
           test -s "$RUNNER_TEMP/flowie-ecdsa-sha384-fixtures/leaf.key"
           echo 'X509 reference oracle passed; no product TLS/WSS/HTTPS success is claimed'

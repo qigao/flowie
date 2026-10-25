@@ -37,7 +37,8 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
                             intermediate-chain.pem invalid-basic-ca-chain.pem
                             invalid-key-usage-chain.pem invalid-eku-leaf.pem expired-leaf.pem
                             future-leaf.pem leaf.key client-leaf.pem client.key
-                            wrong-ca.pem tampered.pem)
+                            wrong-ca.pem tampered.pem unsupported-signature-oid.pem
+                            malformed-san-leaf.pem)
     if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
       message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
     endif()
@@ -55,6 +56,9 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.key" _p384_key)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/wrong-ca.pem" _p384_wrong_ca)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/tampered.pem" _p384_tampered)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/unsupported-signature-oid.pem"
+                     _p384_unsupported_signature_oid)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/malformed-san-leaf.pem" _p384_malformed_san)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/expired-leaf.pem" _p384_expired)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/future-leaf.pem" _p384_future)
   target_compile_definitions(test_flowie_mqtt_client PRIVATE
@@ -70,6 +74,8 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
     "FLOWIE_P384_SHA384_KEY=\"${_p384_key}\""
     "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_wrong_ca}\""
     "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_tampered}\""
+    "FLOWIE_P384_SHA384_UNSUPPORTED_SIGNATURE_OID=\"${_p384_unsupported_signature_oid}\""
+    "FLOWIE_P384_SHA384_MALFORMED_SAN_LEAF=\"${_p384_malformed_san}\""
     "FLOWIE_P384_SHA384_EXPIRED_LEAF=\"${_p384_expired}\""
     "FLOWIE_P384_SHA384_FUTURE_LEAF=\"${_p384_future}\"")
   message(STATUS "Flowie #70 P384/SHA384 MQTT TLS+WSS acceptance enabled; GmSSL remains private CNet runtime")
