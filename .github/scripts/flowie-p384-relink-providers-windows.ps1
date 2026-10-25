@@ -121,6 +121,7 @@ $env:QIGAO_SDK_RID = 'windows-x64'
 $env:QIGAO_TARGET_TRIPLET = 'x64-windows'
 $env:QIGAO_VCPKG_WINDOWS_TRIPLET = 'x64-windows'
 $env:QIGAO_VCPKG_WINDOWS_HOST_TRIPLET = 'x64-windows'
+$env:QIGAO_VCPKG_ROOT = $env:VCPKG_ROOT
 $env:PROJECT_ROOT = $env:GITHUB_WORKSPACE
 
 $quickjsSource = Join-Path $env:VCPKG_CACHE_REPOSITORY_ROOT 'ports/quickjs-ng'
@@ -142,11 +143,14 @@ $env:VCPKG_OVERLAY_PORTS = $quickjsOverlay
 
 Push-Location $saltsUtilsSource
 try {
-  Invoke-Checked cmake --preset win-sdk-package-user -DBUILD_TESTS=OFF `
+  # Use the repository's CI preset so VCPKG_CACHE_REPOSITORY_ROOT is inherited
+  # from the immutable setup action. The user preset intentionally resolves a
+  # developer-local cache under LOCALAPPDATA and is invalid on a clean runner.
+  Invoke-Checked cmake --preset ci-win-sdk-release-user -DBUILD_TESTS=OFF `
     -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF `
     "-DCMAKE_INSTALL_PREFIX=$saltsUtilsSdk"
-  Invoke-Checked cmake --build --preset win-sdk-package-user --parallel 2
-  Invoke-Checked cmake --install build/Msvc-SDK-Release --prefix $saltsUtilsSdk
+  Invoke-Checked cmake --build --preset ci-win-sdk-release-user --parallel 2
+  Invoke-Checked cmake --install build/ci-sdk/windows-x64 --prefix $saltsUtilsSdk
 } finally { Pop-Location }
 if (-not (Test-Path -LiteralPath (Join-Path $saltsUtilsSdk 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake'))) {
   throw 'Source-rebuilt SaltsUtils SDK is missing'
