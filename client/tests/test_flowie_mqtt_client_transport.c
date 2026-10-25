@@ -266,7 +266,7 @@ static void flowie_client_transport_case_ex_fixture_observed(
     int expected_connect_status, int with_destination_policy, int round_trips,
     const char *test_ca, const char *test_cert, const char *test_key,
     const char *test_client_ca, const char *test_logical_host,
-    int expect_tls_reject, int expected_server_opens_on_reject) {
+    int expect_tls_reject, int allow_server_open_on_reject) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -411,8 +411,12 @@ static void flowie_client_transport_case_ex_fixture_observed(
       /* TLS 1.3 lets a server finish its side before the client parses the
        * Certificate extensions. A malformed on-wire extension may therefore
        * produce one transport-open observation, but never MQTT bytes. */
-      check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed),
-                  expected_server_opens_on_reject);
+      int server_opens = atomic_load_explicit(&broker.opens, memory_order_relaxed);
+      if (allow_server_open_on_reject) {
+        check_less_equal(server_opens, 1);
+      } else {
+        check_equal(server_opens, 0);
+      }
       check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 0);
       check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed), 0);
       check_equal(atomic_load_explicit(&probe.reconnect_attempts, memory_order_relaxed), 0);

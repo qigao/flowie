@@ -59,16 +59,33 @@ foreach ($source in @($saltsUtilsSource, $chttpSource, $turbodbSource)) {
   $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
   $registries = @($config.registries)
   $matches = @($registries | Where-Object { $_.packages -contains 'gmssl' })
-  if ($matches.Count -ne 1) {
-    throw "Expected exactly one GmSSL Registry in $path; got $($matches.Count)"
+  if ($matches.Count -gt 1) {
+    throw "Expected at most one GmSSL Registry in $path; got $($matches.Count)"
   }
-  if ($matches[0].kind -ne 'git' -or
-      $matches[0].repository -ne 'https://github.com/qigao/vcpkg-cache') {
-    throw "Unexpected GmSSL Registry in $path"
+  if ($matches.Count -eq 1) {
+    if ($matches[0].kind -ne 'git' -or
+        $matches[0].repository -ne 'https://github.com/qigao/vcpkg-cache') {
+      throw "Unexpected GmSSL Registry in $path"
+    }
+    $matches[0].reference = $provider
+    $matches[0].baseline = $provider
+  } else {
+    $registries += [PSCustomObject]@{
+      kind = 'git'
+      repository = 'https://github.com/qigao/vcpkg-cache'
+      reference = $provider
+      baseline = $provider
+      packages = @('gmssl')
+    }
+    $config.registries = $registries
   }
-  $matches[0].reference = $provider
-  $matches[0].baseline = $provider
   $config | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8
+  $check = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+  $pinned = @($check.registries | Where-Object { $_.packages -contains 'gmssl' })
+  if ($pinned.Count -ne 1 -or $pinned[0].reference -ne $provider -or
+      $pinned[0].baseline -ne $provider) {
+    throw "Candidate GmSSL Registry pin verification failed in $path"
+  }
 }
 
 foreach ($target in @($saltsUtilsSdk, $chttpSdk, $turbodbSdk)) {
