@@ -296,6 +296,12 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
+          rem Salts Plugin's absolute-path loader intentionally ignores PATH
+          rem for transitive dependencies. Stage the exact-source candidate
+          rem runtime beside the test applications, as a deployed application
+          rem would, so no released/vcpkg DLL can satisfy this qualification.
+          for %%D in ("%SALTS_ROOT%\bin" "%SALTS_UTILS_ROOT%\bin" "%HTTP_SERVICES_ROOT%\bin" "%TURBODB_ROOT%\bin") do if exist "%%~D\*.dll" copy /Y "%%~D\*.dll" build\native-ci\bin\ >nul
+          if not exist "%TURBODB_ROOT%\lib\turbodb\drivers\turbodb_driver_sqlite.dll" exit /b 1
           ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
           if errorlevel 1 exit /b 1
       - name: Install and test external C11/C++17 consumer (Windows)

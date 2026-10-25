@@ -181,6 +181,10 @@ try {
 if (-not (Test-Path -LiteralPath (Join-Path $turbodbSdk 'lib/cmake/TurboDB/TurboDBConfig.cmake'))) {
   throw 'Source-rebuilt TurboDB SDK is missing'
 }
+$sqliteDriver = Join-Path $turbodbSdk 'lib/turbodb/drivers/turbodb_driver_sqlite.dll'
+if (-not (Test-Path -LiteralPath $sqliteDriver -PathType Leaf)) {
+  throw "Source-rebuilt TurboDB SQLite driver is missing: $sqliteDriver"
+}
 
 @"
 ### Flowie #70 Windows exact-source provider closure (Draft)

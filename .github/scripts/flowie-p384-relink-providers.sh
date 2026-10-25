@@ -26,9 +26,11 @@ case "$sanitizer_mode" in
       -DENABLE_SANITIZER_ADDRESS=ON
       -DENABLE_SANITIZER_UNDEFINED=ON
     )
+    turbodb_host_tool_args=()
     ;;
   OFF)
     sanitizer_args=()
+    turbodb_host_tool_args=()
     ;;
   *)
     echo "FLOWIE_EXACT_SOURCE_SANITIZERS must be ON or OFF, got: $sanitizer_mode" >&2
@@ -52,6 +54,18 @@ test "$(git -C "$su_src" rev-parse HEAD)" = "$SALTS_UTILS_SOURCE_REF"
 test "$(git -C "$chttp_src" rev-parse HEAD)" = "$CHTTP_SOURCE_REF"
 test "$(git -C "$turbodb_src" rev-parse HEAD)" = "$TURBODB_SOURCE_REF"
 test -f "$salts/lib/cmake/Salts/SaltsConfig.cmake"
+
+if [ "$sanitizer_mode" = ON ]; then
+  # TurboDB builds Lemon as a host code generator. Instrumenting that
+  # build-time executable exercises upstream generator UB before any target
+  # product is compiled, so provide an uninstrumented repository-matched
+  # host tool while retaining ASan/UBSan on all shipped libraries.
+  host_tools="$RUNNER_TEMP/flowie-host-tools"
+  mkdir -p "$host_tools"
+  "${CC:-cc}" -O2 "$turbodb_src/tools/lemon/lemon.c" -o "$host_tools/lemon"
+  test -x "$host_tools/lemon"
+  turbodb_host_tool_args=(-DLEMON_EXECUTABLE="$host_tools/lemon")
+fi
 
 # The source rebuilt SaltsUtils and CHttp both must resolve the same
 # GmSSL candidate as Salts. SaltsUtils already has a separate *zstd* registry:
@@ -167,6 +181,7 @@ export TURBODB_CI_PKG_ROOT="$sdk"
   cmake --preset ci-linux-release \
     -DBUILD_TESTS=OFF -DBUILD_E2E_TESTS=OFF -DBUILD_EXAMPLES=OFF \
     -DTURBODB_BUILD_DBTOOLS=OFF \
+    "${turbodb_host_tool_args[@]}" \
     "${sanitizer_args[@]}" \
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
   cmake --build --preset ci-linux-release --parallel 2
