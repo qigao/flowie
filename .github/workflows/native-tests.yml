@@ -18,7 +18,8 @@ concurrency:
   group: flowie-native-tests-${{ github.ref }}
   cancel-in-progress: true
 
-# Candidate source refs are scoped per matrix OS below so Windows never mixes #12 with #11 DSOs.
+# Candidate source refs are enabled only on the dedicated branch. Each enabled
+# OS replaces the complete dependent SDK graph before product acceptance runs.
 
 jobs:
   test:
@@ -44,11 +45,10 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 750M
-      # Candidate source relink is Linux-only until Windows can rebuild every dependent DSO.
-      SALTS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '259a353eeda78d81c3d72cb18bae2d83d2a00f94' || (matrix.os == 'ubuntu-24.04' && github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70' && inputs.salts_ref) || '' }}
-      SALTS_UTILS_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'fbb5f3ee19589836ced0f3b98414e71e6dcc1388' || '' }}
-      CHTTP_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '51802da8029304109954674755dd4ea3d573a1b7' || '' }}
-      TURBODB_SOURCE_REF: ${{ matrix.os == 'ubuntu-24.04' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'ad60d6060d0f91179a1ae6c7687dfb497e70ab52' || '' }}
+      SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '259a353eeda78d81c3d72cb18bae2d83d2a00f94' || (matrix.os == 'ubuntu-24.04' && inputs.salts_ref) || '' }}
+      SALTS_UTILS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'fbb5f3ee19589836ced0f3b98414e71e6dcc1388' || '' }}
+      CHTTP_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '51802da8029304109954674755dd4ea3d573a1b7' || '' }}
+      TURBODB_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'ad60d6060d0f91179a1ae6c7687dfb497e70ab52' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,15 +60,12 @@ jobs:
           key: flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
-      # The released Windows producer DSOs still use the GmSSL #11 public
-      # struct layout. Do not load them with candidate GmSSL #13 until the
-      # complete dependent source graph is rebuilt on Windows as it is on Linux.
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
-        if: runner.os == 'Windows' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
+        if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        if: runner.os != 'Windows' || github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
+        if: github.ref != 'refs/heads/test/flowie-p384-sha384-tls-70'
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
@@ -80,28 +77,28 @@ jobs:
           path: build/dependencies/salts
           persist-credentials: false
       - uses: actions/checkout@v4
-        if: runner.os == 'Linux' && env.SALTS_UTILS_SOURCE_REF != ''
+        if: env.SALTS_UTILS_SOURCE_REF != ''
         with:
           repository: qigao/salts-utils
           ref: ${{ env.SALTS_UTILS_SOURCE_REF }}
           path: build/dependencies/salts-utils
           persist-credentials: false
       - uses: actions/checkout@v4
-        if: runner.os == 'Linux' && env.CHTTP_SOURCE_REF != ''
+        if: env.CHTTP_SOURCE_REF != ''
         with:
           repository: qigao/chttp
           ref: ${{ env.CHTTP_SOURCE_REF }}
           path: build/dependencies/chttp
           persist-credentials: false
       - uses: actions/checkout@v4
-        if: runner.os == 'Linux' && env.TURBODB_SOURCE_REF != ''
+        if: env.TURBODB_SOURCE_REF != ''
         with:
           repository: qigao/turbodb
           ref: ${{ env.TURBODB_SOURCE_REF }}
           path: build/dependencies/turbodb
           persist-credentials: false
       - name: Pin exact unpublished GmSSL 3.2.0#13 Registry for the Flowie #70 candidate
-        if: runner.os == 'Linux' && github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
+        if: github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && env.SALTS_SOURCE_REF != ''
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -244,6 +241,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Cannot install ccache' }
           ccache --version
           if ($LASTEXITCODE -ne 0) { throw 'Cannot run ccache' }
+          $openssl = 'C:\Program Files\Git\usr\bin\openssl.exe'
+          if (-not (Test-Path -LiteralPath $openssl)) {
+            throw "Independent OpenSSL oracle not found: $openssl"
+          }
+          (Split-Path -Parent $openssl) >> $env:GITHUB_PATH
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
@@ -270,6 +272,16 @@ jobs:
           if errorlevel 1 exit /b 1
           powershell -NoProfile -Command "New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts') | Out-Null; Copy-Item -LiteralPath 'stage/sdk/windows-x64' -Destination (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts/release') -Recurse -ErrorAction Stop"
           if errorlevel 1 exit /b 1
+      - name: Rebuild exact source SaltsUtils, CHttp and TurboDB on Windows
+        if: runner.os == 'Windows' && env.SALTS_UTILS_SOURCE_REF != '' && env.CHTTP_SOURCE_REF != '' && env.TURBODB_SOURCE_REF != ''
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          pwsh -NoProfile -File .github\scripts\flowie-p384-relink-providers-windows.ps1
+          if errorlevel 1 exit /b 1
       - name: Configure, build and test Windows
         if: runner.os == 'Windows'
         shell: cmd
@@ -278,7 +290,9 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset ci-win-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          set "CANDIDATE_FLAGS="
+          if defined SALTS_SOURCE_REF set "CANDIDATE_FLAGS=-DFLOWIE_P384_SHA384_ACCEPTANCE_TESTS=ON"
+          cmake --preset ci-win-release-user %CANDIDATE_FLAGS% -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
