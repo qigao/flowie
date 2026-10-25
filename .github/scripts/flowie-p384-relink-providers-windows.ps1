@@ -73,8 +73,19 @@ foreach ($source in @($saltsUtilsSource, $chttpSource, $turbodbSource)) {
         $matches[0].repository -ne 'https://github.com/qigao/vcpkg-cache') {
       throw "Unexpected GmSSL Registry in $path"
     }
-    $matches[0].reference = $provider
-    $matches[0].baseline = $provider
+    # Older manifests carry only a baseline. ConvertFrom-Json produces a
+    # fixed-shape PSCustomObject, so assigning an absent candidate reference
+    # throws instead of extending the object.
+    if ($matches[0].PSObject.Properties.Name -contains 'reference') {
+      $matches[0].reference = $provider
+    } else {
+      $matches[0] | Add-Member -NotePropertyName reference -NotePropertyValue $provider
+    }
+    if ($matches[0].PSObject.Properties.Name -contains 'baseline') {
+      $matches[0].baseline = $provider
+    } else {
+      $matches[0] | Add-Member -NotePropertyName baseline -NotePropertyValue $provider
+    }
   } else {
     $registries += [PSCustomObject]@{
       kind = 'git'
