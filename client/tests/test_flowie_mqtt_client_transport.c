@@ -260,13 +260,13 @@ static cnet_client_config flowie_client_transport_network(void) {
   return config;
 }
 
-static void flowie_client_transport_case_ex_fixture(
+static void flowie_client_transport_case_ex_fixture_observed(
     flowie_mqtt_client_transport_t client_transport, flowie_transport server_transport,
     flowie_client_transport_connack_mode connack_mode, uint64_t client_timeout_ms,
     int expected_connect_status, int with_destination_policy, int round_trips,
     const char *test_ca, const char *test_cert, const char *test_key,
     const char *test_client_ca, const char *test_logical_host,
-    int expect_tls_reject) {
+    int expect_tls_reject, int expected_server_opens_on_reject) {
   static const unsigned char client_id[] = "cnet-client-test";
   flowie_client_transport_broker broker = {0};
   flowie_client_transport_probe probe = {0};
@@ -408,7 +408,11 @@ static void flowie_client_transport_case_ex_fixture(
       check_not_equal(atomic_load_explicit(&probe.connect_status, memory_order_relaxed),
                       SALTS_EBUSY);
       check_equal(flowie_mqtt_client_is_connected(client), 0);
-      check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed), 0);
+      /* TLS 1.3 lets a server finish its side before the client parses the
+       * Certificate extensions. A malformed on-wire extension may therefore
+       * produce one transport-open observation, but never MQTT bytes. */
+      check_equal(atomic_load_explicit(&broker.opens, memory_order_relaxed),
+                  expected_server_opens_on_reject);
       check_equal(atomic_load_explicit(&broker.connects, memory_order_relaxed), 0);
       check_equal(atomic_load_explicit(&broker.pings, memory_order_relaxed), 0);
       check_equal(atomic_load_explicit(&probe.reconnect_attempts, memory_order_relaxed), 0);
@@ -446,6 +450,20 @@ static void flowie_client_transport_case_ex_fixture(
     tls_test_remove_file(key_path);
     tls_test_remove_file(cert_path);
   }
+}
+
+static void flowie_client_transport_case_ex_fixture(
+    flowie_mqtt_client_transport_t client_transport, flowie_transport server_transport,
+    flowie_client_transport_connack_mode connack_mode, uint64_t client_timeout_ms,
+    int expected_connect_status, int with_destination_policy, int round_trips,
+    const char *test_ca, const char *test_cert, const char *test_key,
+    const char *test_client_ca, const char *test_logical_host,
+    int expect_tls_reject) {
+  flowie_client_transport_case_ex_fixture_observed(
+      client_transport, server_transport, connack_mode, client_timeout_ms,
+      expected_connect_status, with_destination_policy, round_trips, test_ca,
+      test_cert, test_key, test_client_ca, test_logical_host,
+      expect_tls_reject, 0);
 }
 
 static void flowie_client_transport_case_ex(
@@ -1774,13 +1792,14 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
       const char *failure = chain_failures[chain_case];
       it("rejects %s before MQTT CONNECT over TLS/WSS, websocket=%d",
          failure, secure_websocket) {
-        flowie_client_transport_case_ex_fixture(
+        flowie_client_transport_case_ex_fixture_observed(
             secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS
                              : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
             secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
             FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
             SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, chain, FLOWIE_P384_SHA384_KEY,
-            NULL, NULL, 1);
+            NULL, NULL, 1,
+            chain_case == sizeof(invalid_chains) / sizeof(invalid_chains[0]) - 1u ? 1 : 0);
       }
     }
     it("rejects wrong P-384 SHA-384 issuing CA before MQTT CONNECT over TLS/WSS, websocket=%d",
