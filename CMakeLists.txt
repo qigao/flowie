@@ -59,6 +59,15 @@ if(NOT IS_DIRECTORY "${FLOWIE_SALTS_ROOT_PATH}")
 endif()
 find_package(Salts CONFIG REQUIRED
              PATHS "${FLOWIE_SALTS_ROOT_PATH}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+if(TARGET Salts::ComponentABI)
+  set(FLOWIE_SALTS_COMPONENT_TARGET Salts::ComponentABI)
+elseif(TARGET Salts::Component)
+  # Salts.Native <= 2.3.0-rc.17 exported the pre-cutover target name.
+  set(FLOWIE_SALTS_COMPONENT_TARGET Salts::Component)
+else()
+  message(FATAL_ERROR
+          "The installed Salts SDK provides neither ComponentABI nor the legacy Component target")
+endif()
 if(NOT DEFINED ENV{SALTS_UTILS_ROOT} OR "$ENV{SALTS_UTILS_ROOT}" STREQUAL "")
   message(FATAL_ERROR "SALTS_UTILS_ROOT must name the installed SaltsUtils profile")
 endif()

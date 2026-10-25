@@ -8,7 +8,7 @@ add_executable(
 target_link_libraries(
   flowie_server PRIVATE Flowie::App Orm::C CHttp::Client Salts::CmdParser
                         Salts::CYaml Salts::JsonParser Salts::UriParser
-                        Salts::Component Salts::CMeta)
+                        ${FLOWIE_SALTS_COMPONENT_TARGET} Salts::CMeta)
 install(TARGETS flowie_server RUNTIME DESTINATION bin)
 
 if(FLOWIE_BUILD_TESTS)
@@ -16,7 +16,7 @@ if(FLOWIE_BUILD_TESTS)
     test_flowie_server_runtime
     SOURCES tests/test_flowie_server_runtime.c flowie_server_runtime.c
             flowie_server_config.c flowie_server_http_security.c flowie_server_turbodb_config.c
-    LIBS Flowie::App Orm::C CHttp::Client Salts::Component Salts::CMeta
+    LIBS Flowie::App Orm::C CHttp::Client ${FLOWIE_SALTS_COMPONENT_TARGET} Salts::CMeta
          Salts::CYaml Salts::JsonParser Salts::UriParser Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/flowie/include
              ${PROJECT_SOURCE_DIR}/flowie/tests
