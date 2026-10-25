@@ -57,6 +57,18 @@ cmake_add_test(
   LIBS flowie_orm_flow Salts::TinyTest
   DEFS FLOWIE_TEST_SQLITE_MODULE="${TurboDB_DRIVER_DIR}/turbodb_driver_sqlite${CMAKE_SHARED_MODULE_SUFFIX}"
   FOLDER "flowie/tests")
+if(WIN32)
+  # The ORM test loads PostgreSQL/MySQL drivers by an explicit absolute path.
+  # Salts Plugin deliberately ignores PATH for their dependencies; model a
+  # deployed application by placing CNet in the executable directory, one of
+  # the loader's trusted DEFAULT_DIRS locations.
+  add_custom_command(
+    TARGET test_flowie_orm_runtime POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Salts::CNet>"
+            "$<TARGET_FILE_DIR:test_flowie_orm_runtime>"
+    VERBATIM)
+endif()
 set_tests_properties(test_flowie_orm_runtime PROPERTIES LABELS "flowie;flowie-release;storage")
 
 if(FLOWIE_TURBODB_LIVE_TESTS)
