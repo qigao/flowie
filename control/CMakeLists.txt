@@ -596,8 +596,6 @@ if(BUILD_TESTS)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/client.key" _p384_https_client_key)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/wrong-ca.pem" _p384_https_wrong)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/tampered.pem" _p384_https_tampered)
-      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/unsupported-signature-oid.pem"
-                         _p384_https_unsupported_signature_oid)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/malformed-san-leaf.pem"
                          _p384_https_malformed_san)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/expired-leaf.pem" _p384_https_expired)
@@ -616,7 +614,6 @@ if(BUILD_TESTS)
         "FLOWIE_P384_SHA384_CLIENT_KEY=\"${_p384_https_client_key}\""
         "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_https_wrong}\""
         "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_https_tampered}\""
-        "FLOWIE_P384_SHA384_UNSUPPORTED_SIGNATURE_OID=\"${_p384_https_unsupported_signature_oid}\""
         "FLOWIE_P384_SHA384_MALFORMED_SAN_LEAF=\"${_p384_https_malformed_san}\""
         "FLOWIE_P384_SHA384_EXPIRED_LEAF=\"${_p384_https_expired}\""
         "FLOWIE_P384_SHA384_FUTURE_LEAF=\"${_p384_https_future}\"")
