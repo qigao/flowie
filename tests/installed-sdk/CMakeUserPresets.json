@@ -27,9 +27,9 @@
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "VCPKG_HOST_TRIPLET": "x64-windows",
-        "CMAKE_PREFIX_PATH": "${sourceDir}/../../vcpkg_installed/x64-windows"
+        "VCPKG_TARGET_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_TRIPLET}",
+        "VCPKG_HOST_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_HOST_TRIPLET}",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/../../vcpkg_installed/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}"
       }
     },
     {

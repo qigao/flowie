@@ -42,12 +42,12 @@
       ],
       "binaryDir": "${sourceDir}/build/windows-sdk",
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "VCPKG_HOST_TRIPLET": "x64-windows",
+        "VCPKG_TARGET_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_TRIPLET}",
+        "VCPKG_HOST_TRIPLET": "$env{QIGAO_VCPKG_WINDOWS_HOST_TRIPLET}",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/stage/sdk/windows-x64"
       },
       "environment": {
-        "PATH": "$env{SALTS_UTILS_ROOT}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$env{HTTP_SERVICES_ROOT}/bin${pathListSep}$env{TURBODB_ROOT}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$penv{PATH}"
+        "PATH": "$env{SALTS_UTILS_ROOT}/bin${pathListSep}$env{SALTS_ROOT}/bin${pathListSep}$env{HTTP_SERVICES_ROOT}/bin${pathListSep}$env{TURBODB_ROOT}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{QIGAO_VCPKG_WINDOWS_TRIPLET}/bin${pathListSep}$penv{PATH}"
       }
     },
     {
