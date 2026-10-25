@@ -31,10 +31,13 @@ def create(exe, folder):
     wrong_key = folder / "wrong-ca.key"
     leaf = folder / "leaf.pem"
     dns_only_leaf = folder / "dns-only-leaf.pem"
+    expired_leaf = folder / "expired-leaf.pem"
+    future_leaf = folder / "future-leaf.pem"
     leaf_key = folder / "leaf.key"
     request = folder / "leaf.csr"
     extensions = folder / "leaf.ext"
     tampered = folder / "tampered.pem"
+    ca_config = folder / "ca.cnf"
 
     openssl(exe, "genpkey", "-algorithm", "EC",
             "-pkeyopt", "ec_paramgen_curve:secp384r1", "-out", root_key)
@@ -67,6 +70,42 @@ def create(exe, folder):
     openssl(exe, "x509", "-req", "-in", request, "-CA", root, "-CAkey", root_key,
             "-set_serial", "0x1002", "-days", "30", "-sha384",
             "-extfile", extensions, "-out", dns_only_leaf)
+
+    # `openssl x509 -req` cannot set an absolute validity window. Use the
+    # reference CA command for deterministic expired and not-yet-valid leaves.
+    # These files are test inputs only and never enter Flowie's runtime graph.
+    ca_dir = folder.resolve().as_posix()
+    (folder / "newcerts").mkdir(exist_ok=True)
+    (folder / "index.txt").write_text("", encoding="ascii")
+    (folder / "serial").write_text("1003\n", encoding="ascii")
+    ca_config.write_text(textwrap.dedent(f"""
+        [ ca ]
+        default_ca = test_ca
+        [ test_ca ]
+        dir = {ca_dir}
+        database = $dir/index.txt
+        new_certs_dir = $dir/newcerts
+        certificate = $dir/ca.pem
+        private_key = $dir/ca.key
+        serial = $dir/serial
+        default_md = sha384
+        policy = test_policy
+        unique_subject = no
+        x509_extensions = server_leaf
+        [ test_policy ]
+        commonName = supplied
+        [ server_leaf ]
+        basicConstraints = critical,CA:FALSE
+        keyUsage = critical,digitalSignature
+        extendedKeyUsage = serverAuth
+        subjectAltName = DNS:localhost,IP:127.0.0.1
+        """).lstrip(), encoding="ascii")
+    openssl(exe, "ca", "-batch", "-config", ca_config, "-in", request,
+            "-out", expired_leaf, "-notext", "-startdate", "220101000000Z",
+            "-enddate", "230101000000Z", "-extensions", "server_leaf")
+    openssl(exe, "ca", "-batch", "-config", ca_config, "-in", request,
+            "-out", future_leaf, "-notext", "-startdate", "350101000000Z",
+            "-enddate", "360101000000Z", "-extensions", "server_leaf")
 
     openssl(exe, "genpkey", "-algorithm", "EC",
             "-pkeyopt", "ec_paramgen_curve:secp384r1", "-out", wrong_key)
@@ -104,6 +143,10 @@ def create(exe, folder):
             "-verify_ip", "127.0.0.1", dns_only_leaf, expect=1)
     openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
             "-verify_hostname", "localhost", tampered, expect=1)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
+            "-verify_hostname", "localhost", expired_leaf, expect=1)
+    openssl(exe, "verify", "-CAfile", root, "-purpose", "sslserver",
+            "-verify_hostname", "localhost", future_leaf, expect=1)
     print("P384 issuer/P256 leaf SHA384 test-only PKI and fail-closed oracle: PASS")
 
 if __name__ == "__main__":

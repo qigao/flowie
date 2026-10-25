@@ -1780,6 +1780,21 @@ spec("Flowie MQTT client CNet and CHTTP transports") {
           SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, FLOWIE_P384_SHA384_TAMPERED_LEAF,
           FLOWIE_P384_SHA384_KEY, NULL, NULL, 1);
     }
+    for (size_t validity_case = 0u; validity_case < 2u; ++validity_case) {
+      const char *leaf = validity_case == 0u ? FLOWIE_P384_SHA384_EXPIRED_LEAF
+                                             : FLOWIE_P384_SHA384_FUTURE_LEAF;
+      const char *validity = validity_case == 0u ? "expired" : "not-yet-valid";
+      it("rejects a %s P-384 SHA-384 TLS/WSS leaf before MQTT CONNECT, websocket=%d",
+         validity, secure_websocket) {
+        flowie_client_transport_case_ex_fixture(
+            secure_websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WSS
+                             : FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
+            secure_websocket ? TF_NET_TRANSPORT_WSS : TF_NET_TRANSPORT_TLS,
+            FLOWIE_CLIENT_TRANSPORT_CONNACK_VALID, FLOWIE_CLIENT_TRANSPORT_TEST_TIMEOUT_MS,
+            SALTS_OK, 0, 1, FLOWIE_P384_SHA384_CA, leaf, FLOWIE_P384_SHA384_KEY,
+            NULL, NULL, 1);
+      }
+    }
   }
 #endif
 

@@ -615,6 +615,30 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(result.request_size, (size_t)0u);
     check_equal(result.stats.transport_failures, 1u);
   }
+
+  for (size_t validity_case = 0u; validity_case < 2u; ++validity_case) {
+    const char *leaf = validity_case == 0u ? FLOWIE_P384_SHA384_EXPIRED_LEAF
+                                           : FLOWIE_P384_SHA384_FUTURE_LEAF;
+    const char *validity = validity_case == 0u ? "expired" : "not-yet-valid";
+    it("rejects a %s P384 issuer SHA384 HTTPS leaf before HTTP auth", validity) {
+      char response[4096];
+      external_https_network_result_t result;
+      external_https_network_options_t options;
+      int response_size = external_https_http_response(
+          response, sizeof(response), 200, "OK", "application/json",
+          EXTERNAL_HTTPS_RESPONSE_BODY);
+      check_greater(response_size, 0);
+      options = external_https_network_options(response, (size_t)response_size);
+      options.test_server_cert_file = leaf;
+      options.test_server_key_file = FLOWIE_P384_SHA384_KEY;
+      options.test_ca_file = FLOWIE_P384_SHA384_CA;
+      options.configure_client_identity = 0;
+      check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
+      check_equal(result.status, SALTS_EIO);
+      check_equal(result.request_size, (size_t)0u);
+      check_equal(result.stats.transport_failures, 1u);
+    }
+  }
 #endif
 
   it("fails the handshake when the third-party server certificate is untrusted") {

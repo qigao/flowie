@@ -33,7 +33,8 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
       "Flowie P384/SHA384 independent test PKI generation failed:"
       "\n${_flowie_p384_pki_output}\n${_flowie_p384_pki_error}")
   endif()
-  foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem leaf.key wrong-ca.pem tampered.pem)
+  foreach(_fixture IN ITEMS ca.pem leaf.pem dns-only-leaf.pem expired-leaf.pem
+                            future-leaf.pem leaf.key wrong-ca.pem tampered.pem)
     if(NOT EXISTS "${_flowie_p384_pki}/${_fixture}")
       message(FATAL_ERROR "Missing Flowie P384/SHA384 test certificate material: ${_fixture}")
     endif()
@@ -44,6 +45,8 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/leaf.key" _p384_key)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/wrong-ca.pem" _p384_wrong_ca)
   file(TO_CMAKE_PATH "${_flowie_p384_pki}/tampered.pem" _p384_tampered)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/expired-leaf.pem" _p384_expired)
+  file(TO_CMAKE_PATH "${_flowie_p384_pki}/future-leaf.pem" _p384_future)
   target_compile_definitions(test_flowie_mqtt_client PRIVATE
     FLOWIE_P384_SHA384_ACCEPTANCE_TESTS=1
     "FLOWIE_P384_SHA384_CA=\"${_p384_ca}\""
@@ -51,7 +54,9 @@ if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
     "FLOWIE_P384_SHA384_DNS_ONLY_LEAF=\"${_p384_dns_only_leaf}\""
     "FLOWIE_P384_SHA384_KEY=\"${_p384_key}\""
     "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_wrong_ca}\""
-    "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_tampered}\"")
+    "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_tampered}\""
+    "FLOWIE_P384_SHA384_EXPIRED_LEAF=\"${_p384_expired}\""
+    "FLOWIE_P384_SHA384_FUTURE_LEAF=\"${_p384_future}\"")
   message(STATUS "Flowie #70 P384/SHA384 MQTT TLS+WSS acceptance enabled; GmSSL remains private CNet runtime")
 endif()
 

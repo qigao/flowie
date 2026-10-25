@@ -569,7 +569,8 @@ if(BUILD_TESTS)
     # a second TLS provider or smuggling an OpenSSL runtime into Flowie.
     if(FLOWIE_P384_SHA384_ACCEPTANCE_TESTS)
       set(_flowie_p384_https_pki "${CMAKE_BINARY_DIR}/client/tests/p384-sha384-fixtures")
-      foreach(_name IN ITEMS ca.pem leaf.pem leaf.key wrong-ca.pem tampered.pem)
+      foreach(_name IN ITEMS ca.pem leaf.pem expired-leaf.pem future-leaf.pem
+                             leaf.key wrong-ca.pem tampered.pem)
         if(NOT EXISTS "${_flowie_p384_https_pki}/${_name}")
           message(FATAL_ERROR "Flowie #70 HTTPS test-PKI missing ${_name}")
         endif()
@@ -579,13 +580,17 @@ if(BUILD_TESTS)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/leaf.key" _p384_https_key)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/wrong-ca.pem" _p384_https_wrong)
       file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/tampered.pem" _p384_https_tampered)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/expired-leaf.pem" _p384_https_expired)
+      file(TO_CMAKE_PATH "${_flowie_p384_https_pki}/future-leaf.pem" _p384_https_future)
       target_compile_definitions(test_flowie_control_external_https_authenticator PRIVATE
         FLOWIE_P384_SHA384_ACCEPTANCE_TESTS=1
         "FLOWIE_P384_SHA384_CA=\"${_p384_https_ca}\""
         "FLOWIE_P384_SHA384_LEAF=\"${_p384_https_leaf}\""
         "FLOWIE_P384_SHA384_KEY=\"${_p384_https_key}\""
         "FLOWIE_P384_SHA384_WRONG_CA=\"${_p384_https_wrong}\""
-        "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_https_tampered}\"")
+        "FLOWIE_P384_SHA384_TAMPERED_LEAF=\"${_p384_https_tampered}\""
+        "FLOWIE_P384_SHA384_EXPIRED_LEAF=\"${_p384_https_expired}\""
+        "FLOWIE_P384_SHA384_FUTURE_LEAF=\"${_p384_https_future}\"")
     endif()
     if(WIN32)
       target_link_libraries(test_flowie_control_external_https_authenticator PRIVATE ws2_32)
