@@ -1152,8 +1152,10 @@ int flowie_mqtt_control_packet_encode(const flowie_mqtt_control_packet_t *packet
     }
   }
   if (packet->type == FLOWIE_MQTT_PACKET_SUBACK || packet->type == FLOWIE_MQTT_PACKET_UNSUBACK) {
-    memcpy(output + offset, packet->reason_codes.data, packet->reason_codes.size);
-    offset += packet->reason_codes.size;
+    if (packet->reason_codes.size != 0u) {
+      memcpy(output + offset, packet->reason_codes.data, packet->reason_codes.size);
+      offset += packet->reason_codes.size;
+    }
   }
   if (offset != total) return FLOWIE_MQTT_PARSE_MALFORMED;
   *written = total;

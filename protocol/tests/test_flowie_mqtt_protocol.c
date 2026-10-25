@@ -608,6 +608,13 @@ spec("flowie mqtt protocol") {
                  FLOWIE_MQTT_PARSE_OK);
     check_equal(encoded, expected_puback, sizeof(expected_puback));
 
+    control.type = FLOWIE_MQTT_PACKET_UNSUBACK;
+    check_equal(flowie_mqtt_control_packet_encode(&control, encoded, sizeof(encoded), &written),
+                 FLOWIE_MQTT_PARSE_OK);
+    check_equal(written, sizeof(expected_puback));
+    check_equal(encoded[0], 0xb0u);
+    check_equal(encoded + 1u, expected_puback + 1u, sizeof(expected_puback) - 1u);
+
     control.type = FLOWIE_MQTT_PACKET_SUBACK;
     control.packet_id = 7u;
     control.reason_codes = (flowie_mqtt_span_t){suback_codes, sizeof(suback_codes)};

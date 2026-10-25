@@ -26,9 +26,9 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 750M
-      SALTS_SOURCE_REF: 259a353eeda78d81c3d72cb18bae2d83d2a00f94
+      SALTS_SOURCE_REF: 2a943b532c56b959a8f395288c23a77c003009db
       SALTS_UTILS_SOURCE_REF: fbb5f3ee19589836ced0f3b98414e71e6dcc1388
-      CHTTP_SOURCE_REF: 51802da8029304109954674755dd4ea3d573a1b7
+      CHTTP_SOURCE_REF: 7c0c1ca505bde9e4fd7e7cb9eb75be5b8361811a
       TURBODB_SOURCE_REF: ad60d6060d0f91179a1ae6c7687dfb497e70ab52
       FLOWIE_EXACT_SOURCE_SANITIZERS: ON
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
@@ -44,7 +44,7 @@ jobs:
           key: flowie-p384-sanitizers-v1-linux-x64-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
             flowie-p384-sanitizers-v1-linux-x64-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@a4400388446378f2b6e13537bbc0f160dc20f53f
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
       - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master

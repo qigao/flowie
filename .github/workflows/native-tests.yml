@@ -45,9 +45,9 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_MAXSIZE: 750M
-      SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '259a353eeda78d81c3d72cb18bae2d83d2a00f94' || (matrix.os == 'ubuntu-24.04' && inputs.salts_ref) || '' }}
+      SALTS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '2a943b532c56b959a8f395288c23a77c003009db' || (matrix.os == 'ubuntu-24.04' && inputs.salts_ref) || '' }}
       SALTS_UTILS_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'fbb5f3ee19589836ced0f3b98414e71e6dcc1388' || '' }}
-      CHTTP_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '51802da8029304109954674755dd4ea3d573a1b7' || '' }}
+      CHTTP_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && '7c0c1ca505bde9e4fd7e7cb9eb75be5b8361811a' || '' }}
       TURBODB_SOURCE_REF: ${{ github.ref == 'refs/heads/test/flowie-p384-sha384-tls-70' && 'ad60d6060d0f91179a1ae6c7687dfb497e70ab52' || '' }}
     steps:
       - uses: actions/checkout@v4
