@@ -241,6 +241,11 @@ jobs:
             test_flowie_mqtt_qos1_deferred_overflow \
             test_flowie_mqtt_qos1_deferred_queue_full \
             test_flowie_mqtt_qos1_deferred_destroy_pending
+          # The MQTT-only tests do not cover the retained TCP mailbox.
+          # Exercise the same real Flowie/CNet owner graph under source TSan.
+          if test "${{ matrix.mode }}" = tsan-firstparty-source; then
+            cmake --build "$build" --parallel 2 --target test_flowie_connection
+          fi
           test -f "$build/bin/libflowie_client.so"
           printf 'flowie=%s\nmode=%s\nproducer_sdk=published_uninstrumented_unless_salts_source_variant\n' \
             "$(git rev-parse HEAD)" "${{ matrix.mode }}" > "$build/provenance.txt"
@@ -257,6 +262,8 @@ jobs:
           if test "${{ matrix.mode }}" = tsan-firstparty-source; then
             echo "== actual real-wire executable dynamic dependencies =="
             ldd "$build/bin/test_flowie_mqtt_qos1_deferred_wire" | tee -a "$build/dependencies.txt"
+            echo "== retained TCP owner test actual dependency graph =="
+            ldd "$build/bin/test_flowie_connection" | tee -a "$build/dependencies.txt"
             if grep -q 'not found' "$build/dependencies.txt"; then
               echo "Actual native consumer dependency closure incomplete" >&2
               exit 1
@@ -280,6 +287,15 @@ jobs:
             --timeout 60 --repeat until-fail:10 \
             -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow|queue_full|destroy_pending)$' \
             2>&1 | tee "$build/sanitizer-ctest.log"
+          if test "${{ matrix.mode }}" = tsan-firstparty-source; then
+            # Real TCP Owner admission, retained buffers, teardown and
+            # deterministic queue-FULL rejection. Does not replace a CNet
+            # terminal/refcount proof on all cancellation paths.
+            ctest --test-dir "$build" --no-tests=error --output-on-failure \
+              --timeout 180 --repeat until-fail:3 \
+              -R '^test_flowie_connection$' \
+              2>&1 | tee "$build/sanitizer-connection-ctest.log"
+          fi
       - name: Preserve instrumented Flowie source evidence even on RED
         if: always()
         uses: actions/upload-artifact@v4
@@ -291,4 +307,5 @@ jobs:
             build/qos1-sanitize-${{ matrix.mode }}/provenance.txt
             build/qos1-sanitize-${{ matrix.mode }}/dependencies.txt
             build/qos1-sanitize-${{ matrix.mode }}/sanitizer-ctest.log
+            build/qos1-sanitize-${{ matrix.mode }}/sanitizer-connection-ctest.log
             build/qos1-sanitize-${{ matrix.mode }}/Testing/Temporary/LastTest.log
