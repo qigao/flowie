@@ -1,3 +1,24 @@
+# Independent C11 state machine test. It does not open MQTT sockets and
+# does not pretend a queue admission is a PUBACK. The same internal helper
+# will be compiled into the opt-in native receive path.
+add_executable(test_flowie_mqtt_qos1_deferred_state
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_qos1_deferred_state.c)
+target_include_directories(test_flowie_mqtt_qos1_deferred_state PRIVATE
+  ${PROJECT_SOURCE_DIR}/client/include
+  ${PROJECT_SOURCE_DIR}/protocol/include)
+set_target_properties(test_flowie_mqtt_qos1_deferred_state PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(test_flowie_mqtt_qos1_deferred_state PRIVATE /W4 /WX)
+else()
+  target_compile_options(test_flowie_mqtt_qos1_deferred_state PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME flowie.mqtt.qos1_deferred_state
+  COMMAND test_flowie_mqtt_qos1_deferred_state)
+set_tests_properties(flowie.mqtt.qos1_deferred_state PROPERTIES
+  LABELS "flowie;mqtt;client;receive;deferred;qos1;security-contract")
+
 cmake_add_test(
   test_flowie_mqtt_client
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
