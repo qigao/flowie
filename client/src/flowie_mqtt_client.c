@@ -1,5 +1,6 @@
 #include "flowie_mqtt_client.h"
 #include "flowie_mqtt_client_receive_state.h"
+#include <cmeta_crypto.h>
 
 #include "flowie_stl_error_internal.h"
 
@@ -1287,7 +1288,13 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
   if (publish.qos == 1u && client->deferred_qos1_enabled) {
     flowie_mqtt_client_inbound_token_t token = {0};
+    uint8_t digest[FLOWIE_RECEIVE_DIGEST_BYTES] = {0};
     int admitted;
+    /* Full MQTT PUBLISH body excludes the mutable fixed-header DUP flag.
+     * A retransmit must match this original canonical wire body exactly. */
+    if (!packet->body.data || packet->body.size == 0u ||
+        cmeta_sha256(packet->body.data, packet->body.size, digest) != SALTS_OK)
+      return SALTS_EPROTO;
     /* Exact authorized topic matching, but only ONE deferred callback.
      * The legacy auto-PUBACK path is unchanged when mode is off. */
     for (size_t i = 0u; i < client->topic_handler_count; ++i) {
@@ -1300,7 +1307,8 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
     if (match_count == 0u) return SALTS_ENOTSUP;
     admitted = flowie_receive_state_offer(
         &client->inbound_qos1, publish.packet_id,
-        publish.duplicate ? 1 : 0, &token);
+        publish.duplicate ? 1 : 0, digest, &token);
+    crypto_wipe(digest, sizeof(digest));
     if (admitted == FLOWIE_RECEIVE_DUPLICATE_PENDING)
       return SALTS_OK; /* neither duplicate callback nor premature PUBACK */
     if (admitted == FLOWIE_RECEIVE_FULL) return SALTS_ENOSPC;
