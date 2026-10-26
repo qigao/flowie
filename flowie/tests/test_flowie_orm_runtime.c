@@ -9,30 +9,45 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#ifndef FLOWIE_TEST_TURBODB_RUNTIME_DIR
-#error "Windows ORM Plugin test must specify its exact TurboDB runtime directory"
+#if !defined(FLOWIE_TEST_TURBODB_RUNTIME_DIR) || !defined(FLOWIE_TEST_SALTS_RUNTIME_DIR)
+#error "Windows ORM Plugin test requires exact TurboDB and Salts SDK runtime paths"
 #endif
-static DLL_DIRECTORY_COOKIE flowie_sdk_runtime_cookie;
+static DLL_DIRECTORY_COOKIE flowie_sdk_turbodb_cookie;
+static DLL_DIRECTORY_COOKIE flowie_sdk_salts_cookie;
 
-static int flowie_test_register_sdk_runtime(void) {
-  const char *path = FLOWIE_TEST_TURBODB_RUNTIME_DIR;
+static int flowie_test_trust_sdk_bin(const char *path,
+                                    DLL_DIRECTORY_COOKIE *cookie) {
   wchar_t trusted[MAX_PATH * 4u];
   int count;
-  if (flowie_sdk_runtime_cookie != NULL) return 0;
-  count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                              path, -1, trusted,
+  if (!path || !cookie || *cookie) return 0;
+  count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1,
+                              trusted,
                               (int)(sizeof(trusted) / sizeof(trusted[0])));
   if (count <= 0 || count >= (int)(sizeof(trusted) / sizeof(trusted[0])))
     return 0;
-  flowie_sdk_runtime_cookie = AddDllDirectory(trusted);
-  return flowie_sdk_runtime_cookie != NULL;
+  *cookie = AddDllDirectory(trusted);
+  return *cookie != NULL;
+}
+static int flowie_test_register_sdk_runtime(void) {
+  /* Both locations originate from the immutable published SDK graph;
+   * nothing is searched through PATH, the working directory or runner. */
+  if (!flowie_test_trust_sdk_bin(FLOWIE_TEST_TURBODB_RUNTIME_DIR,
+                                 &flowie_sdk_turbodb_cookie)) return 0;
+  if (!flowie_test_trust_sdk_bin(FLOWIE_TEST_SALTS_RUNTIME_DIR,
+                                 &flowie_sdk_salts_cookie)) return 0;
+  return 1;
 }
 static int flowie_test_release_sdk_runtime(void) {
-  const DLL_DIRECTORY_COOKIE cookie = flowie_sdk_runtime_cookie;
-  if (cookie == NULL) return 0;
-  if (!RemoveDllDirectory(cookie)) return 0;
-  flowie_sdk_runtime_cookie = NULL;
-  return 1;
+  int status = 1;
+  if (flowie_sdk_salts_cookie) {
+    if (!RemoveDllDirectory(flowie_sdk_salts_cookie)) status = 0;
+    else flowie_sdk_salts_cookie = NULL;
+  }
+  if (flowie_sdk_turbodb_cookie) {
+    if (!RemoveDllDirectory(flowie_sdk_turbodb_cookie)) status = 0;
+    else flowie_sdk_turbodb_cookie = NULL;
+  }
+  return status;
 }
 #endif
 
