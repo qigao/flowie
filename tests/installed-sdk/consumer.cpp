@@ -12,6 +12,10 @@ static_assert(std::is_standard_layout<flowie_mqtt_client_destination_policy_t>::
               "Client destination config must remain a C-compatible layout");
 static_assert(std::is_standard_layout<flowie_endpoint_config_t>::value,
               "Broker endpoint must remain a C-compatible layout");
+static_assert(std::is_standard_layout<flowie_mqtt_client_receive_policy_t>::value,
+              "Deferred receive policy must remain standard C layout");
+static_assert(std::is_standard_layout<flowie_mqtt_client_inbound_token_t>::value,
+              "Deferred QoS1 token must remain standard C layout");
 
 int main() {
   flowie_mqtt_client_destination_policy_t policy{};
@@ -22,6 +26,16 @@ int main() {
   using SetDestination = int (*)(flowie_mqtt_client_t *,
                                 const flowie_mqtt_client_destination_policy_t *);
   SetDestination set_destination = &flowie_mqtt_client_set_destination_policy;
+  using SetReceive = int (*)(flowie_mqtt_client_t *,
+                             const flowie_mqtt_client_receive_policy_t *);
+  using SettleQoS1 = int (*)(flowie_mqtt_client_t *,
+                             const flowie_mqtt_client_inbound_token_t *,
+                             flowie_mqtt_client_completion_fn, void *);
+  SetReceive set_receive = &flowie_mqtt_client_set_receive_policy;
+  SettleQoS1 settle_qos1 = &flowie_mqtt_client_settle_inbound_qos1;
+  flowie_mqtt_client_receive_policy_t receive_policy{};
+  receive_policy.size = sizeof(receive_policy);
+  receive_policy.version = FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_VERSION;
   policy.size = sizeof(policy);
   policy.version = FLOWIE_MQTT_CLIENT_DESTINATION_VERSION;
   endpoint.endpoint_id = 1u;
@@ -35,6 +49,11 @@ int main() {
       endpoint.weight != 1u || set_destination == nullptr) return 1;
   if (set_destination(nullptr, nullptr) != SALTS_EINVAL) return 2;
   if (flowie_mqtt_client_try_destroy(nullptr, 0u) != SALTS_EINVAL) return 6;
+  if (receive_policy.size != sizeof(receive_policy) ||
+      !set_receive || !settle_qos1 ||
+      set_receive(nullptr, nullptr) != SALTS_EINVAL ||
+      settle_qos1(nullptr, nullptr, nullptr, nullptr) != SALTS_EINVAL)
+    return 7;
   if (cnet_owner_placement_choose(&input, &owner) != SALTS_OK || owner != 1u) return 3;
 
   flowie_pattern_selector_t selector{};

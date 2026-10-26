@@ -1,0 +1,50 @@
+name: Flowie QoS1 deferred state C11
+
+'on':
+  push:
+    branches: [feature/qos1-deferred-inbound-settlement-22]
+    paths:
+      - client/include/flowie_mqtt_client.h
+      - client/src/flowie_mqtt_client_receive_state.h
+      - client/tests/test_flowie_mqtt_qos1_deferred_state.c
+      - client/tests/qos1-state-standalone/**
+      - .github/workflows/qos1-deferred-state-c11.yml
+  pull_request:
+    paths:
+      - client/include/flowie_mqtt_client.h
+      - client/src/flowie_mqtt_client_receive_state.h
+      - client/tests/test_flowie_mqtt_qos1_deferred_state.c
+      - client/tests/qos1-state-standalone/**
+      - .github/workflows/qos1-deferred-state-c11.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flowie-qos1-state-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  state:
+    name: ${{ matrix.os }} strict C11
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Configure standalone state without vcpkg or published SDK
+        run: cmake -S client/tests/qos1-state-standalone -B build/qos1-state-c11 -DCMAKE_BUILD_TYPE=Debug
+      - name: Build with strict warnings
+        run: cmake --build build/qos1-state-c11 --config Debug --parallel 2
+      - name: Verify bounded state, token generation and DUP identity
+        run: ctest --test-dir build/qos1-state-c11 -C Debug --output-on-failure --no-tests=error
+      - name: Verify exact checkout unchanged
+        shell: bash
+        run: |
+          test -z "$(git status --porcelain --untracked-files=no)"

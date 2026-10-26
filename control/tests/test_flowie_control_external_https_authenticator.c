@@ -5,6 +5,7 @@
 #include "tls_test_support.h"
 #include <json_parser.h>
 #include <salts/error_codes.h>
+#include <salts/clock.h>
 #include <salts/thread.h>
 
 #include <stdatomic.h>
@@ -14,6 +15,14 @@
 #define EXTERNAL_HTTPS_CLIENT_CERT                                                                 \
   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
+/* Test-only handoff: the first real verify holds in_flight=1 before
+ * returning the request's secret lease, so a second request deterministically
+ * proves rejection BEFORE it may acquire a secret or access any network. */
+typedef struct external_https_request_gate_s {
+  atomic_int entered;
+  atomic_int release;
+} external_https_request_gate_t;
+
 typedef struct external_https_secret_fixture_s {
   atomic_int acquire_calls;
   atomic_int release_calls;
@@ -21,6 +30,7 @@ typedef struct external_https_secret_fixture_s {
   const uint8_t *token;
   size_t token_size;
   uint64_t token_version;
+  external_https_request_gate_t *request_gate;
 } external_https_secret_fixture_t;
 
 typedef struct external_https_task_s {
@@ -71,7 +81,21 @@ static int external_https_secret_acquire(void *ctx, const char *reference,
   external_https_secret_fixture_t *fixture = (external_https_secret_fixture_t *)ctx;
   if (!fixture || !reference || strcmp(reference, "env://EXTERNAL_AUTH_TOKEN") != 0 || !lease)
     return SALTS_ENOENT;
-  (void)atomic_fetch_add_explicit(&fixture->acquire_calls, 1, memory_order_relaxed);
+  {
+    const int prior =
+        atomic_fetch_add_explicit(&fixture->acquire_calls, 1, memory_order_relaxed);
+    if (prior == 1 && fixture->request_gate != NULL) {
+      /* Prior call is the authenticator's create-time secret validation.
+       * verify() first reserves max_in_flight, then calls this provider. */
+      external_https_request_gate_t *gate = fixture->request_gate;
+      const uint64_t deadline = cmeta_monotonic_ms() + UINT64_C(5000);
+      atomic_store_explicit(&gate->entered, 1, memory_order_release);
+      while (!atomic_load_explicit(&gate->release, memory_order_acquire)) {
+        if (cmeta_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+        cmeta_thread_yield();
+      }
+    }
+  }
   if (fixture->acquire_status != SALTS_OK) return fixture->acquire_status;
   lease->bytes = fixture->token ? fixture->token : default_token;
   lease->byte_count = fixture->token ? fixture->token_size : sizeof(default_token) - 1u;
@@ -505,11 +529,19 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    options.response_delay_ms = 250u;
-    options.timeout_ms = 50u;
+    /* The deadline spans DNS/TCP/TLS and the HTTP response. A 50ms
+     * total budget is shorter than a real Windows CNet/GmSSL handshake,
+     * causing the test to time out BEFORE authentication and wrongly
+     * demanding peer_verified=true. Keep the failure boundary strictly
+     * after mTLS/request admission: an actual 1.5s request budget plus a
+     * 4s fixture response delay, verified by the server's received bytes.
+     * The Client still must fail closed before reading a valid assertion. */
+    options.response_delay_ms = 4000u;
+    options.timeout_ms = 1500u;
     check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
     check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
+    check_greater(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
   }
 
@@ -628,6 +660,7 @@ spec("Flowie control external HTTPS authenticator") {
     char url[160];
     flow_mtls_test_server_t server;
     external_https_secret_fixture_t fixture = {0};
+    external_https_request_gate_t gate = {0};
     flowie_control_external_https_authenticator_config_t config = external_https_config(&fixture);
     flowie_control_external_https_authenticator_t *authenticator = NULL;
     external_https_task_t first;
@@ -643,6 +676,9 @@ spec("Flowie control external HTTPS authenticator") {
     memset(&second, 0, sizeof(second));
     atomic_init(&fixture.acquire_calls, 0);
     atomic_init(&fixture.release_calls, 0);
+    atomic_init(&gate.entered, 0);
+    atomic_init(&gate.release, 0);
+    fixture.request_gate = &gate;
     atomic_init(&first.done, 0);
     atomic_init(&second.done, 0);
     first.status = SALTS_EIO;
@@ -652,9 +688,10 @@ spec("Flowie control external HTTPS authenticator") {
     check_greater(response_size, 0);
     check_equal(
         tls_test_write_server_files(cert_file, sizeof(cert_file), key_file, sizeof(key_file)), 0);
-    check_equal(flow_mtls_test_server_start_delayed(&server, (const uint8_t *)response,
-                                                    (size_t)response_size, 1000u),
-                0);
+    /* The server responds immediately; slot occupancy is enforced by the
+     * admission barrier, not by a race against request/TLS timeout. */
+    check_equal(flow_mtls_test_server_start(&server, (const uint8_t *)response,
+                                           (size_t)response_size), 0);
     check_greater(snprintf(url, sizeof(url), "https://localhost:%u/v1/authenticate", server.port),
                   0);
     config.url = url;
@@ -674,18 +711,29 @@ spec("Flowie control external HTTPS authenticator") {
     second.assertion =
         (flowie_control_external_auth_assertion_t)FLOWIE_CONTROL_EXTERNAL_AUTH_ASSERTION_INIT;
     check_equal(cmeta_thread_create(&first_worker, external_https_verify_task, &first), SALTS_OK);
-    while (atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed) < 2 &&
-           !atomic_load_explicit(&first.done, memory_order_acquire))
-      cmeta_thread_yield();
+    {
+      const uint64_t deadline = cmeta_monotonic_ms() + UINT64_C(5000);
+      while (!atomic_load_explicit(&gate.entered, memory_order_acquire) &&
+             !atomic_load_explicit(&first.done, memory_order_acquire) &&
+             cmeta_monotonic_ms() < deadline)
+        cmeta_thread_yield();
+    }
+    check_equal(atomic_load_explicit(&gate.entered, memory_order_acquire), 1);
     check_false(atomic_load_explicit(&first.done, memory_order_acquire));
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
     check_equal(cmeta_thread_create(&second_worker, external_https_verify_task, &second), SALTS_OK);
     check_equal(cmeta_thread_join(&second_worker), SALTS_OK);
     check_equal(second.status, SALTS_EBUSY);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
+    /* Release before join; no Timer-vs-TLS speed assumption is involved. */
+    atomic_store_explicit(&gate.release, 1, memory_order_release);
     check_equal(cmeta_thread_join(&first_worker), SALTS_OK);
     check_equal(first.status, SALTS_OK);
+    /* Join the server before observing peer verification and request bytes;
+     * otherwise the host-thread read races its completion thread. */
+    flow_mtls_test_server_join(&server);
     check_true(server.peer_verified);
+    check_greater(server.request_size, 0u);
     check_equal(atomic_load_explicit(&fixture.acquire_calls, memory_order_relaxed), 2);
     check_equal(atomic_load_explicit(&fixture.release_calls, memory_order_relaxed), 2);
     check_equal(flowie_control_external_https_authenticator_get_stats(authenticator, &stats),
@@ -696,7 +744,6 @@ spec("Flowie control external HTTPS authenticator") {
     check_equal(stats.local_overload, 1u);
 
     flowie_control_external_https_authenticator_destroy(authenticator);
-    flow_mtls_test_server_join(&server);
     tls_test_remove_file(key_file);
     tls_test_remove_file(cert_file);
   }

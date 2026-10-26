@@ -57,6 +57,27 @@ cmake_add_test(
   LIBS flowie_orm_flow Salts::TinyTest
   DEFS FLOWIE_TEST_SQLITE_MODULE="${TurboDB_DRIVER_DIR}/turbodb_driver_sqlite${CMAKE_SHARED_MODULE_SUFFIX}"
   FOLDER "flowie/tests")
+# Salts CMeta loads an explicit Plugin path with DLL_LOAD_DIR|DEFAULT_DIRS,
+# intentionally ignoring PATH. The published TurboDB Windows SDK places its
+# PostgreSQL client DLL under bin/, alongside other release runtime DLLs,
+# while the Plugin is under lib/turbodb/drivers/. Register ONLY that exact
+# package bin in the test process (never a global search fallback).
+if(WIN32)
+  if(NOT EXISTS "${FLOWIE_TURBODB_ROOT_PATH}/bin/libpq.dll")
+    message(FATAL_ERROR "Exact TurboDB SDK libpq.dll is required for Windows Plugin admission")
+  endif()
+  if(NOT EXISTS "${FLOWIE_SALTS_ROOT_PATH}/bin/cnet.dll" OR
+     NOT EXISTS "${FLOWIE_SALTS_ROOT_PATH}/bin/salts.dll")
+    message(FATAL_ERROR
+      "Exact Salts SDK CNet/salts dependency DLLs are required for secure PostgreSQL Plugin admission")
+  endif()
+  # The PG Plugin imports TurboDB/libpq AND Salts/CNet from different
+  # installed SDK roots. Explicit-path CMeta deliberately ignores PATH.
+  # Admit the two immutable producer directories in this test only.
+  target_compile_definitions(test_flowie_orm_runtime PRIVATE
+    FLOWIE_TEST_TURBODB_RUNTIME_DIR="${FLOWIE_TURBODB_ROOT_PATH}/bin"
+    FLOWIE_TEST_SALTS_RUNTIME_DIR="${FLOWIE_SALTS_ROOT_PATH}/bin")
+endif()
 set_tests_properties(test_flowie_orm_runtime PROPERTIES LABELS "flowie;flowie-release;storage")
 
 if(FLOWIE_TURBODB_LIVE_TESTS)

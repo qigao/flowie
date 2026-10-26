@@ -1,4 +1,6 @@
 #include "flowie_mqtt_client.h"
+#include "flowie_mqtt_client_receive_state.h"
+#include <cmeta_crypto.h>
 
 #include "flowie_stl_error_internal.h"
 
@@ -50,6 +52,7 @@ typedef enum flowie_mqtt_client_command_type_e {
   FLOWIE_MQTT_CLIENT_COMMAND_UNSUBSCRIBE,
   FLOWIE_MQTT_CLIENT_COMMAND_PING,
   FLOWIE_MQTT_CLIENT_COMMAND_AUTH,
+  FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE,
   FLOWIE_MQTT_CLIENT_COMMAND_DISCONNECT
 } flowie_mqtt_client_command_type_t;
 
@@ -65,6 +68,7 @@ typedef struct flowie_mqtt_client_command_s {
     flowie_mqtt_publish_packet_t publish;
     flowie_mqtt_subscribe_packet_t subscribe;
     flowie_mqtt_unsubscribe_packet_t unsubscribe;
+    flowie_mqtt_client_inbound_token_t receive_token;
     struct {
       uint8_t reason_code;
       flowie_mqtt_span_t properties;
@@ -157,6 +161,10 @@ struct flowie_mqtt_client_s {
   size_t recv_offset;
   size_t pending_packet_size;
   uint16_t next_packet_id;
+  /* Native MQTT Owner alone mutates receive slots. */
+  flowie_receive_state_t inbound_qos1;
+  flowie_mqtt_client_inbound_qos1_fn on_inbound_qos1;
+  int deferred_qos1_enabled;
   hash_set_t inbound_qos2;
   int framing_initialized;
   int qos2_initialized;
@@ -658,6 +666,7 @@ static void flowie_mqtt_client_transport_close(flowie_mqtt_client_t *client, int
   client->server_maximum_qos = 2u;
   client->server_retain_available = 1u;
   client->pending_packet_size = 0u;
+  flowie_receive_state_invalidate(&client->inbound_qos1);
   if (reset_framing && client->framing_initialized) cmeta_bytes_reset(&client->framing);
   if (client->qos2_initialized) hash_set_clear(&client->inbound_qos2);
 }
@@ -1277,6 +1286,40 @@ static int flowie_mqtt_client_handle_publish(flowie_mqtt_client_t *client,
   size_t match_count = 0u;
   int rc = flowie_mqtt_publish_parse(packet, &publish);
   if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
+  if (publish.qos == 1u && client->deferred_qos1_enabled) {
+    flowie_mqtt_client_inbound_token_t token = {0};
+    uint8_t digest[FLOWIE_RECEIVE_DIGEST_BYTES] = {0};
+    int admitted;
+    /* Full MQTT PUBLISH body excludes the mutable fixed-header DUP flag.
+     * A retransmit must match this original canonical wire body exactly. */
+    if (!packet->body.data || packet->body.size == 0u ||
+        cmeta_sha256(packet->body.data, packet->body.size, digest) != SALTS_OK)
+      return SALTS_EPROTO;
+    /* Exact authorized topic matching, but only ONE deferred callback.
+     * The legacy auto-PUBACK path is unchanged when mode is off. */
+    for (size_t i = 0u; i < client->topic_handler_count; ++i) {
+      int matched = 0;
+      rc = flowie_mqtt_topic_matches(client->topic_handlers[i].filter,
+                                     publish.topic, &matched);
+      if (rc != FLOWIE_MQTT_PARSE_OK) return flowie_mqtt_client_parse_status(rc);
+      if (matched) ++match_count;
+    }
+    if (match_count == 0u) return SALTS_ENOTSUP;
+    admitted = flowie_receive_state_offer(
+        &client->inbound_qos1, publish.packet_id,
+        publish.duplicate ? 1 : 0, digest, &token);
+    crypto_wipe(digest, sizeof(digest));
+    if (admitted == FLOWIE_RECEIVE_DUPLICATE_PENDING)
+      return SALTS_OK; /* neither duplicate callback nor premature PUBACK */
+    if (admitted == FLOWIE_RECEIVE_FULL) return SALTS_ENOSPC;
+    if (admitted != FLOWIE_RECEIVE_NEW) return SALTS_EPROTO;
+    client->callback_active = 1;
+    rc = client->on_inbound_qos1(client, &publish, &token, client->user_data);
+    client->callback_active = 0;
+    if (rc != SALTS_OK)
+      (void)flowie_receive_state_retire(&client->inbound_qos1, token);
+    return rc; /* queue admission != durable receipt != native PUBACK */
+  }
   if (publish.qos == 2u &&
       hash_set_contains(&client->inbound_qos2, &publish.packet_id)) {
     if (!publish.duplicate) return SALTS_EPROTO;
@@ -1587,6 +1630,25 @@ static void flowie_mqtt_client_run_reconnect(flowie_mqtt_client_t *client) {
   client->reconnect_pending = 0;
 }
 
+static int flowie_mqtt_client_settle_qos1_operation(
+    flowie_mqtt_client_t *client, flowie_mqtt_client_inbound_token_t token) {
+  int rc;
+  if (!client || client->state != FLOWIE_MQTT_CLIENT_CONNECTED ||
+      !client->deferred_qos1_enabled)
+    return SALTS_ENOTCONN;
+  if (!flowie_receive_state_contains(&client->inbound_qos1, token))
+    return SALTS_ENOENT;
+  rc = flowie_mqtt_client_send_control(
+      client, FLOWIE_MQTT_PACKET_PUBACK, token.packet_id, 0u);
+  if (rc != SALTS_OK) {
+    /* Never retire a token for an uncertain native transport send. */
+    flowie_mqtt_client_transport_close(client, 1);
+    return rc;
+  }
+  return flowie_receive_state_retire(&client->inbound_qos1, token)
+             ? SALTS_OK : SALTS_EPROTO;
+}
+
 static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
                                            flowie_mqtt_client_command_t *command) {
   flowie_mqtt_control_packet_view_t response = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
@@ -1626,6 +1688,10 @@ static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_PING:
     rc = flowie_mqtt_client_ping_operation(client);
+    break;
+  case FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE:
+    rc = flowie_mqtt_client_settle_qos1_operation(
+        client, command->packet.receive_token);
     break;
   case FLOWIE_MQTT_CLIENT_COMMAND_AUTH:
     rc = flowie_mqtt_client_auth_operation(client, command->packet.control.properties, &response);
@@ -1668,7 +1734,9 @@ static void flowie_mqtt_client_run_command(flowie_mqtt_client_t *client,
     }
   } else if (command->type == FLOWIE_MQTT_CLIENT_COMMAND_DISCONNECT) {
     flowie_mqtt_client_reconnect_cancel(client, 1);
-  } else if (rc != SALTS_OK && client->resilience_enabled &&
+  } else if (rc != SALTS_OK &&
+             command->type != FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE &&
+             client->resilience_enabled &&
              !flowie_mqtt_client_is_stopping(client)) {
     flowie_mqtt_client_reconnect_after_failure(client, rc, 0);
   }
@@ -2545,6 +2613,31 @@ reject:
   return rc;
 }
 
+int flowie_mqtt_client_set_receive_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_receive_policy_t *policy) {
+  int rc;
+  if (!client || !policy || policy->size != sizeof(*policy) ||
+      policy->version != FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_VERSION ||
+      policy->max_pending_qos1 == 0u ||
+      policy->max_pending_qos1 > FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING ||
+      !policy->on_delivery)
+    return SALTS_EINVAL;
+  cmeta_mutex_lock(&client->command_mutex);
+  if (client->stopping) rc = SALTS_ESHUTDOWN;
+  else if (client->version_locked || client->deferred_qos1_enabled ||
+           client->topic_handler_count == 0u || !deque_empty(&client->commands))
+    rc = SALTS_EBUSY;
+  else {
+    client->inbound_qos1.capacity = policy->max_pending_qos1;
+    client->on_inbound_qos1 = policy->on_delivery;
+    client->deferred_qos1_enabled = 1;
+    rc = SALTS_OK;
+  }
+  cmeta_mutex_unlock(&client->command_mutex);
+  return rc;
+}
+
 static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *scheme,
                                   const char *path, char **out) {
   int bracket_host;
@@ -2800,6 +2893,11 @@ static int flowie_mqtt_client_connect_operation(flowie_mqtt_client_t *client,
       rc = cnet_managed_dial_protocol_ready(
           &client->network_dial, snapshot.recovery_ticket, cmeta_monotonic_ms());
     if (rc != SALTS_OK) goto fail;
+  }
+  if (client->deferred_qos1_enabled &&
+      flowie_receive_state_start(&client->inbound_qos1) != FLOWIE_RECEIVE_NEW) {
+    rc = SALTS_ERANGE;
+    goto fail;
   }
   client->state = FLOWIE_MQTT_CLIENT_CONNECTED;
   atomic_store_explicit(&client->public_connected, 1, memory_order_release);
@@ -3177,6 +3275,38 @@ int flowie_mqtt_client_ping(flowie_mqtt_client_t *client) {
   rc = flowie_mqtt_client_submit(client, command);
   if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
+}
+
+int flowie_mqtt_client_settle_inbound_qos1(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_inbound_token_t *token,
+    flowie_mqtt_client_completion_fn on_settled, void *user_data) {
+  flowie_mqtt_client_command_t *command;
+  int rc;
+  if (!client || !token || !on_settled || !token->session_generation ||
+      !token->delivery_sequence || !token->packet_id)
+    return SALTS_EINVAL;
+  /* A borrowed Client callback is never allowed to self-ACK. It must copy
+   * a token, return queue admission, and settle on its own durable Owner. */
+  if (flowie_mqtt_client_current == client) return SALTS_EBUSY;
+  /* Optional receive policy is configured under command_mutex. Read the
+   * mode and stop fence under that SAME mutex before cross-thread admission:
+   * an external caller must never race the pre-CONNECT policy setter. */
+  cmeta_mutex_lock(&client->command_mutex);
+  {
+    const int enabled = client->deferred_qos1_enabled;
+    const int stopping = client->stopping;
+    cmeta_mutex_unlock(&client->command_mutex);
+    if (stopping) return SALTS_ESHUTDOWN;
+    if (!enabled) return SALTS_ENOTSUP;
+  }
+  command = flowie_mqtt_client_command_new(
+      FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE, on_settled, user_data);
+  if (!command) return SALTS_ENOMEM;
+  command->packet.receive_token = *token;
+  rc = flowie_mqtt_client_submit(client, command);
+  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  return rc; /* accepted command only, never wire-ACK proof */
 }
 
 int flowie_mqtt_client_authenticate(flowie_mqtt_client_t *client, flowie_mqtt_span_t properties) {

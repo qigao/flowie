@@ -115,6 +115,11 @@ spec("flowie session delivery packet-id index") {
     flowie_session_config_t config = flowie_test_session_config(113u, 127u, 8u);
     flowie_session_snapshot_t snapshot = FLOWIE_SESSION_SNAPSHOT_INIT;
     flowie_session_owner_t *owner = NULL;
+    flowie_session_connect_result_t resumed = FLOWIE_SESSION_CONNECT_RESULT_INIT;
+    flowie_mqtt_connect_view_t reconnect =
+        flowie_test_persistent_connect(client_id);
+    flowie_mqtt_connect_view_t forged =
+        flowie_test_persistent_connect("delivery-forged");
 
     for (size_t i = 0u; i < sizeof(deliveries) / sizeof(deliveries[0]); ++i) {
       packets[i][0] = 0x32u;
@@ -146,6 +151,16 @@ spec("flowie session delivery packet-id index") {
 
     check_equal(flowie_session_owner_repository_restore(&config, &row, &owner), SALTS_OK);
     check_not_null(owner);
+    /* A durable V2 row MUST restore logical session identity, not merely
+     * the queued QoS1 bytes. A forged Client ID is rejected before the
+     * matching Clean Start=false CONNECT returns Session Present=1. */
+    check_equal(flowie_session_owner_connect(owner, &forged, &resumed), SALTS_EPROTO);
+    check_equal(flowie_session_owner_connect(owner, &reconnect, &resumed), SALTS_OK);
+    check_equal(resumed.accepted, 1u);
+    check_equal(resumed.session_present, 1u);
+    check_equal(resumed.reply.session_present, 1u);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(snapshot.inflight_count, sizeof(deliveries) / sizeof(deliveries[0]));
     check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[1]), SALTS_OK);
     check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), SALTS_OK);
     check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[0]), SALTS_OK);

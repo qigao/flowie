@@ -339,6 +339,11 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
     owner->will_retain = row->will.retain;
     owner->will_delay_interval = row->will.delay_interval;
   }
+  /* Restored V2 rows are an EXISTING logical MQTT session. Without
+   * initialized=1, the next Clean Start=false CONNECT fabricates
+   * Session Present=0 and skips the stored client-id/version fence,
+   * even when the repository retains subscriptions and QoS deliveries. */
+  owner->initialized = 1u;
   owner->active = 0u;
   owner->clean_start = 0u;
   *out = owner;
