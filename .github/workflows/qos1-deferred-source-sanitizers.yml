@@ -245,10 +245,22 @@ jobs:
           printf 'flowie=%s\nmode=%s\nproducer_sdk=published_uninstrumented_unless_salts_source_variant\n' \
             "$(git rev-parse HEAD)" "${{ matrix.mode }}" > "$build/provenance.txt"
           if test -f salts-tsan-source.txt; then cat salts-tsan-source.txt >> "$build/provenance.txt"; fi
+          # Resolve libraries from the same TSan-installed first-party
+          # graph as the subsequent CTest; a bare CI-shell ldd would falsely
+          # mark the newly built libdata_bind.so as missing.
+          export LD_LIBRARY_PATH="$PWD/$build/bin:$RUNNER_TEMP/flowie-sdk/salts/release/lib:$RUNNER_TEMP/flowie-sdk/salts-utils/release/lib:$RUNNER_TEMP/flowie-sdk/http-services/release/lib:$RUNNER_TEMP/flowie-sdk/turbodb/release/lib:$PWD/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           ldd "$build/bin/libflowie_client.so" | tee "$build/dependencies.txt"
+          if grep -q 'not found' "$build/dependencies.txt"; then
+            echo "Source dependency closure incomplete: shared object not found" >&2
+            exit 1
+          fi
           if test "${{ matrix.mode }}" = tsan-firstparty-source; then
             echo "== actual real-wire executable dynamic dependencies =="
             ldd "$build/bin/test_flowie_mqtt_qos1_deferred_wire" | tee -a "$build/dependencies.txt"
+            if grep -q 'not found' "$build/dependencies.txt"; then
+              echo "Actual native consumer dependency closure incomplete" >&2
+              exit 1
+            fi
             test -f "$RUNNER_TEMP/flowie-sdk/http-services/release/lib/libchttp_server.so"
             nm -D "$RUNNER_TEMP/flowie-sdk/http-services/release/lib/libchttp_server.so" | grep '__tsan_init' >/dev/null
             grep -F "$RUNNER_TEMP/flowie-sdk/http-services/release/lib" "$build/dependencies.txt"
