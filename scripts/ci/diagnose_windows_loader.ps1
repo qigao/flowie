@@ -34,12 +34,12 @@ $handle = [FlowieDllProbeNative]::LoadLibraryExW(
     $full, [IntPtr]::Zero, [uint32]0)
 if ($handle -eq [IntPtr]::Zero) {
     $code = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-    $reason = (New-Object System.ComponentModel.Win32Exception($code)).Message
-    Write-Output ("FLOWIE_WIN32_LOADER_PROBE status=FAILED code={0} " +
-        "module={1} message={2}") -f $code, $full, $reason
+    $reason = [System.ComponentModel.Win32Exception]::new($code).Message
+    Write-Output (("FLOWIE_WIN32_LOADER_PROBE status=FAILED code={0} " +
+        "module={1} message={2}") -f $code, $full, $reason)
 } else {
-    Write-Output ("FLOWIE_WIN32_LOADER_PROBE status=LOADABLE " +
-        "module={0}") -f $full
+    Write-Output (("FLOWIE_WIN32_LOADER_PROBE status=LOADABLE " +
+        "module={0}") -f $full)
     if (-not [FlowieDllProbeNative]::FreeLibrary($handle)) {
         throw "Loader probe failed to release module: $full"
     }
