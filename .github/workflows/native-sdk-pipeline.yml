@@ -836,20 +836,31 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $cmd = @"
+          # cmd.exe /c with an embedded multi-line string can return after
+          # running only the first line. Persist an actual .cmd script so the
+          # full configure/build/CTest runs and each failure propagates.
+          $script = Join-Path $env:RUNNER_TEMP "flowie-installed-qualification.cmd"
+          @"
+          @echo on
           call "$env:VSINSTALL\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=$env:VCPKG_ROOT"
           set "PATH=$env:FLOWIE_ROOT\bin;$env:HTTP_SERVICES_ROOT\bin;$env:TURBODB_ROOT\bin;$env:SALTS_UTILS_ROOT\bin;$env:SALTS_ROOT\bin;$env:VCPKG_INSTALLED_DIR\x64-windows\bin;%PATH%"
-          cd tests\installed-sdk
+          cd /d "$env:GITHUB_WORKSPACE\tests\installed-sdk"
+          if errorlevel 1 exit /b 1
           cmake --preset ci-win-release-user
           if errorlevel 1 exit /b 1
           cmake --build --preset ci-win-release-user --parallel 2
           if errorlevel 1 exit /b 1
-          ctest --preset ci-win-release-user
-          "@
-          cmd.exe /d /s /c $cmd
-          if ($LASTEXITCODE -ne 0) { throw "Windows packed consumer qualification failed" }
+          rem Require the NEW installed PostgreSQL Plugin consumer itself
+          rem to execute, not just compile or appear in test discovery.
+          ctest --preset ci-win-release-user --no-tests=error --output-on-failure -R "^flowie_installed_postgresql_plugin$"
+          if errorlevel 1 exit /b 1
+          ctest --preset ci-win-release-user --no-tests=error --output-on-failure
+          if errorlevel 1 exit /b 1
+          "@ | Set-Content -LiteralPath $script -Encoding ascii
+          & cmd.exe /d /c $script
+          if ($LASTEXITCODE -ne 0) { throw "Windows packed consumer qualification failed (exit=$LASTEXITCODE)" }
 
   qualify_android:
     name: Qualify packed Flowie.Native (Android arm64-v8a)
