@@ -198,7 +198,6 @@ int main(void) {
       {filter,sizeof(filter)-1u}, legacy_receive};
   flowie_mqtt_client_receive_policy_t policy=FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_INIT;
   uint16_t port=0u;
-  uint64_t start;
 
   atomic_init(&b.pubacks,0u);
   atomic_init(&b.pingreqs,0u);
