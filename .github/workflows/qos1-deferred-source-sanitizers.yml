@@ -1,0 +1,153 @@
+name: Flowie QoS1 deferred source sanitizers
+
+'on':
+  push:
+    branches: [feature/qos1-deferred-inbound-settlement-22]
+    paths:
+      - ".github/workflows/qos1-deferred-source-sanitizers.yml"
+      - "client/**"
+      - "connection/**"
+      - "protocol/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "cmake/Sanitizers.cmake"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: flowie-source-qos1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Linux ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: asan-ubsan, address: "ON", undefined: "ON", thread: "OFF" }
+          - { mode: tsan, address: "OFF", undefined: "OFF", thread: "ON" }
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Restore one coherent published native SDK family
+        shell: pwsh
+        env:
+          SDK_RID: linux-x64
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $downloads = Join-Path $env:RUNNER_TEMP 'flowie-downloads'
+          $packages = Join-Path $env:RUNNER_TEMP 'flowie-sdk'
+          New-Item -ItemType Directory -Path $downloads -Force | Out-Null
+
+          # SDK compatibility epochs are checked here. We do not pin an exact
+          # RC or silently fall back to stable releases from an older ABI.
+          # The newest published package inside each compatible epoch wins.
+          $sdks = @(
+            @{ Repo='salts'; Package='Salts.Native'; Directory='salts'; Pattern='^v2\.3\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='salts-utils'; Package='SaltsUtils.Native'; Directory='salts-utils'; Pattern='^v4\.3\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='chttp'; Package='CHttp.Native'; Directory='http-services'; Pattern='^v2\.1\.\d+(?:-rc\.\d+)?$' },
+            @{ Repo='turbodb'; Package='TurboDB.Native'; Directory='turbodb'; Pattern='^v2\.3\.\d+$' }
+          )
+          foreach ($sdk in $sdks) {
+            $repository = 'qigao/' + $sdk.Repo
+            $listing = & gh release list --repo $repository --limit 100 --json tagName,isDraft,isPrerelease,publishedAt
+            if ($LASTEXITCODE -ne 0) { throw "Cannot list $($sdk.Package) releases" }
+            $candidates = @($listing | ConvertFrom-Json | Where-Object {
+              -not $_.isDraft -and $_.tagName -match $sdk.Pattern
+            } | Sort-Object -Property publishedAt -Descending)
+            if ($candidates.Count -eq 0) {
+              throw "No published compatible SDK candidate found for $($sdk.Package)"
+            }
+            $tag = $candidates[0].tagName
+            $releaseJson = & gh release view $tag --repo $repository --json tagName,assets
+            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve $($sdk.Package) $tag" }
+            $release = $releaseJson | ConvertFrom-Json
+            $assets = @($release.assets | Where-Object { $_.name -like ($sdk.Package + '.*.nupkg') })
+            if ($assets.Count -ne 1) { throw "Expected one SDK asset for $($sdk.Package) at $tag" }
+            $asset = $assets[0]
+            & gh release download $tag --repo $repository --pattern $asset.name --dir $downloads
+            if ($LASTEXITCODE -ne 0) { throw "Cannot download $($sdk.Package) at $tag" }
+            $archive = Join-Path $downloads $asset.name
+            $digest = 'sha256:' + (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($digest -ne $asset.digest) { throw "Digest mismatch for $($sdk.Package)" }
+            $unpacked = Join-Path $downloads $sdk.Directory
+            [IO.Compression.ZipFile]::ExtractToDirectory($archive, $unpacked)
+            $source = Join-Path $unpacked ('sdk/' + $env:SDK_RID)
+            if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+              throw "Missing compatible $($env:SDK_RID) SDK: $source"
+            }
+            $parent = Join-Path $packages $sdk.Directory
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination (Join-Path $parent 'release') -Recurse
+            Write-Output "$($sdk.Package)=$tag $digest"
+            "- $($sdk.Package) $tag ($digest)" >> $env:GITHUB_STEP_SUMMARY
+          }
+      - name: Prepare Linux source sanitizer host
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config gcc g++ ccache
+          chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
+      - name: Compile Flowie Client and native wire tests with sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/qos1-sanitize-${{ matrix.mode }}"
+          cmake --preset ci-linux-release-user -B "$build" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DFLOWIE_BUILD_CONTROL=OFF -DFLOWIE_BUILD_SERVER=OFF -DFLOWIE_BUILD_CLUSTER=OFF \
+            -DENABLE_SANITIZER_ADDRESS=${{ matrix.address }} \
+            -DENABLE_SANITIZER_UNDEFINED=${{ matrix.undefined }} \
+            -DENABLE_SANITIZER_THREAD=${{ matrix.thread }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build "$build" --parallel 2 --target \
+            test_flowie_mqtt_qos1_deferred_state \
+            test_flowie_mqtt_qos1_deferred_wire \
+            test_flowie_mqtt_qos1_deferred_overflow \
+            test_flowie_mqtt_qos1_deferred_queue_full \
+            test_flowie_mqtt_qos1_deferred_destroy_pending
+          test -f "$build/bin/libflowie_client.so"
+          printf 'flowie=%s\nmode=%s\nproducer_sdk=published_uninstrumented\n' \
+            "$(git rev-parse HEAD)" "${{ matrix.mode }}" > "$build/provenance.txt"
+          ldd "$build/bin/libflowie_client.so" | tee "$build/dependencies.txt"
+      - name: Repeat actual QoS1 wire/owner race and state tests under instrumentation
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1:history_size=7:second_deadlock_stack=1
+        run: |
+          set -euo pipefail
+          build="build/qos1-sanitize-${{ matrix.mode }}"
+          export LD_LIBRARY_PATH="$PWD/$build/bin:$RUNNER_TEMP/flowie-sdk/salts/release/lib:$RUNNER_TEMP/flowie-sdk/salts-utils/release/lib:$RUNNER_TEMP/flowie-sdk/http-services/release/lib:$RUNNER_TEMP/flowie-sdk/turbodb/release/lib:$PWD/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir "$build" --no-tests=error --output-on-failure \
+            --timeout 60 --repeat until-fail:10 \
+            -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow|queue_full|destroy_pending)$' \
+            2>&1 | tee "$build/sanitizer-ctest.log"
+      - name: Preserve instrumented Flowie source evidence even on RED
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qos1-source-${{ matrix.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/qos1-sanitize-${{ matrix.mode }}/provenance.txt
+            build/qos1-sanitize-${{ matrix.mode }}/dependencies.txt
+            build/qos1-sanitize-${{ matrix.mode }}/sanitizer-ctest.log
+            build/qos1-sanitize-${{ matrix.mode }}/Testing/Temporary/LastTest.log
