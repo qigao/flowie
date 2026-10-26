@@ -73,6 +73,39 @@ set_tests_properties(flowie.mqtt.qos1_deferred_overflow PROPERTIES
   LABELS "flowie;mqtt;client;receive;deferred;qos1;real-wire;capacity;negative"
   TIMEOUT 30)
 
+# One real Flowie loopback transport, two independent deterministic negative
+# modes. A test-only callback barrier holds the native Worker until the
+# controller has truly filled its queue or begun its bounded stop. No
+# production ABI, mock MQTT ACK or sleep-only race inference is introduced.
+foreach(kind IN ITEMS queue_full destroy_pending)
+  string(TOUPPER "${kind}" mode)
+  set(test_target "test_flowie_mqtt_qos1_deferred_${kind}")
+  add_executable(${test_target}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_qos1_deferred_wire.c)
+  target_compile_definitions(${test_target} PRIVATE
+    FLOWIE_DEFERRED_${mode}_TEST=1)
+  target_include_directories(${test_target} PRIVATE
+    ${PROJECT_SOURCE_DIR}/client/include
+    ${PROJECT_SOURCE_DIR}/protocol/include
+    ${PROJECT_SOURCE_DIR}/connection/include)
+  target_link_libraries(${test_target} PRIVATE
+    Flowie::Client Flowie::Connection Flowie::Protocol Salts::Core)
+  set_target_properties(${test_target} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(${test_target} PRIVATE /W4 /WX)
+    target_link_libraries(${test_target} PRIVATE ws2_32)
+  else()
+    target_compile_options(${test_target} PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME flowie.mqtt.qos1_deferred_${kind}
+    COMMAND ${test_target})
+  set_tests_properties(flowie.mqtt.qos1_deferred_${kind} PROPERTIES
+    LABELS "flowie;mqtt;client;receive;deferred;qos1;real-wire;negative;owner"
+    TIMEOUT 30)
+endforeach()
+
 cmake_add_test(
   test_flowie_mqtt_client
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
