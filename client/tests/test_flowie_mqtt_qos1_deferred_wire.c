@@ -39,6 +39,8 @@ typedef struct probe_s {
   atomic_int pinged;
   atomic_int first_settlement;
   atomic_int second_settlement;
+  atomic_int stale_settlement;
+  atomic_int callback_self_settlement;
   atomic_uint errors;
 } probe;
 
@@ -127,6 +129,9 @@ static int legacy_receive(flowie_mqtt_client_t *c,
   atomic_fetch_add_explicit(&p->legacy_deliveries,1u,memory_order_release);
   return SALTS_OK;
 }
+static void settled_first(flowie_mqtt_client_t *c,int status,
+                          const flowie_mqtt_control_packet_view_t *ack,void *u);
+
 static int deferred_receive(flowie_mqtt_client_t *c,
                             const flowie_mqtt_publish_view_t *m,
                             const flowie_mqtt_client_inbound_token_t *token,
@@ -137,6 +142,11 @@ static int deferred_receive(flowie_mqtt_client_t *c,
       m->payload.size != 5u || memcmp(m->payload.data,"hello",5u))
     return SALTS_EPROTO;
   p->token = *token; /* copy; message view ceases on callback return */
+  /* The borrowed callback cannot wait for itself or fabricate a PUBACK.
+   * A true external Consumer Owner will settle only after DB COMMIT. */
+  atomic_store_explicit(&p->callback_self_settlement,
+      flowie_mqtt_client_settle_inbound_qos1(
+          c,token,settled_first,p),memory_order_release);
   atomic_fetch_add_explicit(&p->deliveries,1u,memory_order_release);
   return SALTS_OK; /* NOT a PUBACK */
 }
@@ -164,6 +174,12 @@ static void settled_again(flowie_mqtt_client_t *c,int status,
                           const flowie_mqtt_control_packet_view_t *ack,void *u) {
   (void)c;(void)ack;
   atomic_store_explicit(&((probe*)u)->second_settlement,status,
+                        memory_order_release);
+}
+static void settled_stale(flowie_mqtt_client_t *c,int status,
+                          const flowie_mqtt_control_packet_view_t *ack,void *u) {
+  (void)c;(void)ack;
+  atomic_store_explicit(&((probe*)u)->stale_settlement,status,
                         memory_order_release);
 }
 static void error_event(flowie_mqtt_client_t *c,int status,void *u) {
@@ -217,6 +233,8 @@ int main(void) {
   atomic_init(&p.pinged,SALTS_EBUSY);
   atomic_init(&p.first_settlement,SALTS_EBUSY);
   atomic_init(&p.second_settlement,SALTS_EBUSY);
+  atomic_init(&p.stale_settlement,SALTS_EBUSY);
+  atomic_init(&p.callback_self_settlement,SALTS_EBUSY);
   atomic_init(&p.errors,0u);
 
   net.backend=test_backend();
@@ -264,12 +282,26 @@ int main(void) {
   cmeta_sleep_ms(80u);
   assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
   assert(atomic_load_explicit(&p.legacy_deliveries,memory_order_acquire)==0u);
+  assert(atomic_load_explicit(&p.callback_self_settlement,memory_order_acquire)
+         ==SALTS_EBUSY);
   assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
   assert(flowie_mqtt_client_ping(client)==SALTS_OK);
   assert(wait_status(&p.pinged,SALTS_OK));
   assert(wait_uint(&b.pingreqs,1u));
   assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
 
+  /* An arbitrary session-generation token is queued, but the native
+   * Worker must reject it WITHOUT acknowledging or retiring the real
+   * delivery. Packet ID alone cannot authorize a settlement. */
+  {
+    flowie_mqtt_client_inbound_token_t stale=p.token;
+    ++stale.session_generation;
+    assert(flowie_mqtt_client_settle_inbound_qos1(
+        client,&stale,settled_stale,&p)==SALTS_OK);
+    assert(wait_status(&p.stale_settlement,SALTS_ENOENT));
+    assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+    assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
+  }
   /* A foreign durable Owner would commit its effect/receipt here.
    * We deliberately settle only AFTER verifying native progress and no
    * premature PUBACK; this test doesn't simulate a durable DB. */
