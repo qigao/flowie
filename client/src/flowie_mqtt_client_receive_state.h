@@ -11,9 +11,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#define FLOWIE_RECEIVE_DIGEST_BYTES 32u
 typedef struct flowie_receive_slot_s {
   uint64_t delivery_sequence;
   uint16_t packet_id;
+  uint8_t digest[FLOWIE_RECEIVE_DIGEST_BYTES];
   uint8_t occupied;
 } flowie_receive_slot_t;
 
@@ -50,18 +52,29 @@ static inline int flowie_receive_state_start(flowie_receive_state_t *s) {
 
 static inline int flowie_receive_state_offer(
     flowie_receive_state_t *s, uint16_t packet_id, int duplicate,
+    const uint8_t digest[FLOWIE_RECEIVE_DIGEST_BYTES],
     flowie_mqtt_client_inbound_token_t *out) {
   size_t i, empty = FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING;
   if (out) memset(out, 0, sizeof(*out));
-  if (!s || !out || !s->session_generation || !s->capacity ||
+  if (!s || !out || !digest || !s->session_generation || !s->capacity ||
       s->capacity > FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING ||
       !packet_id || (duplicate != 0 && duplicate != 1))
     return FLOWIE_RECEIVE_REJECT;
   for (i = 0u; i < s->capacity; ++i) {
     if (s->slots[i].occupied &&
-        s->slots[i].packet_id == packet_id)
-      return duplicate ? FLOWIE_RECEIVE_DUPLICATE_PENDING
-                       : FLOWIE_RECEIVE_REJECT;
+        s->slots[i].packet_id == packet_id) {
+      /* MQTT DUP does not authorize a DIFFERENT message to reuse the
+       * pending packet ID. SHA256 covers the complete parsed PUBLISH body
+       * including topic, packet ID, properties and payload, but excludes
+       * the mutable DUP flag in the fixed header. */
+      unsigned int difference = 0u;
+      size_t j;
+      for (j = 0u; j < FLOWIE_RECEIVE_DIGEST_BYTES; ++j)
+        difference |= (unsigned int)(s->slots[i].digest[j] ^ digest[j]);
+      return duplicate && difference == 0u
+                 ? FLOWIE_RECEIVE_DUPLICATE_PENDING
+                 : FLOWIE_RECEIVE_REJECT;
+    }
     if (!s->slots[i].occupied && empty == FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING)
       empty = i;
   }
@@ -71,6 +84,7 @@ static inline int flowie_receive_state_offer(
     return FLOWIE_RECEIVE_REJECT;
   ++s->next_sequence;
   s->slots[empty].packet_id = packet_id;
+  memcpy(s->slots[empty].digest, digest, FLOWIE_RECEIVE_DIGEST_BYTES);
   s->slots[empty].delivery_sequence = s->next_sequence;
   s->slots[empty].occupied = 1u;
   out->session_generation = s->session_generation;
