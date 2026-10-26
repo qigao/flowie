@@ -154,6 +154,149 @@ jobs:
           set -euo pipefail
           cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
+          # Preserve independent native-wire qualification evidence even if
+          # an unrelated full-suite integration test later fails.
+          ctest --preset ci-linux-release-user --no-tests=error --timeout 45 \
+            --output-on-failure -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire)
+      - name: Install and test external C11/C++17 consumer (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset install-ci-linux-release-user --parallel 2
+          export PKG_ROOT="$RUNNER_TEMP/flowie-sdk"
+          export FLOWIE_ROOT="$PKG_ROOT/flowie/release"
+          export SALTS_ROOT="$PKG_ROOT/salts/release"
+          export SALTS_UTILS_ROOT="$PKG_ROOT/salts-utils/release"
+          export HTTP_SERVICES_ROOT="$PKG_ROOT/http-services/release"
+          export TURBODB_ROOT="$PKG_ROOT/turbodb/release"
+          test -f "$FLOWIE_ROOT/lib/cmake/Flowie/FlowieConfig.cmake"
+          cd tests/installed-sdk
+          cmake --preset ci-linux-release-user
+          cmake --build --preset ci-linux-release-user --parallel 2
+          export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$SALTS_ROOT/lib:$SALTS_UTILS_ROOT/lib:$HTTP_SERVICES_ROOT/lib:$TURBODB_ROOT/lib:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --preset ci-linux-release-user
+      - name: Locate Windows compiler and install ccache
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ccache -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot install ccache' }
+          ccache --version
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot run ccache' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) { throw 'Visual Studio C++ toolchain not found' }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+      - name: Qualify candidate Salts on Windows
+        if: runner.os == 'Windows' && env.SALTS_SOURCE_REF != ''
+        shell: cmd
+        working-directory: build/dependencies/salts
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          set "VCPKG_OVERLAY_PORTS="
+          set "VCPKG_WINDOWS_TRIPLET=x64-windows"
+          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
+          cmake --preset win-release-ci -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-ci --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-ci -R "^cnet_.*test$" --no-tests=error --timeout 180 --output-on-failure
+          if errorlevel 1 exit /b 1
+          cmake --build --preset install-win-release-ci --parallel 2
+          if errorlevel 1 exit /b 1
+          powershell -NoProfile -Command "New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts') | Out-Null; Copy-Item -LiteralPath 'stage/sdk/windows-x64' -Destination (Join-Path $env:RUNNER_TEMP 'flowie-sdk/salts/release') -Recurse -ErrorAction Stop"
+          if errorlevel 1 exit /b 1
+      - name: Configure, build and test Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --preset ci-win-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          if errorlevel 1 exit /b 1
+          cmake --build --preset ci-win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
+          rem Load exact published TurboDB driver and its transitive DLLs.
+          rem The next installed-SDK step already uses this runtime closure;
+          rem native CTest must use the same PATH rather than runner defaults.
+          rem Preserve full CTest, including PostgreSQL Plugin load test.
+          set "PKG_ROOT=%RUNNER_TEMP:\=/%/flowie-sdk"
+          set "SALTS_ROOT=%PKG_ROOT%/salts/release"
+          set "SALTS_UTILS_ROOT=%PKG_ROOT%/salts-utils/release"
+          set "HTTP_SERVICES_ROOT=%PKG_ROOT%/http-services/release"
+          set "TURBODB_ROOT=%PKG_ROOT%/turbodb/release"
+          if not exist "%TURBODB_ROOT%\lib\turbodb\drivers\turbodb_driver_postgresql.dll" exit /b 1
+          set "PATH=%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
+          rem First qualify actual deferred QoS1 wire/C11 regression independently.
+          rem Still execute the COMPLETE CTest afterward with no skipped tests.
+          ctest --preset ci-win-release-user --no-tests=error --timeout 45 --output-on-failure -R "^flowie[.]mqtt[.]qos1_deferred_(state|wire)$"
+          if errorlevel 1 exit /b 1
+          rem Diagnose (never hide) the independent PostgreSQL Plugin closure.
+          echo ===== TurboDB PostgreSQL plugin direct DLL dependencies =====
+          dumpbin /dependents "%TURBODB_ROOT%\lib\turbodb\drivers\turbodb_driver_postgresql.dll"
+          if errorlevel 1 exit /b 1
+          echo ===== PostgreSQL client DLL resolution from the exact SDK graph =====
+          where libpq.dll
+          if errorlevel 1 echo libpq.dll is not discoverable through the active exact-SDK PATH
+          ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
+          if errorlevel 1 exit /b 1
+      - name: Install and test external C11/C++17 consumer (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --build --preset install-ci-win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
+          set "PKG_ROOT=%RUNNER_TEMP:\=/%/flowie-sdk"
+          set "FLOWIE_ROOT=%PKG_ROOT%/flowie/release"
+          set "SALTS_ROOT=%PKG_ROOT%/salts/release"
+          set "SALTS_UTILS_ROOT=%PKG_ROOT%/salts-utils/release"
+          set "HTTP_SERVICES_ROOT=%PKG_ROOT%/http-services/release"
+          set "TURBODB_ROOT=%PKG_ROOT%/turbodb/release"
+          if not exist "%FLOWIE_ROOT%\lib\cmake\Flowie\FlowieConfig.cmake" exit /b 1
+          set "PATH=%FLOWIE_ROOT%\bin;%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
+          cd tests\installed-sdk
+          cmake --preset ci-win-release-user
+          if errorlevel 1 exit /b 1
+          cmake --build --preset ci-win-release-user --parallel 2
+          if errorlevel 1 exit /b 1
+          ctest --preset ci-win-release-user
+          if errorlevel 1 exit /b 1
+      - name: Report compiler cache statistics
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path build/native-ci -Force | Out-Null
+          $statistics = & ccache --show-stats
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read ccache statistics' }
+          $statistics | Set-Content -Path build/native-ci/ccache-stats.txt
+          $statistics | Write-Output
+          "### Compiler cache: ${{ matrix.rid }} / ${{ matrix.compiler }} / ${{ matrix.preset }}" >> $env:GITHUB_STEP_SUMMARY
+          '```text' >> $env:GITHUB_STEP_SUMMARY
+          $statistics >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-tests-${{ matrix.rid }}
+          path: |
+            build/native-ci/results.xml
+            build/native-ci/Testing/Temporary/LastTest.log
+            build/native-ci/CMakeFiles/CMakeConfigureLog.yaml
+            build/native-ci/ccache-stats.txt
+            build/dependencies/salts/build/**/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
         if: runner.os == 'Linux'
