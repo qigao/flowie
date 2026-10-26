@@ -316,7 +316,7 @@ int main(void) {
   puts("flowie.mqtt.qos1_deferred_overflow: PASS one pending credit, "
        "second QoS1 fail-closed without premature PUBACK");
   return 0;
-#endif
+#else
   /* Native callback returns promptly; neither normal nor duplicate QoS1
    * is acknowledged until a distinct consumer Owner settles its token. */
   cmeta_sleep_ms(80u);
@@ -372,4 +372,5 @@ int main(void) {
   puts("flowie.mqtt.qos1_deferred_wire: PASS native PUBACK only after "
        "external settlement, duplicate bounded, 24 QoS0/control progress and stale ACK");
   return 0;
+#endif
 }
