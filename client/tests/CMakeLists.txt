@@ -19,6 +19,32 @@ add_test(NAME flowie.mqtt.qos1_deferred_state
 set_tests_properties(flowie.mqtt.qos1_deferred_state PROPERTIES
   LABELS "flowie;mqtt;client;receive;deferred;qos1;security-contract")
 
+# Real native Loopback broker receives exact MQTT5 PUBACK only after an
+# independent caller submits a deferred QoS1 disposition; requires no
+# public broker, and never makes a simulated state transition count as ACK.
+add_executable(test_flowie_mqtt_qos1_deferred_wire
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_qos1_deferred_wire.c)
+target_include_directories(test_flowie_mqtt_qos1_deferred_wire PRIVATE
+  ${PROJECT_SOURCE_DIR}/client/include
+  ${PROJECT_SOURCE_DIR}/protocol/include
+  ${PROJECT_SOURCE_DIR}/connection/include)
+target_link_libraries(test_flowie_mqtt_qos1_deferred_wire PRIVATE
+  Flowie::Client Flowie::Connection Flowie::Protocol Salts::Core)
+set_target_properties(test_flowie_mqtt_qos1_deferred_wire PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(test_flowie_mqtt_qos1_deferred_wire PRIVATE /W4 /WX)
+  target_link_libraries(test_flowie_mqtt_qos1_deferred_wire PRIVATE ws2_32)
+else()
+  target_compile_options(test_flowie_mqtt_qos1_deferred_wire PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME flowie.mqtt.qos1_deferred_wire
+  COMMAND test_flowie_mqtt_qos1_deferred_wire)
+set_tests_properties(flowie.mqtt.qos1_deferred_wire PROPERTIES
+  LABELS "flowie;mqtt;client;receive;deferred;qos1;real-wire;regression"
+  TIMEOUT 30)
+
 cmake_add_test(
   test_flowie_mqtt_client
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
