@@ -3,6 +3,39 @@
 
 #include <string.h>
 
+/* Test-only trusted Windows DLL location, sourced from the EXACT installed
+ * TurboDB SDK CMake path. CMeta's secure explicit-path loader ignores PATH.
+ * Register only the SDK's bin directory; no dependency search fallback. */
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#ifndef FLOWIE_TEST_TURBODB_RUNTIME_DIR
+#error "Windows ORM Plugin test must specify its exact TurboDB runtime directory"
+#endif
+static DLL_DIRECTORY_COOKIE flowie_sdk_runtime_cookie;
+
+static int flowie_test_register_sdk_runtime(void) {
+  const char *path = FLOWIE_TEST_TURBODB_RUNTIME_DIR;
+  wchar_t trusted[MAX_PATH * 4u];
+  int count;
+  if (flowie_sdk_runtime_cookie != NULL) return 0;
+  count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                              path, -1, trusted,
+                              (int)(sizeof(trusted) / sizeof(trusted[0])));
+  if (count <= 0 || count >= (int)(sizeof(trusted) / sizeof(trusted[0])))
+    return 0;
+  flowie_sdk_runtime_cookie = AddDllDirectory(trusted);
+  return flowie_sdk_runtime_cookie != NULL;
+}
+static int flowie_test_release_sdk_runtime(void) {
+  const DLL_DIRECTORY_COOKIE cookie = flowie_sdk_runtime_cookie;
+  if (cookie == NULL) return 0;
+  if (!RemoveDllDirectory(cookie)) return 0;
+  flowie_sdk_runtime_cookie = NULL;
+  return 1;
+}
+#endif
+
 spec("Flowie TurboDB driver runtime") {
   static orm_config_t config;
   static orm_option_t options[FLOWIE_ORM_MAX_OPTIONS + 1u];
@@ -13,6 +46,9 @@ spec("Flowie TurboDB driver runtime") {
   static orm_error_t error;
 
   before_each() {
+#if defined(_WIN32)
+    check_true(flowie_test_register_sdk_runtime());
+#endif
     orm_config(&config);
     orm_error_init(&error);
     memset(options, 0, sizeof(options));
@@ -31,6 +67,11 @@ spec("Flowie TurboDB driver runtime") {
     orm_query_destroy(query);
     orm_connection_release(second);
     orm_connection_release(connection);
+#if defined(_WIN32)
+    /* Scope the trust grant to one test and AFTER all plugin/connection
+     * handles have released their module leases. */
+    check_true(flowie_test_release_sdk_runtime());
+#endif
   }
 
   it("loads the SDK default and keeps independent connections usable") {
