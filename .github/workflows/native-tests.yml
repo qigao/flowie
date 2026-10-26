@@ -157,7 +157,8 @@ jobs:
           # Preserve independent native-wire qualification evidence even if
           # an unrelated full-suite integration test later fails.
           ctest --preset ci-linux-release-user --no-tests=error --timeout 45 \
-            --output-on-failure -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire)
+            --output-on-failure -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire)$'
+          ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
         if: runner.os == 'Linux'
         shell: bash
