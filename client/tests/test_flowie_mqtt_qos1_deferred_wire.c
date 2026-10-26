@@ -224,6 +224,7 @@ int main(void) {
   net.request_capacity=8u;net.completion_batch_capacity=8u;
   net.event_capacity=16u;net.max_send_bytes=8192u;
   net.receive_buffer_bytes=8192u;net.tls_io_buffer_bytes=CNET_TLS_MIN_IO_BUFFER_BYTES;
+  net.tls_handshake_timeout_ms=TEST_TIMEOUT_MS;
   net.connect_timeout_ms=TEST_TIMEOUT_MS;
   net.read_timeout_ms=TEST_TIMEOUT_MS;net.write_timeout_ms=TEST_TIMEOUT_MS;
   conf.transport=TF_NET_TRANSPORT_TCP;
@@ -234,7 +235,12 @@ int main(void) {
   b.server=&server;
   conf.observer=(flowie_observer){server_open,server_receive,server_close,NULL,&b};
   assert(flowie_server_init(&server,&conf)==SALTS_OK);
-  assert(flowie_server_start(&server)==SALTS_OK);
+  {
+    const int status = flowie_server_start(&server);
+    if (status != SALTS_OK)
+      fprintf(stderr, "deferred_wire: native Broker start failed status=%d\n", status);
+    assert(status == SALTS_OK);
+  }
   assert(flowie_server_port(&server,&port)==SALTS_OK && port);
 
   cc.host="127.0.0.1";cc.port=(int)port;
