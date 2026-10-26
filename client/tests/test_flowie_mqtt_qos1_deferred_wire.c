@@ -41,6 +41,7 @@ typedef struct probe_s {
   atomic_int second_settlement;
   atomic_int stale_settlement;
   atomic_int callback_self_settlement;
+  atomic_int last_error;
   atomic_uint errors;
 } probe;
 
@@ -79,6 +80,10 @@ static int server_receive(void *user, flowie_connection c,
       0x32u,0x0eu,0u,4u,'t','e','s','t',0u,7u,0u,'h','e','l','l','o'};
   static const unsigned char qos1_dup[] = {
       0x3au,0x0eu,0u,4u,'t','e','s','t',0u,7u,0u,'h','e','l','l','o'};
+#if defined(FLOWIE_DEFERRED_OVERFLOW_TEST)
+  static const unsigned char qos1_overflow[] = {
+      0x32u,0x0eu,0u,4u,'t','e','s','t',0u,8u,0u,'w','o','r','l','d'};
+#endif
   static const unsigned char pingresp[] = {0xd0u,0u};
   /* MQTT5 QoS0 PUBLISH (topic=test, empty properties, payload=noise):
    * should use legacy on_message and MUST NOT spend or settle QoS1 credit. */
@@ -101,6 +106,13 @@ static int server_receive(void *user, flowie_connection c,
         rc = flowie_server_send(b->server, c, qos1, sizeof(qos1));
       if (rc == SALTS_OK)
         rc = flowie_server_send(b->server, c, qos1_dup, sizeof(qos1_dup));
+#if defined(FLOWIE_DEFERRED_OVERFLOW_TEST)
+      /* Different packet ID while the single credit remains owned.
+       * Native Flowie must fail the affected transport, never ACK/drop it
+       * or silently expand the pending QoS1 window. */
+      if (rc == SALTS_OK)
+        rc = flowie_server_send(b->server, c, qos1_overflow, sizeof(qos1_overflow));
+#endif
       break;
     case FLOWIE_MQTT_PACKET_PINGREQ:
       atomic_fetch_add_explicit(&b->pingreqs, 1u, memory_order_release);
@@ -191,8 +203,10 @@ static void settled_stale(flowie_mqtt_client_t *c,int status,
                         memory_order_release);
 }
 static void error_event(flowie_mqtt_client_t *c,int status,void *u) {
-  (void)c;(void)status;
-  atomic_fetch_add_explicit(&((probe*)u)->errors,1u,memory_order_release);
+  probe *p = (probe *)u;
+  (void)c;
+  atomic_store_explicit(&p->last_error,status,memory_order_relaxed);
+  atomic_fetch_add_explicit(&p->errors,1u,memory_order_release);
 }
 static int wait_uint(atomic_uint *p,unsigned expected) {
   const uint64_t until = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
@@ -243,6 +257,7 @@ int main(void) {
   atomic_init(&p.second_settlement,SALTS_EBUSY);
   atomic_init(&p.stale_settlement,SALTS_EBUSY);
   atomic_init(&p.callback_self_settlement,SALTS_EBUSY);
+  atomic_init(&p.last_error,SALTS_EBUSY);
   atomic_init(&p.errors,0u);
 
   net.backend=test_backend();
@@ -285,6 +300,23 @@ int main(void) {
   assert(flowie_mqtt_client_connect(client,&connect)==SALTS_OK);
   assert(wait_status(&p.connected,SALTS_OK));
   assert(wait_uint(&p.deliveries,1u));
+#if defined(FLOWIE_DEFERRED_OVERFLOW_TEST)
+  /* This mode is built into a separate native-wire executable, never the
+   * production Client or the normal positive wire test. The real worker
+   * must reject packet ID 8 at MAX_PENDING=1, close the connection and
+   * report its bounded capacity error without one native PUBACK. */
+  assert(wait_uint(&p.errors,1u));
+  assert(atomic_load_explicit(&p.last_error,memory_order_acquire)==SALTS_ENOSPC);
+  assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
+  assert(atomic_load_explicit(&p.legacy_deliveries,memory_order_acquire)==0u);
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  assert(flowie_mqtt_client_try_destroy(client,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(flowie_server_stop(&server,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(flowie_server_destroy(&server)==SALTS_OK);
+  puts("flowie.mqtt.qos1_deferred_overflow: PASS one pending credit, "
+       "second QoS1 fail-closed without premature PUBACK");
+  return 0;
+#endif
   /* Native callback returns promptly; neither normal nor duplicate QoS1
    * is acknowledged until a distinct consumer Owner settles its token. */
   cmeta_sleep_ms(80u);
