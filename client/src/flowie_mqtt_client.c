@@ -3289,7 +3289,17 @@ int flowie_mqtt_client_settle_inbound_qos1(
   /* A borrowed Client callback is never allowed to self-ACK. It must copy
    * a token, return queue admission, and settle on its own durable Owner. */
   if (flowie_mqtt_client_current == client) return SALTS_EBUSY;
-  if (!client->deferred_qos1_enabled) return SALTS_ENOTSUP;
+  /* Optional receive policy is configured under command_mutex. Read the
+   * mode and stop fence under that SAME mutex before cross-thread admission:
+   * an external caller must never race the pre-CONNECT policy setter. */
+  cmeta_mutex_lock(&client->command_mutex);
+  {
+    const int enabled = client->deferred_qos1_enabled;
+    const int stopping = client->stopping;
+    cmeta_mutex_unlock(&client->command_mutex);
+    if (stopping) return SALTS_ESHUTDOWN;
+    if (!enabled) return SALTS_ENOTSUP;
+  }
   command = flowie_mqtt_client_command_new(
       FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE, on_settled, user_data);
   if (!command) return SALTS_ENOMEM;
