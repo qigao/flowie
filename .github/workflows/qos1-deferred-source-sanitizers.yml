@@ -32,6 +32,7 @@ jobs:
         include:
           - { mode: asan-ubsan, address: "ON", undefined: "ON", thread: "OFF" }
           - { mode: tsan, address: "OFF", undefined: "OFF", thread: "ON" }
+          - { mode: tsan-salts-source, address: "OFF", undefined: "OFF", thread: "ON" }
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -96,6 +97,41 @@ jobs:
             Write-Output "$($sdk.Package)=$tag $digest"
             "- $($sdk.Package) $tag ($digest)" >> $env:GITHUB_STEP_SUMMARY
           }
+      - uses: actions/checkout@v4
+        if: matrix.mode == 'tsan-salts-source'
+        with:
+          repository: qigao/salts
+          ref: v2.3.0-rc.17
+          path: build/upstream/salts
+          persist-credentials: false
+      - name: Build the EXACT published Salts/CNet source with TSan
+        if: matrix.mode == 'tsan-salts-source'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd build/upstream/salts
+          test "$(git describe --tags --exact-match HEAD)" = "v2.3.0-rc.17"
+          # Salts owns its registry; never switch its cryptographic provider
+          # to a Flowie overlay or a guessed ABI.
+          unset VCPKG_OVERLAY_PORTS
+          export PROJECT_ROOT="$GITHUB_WORKSPACE"
+          cmake --preset linux-release-ci \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_ASAN=OFF -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_THREAD=ON \
+            -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build --preset linux-release-ci --parallel 2
+          cmake --build --preset install-linux-release-ci --parallel 2
+          test -f stage/sdk/linux-x64/lib/libsalts.so
+          test -f stage/sdk/linux-x64/lib/libcnet.so
+          nm -D stage/sdk/linux-x64/lib/libsalts.so | grep -q '__tsan_init'
+          nm -D stage/sdk/linux-x64/lib/libcnet.so | grep -q '__tsan_init'
+          rm -rf "$RUNNER_TEMP/flowie-sdk/salts/release"
+          cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
+          printf 'salts_source=%s\nupstream_sanitizer=tsan\n' \
+            "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/salts-tsan-source.txt"
       - name: Prepare Linux source sanitizer host
         shell: bash
         run: |
@@ -122,8 +158,9 @@ jobs:
             test_flowie_mqtt_qos1_deferred_queue_full \
             test_flowie_mqtt_qos1_deferred_destroy_pending
           test -f "$build/bin/libflowie_client.so"
-          printf 'flowie=%s\nmode=%s\nproducer_sdk=published_uninstrumented\n' \
+          printf 'flowie=%s\nmode=%s\nproducer_sdk=published_uninstrumented_unless_salts_source_variant\n' \
             "$(git rev-parse HEAD)" "${{ matrix.mode }}" > "$build/provenance.txt"
+          if test -f salts-tsan-source.txt; then cat salts-tsan-source.txt >> "$build/provenance.txt"; fi
           ldd "$build/bin/libflowie_client.so" | tee "$build/dependencies.txt"
       - name: Repeat actual QoS1 wire/owner race and state tests under instrumentation
         shell: bash
