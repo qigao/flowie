@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { TEST_TIMEOUT_MS = 7000u, TEST_FRAME_MAX = 1024u };
+enum { TEST_TIMEOUT_MS = 7000u, TEST_FRAME_MAX = 1024u, TEST_NEED_MORE = 1 };
 typedef struct broker_s {
   flowie_server *server;
   unsigned char framing[TEST_FRAME_MAX];
@@ -60,11 +60,11 @@ static int frame_size(const unsigned char *p, size_t len, size_t *out) {
     value += (size_t)(c & 0x7fu) * factor;
     if (!(c & 0x80u)) {
       *out = value + i + 1u;
-      return *out <= len ? SALTS_OK : SALTS_EAGAIN;
+      return *out <= len ? SALTS_OK : TEST_NEED_MORE;
     }
     factor *= 128u;
   }
-  return SALTS_EAGAIN;
+  return TEST_NEED_MORE;
 }
 static int server_open(void *user, flowie_connection c, const flowie_peer_info *peer) {
   (void)user; (void)c;
@@ -85,7 +85,7 @@ static int server_receive(void *user, flowie_connection c,
   while (b->pending) {
     size_t size = 0u;
     int rc = frame_size(b->framing, b->pending, &size);
-    if (rc == SALTS_EAGAIN) return SALTS_OK;
+    if (rc == TEST_NEED_MORE) return SALTS_OK;
     if (rc != SALTS_OK || !size || size > b->pending) return SALTS_EPROTO;
     switch (b->framing[0] >> 4u) {
     case FLOWIE_MQTT_PACKET_CONNECT:
