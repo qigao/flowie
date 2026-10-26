@@ -33,6 +33,7 @@ jobs:
           - { mode: asan-ubsan, address: "ON", undefined: "ON", thread: "OFF" }
           - { mode: tsan, address: "OFF", undefined: "OFF", thread: "ON" }
           - { mode: tsan-salts-source, address: "OFF", undefined: "OFF", thread: "ON" }
+          - { mode: tsan-firstparty-source, address: "OFF", undefined: "OFF", thread: "ON" }
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -98,12 +99,26 @@ jobs:
             "- $($sdk.Package) $tag ($digest)" >> $env:GITHUB_STEP_SUMMARY
           }
       - uses: actions/checkout@v4
-        if: matrix.mode == 'tsan-salts-source'
+        if: matrix.mode == 'tsan-salts-source' || matrix.mode == 'tsan-firstparty-source'
         with:
           repository: qigao/salts
           # Immutable tree behind the published v2.3.0-rc.17 tag.
           ref: 6d6fd387cb245be8d7b0d866f9babad026a26832
           path: build/upstream/salts
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: matrix.mode == 'tsan-firstparty-source'
+        with:
+          repository: qigao/salts-utils
+          ref: fbb5f3ee19589836ced0f3b98414e71e6dcc1388
+          path: build/upstream/salts-utils
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: matrix.mode == 'tsan-firstparty-source'
+        with:
+          repository: qigao/chttp
+          ref: 960c7cbca53084e03625cc0c8278f2cf815ce7b6
+          path: build/upstream/chttp
           persist-credentials: false
       - name: Prepare Linux source sanitizer host
         shell: bash
@@ -140,6 +155,74 @@ jobs:
           cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
           printf 'salts_source=%s\nupstream_sanitizer=tsan\n' \
             "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/salts-tsan-source.txt"
+      - name: Build exact SaltsUtils and CHttp sources with TSan
+        if: matrix.mode == 'tsan-firstparty-source'
+        shell: bash
+        run: |
+          set -euo pipefail
+          utils_sha=fbb5f3ee19589836ced0f3b98414e71e6dcc1388
+          chttp_sha=960c7cbca53084e03625cc0c8278f2cf815ce7b6
+          utils_src="$GITHUB_WORKSPACE/build/upstream/salts-utils"
+          chttp_src="$GITHUB_WORKSPACE/build/upstream/chttp"
+          test "$(git -C "$utils_src" rev-parse HEAD)" = "$utils_sha"
+          test "$(git -C "$chttp_src" rev-parse HEAD)" = "$chttp_sha"
+          salts_root="$RUNNER_TEMP/flowie-sdk/salts/release"
+          utils_root="$RUNNER_TEMP/flowie-sdk/salts-utils/release"
+          chttp_root="$RUNNER_TEMP/flowie-sdk/http-services/release"
+          export SALTS_ROOT="$salts_root"
+          export LD_LIBRARY_PATH="$salts_root/lib:$salts_root/bin:$utils_root/lib:$utils_root/bin:${LD_LIBRARY_PATH:-}"
+          export VCPKG_INSTALLED_DIR="$GITHUB_WORKSPACE/vcpkg_installed"
+          cmake --preset ci-linux-release-user -S "$utils_src" -B build/qos1-build-utils-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$utils_root" \
+            -DCMAKE_PREFIX_PATH="$salts_root;$VCPKG_INSTALLED_DIR/x64-linux" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=ON -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build/qos1-build-utils-tsan --parallel 2
+          rm -rf "$utils_root"
+          cmake --install build/qos1-build-utils-tsan --prefix "$utils_root"
+          test -f "$utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
+          export SALTS_UTILS_ROOT="$utils_root"
+          export DATABIND_ROOT="$utils_root"
+          cmake --preset ci-linux-release-user -S "$chttp_src" -B build/qos1-build-chttp-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$chttp_root" \
+            -DCMAKE_PREFIX_PATH="$salts_root;$utils_root;$VCPKG_INSTALLED_DIR/x64-linux" \
+            -DVCPKG_INSTALLED_DIR="$VCPKG_INSTALLED_DIR" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_TESTING=OFF -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=ON -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build/qos1-build-chttp-tsan --parallel 2
+          rm -rf "$chttp_root"
+          cmake --install build/qos1-build-chttp-tsan --prefix "$chttp_root"
+          test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          required = {
+              "SaltsUtils": Path("build/qos1-build-utils-tsan/compile_commands.json"),
+              "CHttp": Path("build/qos1-build-chttp-tsan/compile_commands.json")
+          }
+          for title, path in required.items():
+              commands=json.loads(path.read_text())
+              missing=[row["file"] for row in commands if "-fsanitize=thread" not in
+                       (row.get("command") or " ".join(row.get("arguments",[])))]
+              print(f"{title}: {len(commands)} compile units, {len(missing)} missing TSan")
+              if not commands or missing:
+                  raise SystemExit(f"{title} source instrumentation absent: {missing[:6]}")
+          PY
+          printf 'saltsutils_source=%s\nchttp_source=%s\nfirstparty_sanitizer=tsan\n' \
+            "$utils_sha" "$chttp_sha" >> salts-tsan-source.txt
       - name: Compile Flowie Client and native wire tests with sanitizers
         shell: bash
         run: |
