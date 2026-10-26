@@ -22,13 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: flowie-qos1-state-${dollar}{{ github.ref }}
+  group: flowie-qos1-state-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   state:
-    name: ${dollar}{{ matrix.os }} strict C11
-    runs-on: ${dollar}{{ matrix.os }}
+    name: ${{ matrix.os }} strict C11
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${dollar}{{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Configure standalone state without vcpkg or published SDK
         run: cmake -S client/tests/qos1-state-standalone -B build/qos1-state-c11 -DCMAKE_BUILD_TYPE=Debug
