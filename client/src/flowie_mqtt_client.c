@@ -2605,6 +2605,31 @@ reject:
   return rc;
 }
 
+int flowie_mqtt_client_set_receive_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_receive_policy_t *policy) {
+  int rc;
+  if (!client || !policy || policy->size != sizeof(*policy) ||
+      policy->version != FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_VERSION ||
+      policy->max_pending_qos1 == 0u ||
+      policy->max_pending_qos1 > FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING ||
+      !policy->on_delivery)
+    return SALTS_EINVAL;
+  cmeta_mutex_lock(&client->command_mutex);
+  if (client->stopping) rc = SALTS_ESHUTDOWN;
+  else if (client->version_locked || client->deferred_qos1_enabled ||
+           client->topic_handler_count == 0u || !deque_empty(&client->commands))
+    rc = SALTS_EBUSY;
+  else {
+    client->inbound_qos1.capacity = policy->max_pending_qos1;
+    client->on_inbound_qos1 = policy->on_delivery;
+    client->deferred_qos1_enabled = 1;
+    rc = SALTS_OK;
+  }
+  cmeta_mutex_unlock(&client->command_mutex);
+  return rc;
+}
+
 static int flowie_mqtt_client_uri(flowie_mqtt_client_t *client, const char *scheme,
                                   const char *path, char **out) {
   int bracket_host;
@@ -3242,6 +3267,28 @@ int flowie_mqtt_client_ping(flowie_mqtt_client_t *client) {
   rc = flowie_mqtt_client_submit(client, command);
   if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
   return rc;
+}
+
+int flowie_mqtt_client_settle_inbound_qos1(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_inbound_token_t *token,
+    flowie_mqtt_client_completion_fn on_settled, void *user_data) {
+  flowie_mqtt_client_command_t *command;
+  int rc;
+  if (!client || !token || !on_settled || !token->session_generation ||
+      !token->delivery_sequence || !token->packet_id)
+    return SALTS_EINVAL;
+  /* A borrowed Client callback is never allowed to self-ACK. It must copy
+   * a token, return queue admission, and settle on its own durable Owner. */
+  if (flowie_mqtt_client_current == client) return SALTS_EBUSY;
+  if (!client->deferred_qos1_enabled) return SALTS_ENOTSUP;
+  command = flowie_mqtt_client_command_new(
+      FLOWIE_MQTT_CLIENT_COMMAND_RECEIVE_SETTLE, on_settled, user_data);
+  if (!command) return SALTS_ENOMEM;
+  command->packet.receive_token = *token;
+  rc = flowie_mqtt_client_submit(client, command);
+  if (rc != SALTS_OK) flowie_mqtt_client_command_destroy(command);
+  return rc; /* accepted command only, never wire-ACK proof */
 }
 
 int flowie_mqtt_client_authenticate(flowie_mqtt_client_t *client, flowie_mqtt_span_t properties) {
