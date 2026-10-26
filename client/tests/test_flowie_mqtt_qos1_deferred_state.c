@@ -12,33 +12,43 @@ int main(void) {
   flowie_mqtt_client_inbound_token_t accepted[FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING] = {{0}};
   flowie_mqtt_client_inbound_token_t candidate = {0};
   flowie_mqtt_client_inbound_token_t old;
+  uint8_t digest[FLOWIE_RECEIVE_DIGEST_BYTES] = {0};
+  uint8_t changed[FLOWIE_RECEIVE_DIGEST_BYTES] = {0};
   size_t i;
   state.capacity = 2u;
 
   /* Nothing is admissible before a real native MQTT CONNECT succeeds. */
-  assert(flowie_receive_state_offer(&state, 1u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 1u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_REJECT);
   assert(!candidate.delivery_sequence);
   assert(flowie_receive_state_start(&state) == FLOWIE_RECEIVE_NEW);
 
-  assert(flowie_receive_state_offer(&state, 11u, 0, &accepted[0]) ==
+  assert(flowie_receive_state_offer(&state, 11u, 0, digest, &accepted[0]) ==
          FLOWIE_RECEIVE_NEW);
-  assert(flowie_receive_state_offer(&state, 12u, 0, &accepted[1]) ==
+  assert(flowie_receive_state_offer(&state, 12u, 0, digest, &accepted[1]) ==
          FLOWIE_RECEIVE_NEW);
   assert(accepted[0].session_generation == state.session_generation &&
          accepted[0].delivery_sequence == 1u && accepted[0].packet_id == 11u);
   assert(accepted[1].delivery_sequence == 2u);
   /* Duplicate in-flight QoS1 MUST NOT be ACKed early nor callback-delivered
    * again. A second PUBLISH with same packet ID but no DUP is a violation. */
-  assert(flowie_receive_state_offer(&state, 11u, 1, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 11u, 1, digest, &candidate) ==
          FLOWIE_RECEIVE_DUPLICATE_PENDING);
   assert(!candidate.session_generation);
-  assert(flowie_receive_state_offer(&state, 11u, 0, &candidate) ==
+  /* A spoofed/mutated DUP carrying the same packet ID is not the
+   * retained message. Do not silently ACK, re-deliver, or release credit. */
+  changed[0] = 1u;
+  assert(flowie_receive_state_offer(&state, 11u, 1, changed, &candidate) ==
          FLOWIE_RECEIVE_REJECT);
-  assert(flowie_receive_state_offer(&state, 13u, 0, &candidate) ==
+  assert(flowie_receive_state_contains(&state, accepted[0]));
+  assert(flowie_receive_state_offer(&state, 11u, 1, digest, &candidate) ==
+         FLOWIE_RECEIVE_DUPLICATE_PENDING);
+  assert(flowie_receive_state_offer(&state, 11u, 0, digest, &candidate) ==
+         FLOWIE_RECEIVE_REJECT);
+  assert(flowie_receive_state_offer(&state, 13u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_FULL);
   assert(!candidate.session_generation);
-  assert(flowie_receive_state_offer(&state, 0u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 0u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_REJECT);
 
   assert(!flowie_receive_state_retire(
@@ -48,7 +58,7 @@ int main(void) {
   assert(flowie_receive_state_contains(&state, accepted[0]));
   assert(flowie_receive_state_retire(&state, accepted[0]));
   assert(!flowie_receive_state_retire(&state, accepted[0]));
-  assert(flowie_receive_state_offer(&state, 11u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 11u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_NEW);
   assert(candidate.delivery_sequence == 3u);
   assert(!flowie_receive_state_retire(&state, accepted[0]));
@@ -61,7 +71,7 @@ int main(void) {
   assert(!flowie_receive_state_contains(&state, old));
   assert(!flowie_receive_state_retire(&state, old));
   assert(!flowie_receive_state_contains(&state, accepted[1]));
-  assert(flowie_receive_state_offer(&state, 11u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 11u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_NEW);
   assert(candidate.session_generation == old.session_generation + 1u);
   assert(candidate.delivery_sequence == 1u &&
@@ -74,19 +84,19 @@ int main(void) {
   assert(flowie_receive_state_start(&state) == FLOWIE_RECEIVE_NEW);
   for (i = 0u; i < state.capacity; ++i) {
     assert(flowie_receive_state_offer(&state, (uint16_t)(100u+i), 0,
-                                      &accepted[i]) == FLOWIE_RECEIVE_NEW);
+                                      digest, &accepted[i]) == FLOWIE_RECEIVE_NEW);
   }
-  assert(flowie_receive_state_offer(&state, 999u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 999u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_FULL);
   for (i = 0u; i < state.capacity; ++i) {
     assert(flowie_receive_state_retire(&state, accepted[i]));
     assert(!flowie_receive_state_retire(&state, accepted[i]));
   }
-  assert(flowie_receive_state_offer(&state, 999u, 0, &candidate) ==
+  assert(flowie_receive_state_offer(&state, 999u, 0, digest, &candidate) ==
          FLOWIE_RECEIVE_NEW);
 
   state.next_sequence = UINT64_MAX;
-  assert(flowie_receive_state_offer(&state, 998u, 0, &old) ==
+  assert(flowie_receive_state_offer(&state, 998u, 0, digest, &old) ==
          FLOWIE_RECEIVE_REJECT);
   state.session_generation = UINT64_MAX;
   assert(flowie_receive_state_start(&state) == FLOWIE_RECEIVE_REJECT);
