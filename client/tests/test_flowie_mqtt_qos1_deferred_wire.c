@@ -80,6 +80,10 @@ static int server_receive(void *user, flowie_connection c,
   static const unsigned char qos1_dup[] = {
       0x3au,0x0eu,0u,4u,'t','e','s','t',0u,7u,0u,'h','e','l','l','o'};
   static const unsigned char pingresp[] = {0xd0u,0u};
+  /* MQTT5 QoS0 PUBLISH (topic=test, empty properties, payload=noise):
+   * should use legacy on_message and MUST NOT spend or settle QoS1 credit. */
+  static const unsigned char qos0[] = {
+      0x30u,0x0cu,0u,4u,'t','e','s','t',0u,'n','o','i','s','e'};
   broker *b = (broker *)user;
   if (!b || !bytes || n > sizeof(b->framing) - b->pending) return SALTS_EMSGSIZE;
   memcpy(b->framing + b->pending, bytes, n);
@@ -100,7 +104,11 @@ static int server_receive(void *user, flowie_connection c,
       break;
     case FLOWIE_MQTT_PACKET_PINGREQ:
       atomic_fetch_add_explicit(&b->pingreqs, 1u, memory_order_release);
-      rc = flowie_server_send(b->server, c, pingresp, sizeof(pingresp));
+      /* Inject one valid QoS0 delivery before each control response while
+       * the independent QoS1 token is deliberately unsettled. */
+      rc = flowie_server_send(b->server, c, qos0, sizeof(qos0));
+      if (rc == SALTS_OK)
+        rc = flowie_server_send(b->server, c, pingresp, sizeof(pingresp));
       break;
     case FLOWIE_MQTT_PACKET_PUBACK:
       if (size != 6u && size != 4u) return SALTS_EPROTO;
@@ -285,10 +293,19 @@ int main(void) {
   assert(atomic_load_explicit(&p.callback_self_settlement,memory_order_acquire)
          ==SALTS_EBUSY);
   assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
-  assert(flowie_mqtt_client_ping(client)==SALTS_OK);
-  assert(wait_status(&p.pinged,SALTS_OK));
-  assert(wait_uint(&b.pingreqs,1u));
-  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  /* Delayed QoS1 must not block unrelated QoS0 or control progress.
+   * 24 paced QoS0 publications exercise the real native receive path,
+   * not only the pure state helper. No QoS1 receipt or ACK is invented. */
+  for (unsigned i = 0u; i < 24u; ++i) {
+    atomic_store_explicit(&p.pinged,SALTS_EBUSY,memory_order_release);
+    assert(flowie_mqtt_client_ping(client)==SALTS_OK);
+    assert(wait_status(&p.pinged,SALTS_OK));
+    assert(wait_uint(&b.pingreqs,i+1u));
+    assert(wait_uint(&p.legacy_deliveries,i+1u));
+    assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
+    assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  }
+  assert(atomic_load_explicit(&p.legacy_deliveries,memory_order_acquire)==24u);
 
   /* An arbitrary session-generation token is queued, but the native
    * Worker must reject it WITHOUT acknowledging or retiring the real
@@ -321,6 +338,6 @@ int main(void) {
   assert(flowie_server_stop(&server,TEST_TIMEOUT_MS)==SALTS_OK);
   assert(flowie_server_destroy(&server)==SALTS_OK);
   puts("flowie.mqtt.qos1_deferred_wire: PASS native PUBACK only after "
-       "external settlement, duplicate bounded, ping progress and stale ACK");
+       "external settlement, duplicate bounded, 24 QoS0/control progress and stale ACK");
   return 0;
 }
