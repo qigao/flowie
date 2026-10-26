@@ -155,7 +155,7 @@ jobs:
           cmake --preset ci-linux-release-user -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build --preset ci-linux-release-user --parallel 2
           ctest --preset ci-linux-release-user --no-tests=error --timeout 45 \
-            --output-on-failure -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow)$'
+            --output-on-failure -R '^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow|queue_full|destroy_pending)$'
           ctest --preset ci-linux-release-user --timeout 180 --output-junit build/native-ci/results.xml
       - name: Install and test external C11/C++17 consumer (Linux)
         if: runner.os == 'Linux'
@@ -233,7 +233,7 @@ jobs:
           if not exist "%TURBODB_ROOT%\lib\turbodb\drivers\turbodb_driver_postgresql.dll" exit /b 1
           set "PATH=%SALTS_ROOT%\bin;%SALTS_UTILS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%GITHUB_WORKSPACE%\vcpkg_installed\x64-windows\bin;%PATH%"
           rem Qualify deferred native wire independently; retain COMPLETE CTest.
-          ctest --preset ci-win-release-user --no-tests=error --timeout 45 --output-on-failure -R "^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow)$"
+          ctest --preset ci-win-release-user --no-tests=error --timeout 45 --output-on-failure -R "^flowie[.]mqtt[.]qos1_deferred_(state|wire|overflow|queue_full|destroy_pending)$"
           if errorlevel 1 exit /b 1
           rem Diagnose the unrelated PostgreSQL plugin DLL imports, never bypass.
           echo ===== TurboDB PostgreSQL plugin direct DLL imports =====
