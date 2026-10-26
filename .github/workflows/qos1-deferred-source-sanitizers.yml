@@ -101,7 +101,8 @@ jobs:
         if: matrix.mode == 'tsan-salts-source'
         with:
           repository: qigao/salts
-          ref: v2.3.0-rc.17
+          # Immutable tree behind the published v2.3.0-rc.17 tag.
+          ref: 6d6fd387cb245be8d7b0d866f9babad026a26832
           path: build/upstream/salts
           persist-credentials: false
       - name: Prepare Linux source sanitizer host
@@ -117,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           cd build/upstream/salts
-          test "$(git describe --tags --exact-match HEAD)" = "v2.3.0-rc.17"
+          test "$(git rev-parse HEAD)" = "6d6fd387cb245be8d7b0d866f9babad026a26832"
           # Salts owns its registry; never switch its cryptographic provider
           # to a Flowie overlay or a guessed ABI.
           unset VCPKG_OVERLAY_PORTS
