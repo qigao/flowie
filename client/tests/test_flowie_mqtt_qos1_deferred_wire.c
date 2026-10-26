@@ -187,13 +187,21 @@ int main(void) {
   static const unsigned char client_id[]="deferred-qos1-test";
   static const unsigned char filter[]="test";
   flowie_server server={0};
-  flowie_server_config conf=TF_NET_SERVER_CONFIG_INIT;
+  flowie_server_config conf = {
+      .size = sizeof(flowie_server_config),
+      .stream_socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT,
+      .listener_options = CNET_LISTENER_OPTIONS_INIT,
+      .packet = CNET_PACKET_ENDPOINT_CONFIG_INIT
+  };
   cnet_client_config net={0};
   broker b={0};
   probe p={0};
   flowie_mqtt_client_t *client=NULL;
   flowie_mqtt_client_config_t cc=FLOWIE_MQTT_CLIENT_CONFIG_INIT;
-  flowie_mqtt_connect_packet_t connect=FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_connect_packet_t connect = {
+      .size = sizeof(flowie_mqtt_connect_packet_t),
+      .abi_version = FLOWIE_MQTT_PROTOCOL_ABI_V1
+  };
   flowie_mqtt_client_topic_handler_t handler = {
       {filter,sizeof(filter)-1u}, legacy_receive};
   flowie_mqtt_client_receive_policy_t policy=FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_INIT;
