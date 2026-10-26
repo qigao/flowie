@@ -271,7 +271,9 @@ typedef struct flowie_multi_probe {
   atomic_uint hold_slot;
   atomic_int blocked;
   atomic_int released;
+  atomic_int rejected_released;
   unsigned char retained[8];
+  unsigned char rejected_retained[8];
   atomic_uint generations[4];
   atomic_uintptr_t threads[4];
   int check_affinity;
@@ -364,9 +366,13 @@ static void flowie_multi_released(void *data, void *user) {
   atomic_fetch_add((atomic_int *)user, 1);
 }
 
-static int flowie_multi_queue_retained(flowie_multi_probe *probe, flowie_connection connection) {
-  mem_buffer_t *buffer = mem_wrap_external(probe->retained, sizeof(probe->retained),
-                                           flowie_multi_released, &probe->released);
+static int flowie_multi_queue_retained(flowie_multi_probe *probe, flowie_connection connection,
+                                       bool rejected) {
+  /* Keep rejected and admitted external ownership completely independent. */
+  unsigned char *data = rejected ? probe->rejected_retained : probe->retained;
+  atomic_int *released = rejected ? &probe->rejected_released : &probe->released;
+  mem_buffer_t *buffer = mem_wrap_external(data, sizeof(probe->retained),
+                                           flowie_multi_released, released);
   mem_slice_t slice;
   int status;
   if (buffer == NULL) return SALTS_ENOMEM;
@@ -641,10 +647,15 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_multi_wait(&probe.blocked, 1), SALTS_OK);
     {
       const flowie_connection blocked = {1u, atomic_load(&probe.generations[0])};
-      check_equal(flowie_multi_queue_retained(&probe, blocked), SALTS_OK);
+      check_equal(flowie_multi_queue_retained(&probe, blocked, false), SALTS_OK);
       for (size_t index = 1u; index < config.command_capacity; ++index)
         check_equal(flowie_server_send(&probe.server, blocked, "queued!!", sizeof(received)), SALTS_OK);
       check_equal(flowie_server_send(&probe.server, blocked, "overflow", sizeof(received)), SALTS_ENOBUFS);
+      /* Even after the temporary clone has taken a retained reference, a
+       * mailbox FULL rejection must retire that wrapper once, immediately.
+       * Its callback is distinct from the accepted command's release. */
+      check_equal(flowie_multi_queue_retained(&probe, blocked, true), SALTS_ENOBUFS);
+      check_equal(atomic_load(&probe.rejected_released), 1);
       check_equal(atomic_load(&probe.released), 0);
     }
     check_equal(flowie_test_cnet_send(clients[1], "running!", sizeof(received)), SALTS_OK);
@@ -658,6 +669,7 @@ spec("Flowie multiple network owners") {
     check_equal(atomic_load(&probe.error), SALTS_OK);
     check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
     check_equal(atomic_load(&probe.released), 1);
+    check_equal(atomic_load(&probe.rejected_released), 1);
   }
 
   it("routes retained SG and copied sends to fixed owners and fences recycled generations") {
