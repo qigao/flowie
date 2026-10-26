@@ -43,6 +43,11 @@ typedef struct probe_s {
   atomic_int callback_self_settlement;
   atomic_int last_error;
   atomic_uint errors;
+#if defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST) || defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
+  /* A bounded, test-only callback barrier makes command admission pressure
+   * deterministic without sleeping in the controller or changing the SDK. */
+  atomic_int release_callback;
+#endif
 } probe;
 
 static native_io_backend_kind test_backend(void) {
@@ -168,6 +173,16 @@ static int deferred_receive(flowie_mqtt_client_t *c,
       flowie_mqtt_client_settle_inbound_qos1(
           c,token,settled_first,p),memory_order_release);
   atomic_fetch_add_explicit(&p->deliveries,1u,memory_order_release);
+#if defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST) || defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
+  {
+    const uint64_t until = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+    while (!atomic_load_explicit(&p->release_callback, memory_order_acquire) &&
+           cmeta_monotonic_ms() < until)
+      cmeta_sleep_ms(1u);
+    if (!atomic_load_explicit(&p->release_callback, memory_order_acquire))
+      return SALTS_ETIMEDOUT;
+  }
+#endif
   return SALTS_OK; /* NOT a PUBACK */
 }
 static void connected(flowie_mqtt_client_t *c,int status,
@@ -190,7 +205,9 @@ static void settled_first(flowie_mqtt_client_t *c,int status,
                         status == SALTS_OK ? SALTS_OK : status,
                         memory_order_release);
 }
-#if !defined(FLOWIE_DEFERRED_OVERFLOW_TEST)
+#if !defined(FLOWIE_DEFERRED_OVERFLOW_TEST) && \
+    !defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST) && \
+    !defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
 static void settled_again(flowie_mqtt_client_t *c,int status,
                           const flowie_mqtt_control_packet_view_t *ack,void *u) {
   (void)c;(void)ack;
@@ -203,7 +220,7 @@ static void settled_stale(flowie_mqtt_client_t *c,int status,
   atomic_store_explicit(&((probe*)u)->stale_settlement,status,
                         memory_order_release);
 }
-#endif /* !FLOWIE_DEFERRED_OVERFLOW_TEST */
+#endif /* positive case only */
 static void error_event(flowie_mqtt_client_t *c,int status,void *u) {
   probe *p = (probe *)u;
   (void)c;
@@ -261,6 +278,9 @@ int main(void) {
   atomic_init(&p.callback_self_settlement,SALTS_EBUSY);
   atomic_init(&p.last_error,SALTS_EBUSY);
   atomic_init(&p.errors,0u);
+#if defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST) || defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
+  atomic_init(&p.release_callback,0);
+#endif
 
   net.backend=test_backend();
   net.connection_capacity=4u;net.command_capacity=16u;
@@ -288,6 +308,11 @@ int main(void) {
 
   cc.host="127.0.0.1";cc.port=(int)port;
   cc.timeout_ms=TEST_TIMEOUT_MS;
+#if defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST) || defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
+  /* One queued PING occupies the entire command lane while the native
+   * callback is parked. The accepted QoS1 token remains owned by Flowie. */
+  cc.command_queue_capacity=1u;
+#endif
   cc.topic_handlers=(flowie_mqtt_client_topic_handler_map_t){&handler,1u};
   cc.on_connect=connected;cc.on_ping=pinged;cc.on_error=error_event;
   cc.user_data=&p;
@@ -317,6 +342,54 @@ int main(void) {
   assert(flowie_server_destroy(&server)==SALTS_OK);
   puts("flowie.mqtt.qos1_deferred_overflow: PASS one pending credit, "
        "second QoS1 fail-closed without premature PUBACK");
+  return 0;
+#elif defined(FLOWIE_DEFERRED_QUEUE_FULL_TEST)
+  /* The callback has published its copied token but remains parked on the
+   * actual native Worker. A queued PING fills the only command slot.
+   * Settlement must fail admission immediately with ENOSPC, not consume
+   * that token or fabricate a wire PUBACK. */
+  assert(atomic_load_explicit(&p.release_callback,memory_order_acquire)==0);
+  assert(flowie_mqtt_client_ping(client)==SALTS_OK);
+  assert(flowie_mqtt_client_settle_inbound_qos1(
+      client,&p.token,settled_first,&p)==SALTS_ENOSPC);
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  assert(atomic_load_explicit(&p.first_settlement,memory_order_acquire)==SALTS_EBUSY);
+  atomic_store_explicit(&p.release_callback,1,memory_order_release);
+  assert(wait_status(&p.pinged,SALTS_OK));
+  assert(wait_uint(&b.pingreqs,1u));
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
+  /* Only after queue space exists may the exact original token settle. */
+  assert(flowie_mqtt_client_settle_inbound_qos1(
+      client,&p.token,settled_first,&p)==SALTS_OK);
+  assert(wait_status(&p.first_settlement,SALTS_OK));
+  assert(wait_uint(&b.pubacks,1u));
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==1u);
+  assert(flowie_mqtt_client_try_destroy(client,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(flowie_server_stop(&server,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(flowie_server_destroy(&server)==SALTS_OK);
+  puts("flowie.mqtt.qos1_deferred_queue_full: PASS no fake ACK on full "
+       "command queue, exact copied token retry succeeds after real drain");
+  return 0;
+#elif defined(FLOWIE_DEFERRED_DESTROY_PENDING_TEST)
+  /* A foreign destroy races a borrowed on_delivery. Zero-budget destroy
+   * must retain the Client and mark stop, while preventing any subsequent
+   * settlement admission or native PUBACK. The callback unblocks before
+   * the second bounded destroy joins the true CNet Owner. */
+  assert(atomic_load_explicit(&p.release_callback,memory_order_acquire)==0);
+  assert(flowie_mqtt_client_try_destroy(client,0u)==SALTS_EBUSY);
+  assert(flowie_mqtt_client_settle_inbound_qos1(
+      client,&p.token,settled_first,&p)==SALTS_ESHUTDOWN);
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  atomic_store_explicit(&p.release_callback,1,memory_order_release);
+  assert(flowie_mqtt_client_try_destroy(client,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(atomic_load_explicit(&p.first_settlement,memory_order_acquire)==SALTS_EBUSY);
+  assert(atomic_load_explicit(&b.pubacks,memory_order_acquire)==0u);
+  assert(atomic_load_explicit(&p.deliveries,memory_order_acquire)==1u);
+  assert(flowie_server_stop(&server,TEST_TIMEOUT_MS)==SALTS_OK);
+  assert(flowie_server_destroy(&server)==SALTS_OK);
+  puts("flowie.mqtt.qos1_deferred_destroy_pending: PASS zero-budget "
+       "retain, no post-stop settlement and no PUBACK before final drain");
   return 0;
 #else
   /* Native callback returns promptly; neither normal nor duplicate QoS1
