@@ -128,7 +128,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config gcc g++ ccache
           chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Build the EXACT published Salts/CNet source with TSan
-        if: matrix.mode == 'tsan-salts-source'
+        if: matrix.mode == 'tsan-salts-source' || matrix.mode == 'tsan-firstparty-source'
         shell: bash
         run: |
           set -euo pipefail
@@ -246,6 +246,14 @@ jobs:
             "$(git rev-parse HEAD)" "${{ matrix.mode }}" > "$build/provenance.txt"
           if test -f salts-tsan-source.txt; then cat salts-tsan-source.txt >> "$build/provenance.txt"; fi
           ldd "$build/bin/libflowie_client.so" | tee "$build/dependencies.txt"
+          if test "${{ matrix.mode }}" = tsan-firstparty-source; then
+            echo "== actual real-wire executable dynamic dependencies =="
+            ldd "$build/bin/test_flowie_mqtt_qos1_deferred_wire" | tee -a "$build/dependencies.txt"
+            test -f "$RUNNER_TEMP/flowie-sdk/http-services/release/lib/libchttp_server.so"
+            nm -D "$RUNNER_TEMP/flowie-sdk/http-services/release/lib/libchttp_server.so" | grep '__tsan_init' >/dev/null
+            grep -F "$RUNNER_TEMP/flowie-sdk/http-services/release/lib" "$build/dependencies.txt"
+            grep -F "$RUNNER_TEMP/flowie-sdk/salts-utils/release/lib" "$build/dependencies.txt"
+          fi
       - name: Repeat actual QoS1 wire/owner race and state tests under instrumentation
         shell: bash
         env:
