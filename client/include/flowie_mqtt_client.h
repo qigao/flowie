@@ -139,6 +139,48 @@ typedef struct flowie_mqtt_client_topic_handler_map_s {
   size_t count;
 } flowie_mqtt_client_topic_handler_map_t;
 
+/* Optional QoS1 inbound ownership. The old on_message callback retains its
+ * ordinary auto-PUBACK semantics when this mode is disabled.
+ *
+ * The new callback receives a callback-duration borrowed Publish view and a
+ * COPIED token. It must copy/admit any payload before returning. SALTS_OK
+ * means application queue admission ONLY, never durable storage and never
+ * MQTT PUBACK. The application may settle after an independent successful
+ * consumer effect+receipt+cursor transaction COMMIT.
+ *
+ * The native Flowie Worker exclusively owns PUBACK, socket and MQTT FSM;
+ * callers never send MQTT wire frames. QoS0 follows the ordinary callback,
+ * and QoS2 stays on Flowie's original PUBREC/PUBREL/PUBCOMP path.
+ *
+ * At most 16 unsettled QoS1 packets per session. Exceeding credit is an
+ * explicit transport failure, not a silent pause or unbounded queue. Durable
+ * broker sessions/redelivery must be qualified independently; this mode
+ * alone cannot promise exactly-once or production-grade no-loss.
+ */
+#define FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_VERSION 1u
+#define FLOWIE_MQTT_CLIENT_RECEIVE_QOS1_MAX_PENDING 16u
+
+typedef struct flowie_mqtt_client_inbound_token_s {
+  uint64_t session_generation;
+  uint64_t delivery_sequence;
+  uint16_t packet_id;
+} flowie_mqtt_client_inbound_token_t;
+
+typedef int (*flowie_mqtt_client_inbound_qos1_fn)(
+    flowie_mqtt_client_t *client, const flowie_mqtt_publish_view_t *message,
+    const flowie_mqtt_client_inbound_token_t *token, void *user_data);
+
+typedef struct flowie_mqtt_client_receive_policy_s {
+  size_t size;
+  uint32_t version;
+  size_t max_pending_qos1; /* 1..16; total held packet IDs per connection */
+  flowie_mqtt_client_inbound_qos1_fn on_delivery;
+} flowie_mqtt_client_receive_policy_t;
+
+#define FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_INIT                             \
+  {sizeof(flowie_mqtt_client_receive_policy_t),                             \
+   FLOWIE_MQTT_CLIENT_RECEIVE_POLICY_VERSION, 1u, NULL}
+
 /**
  * Completes one accepted command on the DLL-owned worker thread.
  * response is NULL when the operation has no MQTT control response. Otherwise
@@ -343,6 +385,40 @@ FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_try_destroy(
 FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_destination_policy(
     flowie_mqtt_client_t *client,
     const flowie_mqtt_client_destination_policy_t *policy);
+
+/** Configure the optional deferred QoS1 receive callback on an otherwise
+ * unconnected Client, before ANY CONNECT command is admitted.
+ * The policy is copied; no public config structure is extended. Requires a
+ * nonempty authorized topic-handler map. In deferred QoS1 mode the single
+ * on_delivery callback replaces the ordinary on_message callbacks for
+ * matched QoS1 topics (even if more than one filter matches). It never
+ * produces a PUBACK merely because the callback returned SALTS_OK.
+ *
+ * Returns EINVAL/ERANGE on invalid policy, EBUSY after connection/command
+ * admission, ESHUTDOWN while stopping. Default mode is unaffected.
+ */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_set_receive_policy(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_receive_policy_t *policy);
+
+/** Asynchronously request one positive native QoS1 PUBACK ONLY after
+ * independently durable consumer COMMIT (or verified identical REPLAY).
+ * The token originates from on_delivery and is unique to an MQTT session
+ * generation + delivery sequence, not simply a reusable packet ID.
+ * Returning SALTS_OK accepts a BOUNDED COMMAND only: completion runs on the
+ * Flowie native Owner after the attempted PUBACK, with response == NULL.
+ * Stale, duplicated, disconnected or malformed tokens complete with a
+ * non-success status and MUST NOT send another PUBACK.
+ *
+ * This function may be called from a foreign Owner thread, never directly
+ * inside the on_delivery callback. Negative/unknown DB COMMIT must not call
+ * this API; the application should quarantine and stop as appropriate.
+ * Flowie controls and outgoing MQTT FSM remain native.
+ */
+FLOWIE_MQTT_CLIENT_C_API int flowie_mqtt_client_settle_inbound_qos1(
+    flowie_mqtt_client_t *client,
+    const flowie_mqtt_client_inbound_token_t *token,
+    flowie_mqtt_client_completion_fn on_settled, void *user_data);
 
 /**
  * Select the MQTT protocol version before the first versioned command is accepted.
