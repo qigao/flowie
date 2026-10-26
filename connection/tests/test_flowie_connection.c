@@ -270,6 +270,7 @@ typedef struct flowie_multi_probe {
   atomic_int error;
   atomic_uint hold_slot;
   atomic_int blocked;
+  atomic_int sent;
   atomic_int released;
   atomic_int rejected_released;
   unsigned char retained[8];
@@ -353,6 +354,21 @@ static void flowie_multi_close(void *user, flowie_connection connection, int sta
 #endif
   }
   atomic_fetch_add(&probe->closed, 1);
+}
+
+/* Native CNet on_send is a logical send-completion callback, not mailbox
+ * admission. Assert the same Owner thread and generation as the open event. */
+static void flowie_multi_sent(void *user, flowie_connection connection, size_t size) {
+  flowie_multi_probe *probe = (flowie_multi_probe *)user;
+  if (connection.slot == 0u || connection.slot > 4u ||
+      size != sizeof(probe->retained) ||
+      atomic_load_explicit(&probe->generations[connection.slot - 1u],
+                           memory_order_acquire) != connection.generation ||
+      atomic_load_explicit(&probe->threads[connection.slot - 1u],
+                           memory_order_acquire) !=
+          (uintptr_t)cmeta_thread_current_token())
+    atomic_store_explicit(&probe->error, SALTS_EINVAL, memory_order_release);
+  atomic_fetch_add_explicit(&probe->sent, 1, memory_order_release);
 }
 
 static int flowie_multi_wait(atomic_int *value, int expected) {
@@ -670,6 +686,65 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
     check_equal(atomic_load(&probe.released), 1);
     check_equal(atomic_load(&probe.rejected_released), 1);
+  }
+
+  it("retains an external TCP slice until the real CNet send completion") {
+    static const unsigned char expected[] = {'t', 'e', 'r', 'm', 'i', 'n', 'a', 'l'};
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+    flowie_connection connection;
+    mem_buffer_t *backing;
+    mem_slice_t slice;
+    unsigned char received[sizeof(expected)] = {0};
+    uint16_t port = 0u;
+
+    config.network_workers = 2u;
+    config.stream.connection_capacity = 2u;
+    config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
+                                        flowie_multi_close, flowie_multi_sent, &probe};
+    memcpy(probe.retained, expected, sizeof(expected));
+    check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&probe.server), SALTS_OK);
+    check_equal(flowie_server_port(&probe.server, &port), SALTS_OK);
+    clients[0] = flowie_test_cnet_connect(port);
+    check_not_null(clients[0]);
+    check_equal(flowie_multi_wait(&probe.opened, 1), SALTS_OK);
+
+    /* Block the real CNet Owner inside a borrowed receive callback. No
+     * mailbox command, including the retained send, may progress yet. */
+    atomic_store_explicit(&probe.hold_slot, 1u, memory_order_release);
+    check_equal(flowie_test_cnet_send(clients[0], (const uint8_t *)"blocked!", 8u),
+                SALTS_OK);
+    check_equal(flowie_multi_wait(&probe.blocked, 1), SALTS_OK);
+    connection = (flowie_connection){1u, atomic_load(&probe.generations[0])};
+    backing = mem_wrap_external(probe.retained, sizeof(probe.retained),
+                                flowie_multi_released, &probe.released);
+    check_not_null(backing);
+    slice = mem_slice(backing, 0u, sizeof(probe.retained));
+    check_not_null(slice.buffer);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(2));
+    check_equal(flowie_server_send_slicev(&probe.server, connection, &slice, 1u), SALTS_OK);
+    /* The mailbox owns exactly one further backing reference, even though
+     * the application still holds both its buffer and slice references. */
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(3));
+    mem_slice_release(&slice);
+    check_equal(mem_buffer_ref_count(backing), UINT32_C(2));
+    mem_buffer_release(backing);
+    backing = NULL;
+    check_equal(atomic_load(&probe.released), 0);
+    check_equal(atomic_load(&probe.sent), 0);
+
+    atomic_store_explicit(&probe.hold_slot, 0u, memory_order_release);
+    check_equal(flowie_test_cnet_recv_exact(clients[0], received, sizeof(received)), SALTS_OK);
+    check_equal(memcmp(received, expected, sizeof(expected)), 0);
+    check_equal(flowie_multi_wait(&probe.sent, 1), SALTS_OK);
+    check_equal(flowie_multi_wait(&probe.released, 1), SALTS_OK);
+    check_equal(atomic_load(&probe.sent), 1);
+    check_equal(atomic_load(&probe.released), 1);
+    check_equal(atomic_load(&probe.error), SALTS_OK);
+    check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
+    check_equal(atomic_load(&probe.sent), 1);
+    check_equal(atomic_load(&probe.released), 1);
   }
 
   it("routes retained SG and copied sends to fixed owners and fences recycled generations") {
