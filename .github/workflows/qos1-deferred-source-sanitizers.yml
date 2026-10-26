@@ -104,6 +104,13 @@ jobs:
           ref: v2.3.0-rc.17
           path: build/upstream/salts
           persist-credentials: false
+      - name: Prepare Linux source sanitizer host
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config gcc g++ ccache
+          chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Build the EXACT published Salts/CNet source with TSan
         if: matrix.mode == 'tsan-salts-source'
         shell: bash
@@ -126,19 +133,12 @@ jobs:
           cmake --build --preset install-linux-release-ci --parallel 2
           test -f stage/sdk/linux-x64/lib/libsalts.so
           test -f stage/sdk/linux-x64/lib/libcnet.so
-          nm -D stage/sdk/linux-x64/lib/libsalts.so | grep -q '__tsan_init'
-          nm -D stage/sdk/linux-x64/lib/libcnet.so | grep -q '__tsan_init'
+          nm -D stage/sdk/linux-x64/lib/libsalts.so | grep '__tsan_init' >/dev/null
+          nm -D stage/sdk/linux-x64/lib/libcnet.so | grep '__tsan_init' >/dev/null
           rm -rf "$RUNNER_TEMP/flowie-sdk/salts/release"
           cp -a stage/sdk/linux-x64 "$RUNNER_TEMP/flowie-sdk/salts/release"
           printf 'salts_source=%s\nupstream_sanitizer=tsan\n' \
             "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/salts-tsan-source.txt"
-      - name: Prepare Linux source sanitizer host
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config gcc g++ ccache
-          chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
       - name: Compile Flowie Client and native wire tests with sanitizers
         shell: bash
         run: |
