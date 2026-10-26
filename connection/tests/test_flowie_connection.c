@@ -648,7 +648,7 @@ spec("Flowie multiple network owners") {
     config.network_workers = 2u;
     config.stream.connection_capacity = 2u;
     config.observer = (flowie_observer){flowie_multi_open, flowie_multi_receive,
-                                        flowie_multi_close, NULL, &probe};
+                                        flowie_multi_close, flowie_multi_sent, &probe};
     check_equal(flowie_server_init(&probe.server, &config), SALTS_OK);
     check_equal(flowie_server_stop(&probe.server, 1u), SALTS_OK);
     check_equal(flowie_server_start(&probe.server), SALTS_OK);
@@ -677,6 +677,7 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_test_cnet_send(clients[1], "running!", sizeof(received)), SALTS_OK);
     check_equal(flowie_test_cnet_recv_exact(clients[1], received, sizeof(received)), SALTS_OK);
     check_equal(memcmp(received, "running!", sizeof(received)), 0);
+    check_equal(flowie_multi_wait(&probe.sent, 1), SALTS_OK);
     check_equal(flowie_server_stop(&probe.server, 1u), SALTS_ETIMEDOUT);
     check_equal(flowie_server_destroy(&probe.server), SALTS_EBUSY);
     atomic_store(&probe.hold_slot, 0u);
@@ -686,6 +687,10 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_server_destroy(&probe.server), SALTS_OK);
     check_equal(atomic_load(&probe.released), 1);
     check_equal(atomic_load(&probe.rejected_released), 1);
+    /* The neighbor's successful echo is the sole on_send. The blocked
+     * Owner's queued retained/copy commands are cancelled by stop; none
+     * can fabricate an on_send success after their retained refs retire. */
+    check_equal(atomic_load(&probe.sent), 1);
   }
 
   it("retains an external TCP slice until the real CNet send completion") {
@@ -791,6 +796,10 @@ spec("Flowie multiple network owners") {
     check_not_equal(atomic_load(&probe.generations[1]), old.generation);
     /* Old admission may be queued, but must never reach the recycled socket. */
     check_equal(flowie_server_send(&probe.server, old, stale, sizeof(received)), SALTS_OK);
+    /* Also verify a stale-generation external backing: admission into
+     * the mailbox cannot authorize delivery to the recycled connection. */
+    memcpy(probe.rejected_retained, stale, sizeof(received));
+    check_equal(flowie_multi_queue_retained(&probe, old, true), SALTS_OK);
     check_equal(flowie_server_send(&probe.server,
                     (flowie_connection){2u, atomic_load(&probe.generations[1])},
                     "current!", sizeof(received)), SALTS_OK);
@@ -799,6 +808,7 @@ spec("Flowie multiple network owners") {
     check_equal(flowie_server_stop(&probe.server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(atomic_load(&probe.closed), 4);
     check_equal(atomic_load(&probe.error), SALTS_OK);
+    check_equal(atomic_load(&probe.rejected_released), 1);
     check_equal(flowie_server_send(&probe.server, old, stale, sizeof(received)), SALTS_ESHUTDOWN);
   }
 
