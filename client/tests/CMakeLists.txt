@@ -45,6 +45,34 @@ set_tests_properties(flowie.mqtt.qos1_deferred_wire PROPERTIES
   LABELS "flowie;mqtt;client;receive;deferred;qos1;real-wire;regression"
   TIMEOUT 30)
 
+# Compile an independent REAL network test whose Broker deliberately sends
+# two distinct QoS1 PUBLISHes with capacity=1. No second delivery, silent
+# pause, successful settlement, or PUBACK may be fabricated on overflow.
+add_executable(test_flowie_mqtt_qos1_deferred_overflow
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_qos1_deferred_wire.c)
+target_compile_definitions(test_flowie_mqtt_qos1_deferred_overflow PRIVATE
+  FLOWIE_DEFERRED_OVERFLOW_TEST=1)
+target_include_directories(test_flowie_mqtt_qos1_deferred_overflow PRIVATE
+  ${PROJECT_SOURCE_DIR}/client/include
+  ${PROJECT_SOURCE_DIR}/protocol/include
+  ${PROJECT_SOURCE_DIR}/connection/include)
+target_link_libraries(test_flowie_mqtt_qos1_deferred_overflow PRIVATE
+  Flowie::Client Flowie::Connection Flowie::Protocol Salts::Core)
+set_target_properties(test_flowie_mqtt_qos1_deferred_overflow PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(test_flowie_mqtt_qos1_deferred_overflow PRIVATE /W4 /WX)
+  target_link_libraries(test_flowie_mqtt_qos1_deferred_overflow PRIVATE ws2_32)
+else()
+  target_compile_options(test_flowie_mqtt_qos1_deferred_overflow PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+add_test(NAME flowie.mqtt.qos1_deferred_overflow
+  COMMAND test_flowie_mqtt_qos1_deferred_overflow)
+set_tests_properties(flowie.mqtt.qos1_deferred_overflow PROPERTIES
+  LABELS "flowie;mqtt;client;receive;deferred;qos1;real-wire;capacity;negative"
+  TIMEOUT 30)
+
 cmake_add_test(
   test_flowie_mqtt_client
   SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
