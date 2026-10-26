@@ -505,11 +505,19 @@ spec("Flowie control external HTTPS authenticator") {
 
     check_greater(response_size, 0);
     options = external_https_network_options(response, (size_t)response_size);
-    options.response_delay_ms = 250u;
-    options.timeout_ms = 50u;
+    /* The deadline spans DNS/TCP/TLS and the HTTP response. A 50ms
+     * total budget is shorter than a real Windows CNet/GmSSL handshake,
+     * causing the test to time out BEFORE authentication and wrongly
+     * demanding peer_verified=true. Keep the failure boundary strictly
+     * after mTLS/request admission: an actual 1.5s request budget plus a
+     * 4s fixture response delay, verified by the server's received bytes.
+     * The Client still must fail closed before reading a valid assertion. */
+    options.response_delay_ms = 4000u;
+    options.timeout_ms = 1500u;
     check_equal(external_https_run_mtls(&options, &result), SALTS_OK);
     check_equal(result.status, SALTS_EIO);
     check_true(result.peer_verified);
+    check_greater(result.request_size, 0u);
     check_equal(result.stats.transport_failures, 1u);
   }
 
