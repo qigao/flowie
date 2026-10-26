@@ -242,6 +242,13 @@ jobs:
           echo ===== libpq.dll resolved from exact-SDK PATH =====
           where libpq.dll
           if errorlevel 1 echo libpq.dll NOT found on exact-SDK PATH
+          rem Identify missing transitive imports or Win32 loader status
+          rem without changing the loader search path or waiving full CTest.
+          if exist "%TURBODB_ROOT%\bin\libpq.dll" dumpbin /dependents "%TURBODB_ROOT%\bin\libpq.dll"
+          if exist "%TURBODB_ROOT%\bin\libpq.dll" pwsh -NoProfile -File scripts/ci/diagnose_windows_loader.ps1 -Module "%TURBODB_ROOT%\bin\libpq.dll"
+          if errorlevel 1 echo Diagnostic-only libpq probe failed; full CTest remains mandatory
+          pwsh -NoProfile -File scripts/ci/diagnose_windows_loader.ps1 -Module "%TURBODB_ROOT%\lib\turbodb\drivers\turbodb_driver_postgresql.dll"
+          if errorlevel 1 echo Diagnostic-only PostgreSQL plugin probe failed; full CTest remains mandatory
           ctest --preset ci-win-release-user --timeout 180 --output-junit build/native-ci/results.xml
           if errorlevel 1 exit /b 1
       - name: Install and test external C11/C++17 consumer (Windows)
