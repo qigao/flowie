@@ -190,6 +190,7 @@ static void settled_first(flowie_mqtt_client_t *c,int status,
                         status == SALTS_OK ? SALTS_OK : status,
                         memory_order_release);
 }
+#if !defined(FLOWIE_DEFERRED_OVERFLOW_TEST)
 static void settled_again(flowie_mqtt_client_t *c,int status,
                           const flowie_mqtt_control_packet_view_t *ack,void *u) {
   (void)c;(void)ack;
@@ -202,6 +203,7 @@ static void settled_stale(flowie_mqtt_client_t *c,int status,
   atomic_store_explicit(&((probe*)u)->stale_settlement,status,
                         memory_order_release);
 }
+#endif /* !FLOWIE_DEFERRED_OVERFLOW_TEST */
 static void error_event(flowie_mqtt_client_t *c,int status,void *u) {
   probe *p = (probe *)u;
   (void)c;
