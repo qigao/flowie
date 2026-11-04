@@ -113,11 +113,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: x64-linux
+          host-triplet: x64-linux
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
 
       - name: Prepare build host
         shell: bash
@@ -186,7 +188,7 @@ jobs:
           set -euo pipefail
           install_root="$GITHUB_WORKSPACE/vcpkg_installed"
           log="$RUNNER_TEMP/flowie-release-vcpkg.log"
-          rm -rf "$install_root" "$VCPKG_BINARY_CACHE"
+          rm -rf "$install_root"
           mkdir -p "$VCPKG_BINARY_CACHE"
           set +e
           "$VCPKG_ROOT/vcpkg" install             --x-manifest-root="$GITHUB_WORKSPACE"             --x-install-root="$install_root"             --triplet x64-linux             --only-binarycaching 2>&1 | tee "$log"
@@ -277,11 +279,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: x64-windows
+          host-triplet: x64-windows
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
 
       - name: Prepare Windows build host
         shell: pwsh
@@ -439,11 +443,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: arm64-android
+          host-triplet: x64-linux
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
 
       - name: Prepare Android build host and Lemon
         shell: bash
@@ -690,9 +696,11 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: x64-linux
+          host-triplet: x64-linux
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -772,9 +780,11 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: x64-windows
+          host-triplet: x64-windows
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -867,9 +877,11 @@ jobs:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
+          triplet: arm64-android
+          host-triplet: x64-linux
 
       - uses: actions/setup-dotnet@v4
         with:
