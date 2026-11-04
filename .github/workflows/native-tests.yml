@@ -51,6 +51,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Install pinned native ccache
+        uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.4
       - name: Restore ccache (independent of vcpkg binary cache)
         uses: actions/cache@v4
         with:
@@ -58,10 +60,12 @@ jobs:
           key: flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-${{ github.sha }}
           restore-keys: |
             flowie-ace-cnet23-ccache-v1-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt', 'CMakeOptions.cmake', 'vcpkg.json') }}-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+          triplet: ${{ runner.os == 'Windows' && 'x64-windows' || 'x64-linux' }}
+          host-triplet: ${{ runner.os == 'Windows' && 'x64-windows' || 'x64-linux' }}
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
       - uses: actions/checkout@v4
         if: env.SALTS_SOURCE_REF != ''
         with:
@@ -128,7 +132,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
           ccache --version
           # NuGet stores this host tool as 0644; restore execution permission after extraction.
           chmod +x "$RUNNER_TEMP/flowie-sdk/salts-utils/release/bin/salts-idlc"
@@ -173,12 +177,10 @@ jobs:
           cmake --build --preset ci-linux-release-user --parallel 2
           export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$SALTS_ROOT/lib:$SALTS_UTILS_ROOT/lib:$HTTP_SERVICES_ROOT/lib:$TURBODB_ROOT/lib:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           ctest --preset ci-linux-release-user
-      - name: Locate Windows compiler and install ccache
+      - name: Locate Windows compiler
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install ccache -y --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot install ccache' }
           ccache --version
           if ($LASTEXITCODE -ne 0) { throw 'Cannot run ccache' }
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
