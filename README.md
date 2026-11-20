@@ -147,6 +147,14 @@ cmake --build --preset native-release-user
 ctest --preset native-release-user --output-on-failure
 ```
 
+On Windows ARM64, restore with `-Rid windows-arm64` and select the matching
+profile and preset. Use an ARM64 Visual Studio developer shell for MSVC.
+
+| SDK profile | Local configure, build and test preset |
+| --- | --- |
+| `windows-msvc-arm64` | `msvc-arm64-release-user` |
+| `windows-llvm-mingw-arm64` | `llvm-mingw-native-arm64-release-user` |
+
 All feature switches are declared centrally in `CMakeOptions.cmake`.
 
 The native client SDK is built in eleven configurations. Each job restores upstream
