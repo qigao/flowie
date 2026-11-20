@@ -345,6 +345,11 @@ MSVC ARM64 随后在 Disruptor 链接时报告 x86 的 _mm_pause 未定义。Win
 路径改用 Windows SDK 的 YieldProcessor()，由 SDK 为目标架构选择处理器提示。
 [SaltsBase 链接日志](https://github.com/qigao/salts-base/actions/runs/44695017585/job/136150104644)
 
+Windows SDK 的 rpcndr.h 将 small 定义为 char。SaltsBase 的 JSON SAX 数字临时
+缓冲区、CHttp 测试和 TurboDB MySQL 解码中的同名局部变量改为描述其用途的名称。
+9 项相关本地 CTest 通过。
+[SaltsBase 编译日志](https://github.com/qigao/salts-base/actions/runs/44696074550/job/136153577769)
+
 两种 Android ABI 都需要宿主机版 SaltsBase 和 SaltsUtils。Linux GCC
 arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
 `.env.example` 选择同一组发布，切换平台需重新恢复匹配的依赖并执行
