@@ -279,3 +279,25 @@ History 使用现有 MQTT 最近连接；Manage 打开独立的文件管理标�
 该标签仍存在。完整 native preset build、CTest 75 项（原公网 MQTT 用例
 禁用）、Workbench 39 个用例和 890 个断言通过。串口覆盖不可用端口，
 实物串口收发未验证。正常安装至 `build/native-release-user/stage-global-actions/`。
+
+## 2026-11-20：托管 CI 配置与 MSVC Workbench 链接
+
+GitHub Actions 运行 44665963477 和 44665969391 的三个平台都在生成 `.env`
+时失败。仓库没有 `FLOWIE_BUILD_ENV_*` variables。可复用工作流现在用
+`setup_native_ci.py --materialize <profile>` 从选定提交的 `.env.example` 生成
+每个 job 的配置。它只复制发布版本与 Windows OpenWTL 字段，根据 profile
+设置 triplet，并从 Android runner 取得 NDK 根。Windows runner 使用与
+SaltsBase SDK 生产流程相同的 Windows 2025 镜像系列。
+
+共享 vcpkg-cache 仍通过 `resolve-release` 和 `locked` 恢复安装包。
+re2c 和 Lemon 从同一公共发布取已校验的归档，再交给共享
+`package <id> <version> --archive` 入口验证身份并解包。此前的仓库变量配置
+已由模板生成替代。
+
+实际 MSVC 构建还发现 `CVT1100` 和 `LNK1123`。同一 manifest 同时由
+`workbench.rc` 和 CMake 链接输入嵌入。现在由 RC 单独嵌入，并给应用及测试
+的 RC 对象显式声明 manifest 构建依赖。用正式 `ci-msvc-release-user` preset
+重新配置、构建、CTest 和安装，53 个 CTest 项通过，原公网 MQTT 用例禁用。
+其中 Workbench 39 个用例、890 个断言通过，安装版资源 1 已核对包含
+Common Controls v6。脚本 18 个用例和 actionlint 通过。Linux 和 Android
+托管构建仍待修改后的工作流运行验证。

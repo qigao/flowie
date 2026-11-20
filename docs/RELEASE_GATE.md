@@ -10,10 +10,9 @@
 
 当前可执行的 SDK 资格验证为
 [`native-sdk-qualification.yml`](../.github/workflows/native-sdk-qualification.yml)，
-支持对候选分支手动运行，调用
+支持分支推送、PR 和手动运行，调用
 [`native-sdk-pipeline.yml`](../.github/workflows/native-sdk-pipeline.yml)
-构建 Linux/Windows/Android SDK 并检查打包后的消费能力。
-[`native-tests.yml`](../.github/workflows/native-tests.yml) 单独执行 Linux/Windows 原生回归。
+构建和打包 Linux、Windows 与 Android SDK，并在 Linux 和 Windows 上运行原生回归。
 发布准备状态与尚缺证据见 [1.0.4 发布说明](RELEASE_1.0.4.md)。
 
 下列产品门槛继续保留；补齐实现与对应证据前，不宣称完整产品 release gate 通过。

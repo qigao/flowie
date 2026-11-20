@@ -5,8 +5,8 @@ on:
     tags: ["v*"]
 
 permissions:
+  actions: read
   contents: read
-  packages: read
 
 concurrency:
   group: flowie-native-release-${{ github.ref }}
@@ -43,7 +43,6 @@ jobs:
     uses: ./.github/workflows/native-sdk-pipeline.yml
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
-    secrets: inherit
 
   publish:
     needs: [validate, build]

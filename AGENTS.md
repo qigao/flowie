@@ -66,7 +66,7 @@
 
 ## 上游 SDK 与本地 `.env`
 
-- `VCPKG_CACHE_VERSION`、`SALTS_BASE_VERSION` 由加载后的父环境或本地 `.env` 选择精确发布版本（不带 `v`）；同步维护 `.env.example` 和同名 CI variables。CMake 不隐式读取 `.env`，API 兼容性下限不等于当前选用版本。
+- `VCPKG_CACHE_VERSION`、`SALTS_BASE_VERSION` 由加载后的父环境或本地 `.env` 选择精确发布版本（不带 `v`）。更新 `.env.example` 中的发布版本，CI 从提交的模板生成其 `.env`。CMake 不隐式读取 `.env`，API 兼容性下限不等于当前选用版本。
 - 升级时只读取、更新相关非密钥字段，保留凭据和其他机器设置，不输出完整 `.env`，不提交 `.env`。基础设施 checkout 必须对应所选发布；已有脏 checkout 保留原状，不用 reset/覆盖方式升级。
 - vcpkg-cache 使用共享 `resolve-release` 将平台发布描述解析成构建目录内的 URL/SHA-256 锁，再以 `locked` 恢复；SDK 根取自返回的 `root`/回执。SaltsBase 使用所选公开发布清单核对版本、平台、生产者 CI、大小和摘要，然后恢复原始 SDK。入口见 [README](README.md#upstream-dependency-versions)，不复制下载框架或用旧 SDK 兜底。
 - 同步更新 `.env` 的 `VCPKG_CACHE_REPOSITORY_ROOT`、`VCPKG_INSTALLED_DIR`、`SALTS_BASE_ROOT` 及相应版本变量，使它们属于同一轮匹配编译器/triplet 的恢复结果。使用版本独立的安装目录，不覆盖旧 SDK；缺少发布资产、变量或摘要不符即失败。

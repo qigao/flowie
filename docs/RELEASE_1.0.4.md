@@ -99,7 +99,7 @@ GmSSL 与 CMeta/CNet SDK 属于新的原生依赖组合；消费方应重新构�
 
 ## 准备与发布步骤
 
-1. 对候选提交运行 `Flowie native tests` 与 `Flowie native SDK qualification`。
+1. 对候选提交运行 `Flowie native SDK qualification`。
    手动 qualification 选候选分支，记录 run 的精确 head SHA。
 2. 收集 `Flowie.Native.1.0.4` 工件及各平台 manifest，检查版本、source、依赖版本和验证范围。
 3. 补齐上述产品门槛证据；由发布者评估所有剩余阻塞，不能静默降低要求。

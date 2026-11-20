@@ -32,10 +32,11 @@ add_library(flowie_workbench_ui STATIC ${_workbench_ui})
 cmake_config_target(flowie_workbench_ui NO_INSTALL FOLDER "flowie/client/app")
 target_link_libraries(flowie_workbench_ui PUBLIC flowie_workbench_model OpenWTL::WTL)
 target_compile_definitions(flowie_workbench_ui PUBLIC NOMINMAX)
+# workbench.rc embeds the manifest for the application and the window tests.
 cmake_add_executable(
-    flowie_mqtt_workbench SOURCES src/main.cpp src/workbench.rc src/workbench.manifest LIBS
-    flowie_workbench_ui FOLDER "flowie/client/app"
+    flowie_mqtt_workbench SOURCES src/main.cpp src/workbench.rc LIBS flowie_workbench_ui FOLDER "flowie/client/app"
 )
+set_property(SOURCE src/workbench.rc PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/workbench.manifest")
 set_target_properties(flowie_mqtt_workbench PROPERTIES WIN32_EXECUTABLE TRUE)
 install(TARGETS flowie_mqtt_workbench RUNTIME DESTINATION bin)
 target_compile_definitions(flowie_mqtt_workbench PRIVATE NOMINMAX)
@@ -61,4 +62,8 @@ install(FILES "${openwtl_SOURCE_DIR}/LICENSE" DESTINATION share/licenses/Flowie/
 install(FILES "${openwtl_SOURCE_DIR}/wtl/MS-PL.txt" DESTINATION share/licenses/Flowie/OpenWTL)
 if(BUILD_TESTS)
     add_subdirectory(tests)
+    set_property(
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/workbench.rc" TARGET_DIRECTORY test_flowie_workbench
+        PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/workbench.manifest"
+    )
 endif()

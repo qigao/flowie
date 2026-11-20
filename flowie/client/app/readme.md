@@ -309,6 +309,6 @@ touch HWNDs.
 The extension is contained in the Windows application and its private model.
 Rolling back the executable requires the MQTT-only library copy described above.
 
-Windows CI's `FLOWIE_BUILD_ENV_WINDOWS` must include the same OpenWTL version and
-SHA-256 fields. Build and normal install copy the application's transitive DLLs
+Windows CI takes the pinned OpenWTL version and SHA-256 from `.env.example` when
+generating its `.env`. Build and normal install copy the application's transitive DLLs
 and the selected LLVM-MinGW C++ runtime into `bin`; launching needs no SDK PATH.

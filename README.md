@@ -156,14 +156,17 @@ original SDK TAR archives, a release manifest and SHA256SUMS. Tag releases publi
 GitHub Releases. Distribution and dependency restoration no longer use a product-owned package
 feed, package client or cache proxy.
 
-CI requires `FLOWIE_BUILD_ENV_LINUX`, `FLOWIE_BUILD_ENV_WINDOWS` and `FLOWIE_BUILD_ENV_ANDROID`
-repository variables. Each holds that platform's non-secret `.env` content. The workflow writes it
-as the job's only configuration file; missing configuration fails. Credentials remain in the
-runner's token environment. All three files must select the same dependency release family.
-Use workspace-relative `VCPKG_CACHE_REPOSITORY_ROOT=build/dependencies/vcpkg-cache` and
-`SHARED_DEPENDENCY_ROOT=build/dependencies/shared`, with `VCPKG_TARGET_TRIPLET` set to
-`x64-linux`, `x64-windows` or `arm64-android` respectively. Android also requires its selected
-`ANDROID_NDK_HOME`. These variables are not populated from local credentials or machine paths.
+CI generates each job's `.env` from the dependency releases committed in `.env.example`.
+The matrix selects `x64-linux`, `x64-windows` or `arm64-android` through the SDK profile.
+The bootstrap sets workspace-local paths for the shared checkout and installation. Android uses
+the runner's `ANDROID_NDK_HOME`, and Windows copies the pinned OpenWTL version and SHA-256.
+Credentials come from the runner token environment.
+
+The shared vcpkg-cache release provides the installed dependencies and the re2c and Lemon
+archives. The bootstrap restores them through the selected shared checkout and records the
+returned paths in `.env`. Native jobs upload CTest logs, with Workbench window renders on Windows.
+Automatic branch and pull request builds ignore changes limited to CMake, JSON, and documentation.
+Manual workflow dispatch can validate those changes. Version tags trigger the release workflow.
 
 Common options include:
 

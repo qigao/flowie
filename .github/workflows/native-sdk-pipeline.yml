@@ -8,8 +8,8 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
-  packages: read
 
 jobs:
   metadata:
@@ -42,25 +42,21 @@ jobs:
             rid: linux-x64
             profile: linux-gcc-x64
             preset: ci-gcc-release-user
-            configuration: FLOWIE_BUILD_ENV_LINUX
             native: true
-          - os: windows-2022
+          - os: windows-2025
             rid: windows-x64
             profile: windows-msvc-x64
             preset: ci-msvc-release-user
-            configuration: FLOWIE_BUILD_ENV_WINDOWS
             native: true
           - os: ubuntu-24.04
             rid: android-arm64-v8a
             profile: android-arm64
             preset: ci-android-arm64-release-user
-            configuration: FLOWIE_BUILD_ENV_ANDROID
             native: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,30 +65,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check script contracts
+        run: python -B -m unittest discover -s cmake/ci -p "test_*.py"
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
         with:
           arch: x64
       - id: configuration
-        name: Materialize the selected .env
-        shell: python
-        env:
-          BUILD_ENV_CONTENT: ${{ vars[matrix.configuration] }}
-        run: |
-          import importlib.util, os
-          from pathlib import Path
-          content = os.environ["BUILD_ENV_CONTENT"]
-          if not content.strip():
-              raise ValueError("The selected FLOWIE_BUILD_ENV_* variable must supply .env")
-          Path(".env").write_text(content, encoding="utf-8")
-          spec = importlib.util.spec_from_file_location("settings", "cmake/ci/restore-native-sdks.py")
-          settings = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(settings)
-          values = settings.load_environment_file(".env", {})
-          version = settings.version("VCPKG_CACHE_VERSION", values)
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("infrastructure=" + values["VCPKG_CACHE_REPOSITORY_ROOT"] + "\n")
-              output.write("ref=v" + version + "\n")
+        name: Materialize .env from the source revision
+        run: python -B cmake/ci/setup_native_ci.py --materialize ${{ matrix.profile }}
       - uses: actions/checkout@v4
         with:
           repository: qigao/vcpkg-cache
@@ -106,15 +87,13 @@ jobs:
         run: |
           & ./cmake/ci/restore-native-sdks.ps1 -Rid "${{ matrix.rid }}" -Profile "${{ matrix.profile }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Check script contracts
-        run: python -B -m unittest discover -s cmake/ci -p "test_*.py"
       - name: Configure the complete build graph
         run: cmake --fresh --preset ${{ matrix.preset }}
       - name: Build the configured graph
         run: cmake --build --preset ${{ matrix.preset }}
       - name: Run formal CTest
         if: matrix.native
-        run: ctest --preset ${{ matrix.preset }} --output-on-failure -j 1
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure --no-tests=error -j 1
       - name: Install the SDK
         run: cmake --install build/${{ matrix.preset }}
       - name: Package the original installation
@@ -178,7 +157,9 @@ jobs:
         if: always() && matrix.native
         with:
           name: flowie-tests-${{ matrix.profile }}
-          path: build/${{ matrix.preset }}/Testing/Temporary/
+          path: |
+            build/${{ matrix.preset }}/Testing/Temporary/
+            build/${{ matrix.preset }}/flowie/client/app/tests/workbench-*.bmp
           if-no-files-found: warn
 
   archives:

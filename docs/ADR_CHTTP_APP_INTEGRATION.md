@@ -88,13 +88,13 @@ python -B -m unittest discover -s cmake/ci -p 'test_*.py'
 推论：改后缀释放原临时名称可能导致并发重用，仍需在 SaltsBase 中独立复现和修复。
 本次未通过重试、关闭测试或修改生产行为来掩盖该失败。
 
-尚未完成的 CI 迁移（MED，事实）：`.github/workflows/native-tests.yml` 与
-`native-sdk-pipeline.yml` 仍恢复单体 Salts、导出 `SALTS_ROOT`，并引用现已不存在的
-`ci-win-release-user` 等 preset。历史源码 Dockerfile 仍按旧单体 SDK 构建。
+当时的 CI 仍恢复单体 Salts、导出 `SALTS_ROOT`，并使用旧的
+`ci-win-release-user` 等 preset。当前 SDK 资格验证由
+[`native-sdk-qualification.yml`](../.github/workflows/native-sdk-qualification.yml)
+调用共享管线，按提交中的依赖版本恢复 split SDK，再执行各平台 preset。
 当前发布 SDK 镜像使用 `deploy/server/Dockerfile.sdk` 和 `compose.build.yml`：
 构建与运行均采用匹配 SDK 的 Ubuntu 24.04，复用发布归档恢复工具，保留 TurboDB 插件
-的绝对路径和原有进程、端口、配置及数据卷契约。本地验证不能证明旧远端入口可用；
-CI 的依赖恢复和 preset 仍需一并迁到当前 split SDK 契约。
+的绝对路径和原有进程、端口、配置及数据卷契约。本地验证不能证明旧远端入口可用。
 
 2026-11-16 EU 首次部署验收发现 HIGH 阻塞（已按下述方案修复，事实）：发布 SDK 镜像的 Control 可通过
 常规 TLS 1.2/1.3、管理登录、Auth 和 ACL 检查，但 MQTT CONNECT 后没有 CONNACK。
