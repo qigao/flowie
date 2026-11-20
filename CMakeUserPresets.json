@@ -96,7 +96,7 @@
       "displayName": "Native Windows LLVM-MinGW ARM64 Release",
       "inherits": [
         "target-llvm-mingw-arm64",
-        "llvm-mingw-x64-release-user"
+        "native-release-user"
       ],
       "cacheVariables": {
         "CMAKE_SYSTEM_NAME": null
