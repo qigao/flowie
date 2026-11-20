@@ -15,9 +15,29 @@ SPEC = importlib.util.spec_from_file_location(
 settings = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(settings)
 
-CI_PROFILES = ("linux-gcc-x64", "windows-msvc-x64", "android-arm64")
+CI_PROFILES = {
+    "windows-msvc-x64": ("windows-2025", "ci-msvc-release-user"),
+    "windows-llvm-mingw-x64": ("windows-2025", "ci-llvm-mingw-x64-release-user"),
+    "linux-gcc-x64": ("ubuntu-24.04", "ci-gcc-release-user"),
+    "linux-gcc-arm64": ("ubuntu-24.04-arm", "ci-gcc-arm64-release-user"),
+    "linux-clang-x64": ("ubuntu-24.04", "ci-llvm-native-release-user"),
+    "linux-clang-arm64": ("ubuntu-24.04-arm", "ci-llvm-native-release-user"),
+    "macos-clang-x64": ("macos-15-intel", "ci-llvm-native-release-user"),
+    "macos-clang-arm64": ("macos-15", "ci-llvm-native-release-user"),
+    "android-arm64": ("ubuntu-24.04", "ci-android-arm64-release-user"),
+    "android-x64": ("ubuntu-24.04", "ci-android-x64-release-user"),
+}
 INFRASTRUCTURE = "build/dependencies/vcpkg-cache"
 SHARED_INSTALLATION = "build/dependencies/shared"
+
+
+def ci_matrix():
+    rows = []
+    for profile, (runner, preset) in CI_PROFILES.items():
+        rid, _ = settings.SDK_PROFILES[profile]
+        rows.append(dict(os=runner, profile=profile, preset=preset, rid=rid,
+                         native=rid not in settings.ANDROID_ABIS))
+    return {"include": rows}
 
 
 def materialize_environment(root, profile, runner_environment):
@@ -36,11 +56,12 @@ def materialize_environment(root, profile, runner_environment):
         if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
             raise ValueError("OPENWTL_SHA256 in .env.example must be a SHA-256 digest")
         values.update(OPENWTL_VERSION=openwtl_version, OPENWTL_SHA256=digest)
-    if rid == "android-arm64-v8a":
+    if rid in settings.ANDROID_ABIS:
         ndk = Path(runner_environment["ANDROID_NDK_HOME"]).resolve(strict=True)
         if not (ndk / "build/cmake/android.toolchain.cmake").is_file():
             raise ValueError("ANDROID_NDK_HOME must point to the runner's installed NDK")
         values["ANDROID_NDK_HOME"] = ndk.as_posix()
+        values["ANDROID_ABI"] = settings.ANDROID_ABIS[rid]
     with (root / ".env").open("x", encoding="utf-8", newline="\n") as output:
         output.writelines(f"{key}={value}\n" for key, value in values.items())
     return values
@@ -128,8 +149,13 @@ def prepare(root, configuration, host, execute=run, download=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--materialize", metavar="PROFILE", choices=CI_PROFILES)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--materialize", metavar="PROFILE", choices=CI_PROFILES)
+    mode.add_argument("--matrix", action="store_true")
     args = parser.parse_args()
+    if args.matrix:
+        print(json.dumps(ci_matrix(), separators=(",", ":")))
+        return
     root = Path(__file__).resolve().parents[2]
     if args.materialize:
         outputs = Path(os.environ["GITHUB_OUTPUT"])
@@ -140,6 +166,8 @@ def main():
         return
     configuration = settings.load_environment_file(root / ".env", os.environ)
     values = prepare(root, configuration, settings.host_rid())
+    if configuration["VCPKG_TARGET_TRIPLET"] == settings.SDK_PROFILES["windows-llvm-mingw-x64"][1]:
+        values["LLVM_MINGW_ROOT"] = Path(os.environ["LLVM_MINGW_ROOT"]).resolve(strict=True).as_posix()
     settings.write_environment_file(root / ".env", values)
     print("Prepared shared vcpkg and host-tool installations")
 

@@ -124,8 +124,8 @@ def main():
     environment['VCPKG_BINARY_SOURCES'] = file_environment['VCPKG_BINARY_SOURCES']
     for name in ('VCPKG_INSTALLED_DIR', 'RE2C_ROOT', 'LEMON_ROOT'):
         environment[name] = file_environment[name]
-    if args.rid == 'android-arm64-v8a':
-        environment['ANDROID_ABI'] = 'arm64-v8a'
+    if args.rid in ANDROID_ABIS:
+        environment['ANDROID_ABI'] = ANDROID_ABIS[args.rid]
         idlc_profile = android_idlc_profile(host_rid())
     releases = {}
 
@@ -158,11 +158,11 @@ def main():
 
     def sdk(repo, prefix, config, selected_profile):
         name = f'{repo}-{versions[repo]}-{selected_profile}.tar'
+        item = asset(repo, name)
         if repo == 'salts-base':
             metadata, _ = download(repo, f'{repo}-{versions[repo]}-manifest.json')
             manifest = json.loads(metadata.read_text(encoding='utf-8-sig'))
             producer, = [s for s in manifest['sdks'] if s['platform'] == selected_profile]
-            item = asset(repo, name)
             if (manifest['schemaVersion'] != 1 or manifest['name'] != 'SaltsBase'
                     or manifest['repository'] != 'https://github.com/qigao/salts-base'
                     or manifest['version'] != versions[repo]
@@ -178,7 +178,6 @@ def main():
             metadata, _ = download(repo, f'{repo}-{versions[repo]}-manifest.json')
             manifest = json.loads(metadata.read_text(encoding='utf-8-sig'))
             producer, = [s for s in manifest['sdks'] if s['platform'] == selected_profile]
-            item = asset(repo, name)
             if (manifest['schemaVersion'] != 1 or manifest['name'] != 'cmeta'
                     or manifest['version'] != versions[repo]
                     or manifest['repository'] != 'https://github.com/qigao/cmeta'
@@ -196,7 +195,6 @@ def main():
             metadata, _ = download(repo, f'{repo}-{versions[repo]}-manifest.json')
             manifest = json.loads(metadata.read_text(encoding='utf-8-sig'))
             producer, = [s for s in manifest['sdks'] if s['profile'] == selected_profile]
-            item = asset(repo, name)
             dependencies = manifest['dependencies']
             # CMeta publishes SameMinorVersion compatibility. A selected patch
             # upgrade must still match Base exactly via its own release manifest.
@@ -223,7 +221,6 @@ def main():
             metadata, _ = download(repo, f'{repo}-{versions[repo]}-manifest.json')
             manifest = json.loads(metadata.read_text(encoding='utf-8-sig'))
             producer, = [s for s in manifest['sdks'] if s['profile'] == selected_profile]
-            item = asset(repo, name)
             run_info = json.loads(run('gh', 'api',
                 f'repos/qigao/turbodb/actions/runs/{manifest["producer_run"]}'))
             if (manifest['schema'] != 1 or manifest['name'] != 'TurboDB'
@@ -259,14 +256,15 @@ def main():
     sdk('salts-base', 'SALTS_BASE', 'lib/cmake/SaltsBase/SaltsBaseConfig.cmake', profile)
     sdk('cmeta', 'CMETA', 'lib/cmake/CMeta/CMetaConfig.cmake', profile)
     sdk('salts-utils', 'SALTS_UTILS', 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake', profile)
-    if args.rid == 'android-arm64-v8a':
+    if args.rid in ANDROID_ABIS:
         sdk('salts-base', 'SALTS_IDLC_BASE', 'lib/cmake/SaltsBase/SaltsBaseConfig.cmake',
             idlc_profile)
         sdk('salts-utils', 'SALTS_IDLC', 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake',
             idlc_profile)
     cnet_profile = {'windows-llvm-mingw-x64': 'windows-x64',
                     'linux-clang-x64': 'linux-x64', 'linux-clang-arm64': 'linux-arm64',
-                    'macos-clang-arm64': 'macos-arm64'}.get(profile, profile)
+                    'macos-clang-arm64': 'macos-arm64',
+                    'macos-clang-x64': 'macos-x64'}.get(profile, profile)
     sdk('salts-cnet', 'SALTS_CORE', 'lib/cmake/SaltsCNet/SaltsCNetConfig.cmake', cnet_profile)
     environment['SALTS_CNET_ROOT'] = environment['SALTS_CORE_ROOT']
     sdk('chttp', 'CHTTP', 'lib/cmake/Chttp/ChttpConfig.cmake', profile)
@@ -286,7 +284,7 @@ ENVIRONMENT_FILE_FIELDS = frozenset(VERSIONS.values()) | {
     'VSDEVCMD_BAT', 'CMAKE_BUILD_PARALLEL_LEVEL', 'MSVC_TARGET_TRIPLET',
     'LLVM_NATIVE_TARGET_TRIPLET', 'GCC_TARGET_TRIPLET', 'GCC_C_COMPILER',
     'GCC_CXX_COMPILER', 'LLVM_MINGW_ROOT', 'LLVM_MINGW_TARGET',
-    'LLVM_MINGW_TOOLCHAIN_FILE', 'ANDROID_NDK_HOME', 'TURBODB_ROOT',
+    'LLVM_MINGW_TOOLCHAIN_FILE', 'ANDROID_NDK_HOME', 'ANDROID_ABI', 'TURBODB_ROOT',
     'VCPKG_INSTALLED_DIR', 'VCPKG_TARGET_TRIPLET', 'RE2C_ROOT', 'LEMON_ROOT',
     'SHARED_DEPENDENCY_ROOT',
     'OPENWTL_VERSION', 'OPENWTL_SHA256',
@@ -295,14 +293,18 @@ ENVIRONMENT_FILE_FIELDS = frozenset(VERSIONS.values()) | {
     'SALTS_CNET_ROOT', 'SALTS_CNET_VERSION', 'CHTTP_ROOT',
     'SALTS_IDLC_ROOT', 'SALTS_IDLC_BASE_ROOT'
 }
+ANDROID_ABIS = {'android-arm64-v8a': 'arm64-v8a', 'android-x86_64': 'x86_64'}
 PROFILES = {'windows-x64': ('windows-msvc-x64', 'x64-windows'),
             'linux-x64': ('linux-clang-x64', 'x64-linux'),
             'linux-arm64': ('linux-clang-arm64', 'arm64-linux'),
             'macos-arm64': ('macos-clang-arm64', 'arm64-osx'),
-            'android-arm64-v8a': ('android-arm64', 'arm64-android')}
+            'macos-x64': ('macos-clang-x64', 'x64-osx'),
+            'android-arm64-v8a': ('android-arm64', 'arm64-android'),
+            'android-x86_64': ('android-x64', 'x64-android')}
 SDK_PROFILES = {profile: (rid, triplet) for rid, (profile, triplet) in PROFILES.items()}
 SDK_PROFILES.update({'windows-llvm-mingw-x64': ('windows-x64', 'qigao-x64-windows-llvm-mingw'),
-                     'linux-gcc-x64': ('linux-x64', 'x64-linux')})
+                     'linux-gcc-x64': ('linux-x64', 'x64-linux'),
+                     'linux-gcc-arm64': ('linux-arm64', 'arm64-linux')})
 
 if __name__ == '__main__':
     main()

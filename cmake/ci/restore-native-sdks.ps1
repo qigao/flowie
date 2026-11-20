@@ -1,6 +1,5 @@
 param(
   [Parameter(Mandatory=$true)]
-  [ValidateSet('windows-x64', 'linux-x64', 'linux-arm64', 'macos-arm64', 'android-arm64-v8a')]
   [string]$Rid,
   [string]$Profile,
   [switch]$Local

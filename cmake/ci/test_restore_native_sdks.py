@@ -54,7 +54,7 @@ class EnvironmentFileTests(unittest.TestCase):
 
     def test_android_selects_a_native_sdk_profile_for_the_idl_compiler(self):
         self.assertEqual(restore.android_idlc_profile('linux-x64'), 'linux-gcc-x64')
-        for host in ('linux-x64', 'linux-arm64', 'windows-x64', 'macos-arm64'):
+        for host in ('linux-x64', 'linux-arm64', 'windows-x64', 'macos-arm64', 'macos-x64'):
             with self.subTest(host=host):
                 profile = restore.android_idlc_profile(host)
                 self.assertEqual(restore.SDK_PROFILES[profile][0], host)

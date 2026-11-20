@@ -322,3 +322,16 @@ Android 打包检查发现 NDK r27 产出的 `libflowie.so` 未达到 16 KiB ELF
 滚入可见区域，随后状态标题增加宽度，使关闭按钮被裁剪。更新标题后再选中
 标签，保留原生滚动行为。传输下拉框测试使用控件报告的行高和选项数，避免
 受固定像素阈值影响。两处修复通过本地 `ci-msvc-release-user` Workbench CTest。
+
+## 2026-11-20：原生客户端 SDK 的十项矩阵
+
+发布配置来自 `cmake/ci/setup_native_ci.py --matrix`。它为 Windows x64
+选择 MSVC 和 LLVM-MinGW，为 Linux x64/arm64 选择 GCC 和 Clang，为
+macOS x64/arm64 选择 Clang，为 Android x86_64/arm64-v8a 选择 NDK Clang。
+归档步骤复用同一配置，逐一核对 profile、源码 SHA 和原生 CTest 状态。
+
+两种 Android ABI 都需要宿主机版 SaltsBase 和 SaltsUtils。Linux GCC
+arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
+macOS Intel 使用 `x64-osx` 的共享依赖和 Intel SDK，GitHub runner 为
+`macos-15-intel`。`.env.example` 选择同一组发布，切换平台需重新恢复匹配
+的依赖并执行 `cmake --fresh --preset <preset>`。

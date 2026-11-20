@@ -149,18 +149,25 @@ ctest --preset native-release-user --output-on-failure
 
 All feature switches are declared centrally in `CMakeOptions.cmake`.
 
-The native workflows use the same complete preset build graph and formal CTest entry points.
-Linux GCC and Windows MSVC run their tests; Android arm64 performs cross-build, installation and
-16 KiB ELF alignment checks. Android device execution is not implied. Successful runs produce
-original SDK TAR archives, a release manifest and SHA256SUMS. Tag releases publish these files to
-GitHub Releases. Distribution and dependency restoration no longer use a product-owned package
-feed, package client or cache proxy.
+The native client SDK is built in ten configurations. Each job restores upstream
+SDKs that match its compiler and target architecture and builds the complete preset graph.
 
-CI generates each job's `.env` from the dependency releases committed in `.env.example`.
-The matrix selects `x64-linux`, `x64-windows` or `arm64-android` through the SDK profile.
-The bootstrap sets workspace-local paths for the shared checkout and installation. Android uses
-the runner's `ANDROID_NDK_HOME`, and Windows copies the pinned OpenWTL version and SHA-256.
-Credentials come from the runner token environment.
+| Platform | Architecture | Toolchain |
+| --- | --- | --- |
+| Windows | x64 | MSVC, LLVM-MinGW |
+| Linux | x64, arm64 | GCC, Clang |
+| macOS | x64, arm64 | Clang |
+| Android | x86_64, arm64-v8a | NDK Clang |
+
+Native jobs run CTest on the target architecture. Android jobs cross-compile,
+install and check 16 KiB ELF alignment on Ubuntu. The OpenWTL Workbench ships
+with the Windows SDKs. The workflow verifies all ten profiles before producing
+the SDK archives, release manifest and SHA256SUMS. Version tags publish those
+files to GitHub Releases.
+
+CI generates each job's `.env` from `.env.example` and sets workspace-local
+paths. Android uses the runner's `ANDROID_NDK_HOME`. Windows copies the pinned
+OpenWTL version and SHA-256. Credentials come from the runner token environment.
 
 The shared vcpkg-cache release provides the installed dependencies and the re2c and Lemon
 archives. The bootstrap restores them through the selected shared checkout and records the
@@ -185,9 +192,9 @@ merge selected fields into `.env` while preserving credentials and machine setti
 The restore loader replaces inherited build settings with the selected file values and never
 imports credentials from the file. CMake consumes the loaded environment and does not read dotenv.
 
-The selected family is SaltsBase 0.1.8, CMeta 0.1.8, SaltsUtils 0.1.6, SaltsCNet 0.1.16,
-[Chttp 0.1.2](https://github.com/qigao/chttp/releases/tag/v0.1.2),
-[TurboRaft 0.3.2](https://github.com/qigao/turboraft/releases/tag/v0.3.2) and TurboDB 0.1.2,
+The selected family is SaltsBase 0.1.9, CMeta 0.1.9, SaltsUtils 0.1.7, SaltsCNet 0.1.17,
+[Chttp 0.1.3](https://github.com/qigao/chttp/releases/tag/v0.1.3),
+[TurboRaft 0.3.2](https://github.com/qigao/turboraft/releases/tag/v0.3.2) and TurboDB 0.1.3,
 with vcpkg-cache 0.1.3. Versions and roots are selected in `.env`:
 
 - `SALTS_BASE_ROOT`, `CMETA_ROOT`, `SALTS_UTILS_ROOT`, `SALTS_CORE_ROOT` / `SALTS_CNET_ROOT`;

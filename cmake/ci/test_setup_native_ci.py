@@ -133,6 +133,21 @@ class CIEnvironmentTests(unittest.TestCase):
                                                 {'ANDROID_NDK_HOME': str(ndk)})
         self.assertEqual(values['ANDROID_NDK_HOME'], ndk.resolve().as_posix())
         self.assertEqual(values['VCPKG_TARGET_TRIPLET'], 'arm64-android')
+        self.assertEqual(values['ANDROID_ABI'], 'arm64-v8a')
+        x64 = self.root / 'android-x64'
+        x64.mkdir()
+        (x64 / '.env.example').write_bytes(self.template.read_bytes())
+        values = setup.materialize_environment(x64, 'android-x64', {'ANDROID_NDK_HOME': str(ndk)})
+        self.assertEqual(values['VCPKG_TARGET_TRIPLET'], 'x64-android')
+        self.assertEqual(values['ANDROID_ABI'], 'x86_64')
+
+    def test_matrix_covers_each_release_profile_and_only_runs_native_ctest(self):
+        rows = setup.ci_matrix()['include']
+        self.assertEqual(len(rows), 10)
+        self.assertEqual({row['profile'] for row in rows}, setup.settings.SDK_PROFILES.keys())
+        self.assertEqual({row['profile'] for row in rows if not row['native']},
+                         {'android-arm64', 'android-x64'})
+        self.assertEqual({row['rid'] for row in rows}, setup.settings.PROFILES.keys())
 
     def test_invalid_openwtl_hash_stops_before_creating_the_file(self):
         path = self.template

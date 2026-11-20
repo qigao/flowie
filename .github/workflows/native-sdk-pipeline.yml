@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
+      matrix: ${{ steps.meta.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,35 +25,22 @@ jobs:
       - id: meta
         shell: python
         run: |
-          import json, os, re
+          import json, os, re, subprocess, sys
           from pathlib import Path
           version = json.loads(Path("vcpkg.json").read_text(encoding="utf-8"))["version-semver"]
           if not re.fullmatch(r"\d+\.\d+\.\d+", version):
               raise ValueError("Flowie must declare an exact release version")
+          matrix = subprocess.check_output(
+              [sys.executable, "-B", "cmake/ci/setup_native_ci.py", "--matrix"], text=True).strip()
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("version=" + version + "\n")
+              output.write("matrix=" + matrix + "\n")
 
   sdk:
     needs: metadata
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            rid: linux-x64
-            profile: linux-gcc-x64
-            preset: ci-gcc-release-user
-            native: true
-          - os: windows-2025
-            rid: windows-x64
-            profile: windows-msvc-x64
-            preset: ci-msvc-release-user
-            native: true
-          - os: ubuntu-24.04
-            rid: android-arm64-v8a
-            profile: android-arm64
-            preset: ci-android-arm64-release-user
-            native: false
+      matrix: ${{ fromJSON(needs.metadata.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -68,7 +56,7 @@ jobs:
       - name: Check script contracts
         run: python -B -m unittest discover -s cmake/ci -p "test_*.py"
       - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
+        if: matrix.profile == 'windows-msvc-x64'
         with:
           arch: x64
       - id: configuration
@@ -80,6 +68,8 @@ jobs:
           ref: ${{ steps.configuration.outputs.ref }}
           path: ${{ steps.configuration.outputs.infrastructure }}
           persist-credentials: false
+      - uses: ./build/dependencies/vcpkg-cache/.github/actions/setup-llvm-mingw
+        if: matrix.profile == 'windows-llvm-mingw-x64'
       - name: Restore shared vcpkg and host generators
         run: python -B cmake/ci/setup_native_ci.py
       - name: Restore exact published SDK archives
@@ -176,13 +166,17 @@ jobs:
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          MATRIX: ${{ needs.metadata.outputs.matrix }}
         run: |
           import hashlib, json, os
           from pathlib import Path
           dist = Path("dist")
           sdks = [json.loads(path.read_text(encoding="utf-8"))
                   for path in sorted(dist.glob("*.json"))]
-          if len(sdks) != 3 or any(item["source"] != os.environ["SOURCE_SHA"] for item in sdks):
+          expected = {row["profile"]: row["native"] for row in json.loads(os.environ["MATRIX"])["include"]}
+          received = {sdk["profile"]: sdk["native_tests"] for sdk in sdks}
+          if (len(sdks) != len(expected) or received != expected or
+                  any(item["source"] != os.environ["SOURCE_SHA"] for item in sdks)):
               raise ValueError("Incomplete or inconsistent platform archives")
           if any(item["dependencies"] != sdks[0]["dependencies"] for item in sdks):
               raise ValueError("Platform SDKs used different dependency releases")
