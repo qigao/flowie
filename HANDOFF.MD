@@ -354,3 +354,13 @@ Windows SDK 的 rpcndr.h 将 small 定义为 char。SaltsBase 的 JSON SAX 数�
 arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
 `.env.example` 选择同一组发布，切换平台需重新恢复匹配的依赖并执行
 `cmake --fresh --preset <preset>`。
+
+MSVC 19.52.37029 的 ARM64 代码生成会在结构体字段赋值后写入重叠的零值。
+反汇编中，向偏移 0x38 写入生命周期 size 后，偏移 0x20 处的 32 字节清零
+覆盖了该字段。Actor 的 Action binding 也有同样的写入次序。
+[CMeta 诊断](https://github.com/qigao/cmeta/actions/runs/44701573552)
+
+受影响的 MSVC ARM64 Release preset 使用 `/Od /DNDEBUG`。
+`/O1` 和 `/Qvec-` 的验证仍有失败，`/Od` 通过 CMeta 的 120 项 CTest。
+恢复优化的验收条件是修正的工具链通过相同的原生和下游测试。性能影响未测量。
+[CMeta ARM64 验证](https://github.com/qigao/cmeta/actions/runs/44703550580)
