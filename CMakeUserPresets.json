@@ -122,6 +122,25 @@
       ]
     },
     {
+      "name": "ci-msvc-arm64-release-user",
+      "displayName": "CI shared vcpkg cache: Windows MSVC arm64 Release",
+      "inherits": "ci-msvc-release-user",
+      "environment": {
+        "VCPKG_TARGET_TRIPLET": "arm64-windows"
+      }
+    },
+    {
+      "name": "ci-llvm-mingw-arm64-release-user",
+      "displayName": "CI shared vcpkg cache: Windows LLVM-MinGW arm64 Release",
+      "inherits": [
+        "target-llvm-mingw-arm64",
+        "ci-llvm-mingw-x64-release-user"
+      ],
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": null
+      }
+    },
+    {
       "name": "ci-llvm-native-release-user",
       "displayName": "CI shared vcpkg cache: llvm-native-release-user",
       "inherits": [
@@ -320,6 +339,26 @@
       "configurePreset": "ci-llvm-mingw-x64-release-user"
     },
     {
+      "name": "ci-msvc-arm64-release-user",
+      "inherits": "ci-msvc-release-user",
+      "configurePreset": "ci-msvc-arm64-release-user"
+    },
+    {
+      "name": "install-ci-msvc-arm64-release-user",
+      "inherits": "install-ci-msvc-release-user",
+      "configurePreset": "ci-msvc-arm64-release-user"
+    },
+    {
+      "name": "ci-llvm-mingw-arm64-release-user",
+      "inherits": "ci-llvm-mingw-x64-release-user",
+      "configurePreset": "ci-llvm-mingw-arm64-release-user"
+    },
+    {
+      "name": "install-ci-llvm-mingw-arm64-release-user",
+      "inherits": "install-ci-llvm-mingw-x64-release-user",
+      "configurePreset": "ci-llvm-mingw-arm64-release-user"
+    },
+    {
       "name": "ci-llvm-native-release-user",
       "inherits": [
         "llvm-native-release-user"
@@ -438,6 +477,16 @@
         "llvm-mingw-x64-release-user"
       ],
       "configurePreset": "ci-llvm-mingw-x64-release-user"
+    },
+    {
+      "name": "ci-msvc-arm64-release-user",
+      "inherits": "ci-msvc-release-user",
+      "configurePreset": "ci-msvc-arm64-release-user"
+    },
+    {
+      "name": "ci-llvm-mingw-arm64-release-user",
+      "inherits": "ci-llvm-mingw-x64-release-user",
+      "configurePreset": "ci-llvm-mingw-arm64-release-user"
     },
     {
       "name": "ci-llvm-native-release-user",

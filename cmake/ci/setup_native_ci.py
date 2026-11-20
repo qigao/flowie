@@ -18,11 +18,12 @@ SPEC.loader.exec_module(settings)
 CI_PROFILES = {
     "windows-msvc-x64": ("windows-2025", "ci-msvc-release-user"),
     "windows-llvm-mingw-x64": ("windows-2025", "ci-llvm-mingw-x64-release-user"),
+    "windows-msvc-arm64": ("windows-11-arm", "ci-msvc-arm64-release-user"),
+    "windows-llvm-mingw-arm64": ("windows-11-arm", "ci-llvm-mingw-arm64-release-user"),
     "linux-gcc-x64": ("ubuntu-24.04", "ci-gcc-release-user"),
     "linux-gcc-arm64": ("ubuntu-24.04-arm", "ci-gcc-arm64-release-user"),
     "linux-clang-x64": ("ubuntu-24.04", "ci-llvm-native-release-user"),
     "linux-clang-arm64": ("ubuntu-24.04-arm", "ci-llvm-native-release-user"),
-    "macos-clang-x64": ("macos-15-intel", "ci-llvm-native-release-user"),
     "macos-clang-arm64": ("macos-15", "ci-llvm-native-release-user"),
     "android-arm64": ("ubuntu-24.04", "ci-android-arm64-release-user"),
     "android-x64": ("ubuntu-24.04", "ci-android-x64-release-user"),
@@ -48,7 +49,7 @@ def materialize_environment(root, profile, runner_environment):
     values = dict(versions, VCPKG_CACHE_REPOSITORY_ROOT=INFRASTRUCTURE,
                   SHARED_DEPENDENCY_ROOT=SHARED_INSTALLATION, VCPKG_TARGET_TRIPLET=triplet,
                   VCPKG_BINARY_SOURCES="clear")
-    if rid == "windows-x64":
+    if rid.startswith("windows-"):
         openwtl_version = template["OPENWTL_VERSION"]
         if not re.fullmatch(r"\d+\.\d+\.\d+", openwtl_version):
             raise ValueError("OPENWTL_VERSION in .env.example must select an exact release")
@@ -166,7 +167,9 @@ def main():
         return
     configuration = settings.load_environment_file(root / ".env", os.environ)
     values = prepare(root, configuration, settings.host_rid())
-    if configuration["VCPKG_TARGET_TRIPLET"] == settings.SDK_PROFILES["windows-llvm-mingw-x64"][1]:
+    if configuration["VCPKG_TARGET_TRIPLET"] in {
+            triplet for profile, (_, triplet) in settings.SDK_PROFILES.items()
+            if profile.startswith("windows-llvm-mingw-")}:
         values["LLVM_MINGW_ROOT"] = Path(os.environ["LLVM_MINGW_ROOT"]).resolve(strict=True).as_posix()
     settings.write_environment_file(root / ".env", values)
     print("Prepared shared vcpkg and host-tool installations")

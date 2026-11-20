@@ -56,9 +56,9 @@ jobs:
       - name: Check script contracts
         run: python -B -m unittest discover -s cmake/ci -p "test_*.py"
       - uses: ilammy/msvc-dev-cmd@v1
-        if: matrix.profile == 'windows-msvc-x64'
+        if: startsWith(matrix.profile, 'windows-msvc-')
         with:
-          arch: x64
+          arch: ${{ matrix.rid == 'windows-arm64' && 'arm64' || 'x64' }}
       - id: configuration
         name: Materialize .env from the source revision
         run: python -B cmake/ci/setup_native_ci.py --materialize ${{ matrix.profile }}
@@ -69,7 +69,9 @@ jobs:
           path: ${{ steps.configuration.outputs.infrastructure }}
           persist-credentials: false
       - uses: ./build/dependencies/vcpkg-cache/.github/actions/setup-llvm-mingw
-        if: matrix.profile == 'windows-llvm-mingw-x64'
+        if: startsWith(matrix.profile, 'windows-llvm-mingw-')
+        with:
+          target: ${{ matrix.rid == 'windows-arm64' && 'arm64' || 'x64' }}
       - name: Restore shared vcpkg and host generators
         run: python -B cmake/ci/setup_native_ci.py
       - name: Restore exact published SDK archives
@@ -95,7 +97,7 @@ jobs:
           NATIVE_TESTS: ${{ matrix.native }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          import hashlib, importlib.util, json, os, subprocess, tarfile
+          import hashlib, importlib.util, json, os, struct, subprocess, tarfile
           from pathlib import Path
           preset = os.environ["PRESET"]
           version = os.environ["VERSION"]
@@ -107,6 +109,30 @@ jobs:
               raise ValueError("Configured CMake version differs from the release identity")
           stage = build / "stage"
           (stage / "lib/cmake/Flowie/FlowieConfig.cmake").read_bytes()
+          profile = os.environ["PROFILE"]
+          arm64 = profile.endswith("-arm64")
+          if profile.startswith("windows-"):
+              library = "libflowie_client.dll" if "-llvm-mingw-" in profile else "flowie_client.dll"
+              expected_machine = 0xAA64 if arm64 else 0x8664
+              for name in (library, "flowie_mqtt_workbench.exe"):
+                  with (stage / "bin" / name).open("rb") as binary:
+                      header = binary.read(64)
+                      if len(header) != 64 or header[:2] != b"MZ":
+                          raise ValueError("Invalid Windows PE header: " + name)
+                      binary.seek(struct.unpack_from("<I", header, 60)[0])
+                      if binary.read(6) != b"PE\0\0" + struct.pack("<H", expected_machine):
+                          raise ValueError("Windows PE machine differs from " + profile + ": " + name)
+          elif profile.startswith("macos-"):
+              with (stage / "lib/libflowie_client.dylib").open("rb") as binary:
+                  if binary.read(8) != struct.pack("<II", 0xFEEDFACF, 0x0100000C):
+                      raise ValueError("Expected a macOS arm64 Mach-O client")
+          else:
+              with (stage / "lib/libflowie_client.so").open("rb") as binary:
+                  header = binary.read(20)
+                  expected_machine = 183 if arm64 else 62
+                  if (len(header) != 20 or header[:6] != b"\x7fELF\x02\x01"
+                          or struct.unpack_from("<H", header, 18)[0] != expected_machine):
+                      raise ValueError("ELF machine differs from " + profile)
           dist = Path("dist")
           dist.mkdir()
           name = "flowie-" + version + "-" + os.environ["PROFILE"] + ".tar"

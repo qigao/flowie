@@ -26,8 +26,8 @@ def version(name, environment=None):
 
 def host_rid():
     system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
-    architecture = {"AMD64": "x64", "x86_64": "x64",
-                    "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
+    architecture = {"amd64": "x64", "x86_64": "x64",
+                    "aarch64": "arm64", "arm64": "arm64"}[platform.machine().lower()]
     return system + "-" + architecture
 
 
@@ -262,9 +262,9 @@ def main():
         sdk('salts-utils', 'SALTS_IDLC', 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake',
             idlc_profile)
     cnet_profile = {'windows-llvm-mingw-x64': 'windows-x64',
+                    'windows-llvm-mingw-arm64': 'windows-arm64',
                     'linux-clang-x64': 'linux-x64', 'linux-clang-arm64': 'linux-arm64',
-                    'macos-clang-arm64': 'macos-arm64',
-                    'macos-clang-x64': 'macos-x64'}.get(profile, profile)
+                    'macos-clang-arm64': 'macos-arm64'}.get(profile, profile)
     sdk('salts-cnet', 'SALTS_CORE', 'lib/cmake/SaltsCNet/SaltsCNetConfig.cmake', cnet_profile)
     environment['SALTS_CNET_ROOT'] = environment['SALTS_CORE_ROOT']
     sdk('chttp', 'CHTTP', 'lib/cmake/Chttp/ChttpConfig.cmake', profile)
@@ -295,14 +295,15 @@ ENVIRONMENT_FILE_FIELDS = frozenset(VERSIONS.values()) | {
 }
 ANDROID_ABIS = {'android-arm64-v8a': 'arm64-v8a', 'android-x86_64': 'x86_64'}
 PROFILES = {'windows-x64': ('windows-msvc-x64', 'x64-windows'),
+            'windows-arm64': ('windows-msvc-arm64', 'arm64-windows'),
             'linux-x64': ('linux-clang-x64', 'x64-linux'),
             'linux-arm64': ('linux-clang-arm64', 'arm64-linux'),
             'macos-arm64': ('macos-clang-arm64', 'arm64-osx'),
-            'macos-x64': ('macos-clang-x64', 'x64-osx'),
             'android-arm64-v8a': ('android-arm64', 'arm64-android'),
             'android-x86_64': ('android-x64', 'x64-android')}
 SDK_PROFILES = {profile: (rid, triplet) for rid, (profile, triplet) in PROFILES.items()}
 SDK_PROFILES.update({'windows-llvm-mingw-x64': ('windows-x64', 'qigao-x64-windows-llvm-mingw'),
+                     'windows-llvm-mingw-arm64': ('windows-arm64', 'qigao-arm64-windows-llvm-mingw'),
                      'linux-gcc-x64': ('linux-x64', 'x64-linux'),
                      'linux-gcc-arm64': ('linux-arm64', 'arm64-linux')})
 

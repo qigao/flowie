@@ -143,11 +143,22 @@ class CIEnvironmentTests(unittest.TestCase):
 
     def test_matrix_covers_each_release_profile_and_only_runs_native_ctest(self):
         rows = setup.ci_matrix()['include']
-        self.assertEqual(len(rows), 10)
+        self.assertEqual(len(rows), 11)
         self.assertEqual({row['profile'] for row in rows}, setup.settings.SDK_PROFILES.keys())
         self.assertEqual({row['profile'] for row in rows if not row['native']},
                          {'android-arm64', 'android-x64'})
         self.assertEqual({row['rid'] for row in rows}, setup.settings.PROFILES.keys())
+        self.assertEqual({row['profile'] for row in rows if row['os'] == 'windows-11-arm'},
+                         {'windows-msvc-arm64', 'windows-llvm-mingw-arm64'})
+        for profile, triplet in (('windows-msvc-arm64', 'arm64-windows'),
+                                 ('windows-llvm-mingw-arm64', 'qigao-arm64-windows-llvm-mingw')):
+            with self.subTest(profile=profile):
+                root = self.root / profile
+                root.mkdir()
+                (root / '.env.example').write_bytes(self.template.read_bytes())
+                values = setup.materialize_environment(root, profile, {})
+                self.assertEqual(values['VCPKG_TARGET_TRIPLET'], triplet)
+                self.assertIn('OPENWTL_VERSION', values)
 
     def test_invalid_openwtl_hash_stops_before_creating_the_file(self):
         path = self.template
