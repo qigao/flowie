@@ -58,14 +58,14 @@ FIN 为 0 条 CoroNet 日志，TCP RST 仍恰好产生一条完整记录。
 
 ### 2.2 一个事实只能有一个日志所有者
 
-基线版本的一次正常断连会经过 `read-event`、`shutdown-begin` 和 `stream-close` 多个记录点。底层 transport、
+基线版本的一次正常断连会经过 `read-event`、`shutdown-begin` 和 `stream-close` 多个记录点。底层 flowie/transport、
 session 和业务层都可以观察同一个失败，但只能由真正消费错误并决定动作的边界记录它。下层如果必须保留
 诊断信息，应使用计数器或受控 trace，而不是再发一条相同严重度的独立日志。
 
 ### 2.3 临时地址和 fd 不是连接身份
 
 指针和 fd 会复用，只适合单进程短时间调试，不能作为跨日志、跨重启的唯一关联键。需要关联时应由 Flowie
-生成不含客户身份的进程内 connection/session sequence，并同时保留 transport、operation 和生命周期阶段。
+生成不含客户身份的进程内 connection/session sequence，并同时保留 flowie/transport、operation 和生命周期阶段。
 
 ### 2.4 shutdown 统计必须说明快照时刻
 
@@ -82,7 +82,7 @@ tlog 当前把 pool 分配失败和 disruptor acquire 失败合并为一个 `dro
 | 事件 | 生产默认行为 | DEBUG 行为 | 指标 |
 |---|---|---|---|
 | 正常 EOF、正常 close、主动 shutdown | 不记录 | 默认仍不逐条记录 | `normal_eof_total`、`normal_close_total` |
-| transport 异常 | 由消费错误的边界记录一条 WARN/ERROR | 可附一条同 owner 的上下文 | 按 reason 分类计数 |
+| flowie/transport 异常 | 由消费错误的边界记录一条 WARN/ERROR | 可附一条同 owner 的上下文 | 按 reason 分类计数 |
 | accept/reactor 失败 | ERROR，包含 operation、status、reason、action | 相同 | 失败和恢复计数 |
 | 慢 subscriber 隔离 | 保留 power-of-two 采样 WARN | 可增加资源上下文，禁止 payload/身份 | 隔离总数、当前数 |
 | QoS 2 window | 不逐连接记录 | 仅用于限定测试或按连接一次采样 | 满窗/释放总数、峰值 |

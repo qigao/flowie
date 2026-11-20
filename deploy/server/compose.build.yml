@@ -1,0 +1,21 @@
+services:
+  flowie-server:
+    build:
+      context: ../..
+      dockerfile: deploy/server/Dockerfile.sdk
+      args:
+        VCPKG_CACHE_VERSION: ${VCPKG_CACHE_VERSION:?set VCPKG_CACHE_VERSION in .env}
+        SALTS_BASE_VERSION: ${SALTS_BASE_VERSION:?set SALTS_BASE_VERSION in .env}
+        CMETA_VERSION: ${CMETA_VERSION:?set CMETA_VERSION in .env}
+        SALTS_UTILS_VERSION: ${SALTS_UTILS_VERSION:?set SALTS_UTILS_VERSION in .env}
+        SALTS_CORE_VERSION: ${SALTS_CORE_VERSION:?set SALTS_CORE_VERSION in .env}
+        CHTTP_VERSION: ${CHTTP_VERSION:?set CHTTP_VERSION in .env}
+        TURBODB_VERSION: ${TURBODB_VERSION:?set TURBODB_VERSION in .env}
+        BUILD_PARALLEL: ${CMAKE_BUILD_PARALLEL_LEVEL:-3}
+        SOURCE_REVISION: ${FLOWIE_SOURCE_REVISION:?set FLOWIE_SOURCE_REVISION}
+      secrets:
+        - github_token
+
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN

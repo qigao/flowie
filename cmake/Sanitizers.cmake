@@ -1,9 +1,13 @@
-# Sanitizer configuration module
-# Supports: AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer, LeakSanitizer, MemorySanitizer
+# Sanitizer configuration module Supports: AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer, LeakSanitizer,
+# MemorySanitizer
 
 # Global sanitizer setup (applies to all targets)
-if(ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_UNDEFINED OR ENABLE_SANITIZER_LEAK OR 
-   ENABLE_SANITIZER_THREAD OR ENABLE_SANITIZER_MEMORY)
+if(ENABLE_SANITIZER_ADDRESS
+   OR ENABLE_SANITIZER_UNDEFINED
+   OR ENABLE_SANITIZER_LEAK
+   OR ENABLE_SANITIZER_THREAD
+   OR ENABLE_SANITIZER_MEMORY
+)
     message(STATUS "=== Sanitizers Configuration ===")
     message(STATUS "AddressSanitizer: ${ENABLE_SANITIZER_ADDRESS}")
     message(STATUS "UndefinedBehaviorSanitizer: ${ENABLE_SANITIZER_UNDEFINED}")
@@ -12,11 +16,21 @@ if(ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_UNDEFINED OR ENABLE_SANITIZER_LE
     message(STATUS "MemorySanitizer: ${ENABLE_SANITIZER_MEMORY}")
     message(STATUS "================================")
 
-    if(ENABLE_SANITIZER_THREAD AND (ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_LEAK OR ENABLE_SANITIZER_MEMORY))
-        message(FATAL_ERROR "ThreadSanitizer cannot be combined with AddressSanitizer, LeakSanitizer, or MemorySanitizer")
+    if(ENABLE_SANITIZER_THREAD
+       AND (ENABLE_SANITIZER_ADDRESS
+            OR ENABLE_SANITIZER_LEAK
+            OR ENABLE_SANITIZER_MEMORY)
+    )
+        message(
+            FATAL_ERROR "ThreadSanitizer cannot be combined with AddressSanitizer, LeakSanitizer, or MemorySanitizer"
+        )
     endif()
 
-    if(ENABLE_SANITIZER_MEMORY AND (ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_LEAK OR ENABLE_SANITIZER_THREAD))
+    if(ENABLE_SANITIZER_MEMORY
+       AND (ENABLE_SANITIZER_ADDRESS
+            OR ENABLE_SANITIZER_LEAK
+            OR ENABLE_SANITIZER_THREAD)
+    )
         message(FATAL_ERROR "MemorySanitizer cannot be combined with other sanitizers")
     endif()
 
@@ -71,7 +85,9 @@ if(ENABLE_SANITIZER_ADDRESS OR ENABLE_SANITIZER_UNDEFINED OR ENABLE_SANITIZER_LE
         if(MSVC)
             message(WARNING "MemorySanitizer is not supported by MSVC")
         else()
-            list(APPEND SANITIZER_COMPILE_FLAGS -fsanitize=memory -fno-omit-frame-pointer -fsanitize-memory-track-origins)
+            list(APPEND SANITIZER_COMPILE_FLAGS -fsanitize=memory -fno-omit-frame-pointer
+                 -fsanitize-memory-track-origins
+            )
             list(APPEND SANITIZER_LINK_FLAGS -fsanitize=memory)
         endif()
     endif()

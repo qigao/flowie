@@ -33,7 +33,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
       autoconf bison build-essential ca-certificates curl flex git golang-go \
       libtool liburing-dev linux-libc-dev nasm ninja-build \
-      mono-complete pkg-config python3 tar unzip wget xz-utils zip \
+      pkg-config python3 tar unzip wget xz-utils zip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL \
@@ -216,8 +216,8 @@ RUN --mount=type=cache,target=/var/cache/vcpkg,sharing=locked \
 FROM debian:bookworm-slim AS runtime
 ARG SOURCE_REVISION=unknown
 ARG FLOWIE_ENABLE_ASAN
-LABEL org.opencontainers.image.title="Flowie server and control" \
-      org.opencontainers.image.description="Flowie MQTT broker and HTTPS control runtime" \
+LABEL org.opencontainers.image.title="Flowie server and flowie/control" \
+      org.opencontainers.image.description="Flowie MQTT broker and HTTPS flowie/control runtime" \
       org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

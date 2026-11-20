@@ -1,4 +1,4 @@
-name: Flowie native SDK pipeline
+name: Flowie native SDK archives
 
 on:
   workflow_call:
@@ -13,928 +13,214 @@ permissions:
 
 jobs:
   metadata:
-    name: Release metadata
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      salts_version: ${{ steps.producers.outputs.salts_version }}
-      salts_utils_version: ${{ steps.producers.outputs.salts_utils_version }}
-      chttp_version: ${{ steps.producers.outputs.chttp_version }}
-      turbodb_version: ${{ steps.producers.outputs.turbodb_version }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
       - id: meta
-        name: Validate release identity
-        shell: bash
+        shell: python
         run: |
-          set -euo pipefail
-          version="$(sed -nE 's/^project\(Flowie VERSION ([0-9]+\.[0-9]+\.[0-9]+) LANGUAGES.*$/\1/p' CMakeLists.txt)"
-          manifest_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json", encoding="utf-8"))["version-semver"])')"
-          test "$version" = "$manifest_version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          import json, os, re
+          from pathlib import Path
+          version = json.loads(Path("vcpkg.json").read_text(encoding="utf-8"))["version-semver"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              raise ValueError("Flowie must declare an exact release version")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("version=" + version + "\n")
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - id: producers
-        name: Resolve producer packages including ACE/CNet release candidates
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          config="$RUNNER_TEMP/flowie-producers.config"
-          project="$RUNNER_TEMP/flowie-producers.csproj"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          cat > "$project" <<'EOF'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup>
-              <!-- Include the published RC SDKs used by the ACE/CNet integration.
-                   A stable-only wildcard can resolve the retired crypto ABI. -->
-              <PackageReference Include="Salts.Native" Version="*-*" />
-              <PackageReference Include="SaltsUtils.Native" Version="*-*" />
-              <PackageReference Include="CHttp.Native" Version="*-*" />
-              <PackageReference Include="TurboDB.Native" Version="*" />
-            </ItemGroup>
-          </Project>
-          EOF
-          dotnet restore "$project" --packages "$RUNNER_TEMP/flowie-producers-packages" \
-            --configfile "$config" --no-cache --force-evaluate
-          python3 - "$RUNNER_TEMP/obj/project.assets.json" "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import sys
-
-          with open(sys.argv[1], encoding="utf-8") as stream:
-              libraries = json.load(stream)["libraries"]
-          packages = {
-              "Salts.Native": "salts_version",
-              "SaltsUtils.Native": "salts_utils_version",
-              "CHttp.Native": "chttp_version",
-              "TurboDB.Native": "turbodb_version",
-          }
-          with open(sys.argv[2], "a", encoding="utf-8") as output:
-              for package, name in packages.items():
-                  versions = [key.split("/", 1)[1] for key, entry in libraries.items()
-                              if key.split("/", 1)[0].lower() == package.lower()
-                              and entry["type"] == "package"]
-                  if len(versions) != 1:
-                      raise SystemExit(f"Expected one resolved version of {package}: {versions}")
-                  output.write(f"{name}={versions[0]}\n")
-                  print(f"{package}={versions[0]}")
-          PY
-
-  linux:
-    name: Linux x64 SDK
+  sdk:
     needs: metadata
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+            profile: linux-gcc-x64
+            preset: ci-gcc-release-user
+            configuration: FLOWIE_BUILD_ENV_LINUX
+            native: true
+          - os: windows-2022
+            rid: windows-x64
+            profile: windows-msvc-x64
+            preset: ci-msvc-release-user
+            configuration: FLOWIE_BUILD_ENV_WINDOWS
+            native: true
+          - os: ubuntu-24.04
+            rid: android-arm64-v8a
+            profile: android-arm64
+            preset: ci-android-arm64-release-user
+            configuration: FLOWIE_BUILD_ENV_ANDROID
+            native: false
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_sha }}
           persist-credentials: false
-
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-python@v5
         with:
-          dotnet-version: "8.0.x"
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+          python-version: "3.12"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
         with:
-          mode: read
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-
-      - name: Prepare build host
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
-          test -n "$VCPKG_ROOT"
-          test -n "$QIGAO_VCPKG_TOOLCHAIN_FILE"
-          test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
-
-      - name: Verify endpoint owner-lane boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/verify_endpoint_owner_lane.py
-
-      - name: Restore released producer SDKs
-        shell: bash
+          arch: x64
+      - id: configuration
+        name: Materialize the selected .env
+        shell: python
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          BUILD_ENV_CONTENT: ${{ vars[matrix.configuration] }}
         run: |
-          set -euo pipefail
-          packages="$RUNNER_TEMP/flowie-release-dependencies"
-          config="$RUNNER_TEMP/flowie-release.config"
-          project="$RUNNER_TEMP/flowie-release.csproj"
-          printf '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json             --name github --username qigao --password "$GITHUB_TOKEN"             --store-password-in-clear-text --configfile "$config"
-          cat > "$project" <<EOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup>
-              <PackageReference Include="Salts.Native" Version="[$SALTS_VERSION]" />
-              <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
-              <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
-              <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
-            </ItemGroup>
-          </Project>
-          EOF
-          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
-
-          salts_root="$packages/salts.native/$SALTS_VERSION/sdk/linux-x64"
-          salts_utils_root="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
-          chttp_root="$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
-          turbodb_root="$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
-
-          test -f "$salts_root/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$salts_utils_root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
-          test -f "$chttp_root/lib/cmake/Chttp/ChttpConfig.cmake"
-          test -f "$turbodb_root/lib/cmake/TurboDB/OrmTargets.cmake"
-          turbodb_cmake_version="$(sed -nE 's/^set\(PACKAGE_VERSION "([^"]+)"\).*$/\1/p' "$turbodb_root/lib/cmake/TurboDB/TurboDBConfigVersion.cmake")"
-          test -n "$turbodb_cmake_version"
-
-          {
-            echo "SALTS_ROOT=$salts_root"
-            echo "SALTS_UTILS_ROOT=$salts_utils_root"
-            echo "HTTP_SERVICES_ROOT=$chttp_root"
-            echo "TURBODB_ROOT=$turbodb_root"
-            echo "RELEASE_PACKAGES=$packages"
-            echo "TURBODB_CMAKE_VERSION=$turbodb_cmake_version"
-          } >> "$GITHUB_ENV"
-
-      - name: Restore Flowie third-party graph from shared cache only
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
-          log="$RUNNER_TEMP/flowie-release-vcpkg.log"
-          rm -rf "$install_root" "$VCPKG_BINARY_CACHE"
-          mkdir -p "$VCPKG_BINARY_CACHE"
-          set +e
-          "$VCPKG_ROOT/vcpkg" install             --x-manifest-root="$GITHUB_WORKSPACE"             --x-install-root="$install_root"             --triplet x64-linux             --only-binarycaching 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          test "$status" -eq 0
-          if grep -Eq '^Building [^:]+:x64-linux' "$log"; then
-            echo "source build detected in release dependency graph" >&2
-            exit 1
-          fi
-          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
-
-      - name: Configure complete release graph
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake --preset ci-linux-release
-
-      - name: Build and qualify complete release graph
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake --build --preset ci-linux-release --parallel 2
-          ctest --preset ci-linux-release --timeout 180
-
-      - name: Install release SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
-          cmake --build --preset install-ci-linux-release
-          test -f "$prefix/lib/cmake/Flowie/FlowieConfig.cmake"
-          test -f "$prefix/lib/cmake/Flowie/FlowieConfigVersion.cmake"
-          test -f "$prefix/lib/cmake/Flowie/FlowieTargets.cmake"
-          test -f "$prefix/include/flowie.h"
-          test -f "$prefix/include/flowie_mqtt_client.h"
-          test -f "$prefix/include/flowie_mqtt_protocol.h"
-          test -f "$prefix/lib/libflowie.so"
-          test -f "$prefix/lib/libflowie_client.so"
-          test -f "$prefix/lib/libflowie_protocol.a"
-          cat > "$prefix/flowie-sdk-manifest.txt" <<EOF
-          package=Flowie.Native
-          version=${{ needs.metadata.outputs.version }}
-          source=${{ inputs.source_sha }}
-          rid=linux-x64
-          salts=$SALTS_VERSION
-          saltsutils=$SALTS_UTILS_VERSION
-          chttp=$CHTTP_VERSION
-          turbodb=$TURBODB_VERSION
-          turbodb_cmake=$TURBODB_CMAKE_VERSION
-          cluster=OFF
-          profile=Release
-          qualification=runtime
-          EOF
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flowie-sdk-linux-x64
-          path: stage/sdk/linux-x64
-          if-no-files-found: error
-          compression-level: 9
-
-      - name: Verify exact source revision and clean tracked source
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
-          test -z "$(git status --porcelain --untracked-files=no)"
-
-  windows:
-    name: Windows x64 SDK
-    needs: metadata
-    runs-on: windows-2022
-    timeout-minutes: 60
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-    steps:
+          import importlib.util, os
+          from pathlib import Path
+          content = os.environ["BUILD_ENV_CONTENT"]
+          if not content.strip():
+              raise ValueError("The selected FLOWIE_BUILD_ENV_* variable must supply .env")
+          Path(".env").write_text(content, encoding="utf-8")
+          spec = importlib.util.spec_from_file_location("settings", "cmake/ci/restore-native-sdks.py")
+          settings = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(settings)
+          values = settings.load_environment_file(".env", {})
+          version = settings.version("VCPKG_CACHE_VERSION", values)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("infrastructure=" + values["VCPKG_CACHE_REPOSITORY_ROOT"] + "\n")
+              output.write("ref=v" + version + "\n")
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_sha }}
+          repository: qigao/vcpkg-cache
+          ref: ${{ steps.configuration.outputs.ref }}
+          path: ${{ steps.configuration.outputs.infrastructure }}
           persist-credentials: false
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-
-      - name: Prepare Windows build host
+      - name: Restore shared vcpkg and host generators
+        run: python -B cmake/ci/setup_native_ci.py
+      - name: Restore exact published SDK archives
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          choco install ninja -y --no-progress
-          $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
-          $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
-          if ([string]::IsNullOrWhiteSpace($env:QIGAO_VCPKG_TOOLCHAIN_FILE) -or
-              -not (Test-Path -LiteralPath $env:QIGAO_VCPKG_TOOLCHAIN_FILE -PathType Leaf)) {
-            throw "QIGAO_VCPKG_TOOLCHAIN_FILE is unavailable"
-          }
-          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-
-      - name: Restore released Windows producer SDKs
-        shell: pwsh
+          & ./cmake/ci/restore-native-sdks.ps1 -Rid "${{ matrix.rid }}" -Profile "${{ matrix.profile }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check script contracts
+        run: python -B -m unittest discover -s cmake/ci -p "test_*.py"
+      - name: Configure the complete build graph
+        run: cmake --fresh --preset ${{ matrix.preset }}
+      - name: Build the configured graph
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Run formal CTest
+        if: matrix.native
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure -j 1
+      - name: Install the SDK
+        run: cmake --install build/${{ matrix.preset }}
+      - name: Package the original installation
+        shell: python
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          PROFILE: ${{ matrix.profile }}
+          PRESET: ${{ matrix.preset }}
+          NATIVE_TESTS: ${{ matrix.native }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $packages = Join-Path $env:RUNNER_TEMP "flowie-release-windows-dependencies"
-          $config = Join-Path $env:RUNNER_TEMP "flowie-release-windows.config"
-          $project = Join-Path $env:RUNNER_TEMP "flowie-release-windows.csproj"
-          '<configuration><packageSources><clear /></packageSources></configuration>' | Set-Content -LiteralPath $config
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json --name github --username qigao --password $env:GITHUB_TOKEN --store-password-in-clear-text --configfile $config
-          @"
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup>
-              <PackageReference Include="Salts.Native" Version="[$env:SALTS_VERSION]" />
-              <PackageReference Include="SaltsUtils.Native" Version="[$env:SALTS_UTILS_VERSION]" />
-              <PackageReference Include="CHttp.Native" Version="[$env:CHTTP_VERSION]" />
-              <PackageReference Include="TurboDB.Native" Version="[$env:TURBODB_VERSION]" />
-            </ItemGroup>
-          </Project>
-          "@ | Set-Content -LiteralPath $project
-          dotnet restore $project --packages $packages --configfile $config --no-cache
-          if ($LASTEXITCODE -ne 0) { throw "failed to restore Windows producer SDKs" }
-          $salts = (Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\','/')
-          $utils = (Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\','/')
-          $chttp = (Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\','/')
-          $turbodb = (Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\','/')
-          foreach ($file in @(
-            (Join-Path $salts "lib/cmake/Salts/SaltsConfig.cmake"),
-            (Join-Path $utils "lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"),
-            (Join-Path $chttp "lib/cmake/Chttp/ChttpConfig.cmake"),
-            (Join-Path $turbodb "lib/cmake/TurboDB/OrmTargets.cmake")
-          )) {
-            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "missing producer SDK file: $file" }
-          }
-          $turbodbCmakeVersionFile = Join-Path $turbodb "lib/cmake/TurboDB/TurboDBConfigVersion.cmake"
-          if (-not (Test-Path -LiteralPath $turbodbCmakeVersionFile -PathType Leaf)) {
-            throw "missing TurboDB package version: $turbodbCmakeVersionFile"
-          }
-          $turbodbCmakeVersionContent = Get-Content -LiteralPath $turbodbCmakeVersionFile -Raw
-          if ($turbodbCmakeVersionContent -notmatch 'set\(PACKAGE_VERSION "([^"]+)"\)') {
-            throw "invalid TurboDB package version: $turbodbCmakeVersionFile"
-          }
-          $turbodbCmakeVersion = $Matches[1]
-          "TURBODB_CMAKE_VERSION=$turbodbCmakeVersion" >> $env:GITHUB_ENV
-          "SALTS_ROOT=$salts" >> $env:GITHUB_ENV
-          "SALTS_UTILS_ROOT=$utils" >> $env:GITHUB_ENV
-          "HTTP_SERVICES_ROOT=$chttp" >> $env:GITHUB_ENV
-          "TURBODB_ROOT=$turbodb" >> $env:GITHUB_ENV
-
-      - name: Restore Windows third-party graph from shared cache only
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed"
-          if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=x64-windows" --only-binarycaching
-          if ($LASTEXITCODE -ne 0) { throw "Flowie x64-windows cache-only restore failed" }
-          "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
-
-      - name: Configure, build and install Windows SDK
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          set "PATH=%SALTS_UTILS_ROOT%\bin;%SALTS_ROOT%\bin;%HTTP_SERVICES_ROOT%\bin;%TURBODB_ROOT%\bin;%VCPKG_INSTALLED_DIR%\x64-windows\bin;%PATH%"
-          cmake --preset ci-windows-release
-          if errorlevel 1 exit /b 1
-          cmake --build --preset ci-windows-release --parallel 2
-          if errorlevel 1 exit /b 1
-          cmake --build --preset install-ci-windows-release
-          if errorlevel 1 exit /b 1
-
-      - name: Verify Windows SDK
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage/sdk/windows-x64"
-          foreach ($file in @(
-            "lib/cmake/Flowie/FlowieConfig.cmake",
-            "lib/cmake/Flowie/FlowieConfigVersion.cmake",
-            "lib/cmake/Flowie/FlowieTargets.cmake",
-            "include/flowie.h",
-            "include/flowie_mqtt_client.h",
-            "include/flowie_mqtt_protocol.h",
-            "bin/flowie.dll",
-            "lib/flowie.lib",
-            "bin/flowie_client.dll",
-            "lib/flowie_client.lib",
-            "lib/flowie_protocol.lib"
-          )) {
-            $p = Join-Path $prefix $file
-            if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "missing Windows SDK file: $p" }
-          }
-          $manifestLines = @(
-            "package=Flowie.Native",
-            "version=${{ needs.metadata.outputs.version }}",
-            "source=${{ inputs.source_sha }}",
-            "rid=windows-x64",
-            "salts=$env:SALTS_VERSION",
-            "saltsutils=$env:SALTS_UTILS_VERSION",
-            "chttp=$env:CHTTP_VERSION",
-            "turbodb=$env:TURBODB_VERSION",
-            "turbodb_cmake=$env:TURBODB_CMAKE_VERSION",
-            "cluster=OFF",
-            "profile=Release",
-            "qualification=runtime"
-          )
-          # Use LF on every platform for the Linux pack job's exact-line checks.
-          [IO.File]::WriteAllText((Join-Path $prefix "flowie-sdk-manifest.txt"), ($manifestLines -join "`n") + "`n", [Text.Encoding]::ASCII)
-
+          import hashlib, importlib.util, json, os, subprocess, tarfile
+          from pathlib import Path
+          preset = os.environ["PRESET"]
+          version = os.environ["VERSION"]
+          build = Path("build") / preset
+          cache = dict(line.split("=", 1) for line in
+                       (build / "CMakeCache.txt").read_text(encoding="utf-8").splitlines()
+                       if line.startswith("CMAKE_PROJECT_VERSION:STATIC="))
+          if cache["CMAKE_PROJECT_VERSION:STATIC"] != version:
+              raise ValueError("Configured CMake version differs from the release identity")
+          stage = build / "stage"
+          (stage / "lib/cmake/Flowie/FlowieConfig.cmake").read_bytes()
+          dist = Path("dist")
+          dist.mkdir()
+          name = "flowie-" + version + "-" + os.environ["PROFILE"] + ".tar"
+          archive = dist / name
+          with tarfile.open(archive, "w") as package:
+              package.add(stage, arcname=".")
+          spec = importlib.util.spec_from_file_location("settings", "cmake/ci/restore-native-sdks.py")
+          settings = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(settings)
+          values = settings.load_environment_file(".env", {})
+          source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          if source != os.environ["SOURCE_SHA"]:
+              raise ValueError("Archive source differs from the requested revision")
+          if os.environ["NATIVE_TESTS"] != "true":
+              readelf = Path(values["ANDROID_NDK_HOME"]) / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+              for library in stage.rglob("*.so"):
+                  headers = subprocess.check_output([str(readelf), "--program-headers", "--wide", str(library)], text=True)
+                  loads = [line.split() for line in headers.splitlines() if line.lstrip().startswith("LOAD ")]
+                  if not loads or any(int(fields[-1], 16) < 16384 for fields in loads):
+                      raise ValueError("Android ELF requires 16 KiB LOAD alignment: " + str(library))
+          with archive.open("rb") as stream:
+              digest = hashlib.file_digest(stream, "sha256").hexdigest()
+          metadata = {
+              "profile": os.environ["PROFILE"], "file": name,
+              "sizeBytes": archive.stat().st_size,
+              "sha256": digest,
+              "source": os.environ["SOURCE_SHA"],
+              "native_tests": os.environ["NATIVE_TESTS"] == "true",
+              "dependencies": {key: values[key] for key in settings.VERSIONS.values()}}
+          (dist / (os.environ["PROFILE"] + ".json")).write_text(
+              json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
       - uses: actions/upload-artifact@v4
         with:
-          name: flowie-sdk-windows-x64
-          path: stage/sdk/windows-x64
+          name: flowie-sdk-${{ matrix.profile }}
+          path: dist/*
           if-no-files-found: error
-          compression-level: 9
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.native
+        with:
+          name: flowie-tests-${{ matrix.profile }}
+          path: build/${{ matrix.preset }}/Testing/Temporary/
+          if-no-files-found: warn
 
-  android:
-    name: Android arm64-v8a SDK
-    needs: metadata
+  archives:
+    needs: [metadata, sdk]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
-
-      - name: Prepare Android build host and Lemon
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
-          test -n "${ANDROID_NDK_HOME:-}"
-          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
-          test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
-          host_tools="$RUNNER_TEMP/flowie-host-tools"
-          mkdir -p "$host_tools"
-          cc -O2 tools/lemon/lemon.c -o "$host_tools/lemon"
-          test -x "$host_tools/lemon"
-          echo "$host_tools" >> "$GITHUB_PATH"
-
-      - name: Restore released Android producer SDKs
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          packages="$RUNNER_TEMP/flowie-release-android-dependencies"
-          config="$RUNNER_TEMP/flowie-release-android.config"
-          project="$RUNNER_TEMP/flowie-release-android.csproj"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          cat > "$project" <<EOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup>
-              <PackageReference Include="Salts.Native" Version="[$SALTS_VERSION]" />
-              <PackageReference Include="SaltsUtils.Native" Version="[$SALTS_UTILS_VERSION]" />
-              <PackageReference Include="CHttp.Native" Version="[$CHTTP_VERSION]" />
-              <PackageReference Include="TurboDB.Native" Version="[$TURBODB_VERSION]" />
-            </ItemGroup>
-          </Project>
-          EOF
-          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
-          salts="$packages/salts.native/$SALTS_VERSION/sdk/android-arm64-v8a"
-          utils="$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/android-arm64-v8a"
-          chttp="$packages/chttp.native/$CHTTP_VERSION/sdk/android-arm64-v8a"
-          turbodb="$packages/turbodb.native/$TURBODB_VERSION/sdk/android-arm64-v8a"
-          test -f "$salts/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$utils/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
-          test -f "$chttp/lib/cmake/Chttp/ChttpConfig.cmake"
-          test -f "$turbodb/lib/cmake/TurboDB/OrmTargets.cmake"
-          turbodb_cmake_version="$(sed -nE 's/^set\(PACKAGE_VERSION "([^"]+)"\).*$/\1/p' "$turbodb/lib/cmake/TurboDB/TurboDBConfigVersion.cmake")"
-          test -n "$turbodb_cmake_version"
-          {
-            echo "SALTS_ROOT=$salts"
-            echo "SALTS_UTILS_ROOT=$utils"
-            echo "HTTP_SERVICES_ROOT=$chttp"
-            echo "TURBODB_ROOT=$turbodb"
-            echo "TURBODB_CMAKE_VERSION=$turbodb_cmake_version"
-          } >> "$GITHUB_ENV"
-
-      - name: Restore Android third-party graph from shared cache only
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
-          rm -rf "$install_root"
-          "$VCPKG_ROOT/vcpkg" install \
-            --x-manifest-root="$GITHUB_WORKSPACE" \
-            --x-install-root="$install_root" \
-            --triplet arm64-android \
-            --only-binarycaching
-          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
-
-      - name: Configure, build and install Android SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake --preset ci-android-release
-          cmake --build --preset ci-android-release --parallel 2
-          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
-          cmake --build --preset install-ci-android-release
-          test -f "$prefix/lib/cmake/Flowie/FlowieConfig.cmake"
-          test -f "$prefix/include/flowie.h"
-          test -f "$prefix/include/flowie_mqtt_client.h"
-          test -f "$prefix/include/flowie_mqtt_protocol.h"
-          test -f "$prefix/lib/libflowie.so"
-          test -f "$prefix/lib/libflowie_client.so"
-          test -f "$prefix/lib/libflowie_protocol.a"
-          cat > "$prefix/flowie-sdk-manifest.txt" <<EOF
-          package=Flowie.Native
-          version=${{ needs.metadata.outputs.version }}
-          source=${{ inputs.source_sha }}
-          rid=android-arm64-v8a
-          android_api=26
-          salts=$SALTS_VERSION
-          saltsutils=$SALTS_UTILS_VERSION
-          chttp=$CHTTP_VERSION
-          turbodb=$TURBODB_VERSION
-          turbodb_cmake=$TURBODB_CMAKE_VERSION
-          cluster=OFF
-          profile=Release
-          qualification=compile-link
-          EOF
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flowie-sdk-android-arm64-v8a
-          path: stage/sdk/android-arm64-v8a
-          if-no-files-found: error
-          compression-level: 9
-
-  pack:
-    name: Pack Flowie.Native
-    needs: [metadata, linux, windows, android]
-    runs-on: ubuntu-24.04
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
       - uses: actions/download-artifact@v4
         with:
-          name: flowie-sdk-linux-x64
-          path: package/sdk/linux-x64
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: flowie-sdk-windows-x64
-          path: package/sdk/windows-x64
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: flowie-sdk-android-arm64-v8a
-          path: package/sdk/android-arm64-v8a
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Verify SDK payload
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -f package/sdk/linux-x64/lib/cmake/Flowie/FlowieConfig.cmake
-          test -f package/sdk/linux-x64/lib/libflowie.so
-          test -f package/sdk/linux-x64/lib/libflowie_client.so
-          test -f package/sdk/linux-x64/lib/libflowie_protocol.a
-          grep -Fq "version=${{ needs.metadata.outputs.version }}" package/sdk/linux-x64/flowie-sdk-manifest.txt
-          test -f package/sdk/windows-x64/lib/cmake/Flowie/FlowieConfig.cmake
-          test -f package/sdk/windows-x64/bin/flowie.dll
-          test -f package/sdk/windows-x64/bin/flowie_client.dll
-          test -f package/sdk/windows-x64/lib/flowie_protocol.lib
-          grep -Fq "version=${{ needs.metadata.outputs.version }}" package/sdk/windows-x64/flowie-sdk-manifest.txt
-          test -f package/sdk/android-arm64-v8a/lib/cmake/Flowie/FlowieConfig.cmake
-          test -f package/sdk/android-arm64-v8a/lib/libflowie.so
-          test -f package/sdk/android-arm64-v8a/lib/libflowie_client.so
-          test -f package/sdk/android-arm64-v8a/lib/libflowie_protocol.a
-          grep -Fq "version=${{ needs.metadata.outputs.version }}" package/sdk/android-arm64-v8a/flowie-sdk-manifest.txt
-          for rid in linux-x64 windows-x64 android-arm64-v8a; do
-            manifest="package/sdk/$rid/flowie-sdk-manifest.txt"
-            grep -Fxq "salts=$SALTS_VERSION" "$manifest"
-            grep -Fxq "saltsutils=$SALTS_UTILS_VERSION" "$manifest"
-            grep -Fxq "chttp=$CHTTP_VERSION" "$manifest"
-            grep -Fxq "turbodb=$TURBODB_VERSION" "$manifest"
-          done
-
-      - name: Pack NuGet
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          config="$RUNNER_TEMP/flowie-pack.config"
-          printf '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json             --name github --username qigao --password "$GITHUB_TOKEN"             --store-password-in-clear-text --configfile "$config"
-          dotnet restore packaging/nuget/Flowie.Native.csproj \
-            --configfile "$config" --packages "$RUNNER_TEMP/flowie-pack-dependencies" \
-            -p:SaltsNativeVersion="$SALTS_VERSION" \
-            -p:SaltsUtilsNativeVersion="$SALTS_UTILS_VERSION" \
-            -p:CHttpNativeVersion="$CHTTP_VERSION" \
-            -p:TurboDBNativeVersion="$TURBODB_VERSION"
-          dotnet pack packaging/nuget/Flowie.Native.csproj \
-            --no-restore --configuration Release --output dist \
-            -p:PackageVersion="${{ needs.metadata.outputs.version }}" \
-            -p:PackageRoot="$GITHUB_WORKSPACE/package" \
-            -p:RestorePackagesPath="$RUNNER_TEMP/flowie-pack-dependencies" \
-            -p:RepositoryCommit="${{ inputs.source_sha }}" \
-            -p:SaltsNativeVersion="$SALTS_VERSION" \
-            -p:SaltsUtilsNativeVersion="$SALTS_UTILS_VERSION" \
-            -p:CHttpNativeVersion="$CHTTP_VERSION" \
-            -p:TurboDBNativeVersion="$TURBODB_VERSION"
-          nupkg="dist/Flowie.Native.${{ needs.metadata.outputs.version }}.nupkg"
-          test -f "$nupkg"
-          unzip -Z1 "$nupkg" | sort | tee "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/linux-x64/lib/cmake/Flowie/FlowieConfig.cmake" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/linux-x64/include/flowie.h" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/linux-x64/lib/libflowie.so" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/windows-x64/lib/cmake/Flowie/FlowieConfig.cmake" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/windows-x64/bin/flowie.dll" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/windows-x64/bin/flowie_client.dll" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/android-arm64-v8a/lib/cmake/Flowie/FlowieConfig.cmake" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/android-arm64-v8a/lib/libflowie.so" "$RUNNER_TEMP/flowie-nupkg.txt"
-          grep -Fx "sdk/android-arm64-v8a/lib/libflowie_client.so" "$RUNNER_TEMP/flowie-nupkg.txt"
-          unzip -p "$nupkg" "Flowie.Native.nuspec" > "$RUNNER_TEMP/flowie.nuspec"
-          python3 - "$RUNNER_TEMP/flowie.nuspec" \
-            "$SALTS_VERSION" "$SALTS_UTILS_VERSION" "$CHTTP_VERSION" "$TURBODB_VERSION" <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-
-          dependencies = {item.get("id"): item.get("version")
-                          for item in ET.parse(sys.argv[1]).iter()
-                          if item.tag.endswith("dependency")}
-          for package, selected in zip(
-              ("Salts.Native", "SaltsUtils.Native", "CHttp.Native", "TurboDB.Native"),
-              sys.argv[2:]):
-              declared = dependencies.get(package, "")
-              if selected not in declared or declared == f"[{selected}]":
-                  raise SystemExit(f"Unexpected {package} dependency: {declared!r}")
-          PY
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist/*.nupkg
-          if-no-files-found: error
-
-  qualify:
-    name: Qualify packed Flowie.Native (Linux x64)
-    needs: [metadata, pack]
-    runs-on: ubuntu-24.04
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
+          pattern: flowie-sdk-*
+          merge-multiple: true
           path: dist
-
-      - name: Prepare qualification host
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
-
-      - name: Restore packed SDK and dependencies
-        shell: bash
+      - name: Record release identities and checksums
+        shell: python
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          set -euo pipefail
-          config="$RUNNER_TEMP/flowie-qualify.config"
-          project="$RUNNER_TEMP/flowie-qualify.csproj"
-          packages="$RUNNER_TEMP/flowie-qualify-packages"
-          printf '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source "$GITHUB_WORKSPACE/dist" --name local --configfile "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json             --name github --username qigao --password "$GITHUB_TOKEN"             --store-password-in-clear-text --configfile "$config"
-          cat > "$project" <<EOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup><PackageReference Include="Flowie.Native" Version="[${{ needs.metadata.outputs.version }}]" /></ItemGroup>
-          </Project>
-          EOF
-          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
-          {
-            echo "FLOWIE_ROOT=$packages/flowie.native/${{ needs.metadata.outputs.version }}/sdk/linux-x64"
-            echo "SALTS_ROOT=$packages/salts.native/$SALTS_VERSION/sdk/linux-x64"
-            echo "SALTS_UTILS_ROOT=$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/linux-x64"
-            echo "HTTP_SERVICES_ROOT=$packages/chttp.native/$CHTTP_VERSION/sdk/linux-x64"
-            echo "TURBODB_ROOT=$packages/turbodb.native/$TURBODB_VERSION/sdk/linux-x64"
-          } >> "$GITHUB_ENV"
-
-      - name: Restore consumer vcpkg graph from shared cache only
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
-          rm -rf "$install_root"
-          "$VCPKG_ROOT/vcpkg" install             --x-manifest-root="$GITHUB_WORKSPACE"             --x-install-root="$install_root"             --triplet x64-linux             --only-binarycaching
-          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
-
-      - name: Configure, build and run external consumer
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cd tests/installed-sdk
-          cmake --preset ci-linux-release-user
-          cmake --build --preset ci-linux-release-user --parallel 2
-          export LD_LIBRARY_PATH="$FLOWIE_ROOT/lib:$FLOWIE_ROOT/bin:$HTTP_SERVICES_ROOT/lib:$HTTP_SERVICES_ROOT/bin:$TURBODB_ROOT/lib:$TURBODB_ROOT/bin:$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:$VCPKG_INSTALLED_DIR/x64-linux/lib:${LD_LIBRARY_PATH:-}"
-          ctest --preset ci-linux-release-user
-
-  qualify_windows:
-    name: Qualify packed Flowie.Native (Windows x64)
-    needs: [metadata, pack]
-    runs-on: windows-2022
-    timeout-minutes: 30
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-    steps:
-      - uses: actions/checkout@v4
+          import hashlib, json, os
+          from pathlib import Path
+          dist = Path("dist")
+          sdks = [json.loads(path.read_text(encoding="utf-8"))
+                  for path in sorted(dist.glob("*.json"))]
+          if len(sdks) != 3 or any(item["source"] != os.environ["SOURCE_SHA"] for item in sdks):
+              raise ValueError("Incomplete or inconsistent platform archives")
+          if any(item["dependencies"] != sdks[0]["dependencies"] for item in sdks):
+              raise ValueError("Platform SDKs used different dependency releases")
+          manifest = dist / ("flowie-" + os.environ["VERSION"] + "-manifest.json")
+          manifest.write_text(json.dumps({
+              "schema": 1, "name": "Flowie", "version": os.environ["VERSION"],
+              "commit": os.environ["SOURCE_SHA"], "producer_run": os.environ["GITHUB_RUN_ID"],
+              "sdks": sdks}, indent=2) + "\n", encoding="utf-8")
+          files = sorted(dist.glob("*.tar")) + [manifest]
+          checksums = []
+          for path in files:
+              with path.open("rb") as stream:
+                  checksums.append(hashlib.file_digest(stream, "sha256").hexdigest() + "  " + path.name + "\n")
+          (dist / "SHA256SUMS").write_text("".join(checksums), encoding="utf-8")
+      - uses: actions/upload-artifact@v4
         with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist
-
-      - name: Prepare Windows qualification host
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          choco install ninja -y --no-progress
-          $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
-          $vswhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
-          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-
-      - name: Restore packed Windows SDK and dependencies
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $config = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows.config"
-          $project = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows.csproj"
-          $packages = Join-Path $env:RUNNER_TEMP "flowie-qualify-windows-packages"
-          '<configuration><packageSources><clear /></packageSources></configuration>' | Set-Content -LiteralPath $config
-          dotnet nuget add source (Join-Path $env:GITHUB_WORKSPACE "dist") --name local --configfile $config
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json --name github --username qigao --password $env:GITHUB_TOKEN --store-password-in-clear-text --configfile $config
-          @"
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup><PackageReference Include="Flowie.Native" Version="[${{ needs.metadata.outputs.version }}]" /></ItemGroup>
-          </Project>
-          "@ | Set-Content -LiteralPath $project
-          dotnet restore $project --packages $packages --configfile $config --no-cache
-          if ($LASTEXITCODE -ne 0) { throw "failed to restore packed Flowie.Native on Windows" }
-          "FLOWIE_ROOT=$((Join-Path $packages "flowie.native/${{ needs.metadata.outputs.version }}/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
-          "SALTS_ROOT=$((Join-Path $packages "salts.native/$env:SALTS_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
-          "SALTS_UTILS_ROOT=$((Join-Path $packages "saltsutils.native/$env:SALTS_UTILS_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
-          "HTTP_SERVICES_ROOT=$((Join-Path $packages "chttp.native/$env:CHTTP_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
-          "TURBODB_ROOT=$((Join-Path $packages "turbodb.native/$env:TURBODB_VERSION/sdk/windows-x64").Replace('\','/'))" >> $env:GITHUB_ENV
-
-      - name: Restore Windows consumer graph from shared cache only
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $installRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed"
-          if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
-          & "$env:VCPKG_ROOT\vcpkg.exe" install "--x-manifest-root=$env:GITHUB_WORKSPACE" "--x-install-root=$installRoot" "--triplet=x64-windows" --only-binarycaching
-          if ($LASTEXITCODE -ne 0) { throw "Windows consumer cache-only restore failed" }
-          "VCPKG_INSTALLED_DIR=$installRoot" >> $env:GITHUB_ENV
-
-      - name: Configure, build and run Windows external consumer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $cmd = @"
-          call "$env:VSINSTALL\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=$env:VCPKG_ROOT"
-          set "PATH=$env:FLOWIE_ROOT\bin;$env:HTTP_SERVICES_ROOT\bin;$env:TURBODB_ROOT\bin;$env:SALTS_UTILS_ROOT\bin;$env:SALTS_ROOT\bin;$env:VCPKG_INSTALLED_DIR\x64-windows\bin;%PATH%"
-          cd tests\installed-sdk
-          cmake --preset ci-win-release-user
-          if errorlevel 1 exit /b 1
-          cmake --build --preset ci-win-release-user --parallel 2
-          if errorlevel 1 exit /b 1
-          ctest --preset ci-win-release-user
-          "@
-          cmd.exe /d /s /c $cmd
-          if ($LASTEXITCODE -ne 0) { throw "Windows packed consumer qualification failed" }
-
-  qualify_android:
-    name: Qualify packed Flowie.Native (Android arm64-v8a)
-    needs: [metadata, pack]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      SALTS_VERSION: ${{ needs.metadata.outputs.salts_version }}
-      SALTS_UTILS_VERSION: ${{ needs.metadata.outputs.salts_utils_version }}
-      CHTTP_VERSION: ${{ needs.metadata.outputs.chttp_version }}
-      TURBODB_VERSION: ${{ needs.metadata.outputs.turbodb_version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: false
-
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
-        with:
-          mode: read
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flowie.Native.${{ needs.metadata.outputs.version }}
-          path: dist
-
-      - name: Prepare Android qualification host
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config
-          test -n "${ANDROID_NDK_HOME:-}"
-          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
-
-      - name: Restore packed Android SDK and dependencies
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          config="$RUNNER_TEMP/flowie-qualify-android.config"
-          project="$RUNNER_TEMP/flowie-qualify-android.csproj"
-          packages="$RUNNER_TEMP/flowie-qualify-android-packages"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source "$GITHUB_WORKSPACE/dist" --name local --configfile "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          cat > "$project" <<EOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup><PackageReference Include="Flowie.Native" Version="[${{ needs.metadata.outputs.version }}]" /></ItemGroup>
-          </Project>
-          EOF
-          dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
-          {
-            echo "FLOWIE_ROOT=$packages/flowie.native/${{ needs.metadata.outputs.version }}/sdk/android-arm64-v8a"
-            echo "SALTS_ROOT=$packages/salts.native/$SALTS_VERSION/sdk/android-arm64-v8a"
-            echo "SALTS_UTILS_ROOT=$packages/saltsutils.native/$SALTS_UTILS_VERSION/sdk/android-arm64-v8a"
-            echo "HTTP_SERVICES_ROOT=$packages/chttp.native/$CHTTP_VERSION/sdk/android-arm64-v8a"
-            echo "TURBODB_ROOT=$packages/turbodb.native/$TURBODB_VERSION/sdk/android-arm64-v8a"
-          } >> "$GITHUB_ENV"
-
-      - name: Restore Android consumer graph from shared cache only
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$GITHUB_WORKSPACE/vcpkg_installed"
-          rm -rf "$install_root"
-          "$VCPKG_ROOT/vcpkg" install \
-            --x-manifest-root="$GITHUB_WORKSPACE" \
-            --x-install-root="$install_root" \
-            --triplet arm64-android \
-            --only-binarycaching
-          echo "VCPKG_INSTALLED_DIR=$install_root" >> "$GITHUB_ENV"
-
-      - name: Configure and link Android external consumer
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cd tests/installed-sdk
-          cmake --preset ci-android-release-user
-          cmake --build --preset ci-android-release-user --parallel 2
+          name: flowie-native-sdk-${{ needs.metadata.outputs.version }}
+          path: |
+            dist/*.tar
+            dist/*-manifest.json
+            dist/SHA256SUMS
+          if-no-files-found: error

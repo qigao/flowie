@@ -2,15 +2,7 @@
   "name": "flowie",
   "version-semver": "1.0.5",
   "dependencies": [
-    {
-      "name": "c-ares"
-    },
-    {
-      "name": "gmssl"
-    },
-    {
-      "name": "llhttp"
-    },
+
     {
       "name": "xxhash"
     }

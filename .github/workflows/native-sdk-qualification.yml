@@ -16,17 +16,10 @@ on:
       - "presets/**"
       - "tools/**"
       - "vendor/**"
-      - "transport/**"
-      - "connection/**"
-      - "protocol/**"
-      - "client/**"
       - "flowie/**"
-      - "cluster/**"
-      - "server/**"
-      - "control/**"
+      - "tests/**"
       - "deploy/**"
       - "interop/**"
-      - "packaging/**"
       - ".github/workflows/native-sdk-pipeline.yml"
       - ".github/workflows/native-sdk-qualification.yml"
       - ".github/workflows/native-sdk-release.yml"
@@ -41,7 +34,7 @@ concurrency:
 
 jobs:
   qualify:
-    name: Qualify Flowie.Native
+    name: Qualify native SDK archives
     uses: ./.github/workflows/native-sdk-pipeline.yml
     with:
       source_sha: ${{ github.event.pull_request.head.sha || github.sha }}

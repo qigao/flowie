@@ -197,6 +197,8 @@ function(cmake_add_test target_name)
   if(ARG_INCLUDES)
     target_include_directories(${target_name} PRIVATE ${ARG_INCLUDES})
   endif()
+  target_include_directories(${target_name} PRIVATE
+    "${PROJECT_SOURCE_DIR}/tests/support" "${PROJECT_SOURCE_DIR}/flowie/detail")
   add_test(NAME ${target_name} COMMAND ${target_name})
   if(UNIX AND NOT APPLE)
     set(_runtime_test_environment)

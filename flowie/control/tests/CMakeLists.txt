@@ -1,0 +1,622 @@
+if(BUILD_TESTS)
+  cmake_add_test(
+    test_flowie_control_http_failure
+    SOURCES
+    test_flowie_control_http_failure.c
+    LIBS
+    CHttp::Client
+    CHttp::App
+    CMeta::CMeta
+    Salts::Core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_http_failure
+    PROPERTIES LABELS "flowie;control-plane;http;ownership" TIMEOUT 30)
+  cmake_add_test(
+    test_flowie_control_http
+    SOURCES
+    test_flowie_control_http.c
+    LIBS
+    flowie_control_http
+    CHttp::Client
+    CHttp::Server
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(test_flowie_control_http
+                       PROPERTIES LABELS "flowie;flowie/control-plane;http")
+  cmake_add_test(
+    test_flowie_control_runtime
+    SOURCES
+    test_flowie_control_runtime.c
+    LIBS
+    flowie_control_runtime
+    Salts::CNet
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_runtime
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_bootstrap_runtime
+    SOURCES
+    test_flowie_control_bootstrap_runtime.c
+    LIBS
+    flowie_control_runtime
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_bootstrap_runtime
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_https_integration
+    SOURCES
+    test_flowie_control_https_integration.c
+    LIBS
+    flowie_control_runtime
+    flowie_control_core
+    CHttp::Client
+    CHttp::Server
+    Salts::Coroutine
+    Salts::Core
+    Salts::TinyTest
+    GmSSL::GmSSL
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  target_compile_definitions(
+    test_flowie_control_https_integration
+    PRIVATE FLOWIE_CONTROL_EXECUTABLE="$<TARGET_FILE:flowie-control>")
+  add_dependencies(test_flowie_control_https_integration flowie-control)
+  target_link_libraries(test_flowie_control_https_integration
+                        PRIVATE Salts::Crypto)
+  set_tests_properties(
+    test_flowie_control_https_integration
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;integration"
+               TIMEOUT 30)
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_http
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    target_link_libraries(test_flowie_control_runtime PRIVATE ws2_32)
+    target_link_libraries(test_flowie_control_https_integration PRIVATE ws2_32)
+    set_target_properties(
+      test_flowie_control_runtime
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_target_properties(
+      test_flowie_control_bootstrap_runtime
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_target_properties(
+      test_flowie_control_https_integration
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_tests_properties(
+      test_flowie_control_runtime
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    set_tests_properties(
+      test_flowie_control_bootstrap_runtime
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    set_tests_properties(
+      test_flowie_control_https_integration
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+  endif()
+endif()
+
+if(BUILD_TESTS)
+  cmake_add_test(
+    test_flowie_control_acl
+    SOURCES
+    test_flowie_control_acl.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_acl
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract;parser")
+  cmake_add_test(
+    test_flowie_control_bootstrap
+    SOURCES
+    test_flowie_control_bootstrap.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_bootstrap
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+
+  cmake_add_test(
+    test_flowie_control_startup_options
+    SOURCES
+    test_flowie_control_startup_options.c
+    LIBS
+    flowie_control_startup
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_startup_options
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_startup_options
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
+  cmake_add_test(
+    test_flowie_control_config
+    SOURCES
+    test_flowie_control_config.c
+    LIBS
+    flowie_control_startup
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  target_compile_definitions(
+    test_flowie_control_config
+    PRIVATE
+      FLOWIE_CONTROL_TEST_CONFIG_PATH="${PROJECT_SOURCE_DIR}/deploy/server/control.yml.example"
+  )
+  set_tests_properties(
+    test_flowie_control_config
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_config
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
+  cmake_add_test(
+    test_flowie_control_database
+    SOURCES
+    test_flowie_control_database.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_database
+    PROPERTIES LABELS "flowie;flowie/control-plane;storage-contract")
+  cmake_add_test(
+    test_flowie_control_data_schema
+    SOURCES
+    test_flowie_control_data_schema.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_data_schema
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;storage-contract;data-transfer")
+  cmake_add_test(
+    test_flowie_control_store_schema
+    SOURCES
+    test_flowie_control_store_schema.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_store_schema
+    PROPERTIES LABELS "flowie;flowie/control-plane;storage-contract")
+
+  cmake_add_test(
+    test_flowie_control_data_transfer
+    SOURCES
+    test_flowie_control_data_transfer.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_data_transfer
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;storage-contract;data-transfer")
+  cmake_add_test(
+    test_flowie_control_data_options
+    SOURCES
+    test_flowie_control_data_options.c
+    LIBS
+    flowie_control_startup
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_data_options
+    PROPERTIES LABELS "flowie;flowie/control-plane;data-transfer")
+  if(WIN32)
+    set_tests_properties(
+      test_flowie_control_data_options
+      PROPERTIES ENVIRONMENT_MODIFICATION
+                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+  endif()
+  cmake_add_test(
+    test_flowie_control_store
+    SOURCES
+    test_flowie_control_store.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_store
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  if(FLOWIE_TURBODB_LIVE_TESTS)
+    cmake_add_test(
+      test_flowie_control_turbodb_live
+      SOURCES
+      test_flowie_control_turbodb_live.c
+      LIBS
+      flowie_control_core
+      Salts::TinyTest
+      INCLUDES
+      ${FLOWIE_CONTROL_SOURCE_DIR}
+      FOLDER
+      "flowie/control/tests")
+    set_tests_properties(
+      test_flowie_control_turbodb_live
+      PROPERTIES
+        LABELS
+        "flowie;flowie/control-plane;live;turbodb;postgresql;storage-contract"
+        TIMEOUT 120)
+  endif()
+  cmake_add_test(
+    test_flowie_control_repository
+    SOURCES
+    test_flowie_control_repository.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_repository
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;storage-contract")
+  cmake_add_test(
+    test_flowie_control_auth_cache
+    SOURCES
+    test_flowie_control_auth_cache.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_auth_cache
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;mqtt-security")
+  cmake_add_test(
+    test_flowie_control_external_authenticator
+    SOURCES
+    test_flowie_control_external_authenticator.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_external_authenticator
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;external-auth")
+  cmake_add_test(
+    test_flowie_control_external_https_authenticator
+    SOURCES
+    test_flowie_control_external_https_authenticator.c
+    LIBS
+    flowie_control_external_https_authenticator
+    Salts::Core
+    Salts::JsonParser
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  target_link_libraries(test_flowie_control_external_https_authenticator
+                        PRIVATE GmSSL::GmSSL)
+  if(WIN32)
+    target_link_libraries(test_flowie_control_external_https_authenticator
+                          PRIVATE ws2_32)
+  endif()
+  set_tests_properties(
+    test_flowie_control_external_https_authenticator
+    PROPERTIES
+      LABELS
+      "flowie;flowie/control-plane;security-contract;external-auth;https")
+  cmake_add_test(
+    test_flowie_control_jwt_jwks_authenticator
+    SOURCES
+    test_flowie_control_jwt_jwks_authenticator.c
+    test_flowie_control_jws_backend.c
+    LIBS
+    flowie_control_jwt_jwks_authenticator
+    CHttp::JWT
+    CHttp::Client
+    Salts::JsonParser
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  target_link_libraries(test_flowie_control_jwt_jwks_authenticator
+                        PRIVATE GmSSL::GmSSL)
+  if(WIN32)
+    target_link_libraries(test_flowie_control_jwt_jwks_authenticator
+                          PRIVATE ws2_32)
+  endif()
+  set_tests_properties(
+    test_flowie_control_jwt_jwks_authenticator
+    PROPERTIES
+      LABELS
+      "flowie;flowie/control-plane;security-contract;external-auth;jwt;jwks")
+  if(WIN32)
+    set_target_properties(
+      test_flowie_control_external_https_authenticator
+      test_flowie_control_jwt_jwks_authenticator
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_tests_properties(
+      test_flowie_control_external_https_authenticator
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    set_tests_properties(
+      test_flowie_control_jwt_jwks_authenticator
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Client>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+  endif()
+  cmake_add_test(
+    test_flowie_control_principal_cache
+    SOURCES
+    test_flowie_control_principal_cache.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_principal_cache
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_auth_rate_limiter
+    SOURCES
+    test_flowie_control_auth_rate_limiter.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_auth_rate_limiter
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_auth_service
+    SOURCES
+    test_flowie_control_auth_service.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_auth_service
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;mqtt-security")
+  cmake_add_test(
+    test_flowie_control_management_session
+    SOURCES
+    test_flowie_control_management_session.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_management_session
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_service_credential
+    SOURCES
+    test_flowie_control_service_credential.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_service_credential
+    PROPERTIES LABELS
+               "flowie;flowie/control-plane;security-contract;mqtt-security")
+  cmake_add_test(
+    test_flowie_control_management_service
+    SOURCES
+    test_flowie_control_management_service.c
+    LIBS
+    flowie_control_core
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_management_service
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_auth_iris_adapter
+    SOURCES
+    test_flowie_control_auth_iris_adapter.c
+    LIBS
+    flowie_control_iris_adapter
+    Salts::Coroutine
+    Salts::JsonParser
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_auth_iris_adapter
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_management_rpc
+    SOURCES
+    test_flowie_control_management_rpc.c
+    LIBS
+    flowie_control_iris_adapter
+    Salts::Coroutine
+    Salts::JsonParser
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_management_rpc
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  cmake_add_test(
+    test_flowie_control_dashboard
+    SOURCES
+    test_flowie_control_dashboard.c
+    LIBS
+    flowie_control_iris_adapter
+    Salts::Coroutine
+    Salts::TinyTest
+    INCLUDES
+    ${FLOWIE_CONTROL_SOURCE_DIR}
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(
+    test_flowie_control_dashboard
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract")
+  if(WIN32)
+    set_target_properties(
+      test_flowie_control_auth_iris_adapter
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_tests_properties(
+      test_flowie_control_auth_iris_adapter
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    set_target_properties(
+      test_flowie_control_management_rpc
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_tests_properties(
+      test_flowie_control_management_rpc
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+    set_target_properties(
+      test_flowie_control_dashboard
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+    set_tests_properties(
+      test_flowie_control_dashboard
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:CHttp::Server>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>;PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    )
+  endif()
+endif()
+
+if(WIN32 AND BUILD_TESTS)
+  get_property(
+    _flowie_control_tests
+    DIRECTORY
+    PROPERTY TESTS)
+  set_property(
+    TEST ${_flowie_control_tests}
+    APPEND
+    PROPERTY ENVIRONMENT_MODIFICATION
+             "PATH=path_list_prepend:$<TARGET_FILE_DIR:flowie>")
+  unset(_flowie_control_tests)
+endif()
