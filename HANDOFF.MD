@@ -341,6 +341,9 @@ Windows ARM64 的 MSVC 和 LLVM-MinGW 分别使用 ARM64 vcpkg triplet。LLVM-Mi
 C11 扫描头显式引入 stdatomic.h，使 MSVC ARM64 编译 SIMDe 内的原子栅栏。
 两项问题在 [SaltsBase 首轮 CI](https://github.com/qigao/salts-base/actions/runs/44694282141)
 复现，修复后 Windows ARM64 的两种配置都进入完整构建。
+MSVC ARM64 随后在 Disruptor 链接时报告 x86 的 _mm_pause 未定义。Windows
+路径改用 Windows SDK 的 YieldProcessor()，由 SDK 为目标架构选择处理器提示。
+[SaltsBase 链接日志](https://github.com/qigao/salts-base/actions/runs/44695017585/job/136150104644)
 
 两种 Android ABI 都需要宿主机版 SaltsBase 和 SaltsUtils。Linux GCC
 arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
