@@ -43,7 +43,7 @@ function Assert-SecurityId {
     if ([string]::IsNullOrEmpty($Value) -or
         $Value.Length -gt $maximumSecurityIdLength -or
         $Value -match "[\x00-\x1f\x7f]") {
-        throw "$Name must contain 1..$maximumSecurityIdLength non-control characters"
+        throw "$Name must contain 1..$maximumSecurityIdLength non-flowie/control characters"
     }
 }
 

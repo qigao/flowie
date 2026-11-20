@@ -7,9 +7,9 @@
 ## 对比对象与版本
 
 - **flowie**：本仓库 `flowie/` 下的 MQTT broker。核心文件：
-  - `flowie/src/flowie_session.c`（入站/出站状态机、持久化记录）
-  - `flowie/src/flowie_endpoint.c`（settlement 配置、MQTT 接入）
-  - `cluster/flowie_cluster_session_bind.c`（集群 publish/delivery/ack 路径）
+  - `flowie/core/src/flowie_session.c`（入站/出站状态机、持久化记录）
+  - `flowie/core/src/flowie_endpoint.c`（settlement 配置、MQTT 接入）
+  - `server/cluster/flowie_cluster_session_bind.c`（集群 publish/delivery/ack 路径）
   - `turbo_flow/include/turbo_flow_protocol.h`（settlement 枚举）
 - **Mosquitto**：本地克隆 `C:\tmp\mosquitto`，`master` 分支 commit `5cd2546511596a269dbf53f85858c623b09ebdd6`（2026-07-30）。`事实`：以下 Mosquitto 结论均来自该克隆源码，不代表某一固定发行版（如 2.0.x）的行为。
 
@@ -38,7 +38,7 @@
 - 入站受 receive maximum（`msgs_in.inflight_quota`）约束：满时先入 `queued`，由 `db__message_write_queued_in()` 逐条补发 PUBREC（`src/database.c:1523`）。
 - 复用 mid 且内容不匹配时记录告警并从 storage 清除旧记录（`src/handle_publish.c:100-112`）。
 
-### flowie（事实，`flowie/src/flowie_session.c`）
+### flowie（事实，`flowie/core/src/flowie_session.c`）
 
 - **QoS1 也建立 inflight 记录**（`FLOWIE_SESSION_INFLIGHT_SETTLEMENT`，第 23-24、1244 行），待集群 settlement 推进到配置点才回 PUBACK 并移除（第 1288-1295 行）。
 - **QoS2**：`publish_begin` 建 SETTLEMENT 记录 → `publish_settle` 回 PUBREC 并把状态切为 `FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE`（第 1297-1305 行）→ `qos2_release`（收到 PUBREL）回 PUBCOMP 并移除（第 1315-1330 行）。
@@ -74,7 +74,7 @@
 ## 3. Ack 时机可配置性（核心区别）
 
 - **Mosquitto（事实）**：入站 ack 时机固定——QoS1 收到即转发即 PUBACK，QoS2 收到 PUBREL 才算完成；无任何延迟确认或确认点配置。
-- **flowie（事实）**：`settlement_qos1` / `settlement_qos2` 各 4 档 `received / accepted / processed / durable`（`flowie_endpoint.c:61,186-189`；`turbo_flow_protocol.h:136-142`），默认 `received`（`TURBO_FLOW_PROTOCOL_SETTLEMENT_POLICY_INIT`，`turbo_flow_protocol.h:209-210`），即默认 ≈ Mosquitto。`durable` 档要求显式 durable store 提交边界后才 ack（`flowie/include/flowie.h:420-421`）。
+- **flowie（事实）**：`settlement_qos1` / `settlement_qos2` 各 4 档 `received / accepted / processed / durable`（`flowie_endpoint.c:61,186-189`；`turbo_flow_protocol.h:136-142`），默认 `received`（`TURBO_FLOW_PROTOCOL_SETTLEMENT_POLICY_INIT`，`turbo_flow_protocol.h:209-210`），即默认 ≈ Mosquitto。`durable` 档要求显式 durable store 提交边界后才 ack（`flowie/core/include/flowie.h:420-421`）。
 - `推论`：这是 flowie 的实质扩展——把"何时向发布方确认"从固定语义变为可靠性/吞吐权衡点；代价是 QoS1 也占用 inflight 记录与 session 配额，`durable` 档引入存储往返延迟。
 
 ## 4. 持久化模型
@@ -105,7 +105,7 @@
 
 ## 证据来源
 
-- flowie：`deploy/server/tests/run-mqtt-scale-load.sh` 与 `flowie/LINUX_REMOTE_TEST_RUNBOOK.md`（单方远端负载验证，非对照）、`flowie/src/flowie_session.c`、`flowie/src/flowie_endpoint.c`、`flowie/src/flowie_ingress.c`、`cluster/flowie_cluster_session_bind.c`、`flowie/include/flowie.h`。
+- flowie：`deploy/server/tests/run-mqtt-scale-load.sh` 与 `flowie/LINUX_REMOTE_TEST_RUNBOOK.md`（单方远端负载验证，非对照）、`flowie/core/src/flowie_session.c`、`flowie/core/src/flowie_endpoint.c`、`flowie/core/src/flowie_ingress.c`、`server/cluster/flowie_cluster_session_bind.c`、`flowie/core/include/flowie.h`。
 - Mosquitto：`C:\tmp\mosquitto`（master @ 5cd2546511596a269dbf53f85858c623b09ebdd6），文件 `src/handle_publish.c`、`src/database.c`、`src/conf.c`、`src/persist.h`、`src/plugin_persist.c`、`lib/handle_pubrec.c`、`lib/handle_pubrel.c`、`lib/handle_pubackcomp.c`、`lib/messages_mosq.c`、`lib/mosquitto_internal.h`、`man/mosquitto.conf.5.xml`；I/O 层 `src/loop.c`、`src/net.c`、`src/mux_epoll.c`、`src/mux_poll.c`、`lib/packet_mosq.c`、`lib/net_mosq.c`。
 
 ## 6. I/O 模型对比（源码级）
@@ -115,12 +115,12 @@
 ### 6.1 事件驱动模型（事实）
 
 - **Mosquitto：单线程事件循环。** 主循环 `mosquitto_main_loop`（`src/loop.c`）每轮依次执行 keepalive / session-expiry / will-delay 检查 → `mux__handle()` 事件分发 → 持久化 autosave → 信号检查。事件后端是 mux 抽象：epoll（`src/mux_epoll.c`，`epoll_wait(db.epollfd, ep_events, MAX_EVENTS, db.next_event_ms)`）、kqueue（`src/mux_kqueue.c`）、poll/WSAPoll（`src/mux_poll.c`，Windows/fallback）。socket 全部非阻塞，事件驱动，无每连接线程。
-- **flowie：CoroNet 协程模型。** 每个 MQTT 连接一个协程 handler `flowie_endpoint_client_handler(coro_socket_t *client, ...)`（`flowie/src/flowie_endpoint.c:6811` 附近），运行在 CoroNet executor（`tf_coronet_execution_t`，`io/common/include/flow_coronet_execution.h`，含 loop thread）上。连接协程内是同步风格的 `coro_socket_recv` / `coro_socket_send`，底层由 CoroNet 事件循环调度；主读循环为 `coro_socket_recv` 读块 → `flowie_ingress_feed` 帧重组/解析 → dispatch 进 flow graph（`flowie_endpoint.c:6836-6856`）。
+- **flowie：CoroNet 协程模型。** 每个 MQTT 连接一个协程 handler `flowie_endpoint_client_handler(coro_socket_t *client, ...)`（`flowie/core/src/flowie_endpoint.c:6811` 附近），运行在 CoroNet executor（`tf_coronet_execution_t`，`io/common/include/flow_coronet_execution.h`，含 loop thread）上。连接协程内是同步风格的 `coro_socket_recv` / `coro_socket_send`，底层由 CoroNet 事件循环调度；主读循环为 `coro_socket_recv` 读块 → `flowie_ingress_feed` 帧重组/解析 → dispatch 进 flow graph（`flowie_endpoint.c:6836-6856`）。
 
 ### 6.2 接收与帧解析（事实）
 
 - **Mosquitto**：`packet__read_single`（`lib/packet_mosq.c:473`）逐包解析：先读固定头 + remaining length，再按 `remaining_length` malloc 一块 payload 读 body；一个事件循环周期只推进一个包，跨事件累积在 `in_packet.packet_buffer`/pos。
-- **flowie**：CoroNet 每连接固定两个接收 chunk（`stream_recv_buffer_bytes`，默认 4096/个，`flowie_endpoint.c:202`），MQTT 帧跨 chunk 重组。`flowie_ingress_feed`（`flowie/src/flowie_ingress.c:235`）把输入追加进 framing 的 `turbo_byte_buffer` 并循环 `flowie_ingress_pump`，一次 feed 可解析出多个完整包；解析器为 `flowie_mqtt_packet_parse`（`protocol/`）。
+- **flowie**：CoroNet 每连接固定两个接收 chunk（`stream_recv_buffer_bytes`，默认 4096/个，`flowie_endpoint.c:202`），MQTT 帧跨 chunk 重组。`flowie_ingress_feed`（`flowie/core/src/flowie_ingress.c:235`）把输入追加进 framing 的 `turbo_byte_buffer` 并循环 `flowie_ingress_pump`，一次 feed 可解析出多个完整包；解析器为 `flowie_mqtt_packet_parse`（`flowie/protocol/`）。
 
 ### 6.3 发送与出站（事实）
 

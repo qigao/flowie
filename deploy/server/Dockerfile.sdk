@@ -1,0 +1,152 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ubuntu:24.04 AS builder
+ARG VCPKG_CACHE_VERSION
+ARG SALTS_BASE_VERSION
+ARG CMETA_VERSION
+ARG SALTS_UTILS_VERSION
+ARG SALTS_CORE_VERSION
+ARG CHTTP_VERSION
+ARG TURBODB_VERSION
+ARG BUILD_PARALLEL=3
+ENV DEBIAN_FRONTEND=noninteractive \
+    VCPKG_CACHE_VERSION=${VCPKG_CACHE_VERSION} \
+    SALTS_BASE_VERSION=${SALTS_BASE_VERSION} \
+    CMETA_VERSION=${CMETA_VERSION} \
+    SALTS_UTILS_VERSION=${SALTS_UTILS_VERSION} \
+    SALTS_CORE_VERSION=${SALTS_CORE_VERSION} \
+    CHTTP_VERSION=${CHTTP_VERSION} \
+    TURBODB_VERSION=${TURBODB_VERSION} \
+    VCPKG_CACHE_REPOSITORY_ROOT=/opt/vcpkg-cache \
+    CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_PARALLEL}
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates clang cmake curl g++ gh git ninja-build pkg-config python3 \
+    && rm -rf /var/lib/apt/lists/*
+ARG CMAKE_VERSION=3.31.0
+ARG CMAKE_SHA256=7cfdf4a411c71d13c027199952fd25e8245d85c932ff452e2b9a9e0f6dfe368a
+# The published package configs rely on prefix preservation across dependencies.
+RUN curl --fail --location --silent --show-error --proto '=https' \
+      "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.sh" \
+      -o /tmp/cmake-install.sh \
+    && echo "${CMAKE_SHA256}  /tmp/cmake-install.sh" | sha256sum -c - \
+    && sh /tmp/cmake-install.sh --skip-license --prefix=/usr/local \
+    && rm /tmp/cmake-install.sh \
+    && cmake --version
+RUN git clone --depth 1 --branch "v${VCPKG_CACHE_VERSION}" \
+      https://github.com/qigao/vcpkg-cache.git "$VCPKG_CACHE_REPOSITORY_ROOT"
+
+WORKDIR /src/flowie
+COPY . .
+ARG SOURCE_REVISION=unknown
+RUN --mount=type=secret,id=github_token,required=true \
+    --mount=type=cache,target=/var/cache/vcpkg \
+    --mount=type=cache,target=/src/flowie/build/dependencies/archives <<'SH'
+export GH_TOKEN="$(cat /run/secrets/github_token)"
+python3 -B - <<'PY'
+import os
+from pathlib import Path
+
+fields = ('VCPKG_CACHE_VERSION', 'SALTS_BASE_VERSION', 'CMETA_VERSION',
+          'SALTS_UTILS_VERSION', 'SALTS_CORE_VERSION', 'CHTTP_VERSION',
+          'TURBODB_VERSION', 'VCPKG_CACHE_REPOSITORY_ROOT')
+values = {name: os.environ[name] for name in fields}
+values.update(VCPKG_TARGET_TRIPLET='x64-linux',
+              SHARED_DEPENDENCY_ROOT='/opt/shared-native',
+              VCPKG_BINARY_SOURCES='clear;files,/var/cache/vcpkg,readwrite',
+              CMAKE_BUILD_PARALLEL_LEVEL=os.environ['CMAKE_BUILD_PARALLEL_LEVEL'])
+Path('.env').write_text(''.join(name + '=' + value + '\n' for name, value in values.items()),
+                       encoding='utf-8')
+PY
+python3 -B cmake/ci/setup_native_ci.py
+python3 -B cmake/ci/restore-native-sdks.py --rid linux-x64 --profile linux-clang-x64 \
+  > build-restored-environment.json
+python3 -B - <<'PY'
+import json
+from pathlib import Path
+import shlex
+
+environment = json.loads(Path('build/native-sdk-environment.json').read_text())
+Path('build/docker-sdk-environment.sh').write_text(''.join(
+    'export ' + key + '=' + shlex.quote(str(value)) + '\n'
+    for key, value in environment.items()), encoding='utf-8')
+PY
+source build/docker-sdk-environment.sh
+cmake --fresh --preset llvm-native-release-user \
+  -DCMAKE_INSTALL_PREFIX=/opt/flowie/release \
+  -DBUILD_TESTS=OFF -DBUILD_TESTING=OFF -DBUILD_BENCHMARKS=OFF \
+  -DFLOWIE_BUILD_CLUSTER=OFF -DFLOWIE_BUILD_SERVER=ON -DFLOWIE_BUILD_CONTROL=ON \
+  -DFLOWIE_RELEASE_REVISION="$SOURCE_REVISION" \
+  -DFLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR=/opt/flowie/share/control/dashboard-resources
+cmake --build --preset llvm-native-release-user
+cmake --build --preset install-llvm-native-release-user
+
+install -d /runtime/usr/local/bin /runtime/usr/local/lib /runtime/opt/flowie \
+  /runtime/usr/share/doc/flowie
+for executable in flowie_server flowie-control flowie-control-data; do
+  install -m 0755 "/opt/flowie/release/bin/$executable" /runtime/usr/local/bin/
+done
+install -d /runtime/opt/flowie/share /runtime/opt/flowie/release/share
+cp -a /opt/flowie/share/. /runtime/opt/flowie/share/
+cp -a /opt/flowie/release/share/. /runtime/opt/flowie/release/share/
+install -m 0644 LICENSE NOTICE THIRD_PARTY_NOTICES.md /runtime/usr/share/doc/flowie/
+for sdk in "$SALTS_BASE_ROOT" "$CMETA_ROOT" "$SALTS_UTILS_ROOT" "$SALTS_CORE_ROOT" \
+           "$CHTTP_ROOT" "$TURBODB_ROOT" /opt/flowie/release; do
+  test -d "$sdk/lib"
+  for library in "$sdk/lib/"*.so*; do
+    if [ -e "$library" ]; then cp -a "$library" /runtime/usr/local/lib/; fi
+  done
+  if [ -d "$sdk/share/licenses" ]; then
+    install -d "/runtime/usr/share/licenses/$(basename "$sdk")"
+    cp -a "$sdk/share/licenses/." "/runtime/usr/share/licenses/$(basename "$sdk")/"
+  fi
+done
+for library in "$VCPKG_INSTALLED_DIR/$VCPKG_TARGET_TRIPLET/lib/"*.so*; do
+  if [ -e "$library" ]; then cp -a "$library" /runtime/usr/local/lib/; fi
+done
+for copyright in "$VCPKG_INSTALLED_DIR/$VCPKG_TARGET_TRIPLET/share/"*/copyright; do
+  if [ -f "$copyright" ]; then
+    package=$(basename "$(dirname "$copyright")")
+    install -D -m 0644 "$copyright" "/runtime/usr/share/licenses/vcpkg/$package/copyright"
+  fi
+done
+test -f "$TURBODB_ROOT/lib/turbodb/drivers/turbodb_driver_postgresql.so"
+install -d "/runtime$TURBODB_ROOT/lib/turbodb/drivers"
+cp -a "$TURBODB_ROOT/lib/turbodb/drivers/." "/runtime$TURBODB_ROOT/lib/turbodb/drivers/"
+for executable in /runtime/usr/local/bin/* "/runtime$TURBODB_ROOT/lib/turbodb/drivers/"*.so; do
+  LD_LIBRARY_PATH=/runtime/usr/local/lib ldd "$executable" > /tmp/flowie.ldd
+  cat /tmp/flowie.ldd
+  if grep -Fq 'not found' /tmp/flowie.ldd; then exit 1; fi
+done
+SH
+
+FROM ubuntu:24.04 AS runtime
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.title="Flowie Server and Control" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.description="Flowie with released split SDKs and Chttp 0.1.1"
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libgcc-s1 libstdc++6 netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 flowie \
+    && useradd --uid 10001 --gid flowie --no-create-home --home-dir /var/lib/flowie \
+         --shell /usr/sbin/nologin flowie \
+    && install -d -o flowie -g flowie /var/lib/flowie/control /etc/flowie/certs /opt/flowie/plugins
+COPY --from=builder /runtime/ /
+COPY --chmod=0755 deploy/server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=0755 deploy/server/flowie-control-entrypoint.sh /usr/local/bin/flowie-control-entrypoint
+COPY --chmod=0755 deploy/server/flowie-combined-entrypoint.sh /usr/local/bin/flowie-combined-entrypoint
+COPY --chmod=0755 deploy/server/healthcheck.sh /usr/local/bin/flowie-healthcheck
+RUN set -eu; ldconfig; for executable in flowie_server flowie-control flowie-control-data; do \
+      ldd "/usr/local/bin/$executable" > "/usr/share/doc/flowie/$executable-runtime.ldd"; \
+      cat "/usr/share/doc/flowie/$executable-runtime.ldd"; \
+      if grep -Fq 'not found' "/usr/share/doc/flowie/$executable-runtime.ldd"; then exit 1; fi; \
+    done
+USER 10001:10001
+WORKDIR /var/lib/flowie
+RUN --network=none ["/usr/local/bin/flowie_server", "--check", "--max-connections", "2", "--protocol-store-driver", "sqlite", "--protocol-store-options", "{\"filename\":\":memory:\"}"]
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/usr/local/bin/flowie-healthcheck"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

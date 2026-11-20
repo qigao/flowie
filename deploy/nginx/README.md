@@ -5,7 +5,7 @@
 - `flowie-nginx`：负责 `80/443`、ACME HTTP-01、HTTPS TLS termination，并通过已验证的内部 TLS
   转发 Control/Dashboard。
 - `flowie-haproxy`：负责 `8883` MQTTS TLS termination、MQTT CONNECT 校验、Client ID consistent
-  hash，以及到 Flowie cluster edge 的 PROXY protocol v1 转发。
+  hash，以及到 Flowie server/cluster edge 的 PROXY flowie/protocol v1 转发。
 
 两个代理都不持有用户、ACL、MQTT session、shard ownership 或数据库凭据。Nginx 继续执行 Certbot
 renew；HAProxy 只读挂载同一证书目录，并在证书内容变化后先校验配置再平滑 reload。
@@ -32,7 +32,7 @@ Auth/ACL provider。HAProxy 解密 MQTTS 后，Flowie 到 Auth/ACL 的认证语�
 
 ## 首次签发与启动
 
-复制 `.env.example` 为 `.env`，设置实际域名、邮件地址、内部 Control CA 以及 MQTT cluster backend
+复制 `.env.example` 为 `.env`，设置实际域名、邮件地址、内部 Control CA 以及 MQTT server/cluster backend
 列表。确保 DNS 已指向该主机，并且签发期间 port 80 未被其他进程占用：
 
 ```sh

@@ -1,69 +1,64 @@
 {
-    "version": 6,
-    "include": [
-        "presets/BuildPresets.json",
-        "presets/TestPresets.json",
-        "presets/AndroidPresets.json"
-    ],
-    "configurePresets": [
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 27,
+    "patch": 0
+  },
+  "include": [
+    "presets/ConfigurePresets.json",
+    "presets/BuildPresets.json",
+    "presets/TestPresets.json"
+  ],
+  "configurePresets": [
     {
-      "name": "ci-release-options",
+      "name": "native-runtime",
       "hidden": true,
-      "generator": "Ninja",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "VCPKG_MANIFEST_MODE": "ON",
-        "FLOWIE_BUILD_TESTS": "ON",
-        "BUILD_TESTS": "ON",
-        "FLOWIE_BUILD_CONTROL": "ON",
-        "FLOWIE_BUILD_SERVER": "ON",
-        "FLOWIE_BUILD_CLUSTER": "OFF",
-        "FLOWIE_MQTT_PUBLIC_LIVE_TESTS": "OFF",
-        "FLOWIE_TURBODB_LIVE_TESTS": "OFF",
-        "FLOWIE_MQTT_FIXED_INTEROP_TESTS": "OFF",
-        "FLOWIE_MQTT_SOAK_TESTS": "OFF",
-        "ENABLE_SANITIZER_ADDRESS": "OFF",
-        "ENABLE_SANITIZER_UNDEFINED": "OFF"
+      "environment": {
+        "PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/bin${pathListSep}$env{CHTTP_ROOT}/bin${pathListSep}$env{TURBODB_ROOT}/bin${pathListSep}$env{SALTS_CORE_ROOT}/bin${pathListSep}$env{SALTS_UTILS_ROOT}/bin${pathListSep}$env{CMETA_ROOT}/bin${pathListSep}$env{SALTS_BASE_ROOT}/bin${pathListSep}$penv{PATH}",
+        "LD_LIBRARY_PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}lib${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/lib${pathListSep}$env{CHTTP_ROOT}/lib${pathListSep}$env{TURBODB_ROOT}/lib${pathListSep}$env{SALTS_CORE_ROOT}/lib${pathListSep}$env{SALTS_UTILS_ROOT}/lib${pathListSep}$env{CMETA_ROOT}/lib${pathListSep}$env{SALTS_BASE_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
       }
     },
     {
-      "name": "ci-base-sdk-options",
+      "name": "full-native",
       "hidden": true,
-      "inherits": "ci-release-options",
+      "inherits": [
+        "ISNative",
+        "base",
+        "release-mode"
+      ],
       "cacheVariables": {
-        "FLOWIE_BUILD_TESTS": "OFF",
-        "BUILD_TESTS": "OFF",
-        "FLOWIE_BUILD_CONTROL": "OFF",
-        "FLOWIE_BUILD_SERVER": "OFF",
-        "FLOWIE_BUILD_CLUSTER": "OFF"
+        "BUILD_TESTS": "ON"
       }
     },
-        {
-            "name": "base-win-dev-user",
-            "hidden": true,
-            "displayName": "Developer Build (Windows, Base)",
-            "inherits": [
-                "dev-win-msvc-ninja",
-                "pkg-vcpkg"
-            ]
-        },
-        {
-            "name": "base-win-release-user",
-            "hidden": true,
-            "displayName": "Release Build (Windows, Base)",
-            "inherits": [
-                "release-win-msvc-ninja",
-                "pkg-vcpkg"
-            ]
-        },
-        {
-            "name": "base-linux-dev-user",
-            "hidden": true,
-            "displayName": "Developer Build (Linux, Base)",
-            "inherits": [
-                "dev-linux-ninja",
-                "pkg-vcpkg"
-            ]
-        }
-    ]
+    {
+      "name": "full-native-asan-ubsan",
+      "hidden": true,
+      "inherits": [
+        "ISLinux",
+        "asan-ubsan-mode",
+        "full-native"
+      ]
+    },
+    {
+      "name": "full-native-tsan",
+      "hidden": true,
+      "inherits": [
+        "ISLinux",
+        "tsan-mode",
+        "full-native"
+      ]
+    },
+    {
+      "name": "android-release",
+      "hidden": true,
+      "inherits": [
+        "android-base",
+        "release-mode"
+      ],
+      "cacheVariables": {
+        "CMAKE_ANDROID_ARCH_ABI": "$env{ANDROID_ABI}"
+      }
+    }
+  ]
 }

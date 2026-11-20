@@ -30,7 +30,7 @@ TurboFlow、FlowMQ 或 TurboRaft。
 `.env` 中的 `FLOWIE_CONTROL_HEALTH_HOST`/`FLOWIE_CONTROL_HEALTH_PORT` 设置 secondary 探针。向容器传入
 显式命令时，入口脚本直接执行该命令。`FLOWIE_CHECK=1` 执行完整的 YAML、service token、TLS client、
 security realm、endpoint 与 TurboDB 初始化检查，但不打开网络 listener。布尔值只接受
-`0/1/false/true/no/yes/off/on`。endpoint 的 host、port、transport 与容量全部来自 `flowie.yml`，环境变量
+`0/1/false/true/no/yes/off/on`。endpoint 的 host、port、flowie/transport 与容量全部来自 `flowie.yml`，环境变量
 不再维护第二份配置；修改 YAML 或 token 后需要重启 broker。
 
 YAML 解析、环境变量读取、TLS/CHTTP client 创建均发生在启动阶段。MQTT endpoint 的 TCP/TLS 由 CNet
@@ -61,7 +61,7 @@ MQTT 协议状态仍由 endpoint execution shard 管理。建议先用
 TurboDB/Orm repository 作为 session、subscription、inflight、retained、pending Will 和 principal
 snapshot 的唯一协议事实源。镜像默认写入 SQLite；Compose 则显式配置 PostgreSQL。启动时打开连接、创建
 或校验 Broker V2 schema，任一步失败都会拒绝启动，不回退到进程内存或 SQLite。普通 PUBLISH 业务正文只有
-进入显式业务 sink 时才会持久化，不能把 protocol store 当作业务消息库。
+进入显式业务 sink 时才会持久化，不能把 flowie/protocol store 当作业务消息库。
 
 Control 使用 `control.yml` 中的 `storage.turbodb.driver/options` 连接数据库。其 V7 Repository 保存 Domain、
 用户、credential verifier、Role、Group、ACL、审计以及 management session；原始 session Bearer token
@@ -91,6 +91,34 @@ credential 与对应 Role。
 
 ## 构建
 
+### 发布 SDK 与 Compose
+
+当前分包 SDK 使用 `Dockerfile.sdk`。它在 Ubuntu 24.04 中恢复并校验 SaltsBase 0.1.8、
+CMeta 0.1.7、SaltsUtils 0.1.4、SaltsCNet 0.1.12、Chttp 0.1.1 和 TurboDB 0.1.1，
+通过现有 native presets 构建 Flowie。Ubuntu 24.04 运行层与发布 SDK 的 glibc 相匹配；
+Debian 12 宿主可以直接运行该镜像。运行时保留三个 executable、Dashboard 资源、依赖许可、
+共享库和 TurboDB 插件的原绝对安装路径，并检查动态库解析是否完整。
+构建使用带 SHA-256 校验的 CMake 3.31.0，避免旧版 CMake 在嵌套依赖查找时
+改写 `PACKAGE_PREFIX_DIR`，将插件路径误指向另一个 SDK；详见
+[CMake 官方说明](https://cmake.org/cmake/help/latest/module/CMakePackageConfigHelpers.html)。
+运行层以 UID 10001、禁用网络执行内存 SQLite 的 Broker 初始化检查。
+
+准备本目录的运行配置 `.env` 后，在干净的源码提交上执行：
+
+```sh
+export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
+export FLOWIE_SERVER_IMAGE="flowie-server:git-${FLOWIE_SOURCE_REVISION}"
+: "${GITHUB_TOKEN:?provide a GitHub release read credential}"
+docker compose --env-file deploy/server/.env \
+  -f deploy/server/compose.yml -f deploy/server/compose.build.yml build flowie-server
+```
+
+GitHub 凭据通过 BuildKit secret 注入恢复步骤，不进入镜像环境或源码上下文。构建参数可选择
+精确的发布版本，所有发布摘要由既有共享恢复工具核验。源码含未提交改动时，应记录传输快照的
+SHA-256，并以该内容摘要作为 `FLOWIE_SOURCE_REVISION`，不能只用 HEAD 表示实际构建内容。
+
+### 历史源码构建
+
 默认源码布局包含 Flowie 和四个依赖仓库：
 
 ```text
@@ -108,7 +136,7 @@ cpp/
 ```sh
 export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
 export FLOWIE_SERVER_IMAGE="flowie-server:local"
-: "${GITHUB_TOKEN:?provide a GitHub Packages read token}"
+: "${GITHUB_TOKEN:?provide a GitHub read token for shared host tools}"
 
 docker buildx build \
   --file deploy/server/Dockerfile \
@@ -141,11 +169,11 @@ SQLite/PostgreSQL/MySQL 驱动，排除 TidesSQL 引擎及 TidesDB 驱动。Turb
 原始 `v2.3.2` 会在配置阶段拒绝它，需要先合入 TurboDB 的 ORM/TidesSQL 可选构建修复，
 再将该源码目录传给 `--build-context turbo_db=...`。该依赖修复尚未包含在 `v2.3.2` 发布源码中。
 
-构建层安装带 Unicode 数据文件的 re2c 4.6（下载后检查 SHA-256）、Mono 和固定 revision 的
-共享 vcpkg 工具链。`VCPKG_CACHE_REF` 可显式调整；构建时记录它与各源码 revision。
-缓存保持共享 NuGet feed 只读、本地 BuildKit cache 可写。`github_token` 仅在需要它的 RUN 中
-通过 [BuildKit secret](https://docs.docker.com/build/building/secrets/) 注入，需有 `read:packages`
-权限；不通过 build argument、镜像 ENV 或命令跟踪输出传递。
+SDK 构建入口 `Dockerfile.sdk` 从传入的精确版本参数生成构建层 `.env`，再调用共享 vcpkg-cache
+恢复 vcpkg 与 host generators，并校验原始 SDK 发布归档。版本由根目录 `.env` 通过 compose 参数传入；
+缺少版本即失败。该入口不创建或恢复产品包，也不使用仓库自有缓存代理。`github_token` 仅通过
+[BuildKit secret](https://docs.docker.com/build/building/secrets/) 注入对应 RUN，不能写进构建参数或镜像 ENV。
+
 
 需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
 
@@ -264,8 +292,11 @@ docker compose --env-file deploy/server/.env -f deploy/server/compose.yml \
 空 Control Repository 会建立固定的 `system/admin`，首次密码为公开 bootstrap 值
 `Flowie@ChangeMe!`。首次登录 `https://<control-host>/v2/control/dashboard` 后必须立即改密；改密会撤销当前
 session，需要重新登录。不得把该公开密码作为生产 secret 或通过网络暴露首次启动中的 Control。
+Control 通过 SDK 的内存证书入口加载 PEM 证书链与 PKCS#8 私钥，证书目录可保持只读挂载。
+证书链文件与私钥文件分别限制为 16 KiB；空文件、超限、解密或证书私钥绑定失败都会立即退出。
+初始化后擦除临时私钥缓冲，不要求为 RSA 私钥开放文件写权限。
 改密后创建第三方 Domain、human 管理账号、密码与最小 Role，并交付 Management/MQTT 接入资料的完整
-步骤见 [Flowie 第三方系统接入指南](../../flowie/THIRD_PARTY_INTEGRATION.md)。
+步骤见 [Flowie 第三方系统接入指南](../../docs/THIRD_PARTY_INTEGRATION.md)。
 
 容器健康检查同时探测 MQTT 与 Control TCP listener；任一 listener 不可达都会标记容器 unhealthy。运行态
 验收还应执行 MQTT 5 CONNECT/CONNACK、QoS 1 publish/subscribe、Control 管理登录，以及
@@ -320,6 +351,6 @@ docker inspect --format '{{.State.Health.Status}}' flowie-server
 ```
 
 `flowie_server --check --require-security --config <flowie.yml> --profile <name>` 校验 YAML、远程 Auth/ACL
-provider、共享 Salts executor、endpoint，并打开 protocol store 创建或校验 schema 后退出；它不会启动 MQTT
+provider、共享 Salts executor、endpoint，并打开 flowie/protocol store 创建或校验 schema 后退出；它不会启动 MQTT
 listener，也不会向 flowie-control 发出认证/授权请求。可配合内存 SQLite 做无持久化预检。TLS/WSS listener
-投入生产前仍需完成服务端证书路径和握手验收；`flowie.yml` 中的 transport 才是最终有效值。
+投入生产前仍需完成服务端证书路径和握手验收；`flowie.yml` 中的 flowie/transport 才是最终有效值。
