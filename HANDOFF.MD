@@ -336,6 +336,12 @@ Windows ARM64 的 MSVC 和 LLVM-MinGW 分别使用 ARM64 vcpkg triplet。LLVM-Mi
 标成 ARM64。本地使用现有 MSVC 和 LLVM-MinGW 安装产物确认两种 x64 包通过，
 并在将其标为 ARM64 时被拒绝。
 
+共享 LLVM-MinGW action 返回 Windows 路径。preset 使用 FILEPATH 声明编译器、
+归档器和 windres，CMake 因此在生成资源编译器配置前规范化路径。SaltsBase 的
+C11 扫描头显式引入 stdatomic.h，使 MSVC ARM64 编译 SIMDe 内的原子栅栏。
+两项问题在 [SaltsBase 首轮 CI](https://github.com/qigao/salts-base/actions/runs/44694282141)
+复现，修复后 Windows ARM64 的两种配置都进入完整构建。
+
 两种 Android ABI 都需要宿主机版 SaltsBase 和 SaltsUtils。Linux GCC
 arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
 `.env.example` 选择同一组发布，切换平台需重新恢复匹配的依赖并执行
