@@ -301,3 +301,13 @@ re2c 和 Lemon 从同一公共发布取已校验的归档，再交给共享
 其中 Workbench 39 个用例、890 个断言通过，安装版资源 1 已核对包含
 Common Controls v6。脚本 18 个用例和 actionlint 通过。Linux 和 Android
 托管构建仍待修改后的工作流运行验证。
+
+## 2026-11-20：Windows 短路径与 Android 宿主生成器
+
+托管 Windows runner 的临时目录可能经由 `RUNNER~1` 提供。SDK 脚本有意
+返回规范路径，测试应解析预期路径后比较，而不是比较原始字符串。
+
+Android 交叉构建在 Ubuntu 执行 `salts-idlc` 生成 Control SQL。Android
+SDK 中的同名程序是 AArch64 目标文件，不能用于这一步。恢复过程同时选择
+同一发布的宿主 SaltsUtils 和 SaltsBase，并通过 `SALTS_IDLC_ROOT` 与
+`SALTS_IDLC_BASE_ROOT` 交给生成命令。宿主生成器及其运行库独立于目标链接。

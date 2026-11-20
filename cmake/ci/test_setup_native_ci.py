@@ -71,8 +71,9 @@ class SharedPreparationTests(unittest.TestCase):
         self.assertIn('share/lemon/source.json', restores[2])
         self.assertEqual(len(self.downloads), 2)
         self.assertTrue(all('/releases/download/v0.1.3/' in url for url, _, _ in self.downloads))
-        self.assertTrue(all(str(self.infrastructure / 'scripts') in command[1]
-                            for command in restores))
+        expected_scripts = self.infrastructure.resolve() / 'scripts'
+        for command in restores:
+            self.assertEqual(Path(command[1]).parent, expected_scripts)
 
     def test_dirty_infrastructure_fails_before_dependency_resolution(self):
         self.dirty = True
@@ -130,7 +131,7 @@ class CIEnvironmentTests(unittest.TestCase):
         (tools / 'android.toolchain.cmake').touch()
         values = setup.materialize_environment(self.root, 'android-arm64',
                                                 {'ANDROID_NDK_HOME': str(ndk)})
-        self.assertEqual(values['ANDROID_NDK_HOME'], ndk.as_posix())
+        self.assertEqual(values['ANDROID_NDK_HOME'], ndk.resolve().as_posix())
         self.assertEqual(values['VCPKG_TARGET_TRIPLET'], 'arm64-android')
 
     def test_invalid_openwtl_hash_stops_before_creating_the_file(self):

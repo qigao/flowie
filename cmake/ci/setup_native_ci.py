@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import subprocess
 import sys
@@ -49,13 +48,6 @@ def materialize_environment(root, profile, runner_environment):
 
 def run(*arguments):
     return subprocess.check_output(list(map(str, arguments)), text=True).strip()
-
-
-def host_rid():
-    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
-    architecture = {"AMD64": "x64", "x86_64": "x64",
-                    "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
-    return system + "-" + architecture
 
 
 def archive_transport(infrastructure):
@@ -147,7 +139,7 @@ def main():
             output.write("ref=v" + values["VCPKG_CACHE_VERSION"] + "\n")
         return
     configuration = settings.load_environment_file(root / ".env", os.environ)
-    values = prepare(root, configuration, host_rid())
+    values = prepare(root, configuration, settings.host_rid())
     settings.write_environment_file(root / ".env", values)
     print("Prepared shared vcpkg and host-tool installations")
 

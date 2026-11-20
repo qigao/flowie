@@ -52,6 +52,13 @@ class EnvironmentFileTests(unittest.TestCase):
         self.assertEqual(environment['GITHUB_TOKEN'], 'parent-secret')
         self.assertNotIn('GITHUB_TOKEN', selected)
 
+    def test_android_selects_a_native_sdk_profile_for_the_idl_compiler(self):
+        self.assertEqual(restore.android_idlc_profile('linux-x64'), 'linux-gcc-x64')
+        for host in ('linux-x64', 'linux-arm64', 'windows-x64', 'macos-arm64'):
+            with self.subTest(host=host):
+                profile = restore.android_idlc_profile(host)
+                self.assertEqual(restore.SDK_PROFILES[profile][0], host)
+
     def test_unknown_fields_do_not_enter_environment_or_output(self):
         self.write('GITHUB_TOKEN=file-secret\nUNRELATED_SETTING=value\n')
         environment = {}

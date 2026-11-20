@@ -10,13 +10,24 @@ cmake_add_grammar(
   FOLDER
   "flowie/control/acl")
 
-unset(FLOWIE_CONTROL_SALTS_IDLC CACHE)
-find_program(
-  FLOWIE_CONTROL_SALTS_IDLC
-  NAMES salts-idlc salts-idlc.exe
-  PATHS "$ENV{SALTS_UTILS_ROOT}/bin"
-  NO_DEFAULT_PATH REQUIRED)
-if(WIN32)
+set(_idlc_root "$ENV{SALTS_UTILS_ROOT}")
+if(CMAKE_CROSSCOMPILING)
+  # The generator and its runtime libraries must match the build host.
+  if("$ENV{SALTS_IDLC_ROOT}" STREQUAL "" OR "$ENV{SALTS_IDLC_BASE_ROOT}" STREQUAL "")
+    message(FATAL_ERROR "Cross builds require host SALTS_IDLC_ROOT and SALTS_IDLC_BASE_ROOT")
+  endif()
+  set(_idlc_root "$ENV{SALTS_IDLC_ROOT}")
+  if(CMAKE_HOST_WIN32)
+    set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+        "PATH=$ENV{SALTS_IDLC_ROOT}/bin\;$ENV{SALTS_IDLC_BASE_ROOT}/bin\;$ENV{PATH}")
+  elseif(CMAKE_HOST_APPLE)
+    set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+        "DYLD_LIBRARY_PATH=$ENV{SALTS_IDLC_ROOT}/lib:$ENV{SALTS_IDLC_BASE_ROOT}/lib")
+  else()
+    set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
+        "LD_LIBRARY_PATH=$ENV{SALTS_IDLC_ROOT}/lib:$ENV{SALTS_IDLC_BASE_ROOT}/lib")
+  endif()
+elseif(WIN32)
   set(FLOWIE_CONTROL_TBE_RUNTIME_ENV
       "PATH=$<TARGET_FILE_DIR:Salts::Mustache>\;$<TARGET_FILE_DIR:Salts::Core>\;$ENV{PATH}"
   )
@@ -29,6 +40,12 @@ else()
       "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:Salts::Mustache>:$<TARGET_FILE_DIR:Salts::Core>:$ENV{LD_LIBRARY_PATH}"
   )
 endif()
+unset(FLOWIE_CONTROL_SALTS_IDLC CACHE)
+find_program(
+  FLOWIE_CONTROL_SALTS_IDLC
+  NAMES salts-idlc salts-idlc.exe
+  PATHS "${_idlc_root}/bin"
+  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
 set(FLOWIE_CONTROL_DATA_SCHEMA
     "${CMAKE_CURRENT_SOURCE_DIR}/schema/flowie_control_data.schema")
 set(FLOWIE_CONTROL_DATA_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/data-schema")

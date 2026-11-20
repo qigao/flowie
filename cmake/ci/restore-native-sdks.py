@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sys
@@ -21,6 +22,17 @@ def version(name, environment=None):
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?', value):
         raise ValueError(f'{name} must be an exact release version without v')
     return value
+
+
+def host_rid():
+    system = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}[platform.system()]
+    architecture = {"AMD64": "x64", "x86_64": "x64",
+                    "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
+    return system + "-" + architecture
+
+
+def android_idlc_profile(host):
+    return 'linux-gcc-x64' if host == 'linux-x64' else PROFILES[host][0]
 
 
 def load_environment_file(path, environment):
@@ -114,6 +126,7 @@ def main():
         environment[name] = file_environment[name]
     if args.rid == 'android-arm64-v8a':
         environment['ANDROID_ABI'] = 'arm64-v8a'
+        idlc_profile = android_idlc_profile(host_rid())
     releases = {}
 
     def release(repo):
@@ -157,7 +170,7 @@ def main():
                     or manifest['dependencies']['release'] != 'v' + versions['vcpkg-cache']
                     or manifest['ci']['conclusion'] != 'success'
                     or not manifest['ci']['runId'] or producer['file'] != name
-                    or producer['triplet'] != triplet
+                    or producer['triplet'] != SDK_PROFILES[selected_profile][1]
                     or producer['sizeBytes'] != item['size']
                     or 'sha256:' + producer['sha256'] != item['digest']):
                 raise ValueError('SaltsBase manifest does not qualify the selected SDK')
@@ -246,6 +259,11 @@ def main():
     sdk('salts-base', 'SALTS_BASE', 'lib/cmake/SaltsBase/SaltsBaseConfig.cmake', profile)
     sdk('cmeta', 'CMETA', 'lib/cmake/CMeta/CMetaConfig.cmake', profile)
     sdk('salts-utils', 'SALTS_UTILS', 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake', profile)
+    if args.rid == 'android-arm64-v8a':
+        sdk('salts-base', 'SALTS_IDLC_BASE', 'lib/cmake/SaltsBase/SaltsBaseConfig.cmake',
+            idlc_profile)
+        sdk('salts-utils', 'SALTS_IDLC', 'lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake',
+            idlc_profile)
     cnet_profile = {'windows-llvm-mingw-x64': 'windows-x64',
                     'linux-clang-x64': 'linux-x64', 'linux-clang-arm64': 'linux-arm64',
                     'macos-clang-arm64': 'macos-arm64'}.get(profile, profile)
@@ -274,7 +292,8 @@ ENVIRONMENT_FILE_FIELDS = frozenset(VERSIONS.values()) | {
     'OPENWTL_VERSION', 'OPENWTL_SHA256',
     'TURBORAFT_VERSION', 'TURBORAFT_ROOT',
     'SALTS_BASE_ROOT', 'CMETA_ROOT', 'SALTS_UTILS_ROOT', 'SALTS_CORE_ROOT',
-    'SALTS_CNET_ROOT', 'SALTS_CNET_VERSION', 'CHTTP_ROOT'
+    'SALTS_CNET_ROOT', 'SALTS_CNET_VERSION', 'CHTTP_ROOT',
+    'SALTS_IDLC_ROOT', 'SALTS_IDLC_BASE_ROOT'
 }
 PROFILES = {'windows-x64': ('windows-msvc-x64', 'x64-windows'),
             'linux-x64': ('linux-clang-x64', 'x64-linux'),

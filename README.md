@@ -165,6 +165,9 @@ Credentials come from the runner token environment.
 The shared vcpkg-cache release provides the installed dependencies and the re2c and Lemon
 archives. The bootstrap restores them through the selected shared checkout and records the
 returned paths in `.env`. Native jobs upload CTest logs, with Workbench window renders on Windows.
+For Android, restore also records `SALTS_IDLC_ROOT` and `SALTS_IDLC_BASE_ROOT` for
+the same-version host compiler and its runtime. Control schemas are generated on
+the host while Android targets link the Android SDK.
 Automatic branch and pull request builds ignore changes limited to CMake, JSON, and documentation.
 Manual workflow dispatch can validate those changes. Version tags trigger the release workflow.
 
