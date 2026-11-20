@@ -316,3 +316,9 @@ SDK 中的同名程序是 AArch64 目标文件，不能用于这一步。恢复�
 Android 打包检查发现 NDK r27 产出的 `libflowie.so` 未达到 16 KiB ELF
 段对齐要求。Android 工具链 preset 为可执行文件和共享库显式指定
 `max-page-size=16384` 与 `common-page-size=16384`，由打包检查验证产物。
+
+运行 44671306405 的 Linux 和 Android SDK 已打包，Windows Python 检查和
+构建已通过。Windows Workbench 回归在 900 DIP 窗口本地重现：新增标签先
+滚入可见区域，随后状态标题增加宽度，使关闭按钮被裁剪。更新标题后再选中
+标签，保留原生滚动行为。传输下拉框测试使用控件报告的行高和选项数，避免
+受固定像素阈值影响。两处修复通过本地 `ci-msvc-release-user` Workbench CTest。

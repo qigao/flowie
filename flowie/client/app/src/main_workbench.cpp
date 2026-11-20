@@ -102,7 +102,6 @@ namespace flowie::app {
   void WorkbenchWindow::activate(size_t index) {
     if (index >= clients_.size()) throw std::out_of_range("Invalid client tab");
     active_ = index;
-    TabCtrl_SetCurSel(tabs_, static_cast<int>(index));
     for (size_t i = 0; i < clients_.size(); ++i)
       if (::IsWindow(clients_[i]->hwnd())) {
         ::ShowWindow(clients_[i]->hwnd(), i == active_ ? SW_SHOW : SW_HIDE);
@@ -110,6 +109,8 @@ namespace flowie::app {
       }
     layout();
     update();
+    // Scroll the selection into view after its status caption sets the final tab width.
+    TabCtrl_SetCurSel(tabs_, static_cast<int>(index));
   }
   void WorkbenchWindow::update() {
     for (size_t i = 0; i < clients_.size(); ++i) {

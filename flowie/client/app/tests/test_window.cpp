@@ -454,10 +454,17 @@ suite("Workbench native window") {
   it("keeps transport choices usable and closes while a broker withholds CONNACK") {
     LoopbackBroker broker(false, true);
     WindowFixture view;
-    RECT drop{};
-    SendMessageW(view.control(MainWindow::transport), CB_GETDROPPEDCONTROLRECT, 0,
-                 reinterpret_cast<LPARAM>(&drop));
-    check_greater(drop.bottom - drop.top, 100L);
+    const HWND transport = view.control(MainWindow::transport);
+    RECT closed{}, drop{};
+    check_true(GetWindowRect(transport, &closed) != FALSE);
+    check_true(SendMessageW(transport, CB_GETDROPPEDCONTROLRECT, 0,
+                            reinterpret_cast<LPARAM>(&drop)) != FALSE);
+    const auto count = SendMessageW(transport, CB_GETCOUNT, 0, 0);
+    const auto row_height = SendMessageW(transport, CB_GETITEMHEIGHT, 0, 0);
+    check_equal(count, LRESULT(4));
+    check_greater(row_height, LRESULT(0));
+    const auto list_height = (drop.bottom - drop.top) - (closed.bottom - closed.top);
+    check_greater_equal(LRESULT(list_height), count * row_height);
     view.set(MainWindow::port, std::to_wstring(broker.port).c_str());
     view.click(MainWindow::connect_button);
     SendMessageW(*view.window, WM_CLOSE, 0, 0);
@@ -1123,6 +1130,11 @@ suite("Workbench multiple publishers and subscribers") {
   }
   it("keeps close buttons within visible tab headers when tabs overflow and the window resizes") {
     WorkspaceFixture view;
+    const HDC dc = GetDC(view.window);
+    check_not_null(dc);
+    const int dpi = GetDeviceCaps(dc, LOGPIXELSX);
+    ReleaseDC(view.window, dc);
+    view.window.MoveWindow(0, 0, MulDiv(900, dpi, 96), MulDiv(760, dpi, 96), TRUE);
     for (size_t i = 1; i < flowie::app::kMaxClients; ++i)
       view.action(WorkbenchWindow::add_subscriber);
     auto check_visible_buttons = [&] {
