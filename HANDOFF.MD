@@ -366,7 +366,10 @@ MSVC 19.52.37029 的 ARM64 代码生成会在结构体字段赋值后写入重�
 [CMeta ARM64 验证](https://github.com/qigao/cmeta/actions/runs/44703550580)
 
 macOS ARM64 首轮构建完成后，6 项 ORM、Server 和 Control 的 CTest 在加载
-`libturbo_orm.dylib` 时找不到 `@rpath/libdata_bind.dylib`。Flowie 从已选定的
-`Salts::DataBind` 导入目标取得 SaltsUtils 的库目录，并加入 macOS 的构建 RPATH。
-安装仍使用独立 SDK，归档不会保留该构建目录的绝对路径。
+`libturbo_orm.dylib` 时找不到 `@rpath/libdata_bind.dylib`。补齐 SaltsUtils 后，
+`test_flowie_orm_runtime` 仍无法加载 PostgreSQL 驱动。发布包的 Mach-O 加载命令
+显示 PostgreSQL 和 MySQL 模块还依赖 SaltsCNet 的 `libcnet.dylib` 和
+`libsalts_crypto.dylib`。Flowie 将这两个 SDK 的库目录加入 macOS 构建 RPATH。
+归档保留独立 SDK 的安装布局。
 [Flowie 首轮 macOS CTest](https://github.com/qigao/flowie/actions/runs/44707944027/job/136192209383)
+[Flowie ORM 驱动 CTest](https://github.com/qigao/flowie/actions/runs/44708848545/job/136195221247)

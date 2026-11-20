@@ -34,8 +34,9 @@ find_package(
 )
 
 if(APPLE)
-    # TurboDB's ORM dylib loads DataBind via @rpath from the separate SaltsUtils SDK.
-    list(APPEND CMAKE_BUILD_RPATH "$<TARGET_FILE_DIR:Salts::DataBind>")
+    # The imported ORM dylib and its loadable SQL drivers resolve private
+    # dylibs in the selected SaltsUtils and SaltsCNet SDKs via @rpath.
+    list(APPEND CMAKE_BUILD_RPATH "$<TARGET_FILE_DIR:Salts::DataBind>" "$<TARGET_FILE_DIR:Salts::CNet>")
 endif()
 
 if(FLOWIE_BUILD_CLUSTER)
