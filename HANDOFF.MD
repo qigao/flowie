@@ -311,3 +311,8 @@ Android 交叉构建在 Ubuntu 执行 `salts-idlc` 生成 Control SQL。Android
 SDK 中的同名程序是 AArch64 目标文件，不能用于这一步。恢复过程同时选择
 同一发布的宿主 SaltsUtils 和 SaltsBase，并通过 `SALTS_IDLC_ROOT` 与
 `SALTS_IDLC_BASE_ROOT` 交给生成命令。宿主生成器及其运行库独立于目标链接。
+
+运行 44671000258 的 Windows Python 检查已通过，Android 已完成构建与安装。
+Android 打包检查发现 NDK r27 产出的 `libflowie.so` 未达到 16 KiB ELF
+段对齐要求。Android 工具链 preset 为可执行文件和共享库显式指定
+`max-page-size=16384` 与 `common-page-size=16384`，由打包检查验证产物。
