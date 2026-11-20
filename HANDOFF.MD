@@ -364,3 +364,9 @@ MSVC 19.52.37029 的 ARM64 代码生成会在结构体字段赋值后写入重�
 `/O1` 和 `/Qvec-` 的验证仍有失败，`/Od` 通过 CMeta 的 120 项 CTest。
 恢复优化的验收条件是修正的工具链通过相同的原生和下游测试。性能影响未测量。
 [CMeta ARM64 验证](https://github.com/qigao/cmeta/actions/runs/44703550580)
+
+macOS ARM64 首轮构建完成后，6 项 ORM、Server 和 Control 的 CTest 在加载
+`libturbo_orm.dylib` 时找不到 `@rpath/libdata_bind.dylib`。Flowie 从已选定的
+`Salts::DataBind` 导入目标取得 SaltsUtils 的库目录，并加入 macOS 的构建 RPATH。
+安装仍使用独立 SDK，归档不会保留该构建目录的绝对路径。
+[Flowie 首轮 macOS CTest](https://github.com/qigao/flowie/actions/runs/44707944027/job/136192209383)

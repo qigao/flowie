@@ -33,6 +33,11 @@ find_package(
     NO_CMAKE_FIND_ROOT_PATH
 )
 
+if(APPLE)
+    # TurboDB's ORM dylib loads DataBind via @rpath from the separate SaltsUtils SDK.
+    list(APPEND CMAKE_BUILD_RPATH "$<TARGET_FILE_DIR:Salts::DataBind>")
+endif()
+
 if(FLOWIE_BUILD_CLUSTER)
     find_package(
         TurboRaft "$ENV{TURBORAFT_VERSION}" EXACT CONFIG REQUIRED PATHS "$ENV{TURBORAFT_ROOT}" NO_DEFAULT_PATH
