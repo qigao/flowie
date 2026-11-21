@@ -1,153 +1,167 @@
 cmake_add_test(
-  test_flowie_mqtt_client
-  SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
-  LIBS
-  Flowie::Client
-  Flowie::Protocol
-  Flowie::Connection
-  Salts::Core
-  Salts::TinyTest
-  FOLDER
-  "flowie/client/tests")
+	test_flowie_mqtt_client
+	SOURCES
+	${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
+	LIBS
+	Flowie::Client
+	Flowie::Protocol
+	Flowie::Connection
+	Salts::Core
+	Salts::TinyTest
+	FOLDER
+	"flowie/client/tests"
+)
 
 target_include_directories(test_flowie_mqtt_client
-                           PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
+	PRIVATE ${PROJECT_SOURCE_DIR}/tests/support
+)
 target_link_libraries(test_flowie_mqtt_client PRIVATE GmSSL::GmSSL)
-set_tests_properties(
-  test_flowie_mqtt_client
-  PROPERTIES LABELS
-             "flowie;flowie-release;mqtt;client;mqtt-security;mqtt-negative")
+set_tests_properties(test_flowie_mqtt_client
+	PROPERTIES LABELS "flowie;flowie-release;mqtt;client;mqtt-security;mqtt-negative"
+)
 
 cmake_add_test(
-  test_flowie_mqtt_client_live
-  SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
-  LIBS
-  Flowie::Client
-  Flowie::Protocol
-  Salts::Core
-  Salts::TinyTest
-  FOLDER
-  "flowie/client/tests")
+	test_flowie_mqtt_client_live
+	SOURCES
+	${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
+	LIBS
+	Flowie::Client
+	Flowie::Protocol
+	Salts::Core
+	Salts::TinyTest
+	FOLDER
+	"flowie/client/tests"
+)
 
-set_tests_properties(
-  test_flowie_mqtt_client_live
-  PROPERTIES LABELS
-             "flowie;mqtt;client;integration;mqtt-public-live;external-smoke"
-             TIMEOUT 120)
+set_tests_properties(test_flowie_mqtt_client_live
+	PROPERTIES
+		LABELS "flowie;mqtt;client;integration;mqtt-public-live;external-smoke"
+		TIMEOUT 120
+)
 if(NOT FLOWIE_MQTT_PUBLIC_LIVE_TESTS)
-  set_tests_properties(test_flowie_mqtt_client_live PROPERTIES DISABLED TRUE)
+	set_tests_properties(test_flowie_mqtt_client_live PROPERTIES DISABLED TRUE)
 endif()
 
 if(FLOWIE_MQTT_FIXED_INTEROP_TESTS)
-  if(NOT FLOWIE_MQTT_FIXED_CA_FILE OR NOT EXISTS "${FLOWIE_MQTT_FIXED_CA_FILE}")
-    message(
-      FATAL_ERROR
-        "FLOWIE_MQTT_FIXED_INTEROP_TESTS requires FLOWIE_MQTT_FIXED_CA_FILE")
-  endif()
-  cmake_add_test(
-    test_flowie_mqtt_client_fixed_interop
-    SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
-    LIBS
-    Flowie::Client
-    Flowie::Protocol
-    Salts::Core
-    Salts::TinyTest
-    FOLDER
-    "flowie/client/tests")
-  target_compile_definitions(
-    test_flowie_mqtt_client_fixed_interop
-    PRIVATE
-      FLOWIE_MQTT_FIXED_INTEROP=1
-      FLOWIE_MQTT_FIXED_BROKER_NAME="${FLOWIE_MQTT_FIXED_BROKER_NAME}"
-      FLOWIE_MQTT_FIXED_HOST="${FLOWIE_MQTT_FIXED_HOST}"
-      FLOWIE_MQTT_FIXED_TCP_PORT=${FLOWIE_MQTT_FIXED_TCP_PORT}
-      FLOWIE_MQTT_FIXED_TLS_PORT=${FLOWIE_MQTT_FIXED_TLS_PORT}
-      FLOWIE_MQTT_FIXED_WS_PORT=${FLOWIE_MQTT_FIXED_WS_PORT}
-      FLOWIE_MQTT_FIXED_WSS_PORT=${FLOWIE_MQTT_FIXED_WSS_PORT}
-      FLOWIE_MQTT_FIXED_WS_PATH="${FLOWIE_MQTT_FIXED_WS_PATH}"
-      FLOWIE_MQTT_FIXED_CA_FILE="${FLOWIE_MQTT_FIXED_CA_FILE}"
-      FLOWIE_MQTT_FIXED_SUPPORT_31=$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31}>
-      FLOWIE_MQTT_FIXED_SUPPORT_31_WS=$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31_WS}>
-  )
-  set_tests_properties(
-    test_flowie_mqtt_client_fixed_interop
-    PROPERTIES
-      LABELS
-      "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop;mqtt-persistence"
-      TIMEOUT 300)
-  add_test(
-    NAME flowie_mqtt_fixed_mqtt31_capability
-    COMMAND
-      ${CMAKE_COMMAND} -E echo
-      "$<IF:$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31}>,SUPPORTED: MQTT 3.1 TCP/TLS,SKIP: fixed broker does not declare MQTT 3.1 TCP/TLS>"
-  )
-  set_tests_properties(
-    flowie_mqtt_fixed_mqtt31_capability
-    PROPERTIES LABELS "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop"
-               SKIP_REGULAR_EXPRESSION "^SKIP: fixed broker")
-  add_test(
-    NAME flowie_mqtt_fixed_mqtt31_ws_capability
-    COMMAND
-      ${CMAKE_COMMAND} -E echo
-      "$<IF:$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31_WS}>,SUPPORTED: MQTT 3.1 WS/WSS,SKIP: fixed broker does not declare MQTT 3.1 WS/WSS>"
-  )
-  set_tests_properties(
-    flowie_mqtt_fixed_mqtt31_ws_capability
-    PROPERTIES LABELS "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop"
-               SKIP_REGULAR_EXPRESSION "^SKIP: fixed broker")
-  if(WIN32)
-    target_link_libraries(test_flowie_mqtt_client_fixed_interop PRIVATE ws2_32)
-  endif()
+	if(NOT FLOWIE_MQTT_FIXED_CA_FILE OR NOT EXISTS "${FLOWIE_MQTT_FIXED_CA_FILE}")
+		message(FATAL_ERROR
+			"FLOWIE_MQTT_FIXED_INTEROP_TESTS requires FLOWIE_MQTT_FIXED_CA_FILE"
+		)
+	endif()
+	cmake_add_test(
+		test_flowie_mqtt_client_fixed_interop
+		SOURCES
+		${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c
+		LIBS
+		Flowie::Client
+		Flowie::Protocol
+		Salts::Core
+		Salts::TinyTest
+		FOLDER
+		"flowie/client/tests"
+	)
+	target_compile_definitions(test_flowie_mqtt_client_fixed_interop
+		PRIVATE
+			FLOWIE_MQTT_FIXED_INTEROP=1
+			FLOWIE_MQTT_FIXED_BROKER_NAME="${FLOWIE_MQTT_FIXED_BROKER_NAME}"
+			FLOWIE_MQTT_FIXED_HOST="${FLOWIE_MQTT_FIXED_HOST}"
+			FLOWIE_MQTT_FIXED_TCP_PORT=${FLOWIE_MQTT_FIXED_TCP_PORT}
+			FLOWIE_MQTT_FIXED_TLS_PORT=${FLOWIE_MQTT_FIXED_TLS_PORT}
+			FLOWIE_MQTT_FIXED_WS_PORT=${FLOWIE_MQTT_FIXED_WS_PORT}
+			FLOWIE_MQTT_FIXED_WSS_PORT=${FLOWIE_MQTT_FIXED_WSS_PORT}
+			FLOWIE_MQTT_FIXED_WS_PATH="${FLOWIE_MQTT_FIXED_WS_PATH}"
+			FLOWIE_MQTT_FIXED_CA_FILE="${FLOWIE_MQTT_FIXED_CA_FILE}"
+			FLOWIE_MQTT_FIXED_SUPPORT_31=$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31}>
+			FLOWIE_MQTT_FIXED_SUPPORT_31_WS=$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31_WS}>
+	)
+	set_tests_properties(test_flowie_mqtt_client_fixed_interop
+		PROPERTIES
+			LABELS "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop;mqtt-persistence"
+			TIMEOUT 300
+	)
+	add_test(
+		NAME flowie_mqtt_fixed_mqtt31_capability
+		COMMAND ${CMAKE_COMMAND} -E echo
+			"$<IF:$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31}>,SUPPORTED: MQTT 3.1 TCP/TLS,SKIP: fixed broker does not declare MQTT 3.1 TCP/TLS>"
+	)
+	set_tests_properties(flowie_mqtt_fixed_mqtt31_capability
+		PROPERTIES
+			LABELS "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop"
+			SKIP_REGULAR_EXPRESSION "^SKIP: fixed broker"
+	)
+	add_test(
+		NAME flowie_mqtt_fixed_mqtt31_ws_capability
+		COMMAND ${CMAKE_COMMAND} -E echo
+			"$<IF:$<BOOL:${FLOWIE_MQTT_FIXED_SUPPORT_31_WS}>,SUPPORTED: MQTT 3.1 WS/WSS,SKIP: fixed broker does not declare MQTT 3.1 WS/WSS>"
+	)
+	set_tests_properties(flowie_mqtt_fixed_mqtt31_ws_capability
+		PROPERTIES
+			LABELS "flowie;flowie-release;mqtt-interop;mqtt-fixed-interop"
+			SKIP_REGULAR_EXPRESSION "^SKIP: fixed broker"
+	)
+	if(WIN32)
+		target_link_libraries(test_flowie_mqtt_client_fixed_interop PRIVATE ws2_32)
+	endif()
 endif()
 
 if(WIN32)
-  target_link_libraries(test_flowie_mqtt_client PRIVATE ws2_32)
-  target_link_libraries(test_flowie_mqtt_client_live PRIVATE ws2_32)
+	target_link_libraries(test_flowie_mqtt_client PRIVATE ws2_32)
+	target_link_libraries(test_flowie_mqtt_client_live PRIVATE ws2_32)
 endif()
 
 # Compile the exact Client translation unit as a separate test-only DLL so
 # deterministic CNet admission failures never leak into the installed SDK.
 if(FLOWIE_BUILD_TESTS)
-  add_library(flowie_client_close_fault SHARED
-              ${PROJECT_SOURCE_DIR}/flowie/client/src/flowie_mqtt_client.c)
-  target_compile_definitions(
-    flowie_client_close_fault PRIVATE FLOWIE_MQTT_CLIENT_BUILD
-                                      FLOWIE_CLIENT_FAULT_TEST)
-  target_include_directories(
-    flowie_client_close_fault
-    PUBLIC ${PROJECT_SOURCE_DIR}/flowie/client/include
-           ${PROJECT_SOURCE_DIR}/flowie/protocol/include
-    PRIVATE ${FLOWIE_PRIVATE_INCLUDE_DIR})
-  target_link_libraries(
-    flowie_client_close_fault PRIVATE Flowie::Protocol Salts::Core CMeta::CSTL
-                                      Salts::CNet CHttp::Client monocypher)
+	add_library(flowie_client_close_fault SHARED
+		${PROJECT_SOURCE_DIR}/flowie/client/src/flowie_mqtt_client.c
+	)
+	target_compile_definitions(flowie_client_close_fault
+		PRIVATE
+			FLOWIE_MQTT_CLIENT_BUILD
+			FLOWIE_CLIENT_FAULT_TEST
+	)
+	target_include_directories(flowie_client_close_fault
+		PUBLIC
+			${PROJECT_SOURCE_DIR}/flowie/client/include
+			${PROJECT_SOURCE_DIR}/flowie/protocol/include
+		PRIVATE ${FLOWIE_PRIVATE_INCLUDE_DIR}
+	)
+	target_link_libraries(flowie_client_close_fault
+		PRIVATE
+			Flowie::Protocol
+			Salts::Core
+			CMeta::CSTL
+			Salts::CNet
+			CHttp::Client
+			monocypher
+	)
 
-  cmake_add_test(
-    test_flowie_mqtt_client_close_full
-    SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
-    LIBS
-    flowie_client_close_fault
-    Flowie::Protocol
-    Flowie::Connection
-    Salts::Core
-    Salts::TinyTest
-    FOLDER
-    "flowie/client/tests")
-  target_compile_definitions(test_flowie_mqtt_client_close_full
-                             PRIVATE FLOWIE_CLIENT_FAULT_TEST)
-  target_include_directories(test_flowie_mqtt_client_close_full
-                             PRIVATE ${PROJECT_SOURCE_DIR}/tests/support)
-  target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE GmSSL::GmSSL)
-  if(WIN32)
-    target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE ws2_32)
-  endif()
-  set_tests_properties(
-    test_flowie_mqtt_client_close_full
-    PROPERTIES LABELS
-               "flowie;flowie-release;mqtt;client;fault-injection;lifetime"
-               TIMEOUT 60)
+	cmake_add_test(
+		test_flowie_mqtt_client_close_full
+		SOURCES
+		${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_transport.c
+		LIBS
+		flowie_client_close_fault
+		Flowie::Protocol
+		Flowie::Connection
+		Salts::Core
+		Salts::TinyTest
+		FOLDER
+		"flowie/client/tests"
+	)
+	target_compile_definitions(test_flowie_mqtt_client_close_full
+		PRIVATE FLOWIE_CLIENT_FAULT_TEST
+	)
+	target_include_directories(test_flowie_mqtt_client_close_full
+		PRIVATE ${PROJECT_SOURCE_DIR}/tests/support
+	)
+	target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE GmSSL::GmSSL)
+	if(WIN32)
+		target_link_libraries(test_flowie_mqtt_client_close_full PRIVATE ws2_32)
+	endif()
+	set_tests_properties(test_flowie_mqtt_client_close_full
+		PROPERTIES
+			LABELS "flowie;flowie-release;mqtt;client;fault-injection;lifetime"
+			TIMEOUT 60
+	)
 endif()

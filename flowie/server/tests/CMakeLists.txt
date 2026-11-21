@@ -96,15 +96,22 @@ endif()
 add_test(
   NAME flowie_server_check_native_https_security
   COMMAND
-    flowie_server --check --require-security --config
-    ${PROJECT_SOURCE_DIR}/deploy/server/.remote-flowie-eu.yml --profile flowie
-    --protocol-store-driver sqlite --protocol-store-options
+    flowie_server
+    --check
+    --require-security
+    --config
+    ${PROJECT_SOURCE_DIR}/deploy/server/.remote-flowie-eu.yml
+    --profile
+    flowie
+    --protocol-store-driver
+    sqlite
+    --protocol-store-options
     {"filename":":memory:"})
 set_tests_properties(
   flowie_server_check_native_https_security
-  PROPERTIES LABELS
-             "flowie;flowie-release;product-contract;security-contract;cnet"
-             ENVIRONMENT "FLOWIE_AUTH_SERVICE_TOKEN=test-only-token")
+  PROPERTIES
+    LABELS "flowie;flowie-release;product-contract;security-contract;cnet"
+    ENVIRONMENT "FLOWIE_AUTH_SERVICE_TOKEN=test-only-token")
 
 cmake_add_test(
   test_flowie_server_turbodb_config
@@ -122,33 +129,45 @@ cmake_add_test(
   "flowie/server/tests")
 set_tests_properties(
   test_flowie_server_turbodb_config
-  PROPERTIES LABELS
-             "flowie;flowie-release;product-contract;persistence;turbodb")
+  PROPERTIES LABELS "flowie;flowie-release;product-contract;persistence;turbodb"
+)
 
 add_test(
   NAME flowie_server_check_debug_logging
   COMMAND
-    flowie_server --check --protocol-store-driver sqlite
-    --protocol-store-options {"filename":":memory:"} --log-level DEBUG
-    --max-inflight 17)
+    flowie_server
+    --check
+    --protocol-store-driver
+    sqlite
+    --protocol-store-options
+    {"filename":":memory:"}
+    --log-level
+    DEBUG
+    --max-inflight
+    17)
 set_tests_properties(
   flowie_server_check_debug_logging
   PROPERTIES
-    LABELS
-    "flowie;flowie-release;product-contract;diagnostics"
+    LABELS "flowie;flowie-release;product-contract;diagnostics"
     PASS_REGULAR_EXPRESSION
     "\\[DEBUG\\].*\\[Flowie.Server\\].*effective-config.*max_inflight_per_session=17"
 )
 
 add_test(
   NAME flowie_server_check_logging_shutdown_snapshot
-  COMMAND flowie_server --check --protocol-store-driver sqlite
-          --protocol-store-options {"filename":":memory:"} --log-level INFO)
+  COMMAND
+    flowie_server
+    --check
+    --protocol-store-driver
+    sqlite
+    --protocol-store-options
+    {"filename":":memory:"}
+    --log-level
+    INFO)
 set_tests_properties(
   flowie_server_check_logging_shutdown_snapshot
   PROPERTIES
-    LABELS
-    "flowie;flowie-release;product-contract;diagnostics"
+    LABELS "flowie;flowie-release;product-contract;diagnostics"
     PASS_REGULAR_EXPRESSION
     "logging-shutdown written_before_summary=[0-9]+ dropped_total=0 pending_before_summary=0"
 )

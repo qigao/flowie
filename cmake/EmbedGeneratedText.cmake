@@ -15,11 +15,14 @@ if(NOT DEFINED FUNCTION OR NOT FUNCTION MATCHES "^[A-Za-z_][A-Za-z0-9_]*$")
 endif()
 
 file(READ "${INPUT}" _embedded_text HEX)
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _embedded_bytes "${_embedded_text}")
-file(WRITE "${OUTPUT}"
-     "#include \"${HEADER}\"\n\n"
-     "static const unsigned char ${SYMBOL}[] = {${_embedded_bytes}0x00};\n\n"
-     "const char *${FUNCTION}(size_t *size_out) {\n"
-     "  if (size_out) *size_out = sizeof(${SYMBOL}) - 1u;\n"
-     "  return (const char *)${SYMBOL};\n"
-     "}\n")
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _embedded_bytes
+       "${_embedded_text}")
+file(
+  WRITE
+  "${OUTPUT}"
+  "#include \"${HEADER}\"\n\n"
+  "static const unsigned char ${SYMBOL}[] = {${_embedded_bytes}0x00};\n\n"
+  "const char *${FUNCTION}(size_t *size_out) {\n"
+  "  if (size_out) *size_out = sizeof(${SYMBOL}) - 1u;\n"
+  "  return (const char *)${SYMBOL};\n"
+  "}\n")

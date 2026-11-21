@@ -31,8 +31,9 @@ if(BUILD_TESTS)
     ${PROJECT_SOURCE_DIR}/tests/support
     FOLDER
     "flowie/control/tests")
-  set_tests_properties(test_flowie_control_http
-                       PROPERTIES LABELS "flowie;flowie/control-plane;http")
+  set_tests_properties(
+    test_flowie_control_http
+    PROPERTIES LABELS "flowie;flowie/control-plane;http")
   cmake_add_test(
     test_flowie_control_runtime
     SOURCES
@@ -86,13 +87,14 @@ if(BUILD_TESTS)
     test_flowie_control_https_integration
     PRIVATE FLOWIE_CONTROL_EXECUTABLE="$<TARGET_FILE:flowie-control>")
   add_dependencies(test_flowie_control_https_integration flowie-control)
-  target_link_libraries(test_flowie_control_https_integration
-                        PRIVATE Salts::Crypto)
+  target_link_libraries(
+    test_flowie_control_https_integration
+    PRIVATE Salts::Crypto)
   set_tests_properties(
     test_flowie_control_https_integration
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;integration"
-               TIMEOUT 30)
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;integration" TIMEOUT
+      30)
   if(WIN32)
     set_tests_properties(
       test_flowie_control_http
@@ -104,16 +106,16 @@ if(BUILD_TESTS)
     target_link_libraries(test_flowie_control_https_integration PRIVATE ws2_32)
     set_target_properties(
       test_flowie_control_runtime
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_target_properties(
       test_flowie_control_bootstrap_runtime
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_target_properties(
       test_flowie_control_https_integration
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_tests_properties(
       test_flowie_control_runtime
       PROPERTIES
@@ -182,8 +184,9 @@ if(BUILD_TESTS)
   if(WIN32)
     set_tests_properties(
       test_flowie_control_startup_options
-      PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
   endif()
   cmake_add_test(
     test_flowie_control_config
@@ -207,8 +210,9 @@ if(BUILD_TESTS)
   if(WIN32)
     set_tests_properties(
       test_flowie_control_config
-      PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
   endif()
   cmake_add_test(
     test_flowie_control_database
@@ -238,8 +242,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_data_schema
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;storage-contract;data-transfer")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;storage-contract;data-transfer")
   cmake_add_test(
     test_flowie_control_store_schema
     SOURCES
@@ -270,8 +274,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_data_transfer
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;storage-contract;data-transfer")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;storage-contract;data-transfer")
   cmake_add_test(
     test_flowie_control_data_options
     SOURCES
@@ -289,8 +293,9 @@ if(BUILD_TESTS)
   if(WIN32)
     set_tests_properties(
       test_flowie_control_data_options
-      PROPERTIES ENVIRONMENT_MODIFICATION
-                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
+      PROPERTIES
+        ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:Salts::Core>")
   endif()
   cmake_add_test(
     test_flowie_control_store
@@ -338,8 +343,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_repository
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;storage-contract")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;storage-contract")
   cmake_add_test(
     test_flowie_control_auth_cache
     SOURCES
@@ -353,8 +358,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_auth_cache
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;mqtt-security")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;mqtt-security")
   cmake_add_test(
     test_flowie_control_external_authenticator
     SOURCES
@@ -368,8 +373,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_external_authenticator
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;external-auth")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;external-auth")
   cmake_add_test(
     test_flowie_control_external_https_authenticator
     SOURCES
@@ -384,17 +389,19 @@ if(BUILD_TESTS)
     ${PROJECT_SOURCE_DIR}/tests/support
     FOLDER
     "flowie/control/tests")
-  target_link_libraries(test_flowie_control_external_https_authenticator
-                        PRIVATE GmSSL::GmSSL)
+  target_link_libraries(
+    test_flowie_control_external_https_authenticator
+    PRIVATE GmSSL::GmSSL)
   if(WIN32)
-    target_link_libraries(test_flowie_control_external_https_authenticator
-                          PRIVATE ws2_32)
+    target_link_libraries(
+      test_flowie_control_external_https_authenticator
+      PRIVATE ws2_32)
   endif()
   set_tests_properties(
     test_flowie_control_external_https_authenticator
     PROPERTIES
-      LABELS
-      "flowie;flowie/control-plane;security-contract;external-auth;https")
+      LABELS "flowie;flowie/control-plane;security-contract;external-auth;https"
+  )
   cmake_add_test(
     test_flowie_control_jwt_jwks_authenticator
     SOURCES
@@ -411,11 +418,13 @@ if(BUILD_TESTS)
     ${PROJECT_SOURCE_DIR}/tests/support
     FOLDER
     "flowie/control/tests")
-  target_link_libraries(test_flowie_control_jwt_jwks_authenticator
-                        PRIVATE GmSSL::GmSSL)
+  target_link_libraries(
+    test_flowie_control_jwt_jwks_authenticator
+    PRIVATE GmSSL::GmSSL)
   if(WIN32)
-    target_link_libraries(test_flowie_control_jwt_jwks_authenticator
-                          PRIVATE ws2_32)
+    target_link_libraries(
+      test_flowie_control_jwt_jwks_authenticator
+      PRIVATE ws2_32)
   endif()
   set_tests_properties(
     test_flowie_control_jwt_jwks_authenticator
@@ -426,8 +435,8 @@ if(BUILD_TESTS)
     set_target_properties(
       test_flowie_control_external_https_authenticator
       test_flowie_control_jwt_jwks_authenticator
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_tests_properties(
       test_flowie_control_external_https_authenticator
       PROPERTIES
@@ -482,8 +491,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_auth_service
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;mqtt-security")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;mqtt-security")
   cmake_add_test(
     test_flowie_control_management_session
     SOURCES
@@ -511,8 +520,8 @@ if(BUILD_TESTS)
     "flowie/control/tests")
   set_tests_properties(
     test_flowie_control_service_credential
-    PROPERTIES LABELS
-               "flowie;flowie/control-plane;security-contract;mqtt-security")
+    PROPERTIES
+      LABELS "flowie;flowie/control-plane;security-contract;mqtt-security")
   cmake_add_test(
     test_flowie_control_management_service
     SOURCES
@@ -577,8 +586,8 @@ if(BUILD_TESTS)
   if(WIN32)
     set_target_properties(
       test_flowie_control_auth_iris_adapter
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_tests_properties(
       test_flowie_control_auth_iris_adapter
       PROPERTIES
@@ -587,8 +596,8 @@ if(BUILD_TESTS)
     )
     set_target_properties(
       test_flowie_control_management_rpc
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_tests_properties(
       test_flowie_control_management_rpc
       PROPERTIES
@@ -597,8 +606,8 @@ if(BUILD_TESTS)
     )
     set_target_properties(
       test_flowie_control_dashboard
-      PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                 "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
+      PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/flowie/control/test-bin")
     set_tests_properties(
       test_flowie_control_dashboard
       PROPERTIES
@@ -609,14 +618,12 @@ if(BUILD_TESTS)
 endif()
 
 if(WIN32 AND BUILD_TESTS)
-  get_property(
-    _flowie_control_tests
-    DIRECTORY
-    PROPERTY TESTS)
+  get_property(_flowie_control_tests DIRECTORY PROPERTY TESTS)
   set_property(
     TEST ${_flowie_control_tests}
     APPEND
-    PROPERTY ENVIRONMENT_MODIFICATION
-             "PATH=path_list_prepend:$<TARGET_FILE_DIR:flowie>")
+    PROPERTY
+      ENVIRONMENT_MODIFICATION
+      "PATH=path_list_prepend:$<TARGET_FILE_DIR:flowie>")
   unset(_flowie_control_tests)
 endif()

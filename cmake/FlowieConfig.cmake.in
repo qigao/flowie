@@ -2,20 +2,42 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
-find_dependency(SaltsBase @SaltsBase_VERSION@ EXACT CONFIG
+find_dependency(
+  SaltsBase @SaltsBase_VERSION@
+  EXACT
+  CONFIG
   PATHS "$ENV{SALTS_BASE_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(CMeta @CMeta_VERSION@ EXACT CONFIG
+find_dependency(
+  CMeta @CMeta_VERSION@
+  EXACT
+  CONFIG
   PATHS "$ENV{CMETA_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(SaltsUtils @SaltsUtils_VERSION@ EXACT CONFIG
+find_dependency(
+  SaltsUtils @SaltsUtils_VERSION@
+  EXACT
+  CONFIG
   PATHS "$ENV{SALTS_UTILS_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(GmSSL CONFIG
-  PATHS "$ENV{VCPKG_INSTALLED_DIR}/$ENV{VCPKG_TARGET_TRIPLET}"
-  NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(SaltsCNet @SaltsCNet_VERSION@ EXACT CONFIG
+find_dependency(
+  GmSSL
+  CONFIG
+  PATHS
+    "$ENV{VCPKG_INSTALLED_DIR}/$ENV{VCPKG_TARGET_TRIPLET}" NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH)
+find_dependency(
+  SaltsCNet @SaltsCNet_VERSION@
+  EXACT
+  CONFIG
   PATHS "$ENV{SALTS_CORE_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(Chttp @Chttp_VERSION@ EXACT CONFIG COMPONENTS App JWT
+find_dependency(
+  Chttp @Chttp_VERSION@
+  EXACT
+  CONFIG
+  COMPONENTS App JWT
   PATHS "$ENV{CHTTP_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-find_dependency(TurboDB @TurboDB_VERSION@ EXACT CONFIG
+find_dependency(
+  TurboDB @TurboDB_VERSION@
+  EXACT
+  CONFIG
   PATHS "$ENV{TURBODB_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 include("${CMAKE_CURRENT_LIST_DIR}/FlowieTargets.cmake")
 foreach(_flowie_component IN ITEMS Protocol Client Flowie)

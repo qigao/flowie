@@ -19,8 +19,9 @@ cmake_add_test(
   Salts::TinyTest
   FOLDER
   "flowie/transport/tests")
-set_tests_properties(test_flowie_connection test_flowie_send_batch
-                     PROPERTIES LABELS "flowie;connection;ownership")
+set_tests_properties(
+  test_flowie_connection test_flowie_send_batch
+  PROPERTIES LABELS "flowie;connection;ownership")
 if(WIN32)
   target_link_libraries(test_flowie_connection PRIVATE ws2_32)
 endif()
@@ -36,5 +37,5 @@ cmake_add_test(
   "flowie/transport/tests")
 
 set_tests_properties(
-  test_flow_execution PROPERTIES LABELS
-                                 "flowie;flowie/transport;execution;coroutine")
+  test_flow_execution
+  PROPERTIES LABELS "flowie;flowie/transport;execution;coroutine")

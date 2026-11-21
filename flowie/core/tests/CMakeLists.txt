@@ -12,8 +12,9 @@ cmake_add_test(
   FOLDER
   "flowie/core/tests")
 
-set_tests_properties(test_flowie_core
-                     PROPERTIES LABELS "flowie;flowie-release;mqtt-fast")
+set_tests_properties(
+  test_flowie_core
+  PROPERTIES LABELS "flowie;flowie-release;mqtt-fast")
 
 cmake_add_test(
   test_flowie_security
@@ -43,8 +44,9 @@ cmake_add_test(
   Salts::TinyTest
   FOLDER
   "flowie/core/tests")
-target_include_directories(test_flowie_session_delivery_index
-                           PRIVATE ${PROJECT_SOURCE_DIR}/flowie/core/src)
+target_include_directories(
+  test_flowie_session_delivery_index
+  PRIVATE ${PROJECT_SOURCE_DIR}/flowie/core/src)
 set_tests_properties(
   test_flowie_session_delivery_index
   PROPERTIES LABELS "flowie;flowie-release;mqtt-fast;session")
@@ -66,8 +68,9 @@ endif()
 
 set_tests_properties(
   test_flowie_transport_baseline
-  PROPERTIES LABELS "flowie;flowie-release;mqtt-flowie/transport;mqtt-security"
-             TIMEOUT 120)
+  PROPERTIES
+    LABELS "flowie;flowie-release;mqtt-flowie/transport;mqtt-security" TIMEOUT
+    120)
 
 cmake_add_test(
   test_flowie_protocol_repository
@@ -80,8 +83,9 @@ cmake_add_test(
   FOLDER
   "flowie/core/tests")
 
-set_tests_properties(test_flowie_protocol_repository
-                     PROPERTIES LABELS "flowie;flowie-release;storage")
+set_tests_properties(
+  test_flowie_protocol_repository
+  PROPERTIES LABELS "flowie;flowie-release;storage")
 
 cmake_add_test(
   test_flowie_orm_runtime
@@ -94,8 +98,9 @@ cmake_add_test(
   FLOWIE_TEST_SQLITE_MODULE="${TurboDB_DRIVER_DIR}/turbodb_driver_sqlite${CMAKE_SHARED_MODULE_SUFFIX}"
   FOLDER
   "flowie/core/tests")
-set_tests_properties(test_flowie_orm_runtime
-                     PROPERTIES LABELS "flowie;flowie-release;storage")
+set_tests_properties(
+  test_flowie_orm_runtime
+  PROPERTIES LABELS "flowie;flowie-release;storage")
 
 if(FLOWIE_TURBODB_LIVE_TESTS)
   cmake_add_test(
@@ -123,9 +128,11 @@ cmake_add_test(
   FOLDER
   "flowie/core/tests")
 target_include_directories(
-  test_flowie_cluster PRIVATE ${PROJECT_SOURCE_DIR}/flowie/core/src/cluster)
-set_tests_properties(test_flowie_cluster
-                     PROPERTIES LABELS "flowie;server/cluster;flowie-release")
+  test_flowie_cluster
+  PRIVATE ${PROJECT_SOURCE_DIR}/flowie/core/src/cluster)
+set_tests_properties(
+  test_flowie_cluster
+  PROPERTIES LABELS "flowie;server/cluster;flowie-release")
 
 cmake_add_test(
   test_flowie_topic_index
@@ -138,7 +145,10 @@ cmake_add_test(
   FOLDER
   "flowie/core/tests")
 target_include_directories(
-  test_flowie_topic_index PRIVATE ${PROJECT_SOURCE_DIR}/flowie/core/src/cluster
-                                  ${PROJECT_SOURCE_DIR}/flowie/core/src)
-set_tests_properties(test_flowie_topic_index
-                     PROPERTIES LABELS "flowie;mqtt;topic-index")
+  test_flowie_topic_index
+  PRIVATE
+    ${PROJECT_SOURCE_DIR}/flowie/core/src/cluster
+    ${PROJECT_SOURCE_DIR}/flowie/core/src)
+set_tests_properties(
+  test_flowie_topic_index
+  PROPERTIES LABELS "flowie;mqtt;topic-index")
