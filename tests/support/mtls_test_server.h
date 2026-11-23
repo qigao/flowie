@@ -290,10 +290,15 @@ static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const ui
   return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 1, 0, 1);
 }
 
+static void flow_mtls_test_server_release(flow_mtls_test_server_t *server) {
+  if (server && server->started)
+    atomic_store_explicit(&server->release_socket, 1, memory_order_release);
+}
+
 static void flow_mtls_test_server_join(flow_mtls_test_server_t *server) {
   if (!server) return;
   if (server->started) {
-    atomic_store_explicit(&server->release_socket, 1, memory_order_release);
+    flow_mtls_test_server_release(server);
     (void)sync_thread_join(&server->thread);
   }
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET)
