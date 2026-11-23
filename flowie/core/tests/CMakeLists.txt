@@ -222,11 +222,15 @@ cmake_add_test(
   FLOWIE_SOAK_CLIENT_CLOSE_TEST="$<TARGET_FILE:test_flowie_mqtt_client_close_full>"
   FLOWIE_SOAK_TRANSPORT_BASELINE_TEST="$<TARGET_FILE:test_flowie_transport_baseline>"
   FLOWIE_SOAK_INGRESS_TEST="$<TARGET_FILE:test_flowie_ingress>"
-  FLOWIE_SOAK_RAFT_STORE_TEST="$<TARGET_FILE:test_flowie_cluster_raft_store>"
-  FLOWIE_SOAK_RAFT_RUNTIME_TEST="$<TARGET_FILE:test_flowie_cluster_raft_runtime>"
-  FLOWIE_SOAK_RAFT_GENERATION_TEST="$<TARGET_FILE:test_flowie_cluster_raft_generation>"
   FOLDER
   "flowie/core/tests")
+if(BUILD_CLUSTER)
+  target_compile_definitions(test_flowie_mqtt_soak PRIVATE
+    FLOWIE_SOAK_WITH_RAFT=1
+    FLOWIE_SOAK_RAFT_STORE_TEST="$<TARGET_FILE:test_flowie_cluster_raft_store>"
+    FLOWIE_SOAK_RAFT_RUNTIME_TEST="$<TARGET_FILE:test_flowie_cluster_raft_runtime>"
+    FLOWIE_SOAK_RAFT_GENERATION_TEST="$<TARGET_FILE:test_flowie_cluster_raft_generation>")
+endif()
 if(WIN32)
   target_link_libraries(test_flowie_mqtt_soak PRIVATE psapi)
 endif()

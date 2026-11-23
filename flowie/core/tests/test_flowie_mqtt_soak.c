@@ -37,15 +37,6 @@
 #ifndef FLOWIE_SOAK_INGRESS_TEST
   #error "FLOWIE_SOAK_INGRESS_TEST must point to test_flowie_ingress"
 #endif
-#ifndef FLOWIE_SOAK_RAFT_STORE_TEST
-  #error "FLOWIE_SOAK_RAFT_STORE_TEST must point to test_flowie_cluster_raft_store"
-#endif
-#ifndef FLOWIE_SOAK_RAFT_RUNTIME_TEST
-  #error "FLOWIE_SOAK_RAFT_RUNTIME_TEST must point to test_flowie_cluster_raft_runtime"
-#endif
-#ifndef FLOWIE_SOAK_RAFT_GENERATION_TEST
-  #error "FLOWIE_SOAK_RAFT_GENERATION_TEST must point to test_flowie_cluster_raft_generation"
-#endif
 
 #define FLOWIE_SOAK_DEFAULT_ITERATIONS 3u
 #define FLOWIE_SOAK_DEFAULT_SUBSCRIPTIONS 100000u
@@ -719,6 +710,7 @@ spec("Flowie MQTT scheduled soak") {
                  SALTS_OK);
   }
 
+#ifdef FLOWIE_SOAK_WITH_RAFT
   it("MQTT-SOAK-005 repeats provider outage and lost-commit recovery traces") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
@@ -734,6 +726,7 @@ spec("Flowie MQTT scheduled soak") {
                                         SIZE_MAX),
                  SALTS_OK);
   }
+#endif
 
   it("MQTT-SOAK-006 repeats ingress HWM and admitted shutdown traces") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
