@@ -3,9 +3,10 @@
 ## 当前自动化
 
 [原生 SDK 资格验证](../.github/workflows/native-sdk-qualification.yml)调用
-[共享管线](../.github/workflows/native-sdk-pipeline.yml)，构建、安装和打包 Linux GCC、Windows MSVC、
-Android arm64 SDK。Linux 和 Windows job 通过 CTest 运行其配置注册的用例。
-Android job 检查安装产物的 16 KiB ELF 对齐。版本 tag 通过
+[共享管线](../.github/workflows/native-sdk-pipeline.yml)，构建、安装和打包 11 个平台配置。
+Windows x64 和 ARM64 各使用 MSVC 与 LLVM-MinGW，Linux x64 和 ARM64 各使用 GCC 与 Clang，
+macOS ARM64 使用 Clang。上述原生配置通过 CTest 执行注册用例。Android x64 和 ARM64
+交叉构建并检查安装产物的 16 KiB ELF 对齐。版本 tag 通过
 [SDK 发布 workflow](../.github/workflows/native-sdk-release.yml)发布归档、manifest 和校验和。
 
 本地复验使用 [根 README](../README.md#build-and-test) 中的 SDK 恢复、完整构建和 CTest 命令。
