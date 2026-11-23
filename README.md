@@ -231,10 +231,9 @@ merge selected fields into `.env` while preserving credentials and machine setti
 The restore loader replaces inherited build settings with the selected file values and never
 imports credentials from the file. CMake consumes the loaded environment and does not read dotenv.
 
-The selected family is SaltsBase 0.1.10, CMeta 0.1.10, SaltsUtils 0.1.8, SaltsCNet 0.1.18,
-[Chttp 0.1.4](https://github.com/qigao/chttp/releases/tag/v0.1.4),
-[TurboRaft 0.3.2](https://github.com/qigao/turboraft/releases/tag/v0.3.2) and TurboDB 0.1.3,
-with vcpkg-cache 0.1.8. Versions and roots are selected in `.env`:
+[.env.example](.env.example) pins the matching vcpkg-cache, SaltsBase, CMeta, SaltsUtils,
+SaltsCNet, CHttp, and TurboDB releases. Cluster builds also select TurboRaft.
+Set the corresponding roots in `.env`.
 
 - `SALTS_BASE_ROOT`, `CMETA_ROOT`, `SALTS_UTILS_ROOT`, `SALTS_CORE_ROOT` / `SALTS_CNET_ROOT`;
 - `CHTTP_ROOT` and `TURBODB_ROOT`, plus `TURBORAFT_ROOT` for cluster builds;
@@ -242,7 +241,7 @@ with vcpkg-cache 0.1.8. Versions and roots are selected in `.env`:
 - `VCPKG_INSTALLED_DIR`, `RE2C_ROOT`, `LEMON_ROOT` reference its restored installations.
 
 Flowie does not maintain copies of vcpkg or host-tool release declarations. Restore these
-through the [shared vcpkg-cache entry point](https://github.com/qigao/vcpkg-cache/blob/v0.1.8/docs/restore-native-dependency.md),
+through the [shared vcpkg-cache entry point](https://github.com/qigao/vcpkg-cache/blob/v0.1.9/docs/restore-native-dependency.md),
 then select their returned roots in `.env`. The SDK restore entry points are:
 
 ```powershell
