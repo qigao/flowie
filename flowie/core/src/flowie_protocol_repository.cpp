@@ -1,8 +1,8 @@
-#include "flowie_protocol_repository.h"
 #include "flowie_orm_flow_internal.h"
+#include "flowie_protocol_repository_internal.h"
 
-#include <shared/orm/orm.h>
 #include <core/error.h>
+#include <shared/orm/orm.h>
 #include <threads/thread_pool.h>
 
 #include <cstl.h>
@@ -51,8 +51,7 @@ static orm_value_t repo_span(flowie_mqtt_span_t value, bool blob) {
 
 static int repo_status(orm_status_t status) { return flowie_orm_status_to_salts(status); }
 
-static int repo_table(const repo_state *repository, const char *name, char *out,
-                      size_t capacity) {
+static int repo_table(const repo_state *repository, const char *name, char *out, size_t capacity) {
   int written;
   if (!repository || !name || !out || capacity == 0u) return SALTS_EINVAL;
   written = std::snprintf(out, capacity, "%s%s", repository->prefix, name);
@@ -132,6 +131,8 @@ static int repo_create_schema(repo_state *repository) {
       "client_id text primary key, pending integer not null, qos integer not null, retain "
       "integer not null, delay_interval bigint not null, topic text not null, properties %s "
       "not null, payload %s not null");
+  REPO_SCHEMA("replaced_wills", "client_id text primary key, session_generation bigint not null, "
+                                "mqtt_version integer not null, packet %s not null");
   REPO_SCHEMA(
       "retained",
       "topic text primary key, revision bigint not null, publisher_session_id bigint not null, "
@@ -170,8 +171,21 @@ static int repo_validate_schema(repo_state *repository) {
                                 &version, &rows);
   orm_query_destroy(query);
   if (rc != SALTS_OK) return rc;
-  return rows == 1u && version.version == FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION ? SALTS_OK
-                                                                                    : SALTS_EPROTO;
+  if (rows != 1u || version.version != FLOWIE_PROTOCOL_REPOSITORY_SCHEMA_VERSION)
+    return SALTS_EPROTO;
+  rc = repo_table(repository, "replaced_wills", table, sizeof(table));
+  if (rc != SALTS_OK) return rc;
+  const int check = std::snprintf(
+      sql, sizeof(sql),
+      "select client_id, session_generation, mqtt_version, packet from %s where 1=0", table);
+  if (check <= 0 || (size_t)check >= sizeof(sql)) return SALTS_ERANGE;
+  orm_result_t *result = nullptr;
+  query = nullptr;
+  rc = repo_status(orm_raw(repository->connection, repo_view(sql), &query, &error));
+  if (rc == SALTS_OK) rc = repo_status(orm_query_execute(query, &result, &error));
+  orm_result_destroy(result);
+  orm_query_destroy(query);
+  return rc;
 }
 
 static bool repo_limits_valid(const flowie_protocol_repository_limits_t *limits) {
@@ -202,8 +216,7 @@ static bool repo_cstr_valid(const char *value, size_t capacity, bool required) {
 
 static void repo_close_on_owner(repo_state *repository);
 
-static int repo_open_on_owner(const flowie_protocol_repository_config_t *config,
-                                    repo_state **out) {
+static int repo_open_on_owner(const flowie_protocol_repository_config_t *config, repo_state **out) {
   repo_state *repository = nullptr;
   orm_config_t orm_settings;
   orm_error_t error;
@@ -212,8 +225,7 @@ static int repo_open_on_owner(const flowie_protocol_repository_config_t *config,
   if (out) *out = nullptr;
   if (!config || config->size < sizeof(*config) || !out || !config->database ||
       config->database->struct_size != sizeof(*config->database) ||
-      config->database->abi_version != ORM_C_ABI_VERSION ||
-      !repo_limits_valid(&config->limits))
+      config->database->abi_version != ORM_C_ABI_VERSION || !repo_limits_valid(&config->limits))
     return SALTS_EINVAL;
   repository = (repo_state *)std::calloc(1u, sizeof(*repository));
   if (!repository) return SALTS_ENOMEM;
@@ -277,8 +289,7 @@ static int repo_query_where(orm_query_t *query, const char *column, orm_value_t 
   return repo_status(orm_query_where(query, repo_view(column), ORM_COMPARE_EQUAL, value, &error));
 }
 
-static int repo_query_new(repo_state *repository, const char *table, int kind,
-                          orm_query_t **out) {
+static int repo_query_new(repo_state *repository, const char *table, int kind, orm_query_t **out) {
   char name[128];
   orm_error_t error;
   orm_status_t status;
@@ -293,9 +304,8 @@ static int repo_query_new(repo_state *repository, const char *table, int kind,
   return repo_status(status);
 }
 
-static int repo_delete_by_client(repo_state *repository,
-                                 orm_transaction_t *transaction, const char *table,
-                                 flowie_mqtt_span_t client_id) {
+static int repo_delete_by_client(repo_state *repository, orm_transaction_t *transaction,
+                                 const char *table, flowie_mqtt_span_t client_id) {
   orm_query_t *query = nullptr;
   int rc = repo_query_new(repository, table, 3, &query);
   if (rc == SALTS_OK) rc = repo_query_where(query, "client_id", repo_span(client_id, false));
@@ -317,9 +327,9 @@ static int repo_uint64_visit(void *ctx, const flowie_orm_row_t *row, size_t row_
   return SALTS_OK;
 }
 
-static int repo_existing_revision(repo_state *repository, const char *table,
-                                  const char *key_column, orm_value_t key,
-                                  orm_transaction_t *transaction, bool *found, uint64_t *revision) {
+static int repo_existing_revision(repo_state *repository, const char *table, const char *key_column,
+                                  orm_value_t key, orm_transaction_t *transaction, bool *found,
+                                  uint64_t *revision) {
   orm_query_t *query = nullptr;
   orm_error_t error;
   repo_uint64_context stored{};
@@ -378,8 +388,7 @@ static int repo_count_rows(repo_state *repository, const char *table,
   return rc;
 }
 
-static int repo_insert_session(repo_state *repository,
-                               orm_transaction_t *transaction,
+static int repo_insert_session(repo_state *repository, orm_transaction_t *transaction,
                                const flowie_protocol_session_row_t *row) {
   orm_query_t *query = nullptr;
   const flowie_security_principal_t *p = &row->principal;
@@ -414,10 +423,9 @@ static int repo_insert_session(repo_state *repository,
   return repo_query_finish(query, transaction);
 }
 
-static int repo_insert_child(repo_state *repository,
-                             orm_transaction_t *transaction, const char *table,
-                             flowie_mqtt_span_t client_id, const char *const *columns,
-                             const orm_value_t *values, size_t count) {
+static int repo_insert_child(repo_state *repository, orm_transaction_t *transaction,
+                             const char *table, flowie_mqtt_span_t client_id,
+                             const char *const *columns, const orm_value_t *values, size_t count) {
   orm_query_t *query = nullptr;
   int rc = repo_query_new(repository, table, 1, &query);
   if (rc == SALTS_OK) rc = repo_query_set(query, "client_id", repo_span(client_id, false));
@@ -430,8 +438,7 @@ static int repo_insert_child(repo_state *repository,
   return repo_query_finish(query, transaction);
 }
 
-static int repo_replace_session_children(repo_state *repository,
-                                         orm_transaction_t *transaction,
+static int repo_replace_session_children(repo_state *repository, orm_transaction_t *transaction,
                                          const flowie_protocol_session_row_t *row) {
   static const char *const child_tables[] = {"principal_roles", "principal_groups", "subscriptions",
                                              "inflight",        "deliveries",       "wills"};
@@ -499,7 +506,8 @@ static int repo_replace_session_children(repo_state *repository,
 }
 
 static int repo_session_save_on_owner(repo_state *repository,
-                                            const flowie_protocol_session_row_t *row) {
+                                      const flowie_protocol_session_row_t *row,
+                                      const flowie_replaced_will_row_t *replaced_will) {
   orm_transaction_t *transaction = nullptr;
   orm_error_t error;
   bool found = false;
@@ -557,6 +565,12 @@ static int repo_session_save_on_owner(repo_state *repository,
        row->will.properties.size > repository->limits.max_packet_size ||
        row->will.payload.size > repository->limits.max_packet_size))
     return SALTS_EINVAL;
+  if (replaced_will && (row->expected_revision == 0u || replaced_will->generation == 0u ||
+                        replaced_will->generation >= row->session_generation ||
+                        !flowie_mqtt_version_is_supported(replaced_will->version) ||
+                        !replaced_will->packet.data || replaced_will->packet.size == 0u ||
+                        replaced_will->packet.size > repository->limits.max_packet_size))
+    return SALTS_EINVAL;
   orm_error_init(&error);
   rc = repo_status(orm_transaction_begin(repository->connection, ORM_ISOLATION_SERIALIZABLE,
                                          &transaction, &error));
@@ -572,18 +586,24 @@ static int repo_session_save_on_owner(repo_state *repository,
     rc = repo_delete_by_client(repository, transaction, "sessions", row->client_id);
   if (rc == SALTS_OK) rc = repo_insert_session(repository, transaction, row);
   if (rc == SALTS_OK) rc = repo_replace_session_children(repository, transaction, row);
+  if (rc == SALTS_OK && replaced_will) {
+    const char *columns[] = {"session_generation", "mqtt_version", "packet"};
+    orm_value_t values[] = {repo_u64(replaced_will->generation), repo_i64(replaced_will->version),
+                            repo_span(replaced_will->packet, true)};
+    rc = repo_insert_child(repository, transaction, "replaced_wills", row->client_id, columns,
+                           values, 3u);
+  }
   if (rc == SALTS_OK) rc = repo_status(orm_transaction_commit(transaction, &error));
   else (void)orm_transaction_rollback(transaction, &error);
   orm_transaction_destroy(transaction);
   return rc;
 }
 
-static int repo_session_delete_on_owner(repo_state *repository,
-                                              flowie_mqtt_span_t client_id,
-                                              uint64_t expected_revision) {
+static int repo_session_delete_on_owner(repo_state *repository, flowie_mqtt_span_t client_id,
+                                        uint64_t expected_revision) {
   static const char *const tables[] = {"principal_roles", "principal_groups", "subscriptions",
                                        "inflight",        "deliveries",       "wills",
-                                       "sessions"};
+                                       "replaced_wills",  "sessions"};
   orm_transaction_t *transaction = nullptr;
   orm_error_t error;
   bool found = false;
@@ -620,7 +640,7 @@ static int repo_retained_valid(const repo_state *repository,
 }
 
 static int repo_retained_save_on_owner(repo_state *repository,
-                                             const flowie_protocol_retained_row_t *row) {
+                                       const flowie_protocol_retained_row_t *row) {
   orm_transaction_t *transaction = nullptr;
   orm_query_t *query = nullptr;
   orm_error_t error;
@@ -669,9 +689,8 @@ static int repo_retained_save_on_owner(repo_state *repository,
   return rc;
 }
 
-static int repo_retained_delete_on_owner(repo_state *repository,
-                                               flowie_mqtt_span_t topic,
-                                               uint64_t expected_revision) {
+static int repo_retained_delete_on_owner(repo_state *repository, flowie_mqtt_span_t topic,
+                                         uint64_t expected_revision) {
   orm_transaction_t *transaction = nullptr;
   orm_query_t *query = nullptr;
   orm_error_t error;
@@ -763,8 +782,7 @@ static int repo_retained_visit_row(void *ctx, const flowie_orm_row_t *source, si
 }
 
 static int repo_retained_visit_on_owner(repo_state *repository,
-                                              flowie_protocol_retained_visit_fn visit,
-                                              void *visit_ctx) {
+                                        flowie_protocol_retained_visit_fn visit, void *visit_ctx) {
   static const flowie_orm_column_t columns[] = {
       {"topic", FLOWIE_ORM_COLUMN_TEXT},
       {"revision", FLOWIE_ORM_COLUMN_UINT64},
@@ -1009,8 +1027,7 @@ static void repo_session_children_cleanup(repo_session_children *children) {
   children->row->deliveries = nullptr;
 }
 
-static int repo_session_load_children(repo_state *repository,
-                                      flowie_protocol_session_row_t *row,
+static int repo_session_load_children(repo_state *repository, flowie_protocol_session_row_t *row,
                                       repo_session_children *children) {
   static const flowie_orm_column_t role_columns[] = {{"position", FLOWIE_ORM_COLUMN_INT64},
                                                      {"role", FLOWIE_ORM_COLUMN_TEXT}};
@@ -1089,8 +1106,7 @@ static int repo_session_load_children(repo_state *repository,
   return rc;
 }
 
-static int repo_session_from_record(repo_state *repository,
-                                    const repo_session_record *record,
+static int repo_session_from_record(repo_state *repository, const repo_session_record *record,
                                     flowie_protocol_session_row_t *row) {
   int rc = SALTS_OK;
   row->client_id = repo_buffer_span(record->client_id);
@@ -1136,9 +1152,29 @@ static int repo_session_from_record(repo_state *repository,
   return rc;
 }
 
+struct repo_replaced_will {
+  flowie_replaced_will_row_t row;
+  tstr packet;
+};
+
+static int repo_read_replaced_will(void *ctx, const flowie_orm_row_t *source, size_t index) {
+  auto *will = static_cast<repo_replaced_will *>(ctx);
+  if (index != 0u) return SALTS_EPROTO;
+  will->row.generation = flowie_orm_row_uint64(source, 0u);
+  const int64_t version = flowie_orm_row_int64(source, 1u);
+  if (version < 0 || version > UINT8_MAX || will->row.generation == 0u ||
+      !flowie_mqtt_version_is_supported((flowie_mqtt_version_t)version))
+    return SALTS_EPROTO;
+  will->row.version = (flowie_mqtt_version_t)version;
+  int rc = repo_dup_buffer(flowie_orm_row_buffer(source, 2u), &will->packet);
+  if (rc == SALTS_OK) will->row.packet = repo_buffer_span(will->packet);
+  return rc;
+}
+
 static int repo_session_visit_on_owner(repo_state *repository,
-                                             flowie_protocol_session_visit_fn visit,
-                                             void *visit_ctx) {
+                                       flowie_protocol_session_visit_fn visit,
+                                       flowie_protocol_session_restore_fn restore,
+                                       void *visit_ctx) {
   static const flowie_orm_column_t columns[] = {
       {"client_id", FLOWIE_ORM_COLUMN_TEXT},
       {"revision", FLOWIE_ORM_COLUMN_UINT64},
@@ -1163,7 +1199,7 @@ static int repo_session_visit_on_owner(repo_state *repository,
   repo_session_collect_context collect;
   size_t rows = 0u;
   int rc = SALTS_OK;
-  if (!repository || !visit) return SALTS_EINVAL;
+  if (!repository || (!visit && !restore)) return SALTS_EINVAL;
   rc = repo_vec_status(vec_init_bytes(&records, sizeof(repo_session_record),
                                       alignof(repo_session_record),
                                       repository->limits.max_sessions));
@@ -1178,7 +1214,21 @@ static int repo_session_visit_on_owner(repo_state *repository,
     const auto *record = static_cast<const repo_session_record *>(vec_at_const(&records, i));
     rc = record ? repo_session_from_record(repository, record, &row) : SALTS_EIO;
     if (rc == SALTS_OK) rc = repo_session_load_children(repository, &row, &children);
-    if (rc == SALTS_OK) rc = visit(visit_ctx, &row);
+    if (rc == SALTS_OK && restore) {
+      static const flowie_orm_column_t will_columns[] = {
+          {"session_generation", FLOWIE_ORM_COLUMN_UINT64},
+          {"mqtt_version", FLOWIE_ORM_COLUMN_INT64},
+          {"packet", FLOWIE_ORM_COLUMN_BLOB}};
+      const orm_value_t key = repo_span(row.client_id, false);
+      repo_replaced_will pending{};
+      size_t will_rows = 0u;
+      rc = repo_select_visit(repository, "replaced_wills", will_columns, 3u, "client_id", &key,
+                             nullptr, 1u, repo_read_replaced_will, &pending, &will_rows);
+      if (rc == SALTS_OK) rc = restore(visit_ctx, &row, will_rows != 0u ? &pending.row : nullptr);
+      tstr_freep(&pending.packet);
+    } else if (rc == SALTS_OK) {
+      rc = visit(visit_ctx, &row);
+    }
     repo_session_children_cleanup(&children);
   }
   for (size_t i = 0u; i < vec_size(&records); ++i)
@@ -1194,17 +1244,19 @@ struct flowie_protocol_repository_s {
 
 enum { REPO_OWNER_THREADS = 1, REPO_OWNER_QUEUE_CAPACITY = 1 };
 
-template <typename Operation>
-static int repo_invoke(threadpool_t *owner, Operation operation) {
+template <typename Operation> static int repo_invoke(threadpool_t *owner, Operation operation) {
   if (threadpool_is_current(owner)) return SALTS_EBUSY;
   struct call {
     Operation *operation;
     int result;
   } pending = {&operation, SALTS_EIO};
-  int rc = threadpool_try_submit(owner, [](void *context) {
-    auto *pending = static_cast<call *>(context);
-    pending->result = (*pending->operation)();
-  }, &pending);
+  int rc = threadpool_try_submit(
+      owner,
+      [](void *context) {
+        auto *pending = static_cast<call *>(context);
+        pending->result = (*pending->operation)();
+      },
+      &pending);
   if (rc != SALTS_OK) return rc;
   /* Accepted work borrows the caller's inputs and stack until its terminal.
    * With a live pool and an external caller, failure to join violates that lifetime. */
@@ -1225,9 +1277,8 @@ int flowie_protocol_repository_open(const flowie_protocol_repository_config_t *c
     std::free(repository);
     return SALTS_ENOMEM;
   }
-  const int rc = repo_invoke(repository->owner, [=] {
-    return repo_open_on_owner(config, &repository->state);
-  });
+  const int rc = repo_invoke(repository->owner,
+                             [=] { return repo_open_on_owner(config, &repository->state); });
   if (rc != SALTS_OK) {
     threadpool_destroy(repository->owner);
     std::free(repository);
@@ -1251,13 +1302,37 @@ void flowie_protocol_repository_close(flowie_protocol_repository_t *repository) 
 int flowie_protocol_repository_session_save(flowie_protocol_repository_t *repository,
                                             const flowie_protocol_session_row_t *row) {
   if (!repository) return SALTS_EINVAL;
+  return repo_invoke(repository->owner,
+                     [=] { return repo_session_save_on_owner(repository->state, row, nullptr); });
+}
+
+int flowie_protocol_repository_replace_session(flowie_protocol_repository_t *repository,
+                                               const flowie_protocol_session_row_t *row,
+                                               const flowie_replaced_will_row_t *will) {
+  if (!repository || !will) return SALTS_EINVAL;
+  return repo_invoke(repository->owner,
+                     [=] { return repo_session_save_on_owner(repository->state, row, will); });
+}
+
+int flowie_protocol_repository_complete_replaced_will(flowie_protocol_repository_t *repository,
+                                                      flowie_mqtt_span_t client_id,
+                                                      uint64_t generation) {
+  if (!repository || !client_id.data || client_id.size == 0u || generation == 0u)
+    return SALTS_EINVAL;
   return repo_invoke(repository->owner, [=] {
-    return repo_session_save_on_owner(repository->state, row);
+    orm_query_t *query = nullptr;
+    int rc = repo_query_new(repository->state, "replaced_wills", 3, &query);
+    if (rc == SALTS_OK) rc = repo_query_where(query, "client_id", repo_span(client_id, false));
+    if (rc == SALTS_OK) rc = repo_query_where(query, "session_generation", repo_u64(generation));
+    if (rc == SALTS_OK) return repo_query_finish(query, nullptr);
+    orm_query_destroy(query);
+    return rc;
   });
 }
 
 int flowie_protocol_repository_session_delete(flowie_protocol_repository_t *repository,
-    flowie_mqtt_span_t client_id, uint64_t expected_revision) {
+                                              flowie_mqtt_span_t client_id,
+                                              uint64_t expected_revision) {
   if (!repository) return SALTS_EINVAL;
   return repo_invoke(repository->owner, [=] {
     return repo_session_delete_on_owner(repository->state, client_id, expected_revision);
@@ -1265,23 +1340,33 @@ int flowie_protocol_repository_session_delete(flowie_protocol_repository_t *repo
 }
 
 int flowie_protocol_repository_session_visit(flowie_protocol_repository_t *repository,
-    flowie_protocol_session_visit_fn visit, void *visit_ctx) {
+                                             flowie_protocol_session_visit_fn visit,
+                                             void *visit_ctx) {
   if (!repository) return SALTS_EINVAL;
   return repo_invoke(repository->owner, [=] {
-    return repo_session_visit_on_owner(repository->state, visit, visit_ctx);
+    return repo_session_visit_on_owner(repository->state, visit, nullptr, visit_ctx);
+  });
+}
+
+int flowie_protocol_repository_restore_sessions(flowie_protocol_repository_t *repository,
+                                                flowie_protocol_session_restore_fn visit,
+                                                void *ctx) {
+  if (!repository || !visit) return SALTS_EINVAL;
+  return repo_invoke(repository->owner, [=] {
+    return repo_session_visit_on_owner(repository->state, nullptr, visit, ctx);
   });
 }
 
 int flowie_protocol_repository_retained_save(flowie_protocol_repository_t *repository,
                                              const flowie_protocol_retained_row_t *row) {
   if (!repository) return SALTS_EINVAL;
-  return repo_invoke(repository->owner, [=] {
-    return repo_retained_save_on_owner(repository->state, row);
-  });
+  return repo_invoke(repository->owner,
+                     [=] { return repo_retained_save_on_owner(repository->state, row); });
 }
 
 int flowie_protocol_repository_retained_delete(flowie_protocol_repository_t *repository,
-    flowie_mqtt_span_t topic, uint64_t expected_revision) {
+                                               flowie_mqtt_span_t topic,
+                                               uint64_t expected_revision) {
   if (!repository) return SALTS_EINVAL;
   return repo_invoke(repository->owner, [=] {
     return repo_retained_delete_on_owner(repository->state, topic, expected_revision);
@@ -1289,7 +1374,8 @@ int flowie_protocol_repository_retained_delete(flowie_protocol_repository_t *rep
 }
 
 int flowie_protocol_repository_retained_visit(flowie_protocol_repository_t *repository,
-    flowie_protocol_retained_visit_fn visit, void *visit_ctx) {
+                                              flowie_protocol_retained_visit_fn visit,
+                                              void *visit_ctx) {
   if (!repository) return SALTS_EINVAL;
   return repo_invoke(repository->owner, [=] {
     return repo_retained_visit_on_owner(repository->state, visit, visit_ctx);

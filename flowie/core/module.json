@@ -1,0 +1,127 @@
+{
+  "include": [
+    "tests/module.json"
+  ],
+  "targets": {
+    "flowie_orm_flow": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flowie_orm_flow.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "src"
+        ],
+        "deps": [
+          "turbodb_orm"
+        ]
+      },
+      "private": {
+        "deps": [
+          "cmeta_cflow",
+          "salts_core"
+        ],
+        "defines": {
+          "FLOWIE_ORM_DRIVER_DIR": "\"${envPath:TURBODB_ROOT}/lib/turbodb/drivers\"",
+          "FLOWIE_ORM_MODULE_SUFFIX": "\".dll\""
+        }
+      },
+      "runtimeDeps": [
+        "sqlite3",
+        "libpq",
+        "salts_crypto"
+      ]
+    },
+    "flowie": {
+      "kind": "shared",
+      "outputPrefix": "lib",
+      "sources": {
+        "files": [
+          "src/flowie.c",
+          "src/flowie_bitmap_index.c",
+          "src/flowie_endpoint.c",
+          "src/flowie_ingress.c",
+          "src/flowie_message.c",
+          "src/flowie_protocol_contract.c",
+          "src/flowie_proxy_protocol.c",
+          "src/flowie_security.c",
+          "src/flowie_session.c",
+          "src/flowie_topic_index.c",
+          "src/cluster/flowie_cluster.c",
+          "src/flowie_protocol_repository.cpp",
+          "$builddir/generated/core/flowie_security_rule_lexer_gen.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include",
+          "../transport/include"
+        ],
+        "deps": [
+          "flowie_protocol",
+          "turbodb_orm",
+          "salts_core",
+          "salts_coroutine",
+          "cmeta_cflow"
+        ]
+      },
+      "private": {
+        "includeDirs": [
+          "src/cluster",
+          "src",
+          "../detail",
+          "$builddir/generated/core"
+        ],
+        "defines": {
+          "FLOWIE_BUILD": null,
+          "FLOWIE_BROKER_VERSION": "\"1.0.5\""
+        },
+        "deps": [
+          "flowie_connection",
+          "cmeta_cstl",
+          "salts_ltv_parser",
+          "roaring",
+          "xxhash",
+          "flowie_client",
+          "flowie_transport",
+          "flowie_orm_flow"
+        ],
+        "libs": [
+          "ws2_32"
+        ]
+      },
+      "preTasks": [
+        {
+          "name": "generate_security_lexer",
+          "tool": "re2c",
+          "inputs": [
+            "parser/security_rule_lexer.re",
+            "${envPath:FLOWIE_RE2C_ROOT}/bin/re2c.exe"
+          ],
+          "outputs": [
+            "$builddir/generated/core/flowie_security_rule_lexer_gen.c"
+          ],
+          "args": [
+            "-o",
+            "$builddir/generated/core/flowie_security_rule_lexer_gen.c",
+            "$moduledir/parser/security_rule_lexer.re"
+          ]
+        }
+      ],
+      "install": {
+        "headers": [
+          {
+            "from": "include/*.h",
+            "to": "include"
+          },
+          {
+            "from": "../transport/include/flowie_execution.h",
+            "to": "include"
+          }
+        ]
+      }
+    }
+  }
+}

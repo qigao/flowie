@@ -1,7 +1,7 @@
 #include "flowie.h"
 #include "flowie_mqtt_client.h"
 #include "flowie_test_cnet.h"
-#include "tls_test_support.h"
+#include "tls_test_pki.h"
 
 #include "tinytest.h"
 #include <core/error.h>
@@ -78,6 +78,379 @@ static int flowie_transport_expect_close(flowie_test_cnet_client_t * client) {
   if (!flowie_test_cnet_readable(client, 1500u)) return SALTS_OK;
   rc = flowie_test_cnet_recv_exact(client, &first_byte, 1u);
   return rc != SALTS_OK || first_byte == UINT8_C(0xe0) ? SALTS_OK : SALTS_EPROTO;
+}
+
+static int flowie_transport_test_connect(flowie_test_cnet_client_t *client, const char *client_id,
+                                         int clean_start, flowie_mqtt_span_t properties) {
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  uint8_t encoded[128];
+  size_t written;
+  if (!client) return SALTS_EIO;
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = (uint8_t)clean_start;
+  connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)client_id, strlen(client_id)};
+  connect.properties = properties;
+  if (flowie_mqtt_connect_packet_encode(&connect, encoded, sizeof(encoded), &written) !=
+      FLOWIE_MQTT_PARSE_OK)
+    return SALTS_EPROTO;
+  return flowie_test_cnet_send(client, encoded, written);
+}
+
+static int flowie_transport_expect_packet(flowie_test_cnet_client_t *client, const uint8_t *packet,
+                                          size_t size) {
+  uint8_t received[16];
+  int rc;
+  if (size > sizeof(received)) return SALTS_EINVAL;
+  rc = flowie_test_cnet_recv_exact(client, received, size);
+  if (rc != SALTS_OK) return rc;
+  return memcmp(received, packet, size) == 0 ? SALTS_OK : SALTS_EPROTO;
+}
+
+static int flowie_transport_fanout(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
+                                  flowie_publish_result_t *result, void *ctx) {
+  (void)ctx;
+  result->status = flowie_endpoint_core_send_message(endpoint, message);
+  return result->status;
+}
+
+static int flowie_transport_system_topic_case(void) {
+  static const uint8_t wildcards[] = {0x82u, 13u, 0u, 1u, 0u, 0u, 1u, '#', 0u,
+                                      0u, 3u, '+', '/', '#', 0u};
+  static const uint8_t wildcard_ack[] = {0x90u, 5u, 0u, 1u, 0u, 0u, 0u};
+  static const uint8_t explicit_sub[] = {0x82u, 12u, 0u, 2u, 0u, 0u, 6u, '$', 'S', 'Y',
+                                         'S', '/', '#', 0u};
+  static const uint8_t explicit_ack[] = {0x90u, 4u, 0u, 2u, 0u, 0u};
+  static const uint8_t version_topic[] = "$SYS/broker/version";
+  static const uint8_t publish_denied[] = {0x40u, 4u, 0u, 1u, 0x87u, 0u};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *client = NULL;
+  flowie_mqtt_parse_options_t parse = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
+  flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+  flowie_mqtt_publish_view_t delivered = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
+  flowie_mqtt_publish_packet_t write = FLOWIE_MQTT_PUBLISH_PACKET_INIT;
+  uint8_t wire[128];
+  size_t consumed;
+  size_t written;
+  int rc;
+
+  config.host = "127.0.0.1";
+  config.port = flowie_test_cnet_port();
+  if (config.port == 0) return SALTS_EIO;
+  config.max_connections = 2u;
+  config.max_sessions = 2u;
+  config.max_subscriptions_per_session = 4u;
+  config.max_inflight_per_session = 4u;
+  config.max_packet_size = sizeof(wire);
+  config.manage_sessions = 1;
+  options.on_message = flowie_transport_fanout;
+  rc = flowie_endpoint_core_create("system-topic", &config, &options, &endpoint);
+  if (rc == SALTS_OK) rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+  client = flowie_test_cnet_connect((uint16_t)config.port);
+  rc = flowie_transport_test_connect(client, "system-topic", 1, (flowie_mqtt_span_t){0});
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(client, 0u, 4u, sizeof(wire));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_send(client, wildcards, sizeof(wildcards));
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(client, wildcard_ack, sizeof(wildcard_ack));
+  if (rc != SALTS_OK) goto done;
+  if (flowie_test_cnet_readable(client, 150u)) { rc = SALTS_EPROTO; goto done; }
+  rc = flowie_test_cnet_send(client, explicit_sub, sizeof(explicit_sub));
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(client, explicit_ack, sizeof(explicit_ack));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_exact(client, wire, 2u);
+  if (rc != SALTS_OK) goto done;
+  if (wire[1] > sizeof(wire) - 2u) { rc = SALTS_EPROTO; goto done; }
+  rc = flowie_test_cnet_recv_exact(client, wire + 2u, wire[1]);
+  if (rc != SALTS_OK) goto done;
+  parse.version = FLOWIE_MQTT_VERSION_5;
+  if (flowie_mqtt_packet_parse(wire, wire[1] + 2u, &parse, &packet, &consumed, NULL) !=
+          FLOWIE_MQTT_PARSE_OK ||
+      flowie_mqtt_publish_parse(&packet, &delivered) != FLOWIE_MQTT_PARSE_OK ||
+      !delivered.retain || delivered.qos != 0u || delivered.topic.size != sizeof(version_topic) - 1u ||
+      memcmp(delivered.topic.data, version_topic, sizeof(version_topic) - 1u) != 0 ||
+      delivered.payload.size <= sizeof("Flowie ") - 1u ||
+      memcmp(delivered.payload.data, "Flowie ", sizeof("Flowie ") - 1u) != 0) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+
+  write.version = FLOWIE_MQTT_VERSION_5;
+  write.qos = 1u;
+  write.packet_id = 1u;
+  write.retain = 1u;
+  write.topic = (flowie_mqtt_span_t){version_topic, sizeof(version_topic) - 1u};
+  if (flowie_mqtt_publish_packet_encode(&write, wire, sizeof(wire), &written) != FLOWIE_MQTT_PARSE_OK) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  rc = flowie_test_cnet_send(client, wire, written);
+  if (rc == SALTS_OK)
+    rc = flowie_transport_expect_packet(client, publish_denied, sizeof(publish_denied));
+
+done:
+  flowie_test_cnet_close(client);
+  if (endpoint) {
+    const int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
+  return rc;
+}
+
+static int flowie_transport_delivery_reconnect_case(void) {
+  static const uint8_t subscribe[] = {0x82u, 7u, 0u, 1u, 0u, 0u, 1u, 'q', 2u};
+  static const uint8_t suback[] = {0x90u, 4u, 0u, 1u, 0u, 2u};
+  static const uint8_t pubrec[] = {0x50u, 2u, 0u, 2u};
+  static const uint8_t pubrel[] = {0x62u, 2u, 0u, 2u};
+  static const uint8_t pubcomp[] = {0x70u, 2u, 0u, 2u};
+  static const uint8_t puback[] = {0x40u, 2u, 0u, 1u};
+  static const uint8_t disconnect[] = {0xe0u, 0u};
+  uint8_t properties[] = {0x11u, 0u, 0u, 0u, 60u, 0x21u, 0u, 2u};
+  flowie_mqtt_span_t connect_properties = {properties, sizeof(properties)};
+  uint8_t publish[] = {0x32u, 7u, 0u, 1u, 'q', 0u, 1u, 0u, 'a'};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *subscriber = NULL;
+  flowie_test_cnet_client_t *publisher = NULL;
+  const unsigned short port = flowie_test_cnet_port();
+  int rc;
+
+  if (port == 0u) return SALTS_EIO;
+  config.host = "127.0.0.1";
+  config.port = port;
+  config.max_connections = 2u;
+  config.max_sessions = 2u;
+  config.max_subscriptions_per_session = 2u;
+  config.max_inflight_per_session = 4u;
+  config.max_packet_size = 128u;
+  config.manage_sessions = 1;
+  options.on_message = flowie_transport_fanout;
+
+  rc = flowie_endpoint_core_create("delivery-reconnect", &config, &options, &endpoint);
+  if (rc == SALTS_OK) rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+  subscriber = flowie_test_cnet_connect(port);
+  publisher = flowie_test_cnet_connect(port);
+  rc = flowie_transport_test_connect(subscriber, "subscriber", 1, connect_properties);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(subscriber, 0u, 4u, 128u);
+  if (rc == SALTS_OK)
+    rc = flowie_transport_test_connect(publisher, "publisher", 1, (flowie_mqtt_span_t){0});
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(publisher, 0u, 4u, 128u);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_send(subscriber, subscribe, sizeof(subscribe));
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(subscriber, suback, sizeof(suback));
+  if (rc != SALTS_OK) goto done;
+
+  for (uint8_t id = 1u; id <= 3u; ++id) {
+    uint8_t ack[] = {id == 2u ? 0x50u : 0x40u, 2u, 0u, id};
+    publish[0] = id == 2u ? 0x34u : 0x32u;
+    publish[6] = id;
+    publish[8] = (uint8_t)('a' + id - 1u);
+    rc = flowie_test_cnet_send(publisher, publish, sizeof(publish));
+    if (rc == SALTS_OK) rc = flowie_transport_expect_packet(publisher, ack, sizeof(ack));
+    if (rc == SALTS_OK && id <= 2u)
+      rc = flowie_transport_expect_packet(subscriber, publish, sizeof(publish));
+    if (rc != SALTS_OK) goto done;
+    if (id == 2u) {
+      rc = flowie_test_cnet_send(publisher, pubrel, sizeof(pubrel));
+      if (rc == SALTS_OK) rc = flowie_transport_expect_packet(publisher, pubcomp, sizeof(pubcomp));
+      if (rc == SALTS_OK) rc = flowie_test_cnet_send(subscriber, pubrec, sizeof(pubrec));
+      if (rc == SALTS_OK) rc = flowie_transport_expect_packet(subscriber, pubrel, sizeof(pubrel));
+      if (rc != SALTS_OK) goto done;
+    }
+  }
+  if (flowie_test_cnet_readable(subscriber, 150u)) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  rc = flowie_test_cnet_send(subscriber, disconnect, sizeof(disconnect));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_wait(subscriber, &subscriber->closed, 3000u);
+  if (rc != SALTS_OK) goto done;
+  flowie_test_cnet_close(subscriber);
+  subscriber = flowie_test_cnet_connect(port);
+  properties[7] = 1u;
+  rc = flowie_transport_test_connect(subscriber, "subscriber", 0, connect_properties);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(subscriber, 1u, 4u, 128u);
+  if (rc == SALTS_OK) {
+    const uint8_t retransmit[] = {0x3au, 7u, 0u, 1u, 'q', 0u, 1u, 0u, 'a'};
+    rc = flowie_transport_expect_packet(subscriber, retransmit, sizeof(retransmit));
+  }
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(subscriber, pubrel, sizeof(pubrel));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_send(subscriber, pubcomp, sizeof(pubcomp));
+  if (rc != SALTS_OK) goto done;
+  if (flowie_test_cnet_readable(subscriber, 150u)) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  rc = flowie_test_cnet_send(subscriber, puback, sizeof(puback));
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(subscriber, publish, sizeof(publish));
+
+done:
+  flowie_test_cnet_close(publisher);
+  flowie_test_cnet_close(subscriber);
+  if (endpoint) {
+    int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
+  return rc;
+}
+
+typedef enum flowie_transport_policy_case_e {
+  FLOWIE_TRANSPORT_KEEP_ALIVE,
+  FLOWIE_TRANSPORT_UNSUPPORTED_AUTH,
+  FLOWIE_TRANSPORT_INBOUND_SUBSCRIPTION_IDENTIFIER,
+  FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS,
+  FLOWIE_TRANSPORT_RECEIVE_MAXIMUM
+} flowie_transport_policy_case_t;
+
+static int flowie_transport_connect_policy_case(flowie_transport_policy_case_t policy) {
+  static const uint8_t method[] = {
+      FLOWIE_MQTT_PROPERTY_AUTHENTICATION_METHOD, 0u, 3u, 't', 's', 't'};
+  static const uint8_t rejected[] = {0x20u, 0x03u, 0x00u, 0x8cu, 0x00u};
+  static const uint8_t ping[] = {0xc0u, 0x00u};
+  static const uint8_t pong[] = {0xd0u, 0x00u};
+  static const uint8_t client_id[] = "connect-policy";
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *client = FLOWIE_TEST_INVALID_CNET_CLIENT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  uint8_t outgoing[128];
+  uint8_t incoming[3];
+  size_t outgoing_size = 0u;
+  unsigned short port = flowie_test_cnet_port();
+  int rc;
+
+  if (port == 0u) return SALTS_EIO;
+  config.host = "127.0.0.1";
+  config.port = (int)port;
+  config.max_connections = 2u;
+  config.max_sessions = 2u;
+  config.max_subscriptions_per_session = 2u;
+  config.max_inflight_per_session = 4u;
+  config.recv_timeout_ms = FLOWIE_TRANSPORT_BASELINE_TIMEOUT_MS;
+  config.max_packet_size = sizeof(outgoing);
+  config.manage_sessions = 1;
+  options.on_message = flowie_transport_baseline_on_message;
+  rc = flowie_endpoint_core_create("connect-policy", &config, &options, &endpoint);
+  if (rc != SALTS_OK) goto done;
+  rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.keep_alive = policy == FLOWIE_TRANSPORT_KEEP_ALIVE ? 1u : 0u;
+  connect.client_id = (flowie_mqtt_span_t){client_id, sizeof(client_id) - 1u};
+  if (policy == FLOWIE_TRANSPORT_UNSUPPORTED_AUTH)
+    connect.properties = (flowie_mqtt_span_t){method, sizeof(method)};
+  rc = flowie_mqtt_connect_packet_encode(&connect, outgoing, sizeof(outgoing), &outgoing_size);
+  if (rc != FLOWIE_MQTT_PARSE_OK) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  client = flowie_test_cnet_connect(port);
+  if (client == FLOWIE_TEST_INVALID_CNET_CLIENT) {
+    rc = SALTS_EIO;
+    goto done;
+  }
+  rc = flowie_test_cnet_send(client, outgoing, outgoing_size);
+  if (rc != SALTS_OK) goto done;
+  if (policy == FLOWIE_TRANSPORT_UNSUPPORTED_AUTH) {
+    rc = flowie_transport_expect_connack(client, rejected, sizeof(rejected));
+    if (rc != SALTS_OK) goto done;
+  } else {
+    rc = flowie_test_cnet_recv_mqtt5_connack(client, 0u, 4u, sizeof(outgoing));
+    if (rc != SALTS_OK) goto done;
+    if (policy == FLOWIE_TRANSPORT_INBOUND_SUBSCRIPTION_IDENTIFIER ||
+        policy == FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS) {
+      static const uint8_t topic[] = "policy/publish";
+      static const uint8_t properties[] = {FLOWIE_MQTT_PROPERTY_SUBSCRIPTION_IDENTIFIER, 1u};
+      static const uint8_t alias[] = {FLOWIE_MQTT_PROPERTY_TOPIC_ALIAS, 0u, 1u};
+      flowie_mqtt_publish_packet_t publish = FLOWIE_MQTT_PUBLISH_PACKET_INIT;
+      publish.version = FLOWIE_MQTT_VERSION_5;
+      publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
+      publish.properties = policy == FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS
+                               ? (flowie_mqtt_span_t){alias, sizeof(alias)}
+                               : (flowie_mqtt_span_t){properties, sizeof(properties)};
+      rc = flowie_mqtt_publish_packet_encode(&publish, outgoing, sizeof(outgoing), &outgoing_size);
+      if (rc != FLOWIE_MQTT_PARSE_OK) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+      if (policy == FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS) outgoing[outgoing_size - 1u] = 0u;
+      rc = flowie_test_cnet_send(client, outgoing, outgoing_size);
+      if (rc != SALTS_OK) goto done;
+      rc = flowie_test_cnet_recv_exact(client, incoming, sizeof(incoming));
+      if (rc != SALTS_OK) goto done;
+      if (incoming[0] != 0xe0u ||
+          incoming[2] != (policy == FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS ? 0x94u : 0x82u)) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+    }
+    if (policy == FLOWIE_TRANSPORT_RECEIVE_MAXIMUM) {
+      static const uint8_t topic[] = "policy/window";
+      flowie_mqtt_publish_packet_t publish = FLOWIE_MQTT_PUBLISH_PACKET_INIT;
+      uint8_t burst[128];
+      size_t burst_size = 0u;
+      publish.version = FLOWIE_MQTT_VERSION_5;
+      publish.qos = 2u;
+      publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
+      for (uint16_t id = 1u; id <= config.max_inflight_per_session + 1u; ++id) {
+        publish.packet_id = id;
+        rc = flowie_mqtt_publish_packet_encode(&publish, burst + burst_size,
+                                               sizeof(burst) - burst_size, &outgoing_size);
+        if (rc != FLOWIE_MQTT_PARSE_OK) {
+          rc = SALTS_EPROTO;
+          goto done;
+        }
+        burst_size += outgoing_size;
+      }
+      rc = flowie_test_cnet_send(client, burst, burst_size);
+      if (rc != SALTS_OK) goto done;
+      for (uint8_t id = 1u; id <= config.max_inflight_per_session; ++id) {
+        const uint8_t expected[] = {0x50u, 0x02u, 0x00u, id};
+        uint8_t ack[sizeof(expected)];
+        rc = flowie_test_cnet_recv_exact(client, ack, sizeof(ack));
+        if (rc != SALTS_OK) goto done;
+        if (memcmp(ack, expected, sizeof(ack)) != 0) {
+          rc = SALTS_EPROTO;
+          goto done;
+        }
+      }
+      rc = flowie_test_cnet_recv_exact(client, incoming, sizeof(incoming));
+      if (rc != SALTS_OK) goto done;
+      if (incoming[0] != 0xe0u || incoming[2] != 0x93u) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+    }
+    for (size_t i = 0u; policy == FLOWIE_TRANSPORT_KEEP_ALIVE && i < 2u; ++i) {
+      if (flowie_test_cnet_readable(client, 850u)) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+      rc = flowie_test_cnet_send(client, ping, sizeof(ping));
+      if (rc != SALTS_OK) goto done;
+      rc = flowie_test_cnet_recv_exact(client, incoming, sizeof(pong));
+      if (rc != SALTS_OK) goto done;
+      if (memcmp(pong, incoming, sizeof(pong)) != 0) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+    }
+  }
+  rc = flowie_test_cnet_wait(client, &client->closed, 3500u);
+
+done:
+  flowie_test_cnet_close(client);
+  if (endpoint) {
+    int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
+  return rc;
 }
 
 static int flowie_transport_auth_unavailable_case(void) {
@@ -183,6 +556,166 @@ done:
   }
   flowie_endpoint_core_destroy(endpoint);
   flowie_security_realm_destroy(realm);
+  return rc;
+}
+
+typedef struct flowie_mtls_probe_s {
+  atomic_uint calls;
+} flowie_mtls_probe_t;
+
+static int flowie_mtls_authenticate(void *ctx, const flowie_security_auth_request_t *request,
+                                    flowie_security_principal_t *principal) {
+  flowie_mtls_probe_t *probe = ctx;
+  const char *fingerprint = request->peer_certificate_sha256;
+  atomic_fetch_add(&probe->calls, 1u);
+  if (!fingerprint || strlen(fingerprint) != 64u ||
+      strspn(fingerprint, "0123456789abcdef") != 64u) return SALTS_EPERM;
+  strcpy(principal->principal_id, "mtls-client");
+  strcpy(principal->principal_type, "device");
+  strcpy(principal->domain_id, "mqtt-tests");
+  strcpy(principal->auth_method, "password");
+  principal->scope = FLOWIE_SECURITY_SCOPE_SELF;
+  principal->policy_version = 1u;
+  return SALTS_OK;
+}
+
+static int flowie_mtls_authorize(void *ctx, const flowie_security_request_t *request,
+                                 uint64_t now, flowie_security_decision_t *decision) {
+  (void)ctx;
+  (void)now;
+  decision->effect = FLOWIE_SECURITY_ALLOW;
+  decision->reason = FLOWIE_SECURITY_REASON_ALLOW_RULE;
+  decision->policy_version = request->principal->policy_version;
+  return SALTS_OK;
+}
+
+static int flowie_transport_mtls_listener_case(void) {
+  static const uint8_t ping[] = {0xc0u, 0u};
+  static const uint8_t pong[] = {0xd0u, 0u};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_execution_binding_t execution = FLOWIE_EXECUTION_BINDING_INIT;
+  flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
+  flowie_endpoint_security_binding_t security = FLOWIE_ENDPOINT_SECURITY_BINDING_INIT;
+  flowie_security_realm_config_t realm_config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
+  flowie_security_realm_t *realm = NULL;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *client = NULL;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mtls_probe_t probe = {0};
+  const flowie_security_auth_provider_t auth = {sizeof(auth), &probe, flowie_mtls_authenticate};
+  const flowie_security_authorization_provider_t acl = {
+      sizeof(acl), NULL, flowie_mtls_authorize};
+  cnet_tls_client_config tls = {.size = sizeof(tls)};
+  X509_KEY *ca_key = NULL, *client_key = NULL;
+  tls_test_certificate *ca = NULL, *cert = NULL;
+  char server_ca[512] = {0}, server_cert[512] = {0}, server_key[512] = {0};
+  char client_ca[512] = {0}, client_cert[512] = {0}, client_key_file[512] = {0};
+  char unknown_cert[512] = {0}, unknown_key[512] = {0};
+  uint8_t wire[128];
+  size_t written;
+  const uint16_t port = flowie_test_cnet_port();
+  int rc = SALTS_EIO;
+
+  if (!port || tls_test_write_ca_file(server_ca, sizeof(server_ca)) != 0 ||
+      tls_test_write_server_files(server_cert, sizeof(server_cert), server_key, sizeof(server_key)) != 0 ||
+      tls_test_set_server_env(server_cert, server_key) != 0 ||
+      tls_test_write_temp_file(client_ca, sizeof(client_ca), "ca", "") != 0 ||
+      tls_test_write_temp_file(client_cert, sizeof(client_cert), "crt", "") != 0 ||
+      tls_test_write_temp_file(client_key_file, sizeof(client_key_file), "key", "") != 0 ||
+      tls_test_write_self_signed_files(unknown_cert, sizeof(unknown_cert), unknown_key,
+                                        sizeof(unknown_key), "untrusted-mqtt", 0) != 0) goto done;
+  ca_key = tls_test_pki_generate_key();
+  client_key = tls_test_pki_generate_key();
+  ca = tls_test_pki_generate_self_signed(ca_key, "mqtt-client-ca", 1);
+  if (!ca || !client_key) goto done;
+  cert = tls_test_pki_make_certificate(client_key, ca, ca_key, 2u, "trusted-mqtt", 0, 0,
+                                       OID_kp_client_auth, -300L, TLS_TEST_PKI_VALID_SECONDS);
+  if (!cert || tls_test_pki_write_certificate(client_ca, ca) != 0 ||
+      tls_test_pki_write_certificate(client_cert, cert) != 0 ||
+      tls_test_pki_write_key(client_key_file, client_key) != 0) goto done;
+
+  realm_config.policy_source = "acl.remote";
+  rc = flowie_security_realm_create(&realm_config, &realm);
+  if (rc == SALTS_OK) rc = flowie_security_realm_bind_authorization_provider(realm, &acl);
+  if (rc != SALTS_OK) goto done;
+  security.realm_channel = "security.mqtt-mtls";
+  security.auth_method = "password";
+  security.auth_provider = &auth;
+  security.realm = realm;
+  bindings.security = &security;
+  config.host = "127.0.0.1";
+  config.port = port;
+  config.transport = FLOWIE_TRANSPORT_TLS;
+  config.timeout_ms = 2500u;
+  config.tls_client_ca_file = client_ca;
+  config.max_connections = 4u;
+  config.max_sessions = 4u;
+  config.max_inflight_per_session = 4u;
+  config.max_packet_size = sizeof(wire);
+  config.manage_sessions = 1;
+  options.on_message = flowie_transport_baseline_on_message;
+  rc = flowie_endpoint_core_create_ex("mtls-listener", &config, &options, &execution, &bindings,
+                                      &endpoint);
+  if (rc == SALTS_OK) rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.has_username = 1u;
+  connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)"mqtt-mtls", 9u};
+  connect.username = (flowie_mqtt_span_t){(const uint8_t *)"mtls-client", 11u};
+  if (flowie_mqtt_connect_packet_encode(&connect, wire, sizeof(wire), &written) != FLOWIE_MQTT_PARSE_OK) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+  tls.ca_file = server_ca;
+  for (size_t i = 0u; i < 2u; ++i) {
+    if (i != 0u) { tls.cert_file = unknown_cert; tls.key_file = unknown_key; }
+    client = flowie_test_cnet_connect_configured(port, 0u, &tls);
+    if (client) {
+      /* A client can finish its TLS send before the server's certificate rejection arrives. */
+      if (flowie_test_cnet_send(client, wire, written) == SALTS_OK &&
+          flowie_test_cnet_readable(client, 3000u) && client->received_size != 0u) {
+        rc = SALTS_EPROTO;
+        goto done;
+      }
+      flowie_test_cnet_close(client);
+      client = NULL;
+    }
+  }
+  if (atomic_load(&probe.calls) != 0u) { rc = SALTS_EPROTO; goto done; }
+  tls.cert_file = client_cert;
+  tls.key_file = client_key_file;
+  client = flowie_test_cnet_connect_configured(port, 0u, &tls);
+  if (!client) { rc = SALTS_EIO; goto done; }
+  rc = flowie_test_cnet_send(client, wire, written);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(client, 0u, 4u, sizeof(wire));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_send(client, ping, sizeof(ping));
+  if (rc == SALTS_OK) rc = flowie_transport_expect_packet(client, pong, sizeof(pong));
+  if (rc == SALTS_OK && atomic_load(&probe.calls) != 1u) rc = SALTS_EPROTO;
+
+done:
+  flowie_test_cnet_close(client);
+  if (endpoint) {
+    const int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK) rc = stop_rc;
+  }
+  flowie_endpoint_core_destroy(endpoint);
+  flowie_security_realm_destroy(realm);
+  free(cert);
+  free(ca);
+  tls_test_pki_free_key(client_key);
+  tls_test_pki_free_key(ca_key);
+  tls_test_clear_server_env();
+  tls_test_remove_file(unknown_key);
+  tls_test_remove_file(unknown_cert);
+  tls_test_remove_file(client_key_file);
+  tls_test_remove_file(client_cert);
+  tls_test_remove_file(client_ca);
+  tls_test_remove_file(server_key);
+  tls_test_remove_file(server_cert);
+  tls_test_remove_file(server_ca);
   return rc;
 }
 
@@ -578,6 +1111,40 @@ done:
 }
 
 spec("Flowie TCP/TLS/WS/WSS release baseline") {
+  it("requires a trusted inbound client certificate before MQTT authentication") {
+    check_equal(flowie_transport_mtls_listener_case(), SALTS_OK);
+  }
+
+  it("serves a retained broker version only to explicit system subscriptions and rejects writes") {
+    check_equal(flowie_transport_system_topic_case(), SALTS_OK);
+  }
+
+  it("replays PUBREL outside Receive Maximum and keeps first-send DUP clear") {
+    check_equal(flowie_transport_delivery_reconnect_case(), SALTS_OK);
+  }
+
+  it("refreshes CONNECT Keep Alive on MQTT packets and closes an idle connection") {
+    check_equal(flowie_transport_connect_policy_case(FLOWIE_TRANSPORT_KEEP_ALIVE), SALTS_OK);
+  }
+
+  it("rejects an unsupported Authentication Method in anonymous mode") {
+    check_equal(flowie_transport_connect_policy_case(FLOWIE_TRANSPORT_UNSUPPORTED_AUTH), SALTS_OK);
+  }
+
+  it("rejects Subscription Identifier in client PUBLISH with Protocol Error") {
+    check_equal(flowie_transport_connect_policy_case(
+                    FLOWIE_TRANSPORT_INBOUND_SUBSCRIPTION_IDENTIFIER),
+                SALTS_OK);
+  }
+
+  it("reports Topic Alias Invalid before closing a connection that sent alias zero") {
+    check_equal(flowie_transport_connect_policy_case(FLOWIE_TRANSPORT_ZERO_TOPIC_ALIAS), SALTS_OK);
+  }
+
+  it("drains admitted PUBREC replies and reports a full Receive Maximum window") {
+    check_equal(flowie_transport_connect_policy_case(FLOWIE_TRANSPORT_RECEIVE_MAXIMUM), SALTS_OK);
+  }
+
   it("reports authentication provider unavailability in CONNACK") {
     check_equal(flowie_transport_auth_unavailable_case(), SALTS_OK);
   }

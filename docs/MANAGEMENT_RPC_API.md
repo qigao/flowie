@@ -314,6 +314,18 @@ In parameter signatures, `?` means optional. `domain_id?` follows the scope rule
 | `control.auth.external_https.stats` | `security_admin` | none or `{}` | `{enabled:false}` when external HTTPS Auth is disabled; otherwise returns the counter object below. |
 | `control.domain.create` | `system_admin` in `system` | `domain_id`, `write` | Command result. `system` is reserved and cannot be created. |
 | `control.domain.list` | `system_admin` in `system` | `after?`, `limit?` | Page of `{domain_id}` items. Does not accept a target Domain. |
+| `control.domain.admin.initialize` | `system_admin` in `system` | `domain_id`, `principal_id`, `initial_password`, `write` | Command result. Initializes the first human administrator of an existing business Domain. |
+
+`control.domain.admin.initialize` creates the human user and password credential, then grants
+`security_admin` and `password_change_required` in the target Domain. The administrator must
+change the password before using other management methods. The initial password is 16–4096 bytes
+and is supplied by the caller. The response contains `replayed`. The request ID is limited to 235
+bytes to leave room for the operation's internal step suffixes.
+
+An absent Domain returns `-32004`, a caller without platform admin permission receives `-32003`,
+and a Domain containing a different user or multiple users returns `-32009`. Initialization consists
+of multiple repository writes. After an interruption, reuse the same request ID and parameters to
+resume the same initialization.
 
 When enabled, `control.auth.external_https.stats` returns:
 

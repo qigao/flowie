@@ -1,0 +1,156 @@
+{
+  "targets": {
+    "test_flowie_core": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_core.c"]
+      },
+      "private": {
+        "deps": ["flowie", "flowie_transport", "flowie_connection", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast"]
+      }
+    },
+    "test_flowie_security": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_security.c", "$root/flowie/core/src/flowie_security.c"]
+      },
+      "private": {
+        "deps": ["salts_core", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/include", "$root/flowie/transport/include"],
+        "defines": {
+          "FLOWIE_BUILD": null
+        }
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "mqtt-security"]
+      }
+    },
+    "test_flowie_endpoint": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie.c"]
+      },
+      "private": {
+        "deps": ["flowie", "flowie_protocol", "salts_core", "salts_ltv_parser", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "mqtt-owner", "mqtt-persistence"]
+      }
+    },
+    "test_flowie_ingress": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_ingress.c"]
+      },
+      "private": {
+        "deps": ["flowie", "salts_core", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "mqtt-ingress", "backpressure"]
+      }
+    },
+    "test_flowie_session_delivery_index": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_session_delivery_index.c"]
+      },
+      "private": {
+        "deps": ["flowie", "salts_core", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "session"]
+      }
+    },
+    "test_flowie_transport_baseline": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_transport_baseline.c"]
+      },
+      "private": {
+        "deps": ["flowie", "flowie_client", "flowie_protocol", "gmssl", "salts_cnet", "salts_tinytest"],
+        "includeDirs": ["$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-flowie/transport", "mqtt-security"],
+        "timeout": 120
+      }
+    },
+    "test_flowie_mqtt_endurance": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_endurance.c"]
+      },
+      "private": {
+        "deps": ["flowie", "flowie_protocol", "salts_cnet", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-endurance", "mqtt-persistence"],
+        "timeout": 300
+      }
+    },
+    "test_flowie_protocol_repository": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_protocol_repository.c"]
+      },
+      "private": {
+        "deps": ["flowie", "flowie_orm_flow", "flowie_protocol", "salts_cnet", "salts_tinytest"],
+        "includeDirs": ["$root/tests/support"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "storage"]
+      }
+    },
+    "test_flowie_orm_runtime": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_orm_runtime.c"]
+      },
+      "private": {
+        "deps": ["flowie_orm_flow", "salts_tinytest"],
+        "defines": {
+          "FLOWIE_TEST_SQLITE_MODULE": "\"${envPath:TURBODB_ROOT}/lib/turbodb/drivers/turbodb_driver_sqlite.dll\""
+        }
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "storage"]
+      }
+    },
+    "test_flowie_cluster": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster.c"]
+      },
+      "private": {
+        "deps": ["flowie", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/core/src/cluster"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "flowie-release"]
+      }
+    },
+    "test_flowie_topic_index": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_topic_index.c"]
+      },
+      "private": {
+        "deps": ["flowie", "cmeta_cstl", "salts_tinytest"],
+        "includeDirs": ["../src/cluster", "../src", "../../detail"]
+      },
+      "test": {
+        "labels": ["flowie", "mqtt", "topic-index"]
+      }
+    }
+  }
+}

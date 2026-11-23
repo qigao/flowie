@@ -1,0 +1,111 @@
+{
+  "targets": {
+    "test_flowie_server_runtime": {
+      "kind": "executable",
+      "sources": {
+        "files": [
+          "test_flowie_server_runtime.c",
+          "../src/flowie_server_runtime.c",
+          "../src/flowie_server_config.c",
+          "../src/flowie_server_http_security.c",
+          "../src/flowie_server_turbodb_config.c"
+        ]
+      },
+      "private": {
+        "deps": [
+          "flowie",
+          "turbodb_orm",
+          "chttp_client",
+          "cmeta_ace",
+          "cmeta_cmeta",
+          "salts_cyaml",
+          "salts_json_parser",
+          "salts_uri",
+          "salts_tinytest"
+        ],
+        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/tests/support"],
+        "defines": {
+          "FLOWIE_TEST_MULTI_CONFIG": "\"$moduledir/flowie_server_network_workers.yml\""
+        }
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "ownership", "configurator", "cnet"]
+      }
+    },
+    "test_flowie_server_config": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_server_config.c", "../src/flowie_server_config.c"]
+      },
+      "private": {
+        "deps": ["flowie_protocol", "turbodb_orm", "salts_cyaml", "salts_core", "cmeta_cflow", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include"],
+        "defines": {
+          "FLOWIE_TEST_EU_CONFIG": "\"$root/deploy/server/.remote-flowie-eu.yml\"",
+          "FLOWIE_TEST_INSECURE_CONFIG": "\"$moduledir/flowie_server_no_auth_provider.yml\"",
+          "FLOWIE_TEST_MULTI_CONFIG": "\"$moduledir/flowie_server_network_workers.yml\""
+        }
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "security-contract"]
+      }
+    },
+    "test_flowie_server_http_security": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_server_http_security.c", "../src/flowie_server_http_security.c"]
+      },
+      "private": {
+        "deps": [
+          "flowie_protocol",
+          "turbodb_orm",
+          "chttp_client",
+          "chttp_app",
+          "salts_json_parser",
+          "salts_uri",
+          "salts_core",
+          "cmeta_cmeta",
+          "salts_tinytest"
+        ],
+        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/tests/support"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "security-contract"]
+      }
+    },
+    "flowie_server_check_native_https_security": {
+      "kind": "header_only",
+      "runtimeDeps": ["flowie_server"],
+      "test": {
+        "program": "${artifact:flowie_server}",
+        "args": [
+          "--check",
+          "--require-security",
+          "--config",
+          "$root/deploy/server/.remote-flowie-eu.yml",
+          "--profile",
+          "flowie",
+          "--protocol-store-driver",
+          "sqlite",
+          "--protocol-store-options",
+          "{\"filename\":\":memory:\"}"
+        ],
+        "labels": ["flowie", "flowie-release", "product-contract", "security-contract", "cnet"],
+        "environment": ["FLOWIE_AUTH_SERVICE_TOKEN=test-only-token"]
+      }
+    },
+    "test_flowie_server_turbodb_config": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_server_turbodb_config.c", "../src/flowie_server_turbodb_config.c"]
+      },
+      "private": {
+        "deps": ["turbodb_orm", "cmeta_cflow", "salts_json_parser", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "persistence", "turbodb"]
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@ replaces the legacy Root Group concept in the public administration model.
 
 ## Context
 
-The current implementation combines four different concerns under `flowie-control`:
+Before this decision, `flowie-control` combined four concerns:
 
 - credential verification for MQTT clients;
 - generic user, Role, Group, policy, and audit administration;
@@ -35,8 +35,8 @@ Flowie broker ------ HTTPS authenticate/ACL -> Control ---------> Control Reposi
 ```
 
 The standalone `flowie-server` Docker image is a deliberate deployment bundle containing Flowie
-server and Control. The current composition root may create and supervise both runtimes in one
-process, but module ownership remains separate: Control exclusively owns its Repository, Auth/ACL,
+server and Control. The [Compose entrypoint](../deploy/server/flowie-combined-entrypoint.sh)
+supervises one Broker process and one Control process. Control exclusively owns its Repository, Auth/ACL,
 Management RPC, and UI; Flowie server owns MQTT and ProtocolStore state. Bundling lifecycle does not
 allow either module to bypass the other's public service/repository boundary.
 

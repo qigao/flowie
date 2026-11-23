@@ -1,0 +1,29 @@
+{
+  "name": "flowie_server",
+  "kind": "executable",
+  "include": [
+    "tests/module.json"
+  ],
+  "sources": {
+    "files": [
+      "src/flowie_server.c",
+      "src/flowie_server_config.c",
+      "src/flowie_server_http_security.c",
+      "src/flowie_server_runtime.c",
+      "src/flowie_server_turbodb_config.c"
+    ]
+  },
+  "private": {
+    "deps": [
+      "flowie",
+      "turbodb_orm",
+      "chttp_client",
+      "salts_cmd_parser",
+      "salts_cyaml",
+      "salts_json_parser",
+      "salts_uri",
+      "cmeta_ace",
+      "cmeta_cmeta"
+    ]
+  }
+}

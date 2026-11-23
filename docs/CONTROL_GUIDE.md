@@ -1,26 +1,25 @@
 # Flowie Control 部署与配置指南
 
 Control runtime 独立于 MQTT 数据面，组合本地授权事实源、JSON-RPC、HTMX Dashboard，以及可选的
-`/v4/authenticate` 与 `/v4/acl/check` 服务。推荐生产入口是 `flowie_server --flowie/control-config`，由 Server
-Application 统一启动和关闭 Control 与 MQTT；`flowie-control` 独立可执行文件保留用于兼容和诊断。
+`/v4/authenticate` 与 `/v4/acl/check` 服务。`flowie-control` 与 `flowie_server` 是独立进程。
+部署镜像通过 [Compose 入口](../deploy/server/README.md)同时运行两个进程。
 Auth 可选择本地 Repository verifier，
 或只通过 HTTPS 调用一个第三方认证系统；Flowie Broker 不直连身份/ACL 数据库或目录。
 控制进程只监听一个显式 HTTPS 地址。空 Control Repository 会自动建立固定首位管理员；
 后续用户、Group、Role、credential 与 ACL 只通过管理 RPC 修改。当前仍缺少连接/请求级限流、
 HA/migration 和完整安全发布 gate，因此不能据此宣称整个控制面已达到生产就绪。
 
-外部系统接入、认证、并发控制、错误码与 33 个方法的逐项契约见
+外部系统接入、认证、并发控制、错误码与方法契约见
 [Management JSON-RPC API](MANAGEMENT_RPC_API.md)。
 
 ## 构建与预检
 
-```powershell
-cmake --preset win-release-user
-cmake --build --preset win-release-user --target flowie_server flowie-control
+按[根 README](../README.md#build-and-test)恢复匹配的 SDK，然后构建：
 
-$env:FLOWIE_CONTROL_KEY_PASSWORD = "private-key-password"
-build\Msvc-Release\bin\flowie-control.exe --check `
-  --config flowie\examples\flowie-control.yml
+```powershell
+cmake --preset native-release-user -DBUILD_TESTS=ON -DFLOWIE_BUILD_TESTS=ON
+cmake --build --preset native-release-user
+& ./build/native-release-user/bin/flowie-control.exe --check --config C:/flowie/control.yml
 ```
 
 真实 listener/Auth/ACL gate 使用临时证书、TurboDB 测试驱动和子进程，覆盖本地 credential 成功/拒绝、
@@ -28,18 +27,17 @@ build\Msvc-Release\bin\flowie-control.exe --check `
 测试不修改源码树中的部署文件：
 
 ```powershell
-ctest --preset win-release-user -R test_flowie_control_https_integration --output-on-failure
+ctest --preset native-release-user -R '^test_flowie_control_https_integration$' --no-tests=error --output-on-failure
 ```
 
-Repository 事务、生产本地 Auth、ACL generation 与 JSON-RPC management service 统一通过 TurboDB
-contract 验证。远程打包、测试容器复用、数据清理和证据下载流程见
-[`LINUX_REMOTE_TEST_RUNBOOK.md`](LINUX_REMOTE_TEST_RUNBOOK.md)。
+Repository 事务、生产本地 Auth、ACL generation 与 JSON-RPC management service 通过
+[Control 的 CTest 注册](../flowie/control/tests/CMakeLists.txt)验证。
 
 也可使用环境变量，优先级固定为 CLI、进程环境、显式 DotEnv：
 
 ```powershell
-$env:FLOWIE_CONTROL_CONFIG = "C:\flowie\flowie-control.yml"
-build\Msvc-Release\bin\flowie-control.exe --check
+$env:FLOWIE_CONTROL_CONFIG = "C:/flowie/control.yml"
+& ./build/native-release-user/bin/flowie-control.exe --check
 ```
 
 仅在本地开发时使用 `--env-file/-E`。程序不会隐式读取当前目录 `.env`。`--check` 解析完整 schema，
@@ -92,7 +90,7 @@ principal 映射；ACL 始终只来自 flowie/control Repository。其请求 `do
 
 根节点只接受 `version`、`listener`、`storage`、`management`、`dashboard` 和 `auth`；
 未知字段、错误类型、重复证书指纹与越界值都会使启动失败。完整示例见
-[flowie-control.yml](examples/flowie-control.yml)。
+[部署配置模板](../deploy/server/control.yml.example)。
 
 | 路径 | 约束 |
 | --- | --- |
@@ -105,7 +103,7 @@ principal 映射；ACL 始终只来自 flowie/control Repository。其请求 `do
 | `listener.tls.key_password_ref` | 可选，只接受 `env://UPPER_CASE_NAME`，不接受 literal |
 | `listener.tls.client_auth` | `none`（默认）或 `required`；Dashboard 启用时只能为 `none` |
 | `listener.tls.client_ca_file` | 仅 `client_auth: required` 时必填；`none` 时禁止配置 |
-| `listener.limits.*` | Iris header、URL、JSON、body 与 header count 的有界配额 |
+| `listener.limits.*` | Chttp App 的 header、URL、JSON、body 与 header count 配额 |
 | `storage.turbodb.driver` | 必填的 TurboDB driver 名称；SDK 默认模块支持 `sqlite`、`postgresql`（兼容 `postgres`）、`mysql`、`tidesdb`，加载或连接失败时不回退 |
 | `storage.turbodb.options` | 最多 16 个字符串键值；`flowie.driver_module` 指定驱动模块绝对路径，由 Flowie 消费；`conninfo`、`password`、`sslpassword`、`uri`、`url` 必须使用 `env://UPPER_CASE_NAME`，其余值交给 TurboDB |
 | `management.rpc_path` | 静态绝对 path，默认 `/v2/control/rpc` |
@@ -146,7 +144,7 @@ fail closed。
 `100 requests/s`、burst `200`，每个 `(caller, domain, principal)` 为 `5 requests/s`、burst `10`。
 连续失败消耗 identity bucket；成功凭据只清除该 identity 的失败 bucket，不能重置 caller 总量。
 桶有界且只保留 keyed digest，不保存 identity、证书指纹或 secret 明文。
-本地 Auth 的 Argon2id 与同步 TurboDB 调用只进入专用 executor。Iris request/response/socket
+本地 Auth 的 Argon2id 与同步 TurboDB 调用只进入专用 executor。Chttp App 的 request/response/socket
 不跨线程；deadline 只结束 HTTP 等待，不会强行取消正在执行的同步 KDF/SQL。迟到结果被丢弃，任务自行
 擦除 secret；endpoint shutdown 停止接单并 drain。显式 `local_executor` 与两个外部 provider 互斥。
 外部网络 I/O 始终留在 CHTTP client 路径，JWT/JWK 解析和签名验证进入其专用有界 executor。
@@ -167,7 +165,7 @@ storage:
 旧 `storage.control_store`、`storage.sqlite` 与 `storage.postgresql` 会作为未知字段拒绝；没有兼容 parser、
 provider fallback 或双写路径。driver 与 option 的具体契约由所安装的 TurboDB package 定义。
 
-TurboDB 2.3.1 使用运行时驱动插件。默认模块位置固定为构建时所选 SDK 的
+TurboDB 使用运行时驱动插件。默认模块位置固定为构建时所选 SDK 的
 `TurboDB_DRIVER_DIR/turbodb_driver_<id>`（加平台模块扩展名）。迁移部署目录时，在
 `options` 中添加 `flowie.driver_module: /opt/turbodb/lib/turbodb/drivers/turbodb_driver_sqlite.so`
 （Windows 使用 `.dll` 的绝对路径）。该路径加载原生代码，只应由部署管理员配置；不会搜索目录
@@ -461,9 +459,10 @@ Group 并显式管理目标域；业务 `security_admin` 永远不能跨 Domain�
 所选 Repository 中已存在、启用且至少拥有一个保留角色。空 Repository 必须使用上文
 一次性 bootstrap；不能通过直接编辑 TurboDB 底层数据绕过领域事务、revision 与审计不变量。
 
-Management RPC 当前注册 33 个方法，其中 `control.domain.list` 只允许登录在 `system` Root 且拥有
+`control.domain.list` 只允许登录在 `system` Root 且拥有
 `system_admin` 的 caller 调用。它以 Repository 的 Domain 记录作为唯一事实源，并提供
 `after`/`limit` keyset 分页；Domain 不是 Group，也不会出现在 effective Groups 中。
+平台管理员可通过 `control.domain.admin.initialize` 为新建的业务 Domain 初始化首位管理员。
 
 本节说明部署与权限模型；外部调用者需要的请求参数、返回结构、错误码、分页和幂等语义以
 [Management JSON-RPC API](MANAGEMENT_RPC_API.md) 为准。
@@ -477,26 +476,15 @@ RPC params 或 Dashboard form 覆盖。
 
 ## 启动与关闭
 
-推荐的组合启动：
+Compose 的组合入口分别启动 Broker 和 Control，并在任一子进程退出时终止另一个。
+原生部署可直接启动 Control，Broker 按自己的 YAML 通过 HTTPS 调用它：
 
 ```powershell
-build\Msvc-Release\bin\flowie_server.exe `
-  --flowie/control-config C:\flowie\flowie-control.yml `
-  --require-security `
-  C:\flowie\control.yml C:\flowie\control.flow
+& ./build/native-release-user/bin/flowie-control.exe --config C:/flowie/control.yml
 ```
 
-Server Application 先创建并同步绑定 Control HTTPS listener，再启动 MQTT worker；MQTT 启动失败会关闭
-Control listener。正常关闭顺序是先停止 MQTT，再由 Control runtime 取消 CHTTP 连接、关闭
-listener、停止 context 并 join。以下独立入口仅用于诊断：
-
-```powershell
-build\Msvc-Release\bin\flowie-control.exe `
-  --config C:\flowie\flowie-control.yml
-```
-
-正常启动只调用显式 host 的 `iris_app_listen_tls_on()`；默认
-`TURBO_TLS_CLIENT_AUTH_NONE`。只有 Dashboard 关闭且显式配置 `listener.tls.client_auth: required` 时，
+Control 通过 Chttp App 绑定配置中的 HTTPS listener。客户端证书验证默认为 `none`。
+只有 Dashboard 关闭且显式配置 `listener.tls.client_auth: required` 时，
 才启用高安全服务端 mTLS 部署能力。独立入口收到 `SIGINT`/`SIGTERM` 后停止 event loop；runtime 随后先解除
 Auth、Dashboard 和 RPC 绑定，再销毁 app、caller-owned RPC context、service 与 TurboDB Repository。
 Repository 关闭失败会返回进程错误而不是静默退出。

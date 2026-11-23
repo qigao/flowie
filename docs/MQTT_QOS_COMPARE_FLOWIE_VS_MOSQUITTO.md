@@ -2,7 +2,8 @@
 
 > 文档用途：维护者理解 flowie 的 QoS1/2 实现相对 Mosquitto 的异同，作为后续修改、审查与测试范围划分的参考。
 > 结论均标注证据类型：`事实`（来自源码/文档行号）、`计算`（可复算）、`推论`（依据+不确定性）、`常用做法`（仅辅助）。
-> 其中网络 I/O 小节记录迁移前的历史实现，不代表当前主线；当前 TCP/TLS/UDP/KCP 使用 Salts CNet，WS/WSS 使用独立 Chttp WebSocket。
+> 本文记录与 2026-07-30 Mosquitto 源码快照的历史比较。当前网络 owner、SDK 和运行边界见
+> [Flowie 架构说明](ARCHITECTURE.md)。
 
 ## 对比对象与版本
 
@@ -105,7 +106,7 @@
 
 ## 证据来源
 
-- flowie：`deploy/server/tests/run-mqtt-scale-load.sh` 与 `flowie/LINUX_REMOTE_TEST_RUNBOOK.md`（单方远端负载验证，非对照）、`flowie/core/src/flowie_session.c`、`flowie/core/src/flowie_endpoint.c`、`flowie/core/src/flowie_ingress.c`、`server/cluster/flowie_cluster_session_bind.c`、`flowie/core/include/flowie.h`。
+- Flowie 的单方远端负载验证使用 [MQTT scale runner](../deploy/server/tests/run-mqtt-scale-load.sh)；该场景没有 Mosquitto 对照结果。实现路径见上方历史参考。
 - Mosquitto：`C:\tmp\mosquitto`（master @ 5cd2546511596a269dbf53f85858c623b09ebdd6），文件 `src/handle_publish.c`、`src/database.c`、`src/conf.c`、`src/persist.h`、`src/plugin_persist.c`、`lib/handle_pubrec.c`、`lib/handle_pubrel.c`、`lib/handle_pubackcomp.c`、`lib/messages_mosq.c`、`lib/mosquitto_internal.h`、`man/mosquitto.conf.5.xml`；I/O 层 `src/loop.c`、`src/net.c`、`src/mux_epoll.c`、`src/mux_poll.c`、`lib/packet_mosq.c`、`lib/net_mosq.c`。
 
 ## 6. I/O 模型对比（源码级）
@@ -193,7 +194,7 @@
 
 ### flowie（事实）
 
-- 声明式配置对接外部服务：`auth_provider`（HTTPS `/v4/authenticate`）+ `acl_provider`（HTTPS `/v4/acl/check`）+ `security_realm` + `auth_method`（`flowie/examples/flowie.yml` ≈74-106）；endpoint 选项 `security_realm` / `auth_method` / `trusted_proxy_cidrs`（`flowie_endpoint.c:234-236`）。
+- Broker 通过 HTTPS `/v4/authenticate` 和 `/v4/acl/check` 对接外部服务。现行配置见 [HTTPS Auth/ACL 决策](ADR_HTTPS_AUTH_SERVICE.md)。
 - 认证/授权走外部 HTTPS 服务（auth-service / acl-service），由 `flowie-control` 提供 realm/ACL 管理：即"接后端"= HTTP 服务对接，**无需编译 C 插件**。
 - 安全配置为 fail-fast 精确绑定：缺失 `realm_channel`/`auth_method`/`auth_provider` 直接拒绝启动（`flowie_endpoint.c:2249-2260`），不留匿名降级路径。
 

@@ -1,16 +1,11 @@
 #include "flowie_stl_error_internal.h"
 
-#include <cstl.h>
-#include <cstl.h>
-#include <cstl.h>
-#include <cstl.h>
-
 #include "flowie_session_internal.h"
 
 #include <core/error.h>
-#include <ltv_parser.h>
 #include <core/tstr.h>
 #include <cstl.h>
+#include <ltv_parser.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -49,6 +44,7 @@ typedef struct flowie_session_delivery_s {
   uint16_t packet_id;
   uint8_t qos;
   flowie_session_delivery_state_t state;
+  uint64_t publish_generation;
   uint64_t expiry_at_epoch_seconds;
   tstr packet;
 } flowie_session_delivery_t;
@@ -90,8 +86,7 @@ static int flowie_session_delivery_lookup(flowie_session_owner_t *owner, uint16_
   const size_t *mapped_index;
   flowie_session_delivery_t *delivery;
   if (!owner || packet_id == 0u) return SALTS_EINVAL;
-  mapped_index =
-      (const size_t *)hash_map_get_const(&owner->delivery_index, &packet_id);
+  mapped_index = (const size_t *)hash_map_get_const(&owner->delivery_index, &packet_id);
   if (!mapped_index) return SALTS_ENOENT;
   delivery = (flowie_session_delivery_t *)vec_at(&owner->deliveries, *mapped_index);
   if (!delivery || delivery->packet_id != packet_id) return SALTS_EPROTO;
@@ -112,11 +107,9 @@ static int flowie_session_delivery_append(flowie_session_owner_t *owner,
   index = vec_size(&owner->deliveries);
   rc = flowie_stl_error(vec_push(&owner->deliveries, delivery));
   if (rc != SALTS_OK) return rc;
-  rc = flowie_stl_error(
-      hash_map_put(&owner->delivery_index, &delivery->packet_id, &index));
+  rc = flowie_stl_error(hash_map_put(&owner->delivery_index, &delivery->packet_id, &index));
   if (rc != SALTS_OK) {
-    if (flowie_stl_error(vec_pop(&owner->deliveries, NULL)) != SALTS_OK)
-      return SALTS_EPROTO;
+    if (flowie_stl_error(vec_pop(&owner->deliveries, NULL)) != SALTS_OK) return SALTS_EPROTO;
     return rc;
   }
   return SALTS_OK;
@@ -179,8 +172,8 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
   if (!owner || !out || !owner->initialized || !owner->client_id ||
       owner->resource_generation == 0u)
     return SALTS_EINVAL;
-  row.client_id = (flowie_mqtt_span_t){(const uint8_t *)owner->client_id,
-                                      tstr_len(owner->client_id)};
+  row.client_id =
+      (flowie_mqtt_span_t){(const uint8_t *)owner->client_id, tstr_len(owner->client_id)};
   row.revision = owner->resource_generation;
   row.session_id = owner->config.session_id;
   row.session_generation = owner->session_generation;
@@ -203,12 +196,12 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
   row.delivery_count = persisted_deliveries;
   row.subscriptions = (const flowie_protocol_subscription_row_t *)calloc(
       row.subscription_count, sizeof(*row.subscriptions));
-  row.inflight = (const flowie_protocol_inflight_row_t *)calloc(
-      row.inflight_count, sizeof(*row.inflight));
-  row.deliveries = (const flowie_protocol_delivery_row_t *)calloc(
-      row.delivery_count, sizeof(*row.deliveries));
-  if ((row.subscription_count && !row.subscriptions) ||
-      (row.inflight_count && !row.inflight) || (row.delivery_count && !row.deliveries)) {
+  row.inflight =
+      (const flowie_protocol_inflight_row_t *)calloc(row.inflight_count, sizeof(*row.inflight));
+  row.deliveries =
+      (const flowie_protocol_delivery_row_t *)calloc(row.delivery_count, sizeof(*row.deliveries));
+  if ((row.subscription_count && !row.subscriptions) || (row.inflight_count && !row.inflight) ||
+      (row.delivery_count && !row.deliveries)) {
     flowie_session_owner_repository_snapshot_cleanup(&row);
     return SALTS_ENOMEM;
   }
@@ -218,8 +211,8 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
     flowie_protocol_subscription_row_t *target =
         &((flowie_protocol_subscription_row_t *)row.subscriptions)[i];
     if (!source || !source->filter) goto invalid;
-    target->filter = (flowie_mqtt_span_t){(const uint8_t *)source->filter,
-                                         tstr_len(source->filter)};
+    target->filter =
+        (flowie_mqtt_span_t){(const uint8_t *)source->filter, tstr_len(source->filter)};
     target->qos = source->qos;
     target->no_local = source->no_local;
     target->retain_as_published = source->retain_as_published;
@@ -242,13 +235,10 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
     target = &((flowie_protocol_delivery_row_t *)row.deliveries)[target_index++];
     target->packet_id = source->packet_id;
     target->qos = source->qos;
-    target->state = (uint8_t)(source->state == FLOWIE_SESSION_DELIVERY_QUEUED
-                                  ? source->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK
-                                                      : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC
-                                  : source->state);
+    target->state = (uint8_t)source->state;
     target->expiry_at_epoch_seconds = source->expiry_at_epoch_seconds;
-    target->packet = (flowie_mqtt_span_t){(const uint8_t *)source->packet,
-                                         tstr_len(source->packet)};
+    target->packet =
+        (flowie_mqtt_span_t){(const uint8_t *)source->packet, tstr_len(source->packet)};
   }
   if (owner->has_will) {
     row.will.present = 1;
@@ -256,12 +246,12 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
     row.will.qos = owner->will_qos;
     row.will.retain = owner->will_retain;
     row.will.delay_interval = owner->will_delay_interval;
-    row.will.topic = (flowie_mqtt_span_t){(const uint8_t *)owner->will_topic,
-                                         tstr_len(owner->will_topic)};
+    row.will.topic =
+        (flowie_mqtt_span_t){(const uint8_t *)owner->will_topic, tstr_len(owner->will_topic)};
     row.will.properties = (flowie_mqtt_span_t){(const uint8_t *)owner->will_properties,
-                                              tstr_len(owner->will_properties)};
-    row.will.payload = (flowie_mqtt_span_t){(const uint8_t *)owner->will_payload,
-                                           tstr_len(owner->will_payload)};
+                                               tstr_len(owner->will_properties)};
+    row.will.payload =
+        (flowie_mqtt_span_t){(const uint8_t *)owner->will_payload, tstr_len(owner->will_payload)};
   }
   *out = row;
   return SALTS_OK;
@@ -284,7 +274,10 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
   owner = flowie_session_owner_create(config);
   if (!owner) return SALTS_ENOMEM;
   owner->client_id = tstr_new_len(row->client_id.data, row->client_id.size);
-  if (!owner->client_id) { rc = SALTS_ENOMEM; goto fail; }
+  if (!owner->client_id) {
+    rc = SALTS_ENOMEM;
+    goto fail;
+  }
   owner->config.session_id = row->session_id;
   owner->version = row->mqtt_version;
   owner->keep_alive = row->keep_alive;
@@ -295,16 +288,22 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
   for (size_t i = 0u; i < row->subscription_count; ++i) {
     flowie_session_subscription_owned_t entry;
     memset(&entry, 0, sizeof(entry));
-    entry.filter = tstr_new_len(row->subscriptions[i].filter.data,
-                               row->subscriptions[i].filter.size);
-    if (!entry.filter) { rc = SALTS_ENOMEM; goto fail; }
+    entry.filter =
+        tstr_new_len(row->subscriptions[i].filter.data, row->subscriptions[i].filter.size);
+    if (!entry.filter) {
+      rc = SALTS_ENOMEM;
+      goto fail;
+    }
     entry.qos = row->subscriptions[i].qos;
     entry.no_local = row->subscriptions[i].no_local;
     entry.retain_as_published = row->subscriptions[i].retain_as_published;
     entry.retain_handling = row->subscriptions[i].retain_handling;
     entry.subscription_identifier = row->subscriptions[i].subscription_identifier;
     rc = flowie_stl_error(vec_push(&owner->subscriptions, &entry));
-    if (rc != SALTS_OK) { tstr_freep(&entry.filter); goto fail; }
+    if (rc != SALTS_OK) {
+      tstr_freep(&entry.filter);
+      goto fail;
+    }
   }
   for (size_t i = 0u; i < row->inflight_count; ++i) {
     flowie_session_inflight_t entry = {row->inflight[i].packet_id, row->inflight[i].qos,
@@ -320,18 +319,25 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
     entry.state = (flowie_session_delivery_state_t)row->deliveries[i].state;
     entry.expiry_at_epoch_seconds = row->deliveries[i].expiry_at_epoch_seconds;
     entry.packet = tstr_new_len(row->deliveries[i].packet.data, row->deliveries[i].packet.size);
-    if (!entry.packet) { rc = SALTS_ENOMEM; goto fail; }
+    if (!entry.packet) {
+      rc = SALTS_ENOMEM;
+      goto fail;
+    }
     rc = flowie_session_record_delivery_validate(owner, &entry);
     if (rc == SALTS_OK) rc = flowie_session_delivery_append(owner, &entry);
     if (rc == SALTS_EALREADY) rc = SALTS_EPROTO;
-    if (rc != SALTS_OK) { tstr_freep(&entry.packet); goto fail; }
+    if (rc != SALTS_OK) {
+      tstr_freep(&entry.packet);
+      goto fail;
+    }
   }
   if (row->will.present) {
     owner->will_topic = tstr_new_len(row->will.topic.data, row->will.topic.size);
     owner->will_properties = tstr_new_len(row->will.properties.data, row->will.properties.size);
     owner->will_payload = tstr_new_len(row->will.payload.data, row->will.payload.size);
     if (!owner->will_topic || !owner->will_properties || !owner->will_payload) {
-      rc = SALTS_ENOMEM; goto fail;
+      rc = SALTS_ENOMEM;
+      goto fail;
     }
     owner->has_will = 1u;
     owner->will_pending = (uint8_t)row->will.pending;
@@ -431,7 +437,9 @@ static int flowie_session_will_delay(const flowie_mqtt_connect_view_t *connect, 
 }
 
 static int flowie_session_subscriptions_clone(const vec_t *source, vec_t *out) {
-  int rc = flowie_stl_error(vec_init_bytes(out, sizeof(flowie_session_subscription_owned_t), _Alignof(flowie_session_subscription_owned_t), SIZE_MAX));
+  int rc =
+      flowie_stl_error(vec_init_bytes(out, sizeof(flowie_session_subscription_owned_t),
+                                      _Alignof(flowie_session_subscription_owned_t), SIZE_MAX));
   if (rc != SALTS_OK) return rc;
   for (size_t i = 0u; i < vec_size(source); ++i) {
     const flowie_session_subscription_owned_t *entry =
@@ -497,26 +505,28 @@ flowie_session_owner_t *flowie_session_owner_create(const flowie_session_config_
   owner->config = *config;
   owner->config.size = sizeof(owner->config);
   owner->resource_generation = 1u;
-  if (flowie_stl_error(vec_init_bytes(&owner->subscriptions, sizeof(flowie_session_subscription_owned_t), _Alignof(flowie_session_subscription_owned_t), SIZE_MAX)) !=
-      SALTS_OK) {
+  if (flowie_stl_error(
+          vec_init_bytes(&owner->subscriptions, sizeof(flowie_session_subscription_owned_t),
+                         _Alignof(flowie_session_subscription_owned_t), SIZE_MAX)) != SALTS_OK) {
     free(owner);
     return NULL;
   }
-  if (flowie_stl_error(vec_init_bytes(&owner->inflight, sizeof(flowie_session_inflight_t), _Alignof(flowie_session_inflight_t), SIZE_MAX)) != SALTS_OK) {
+  if (flowie_stl_error(vec_init_bytes(&owner->inflight, sizeof(flowie_session_inflight_t),
+                                      _Alignof(flowie_session_inflight_t), SIZE_MAX)) != SALTS_OK) {
     vec_destroy(&owner->subscriptions);
     free(owner);
     return NULL;
   }
-  if (flowie_stl_error(vec_init_bytes(&owner->deliveries, sizeof(flowie_session_delivery_t), _Alignof(flowie_session_delivery_t), SIZE_MAX)) != SALTS_OK) {
+  if (flowie_stl_error(vec_init_bytes(&owner->deliveries, sizeof(flowie_session_delivery_t),
+                                      _Alignof(flowie_session_delivery_t), SIZE_MAX)) != SALTS_OK) {
     vec_destroy(&owner->inflight);
     vec_destroy(&owner->subscriptions);
     free(owner);
     return NULL;
   }
   if (flowie_stl_error(hash_map_init_bytes(
-          &owner->delivery_index, sizeof(uint16_t), _Alignof(uint16_t),
-          sizeof(size_t), _Alignof(size_t), config->max_inflight, hash_bytes,
-          hash_key_equal, NULL)) != SALTS_OK) {
+          &owner->delivery_index, sizeof(uint16_t), _Alignof(uint16_t), sizeof(size_t),
+          _Alignof(size_t), config->max_inflight, hash_bytes, hash_key_equal, NULL)) != SALTS_OK) {
     vec_destroy(&owner->deliveries);
     vec_destroy(&owner->inflight);
     vec_destroy(&owner->subscriptions);
@@ -603,8 +613,8 @@ void flowie_session_owner_destroy(flowie_session_owner_t *owner) {
 }
 
 static int flowie_session_owner_open_impl(flowie_session_owner_t *owner,
-                                           const flowie_mqtt_connect_view_t *connect,
-                                           int allow_active) {
+                                          const flowie_mqtt_connect_view_t *connect,
+                                          int allow_active) {
   tstr client_id = NULL;
   tstr will_topic = NULL;
   tstr will_properties = NULL;
@@ -637,8 +647,8 @@ static int flowie_session_owner_open_impl(flowie_session_owner_t *owner,
     rc = flowie_session_will_delay(connect, &will_delay);
     if (rc != SALTS_OK) return rc;
     will_topic = tstr_new_len(connect->will_topic.data, connect->will_topic.size);
-    will_properties = tstr_new_len(connect->will_properties.values.data,
-                                   connect->will_properties.values.size);
+    will_properties =
+        tstr_new_len(connect->will_properties.values.data, connect->will_properties.values.size);
     will_payload = tstr_new_len(connect->will_payload.data, connect->will_payload.size);
     if (!will_topic || !will_properties || !will_payload) {
       tstr_freep(&will_topic);
@@ -689,9 +699,9 @@ int flowie_session_owner_open(flowie_session_owner_t *owner,
 }
 
 static int flowie_session_owner_connect_impl(flowie_session_owner_t *owner,
-                                              const flowie_mqtt_connect_view_t *connect,
-                                              flowie_session_connect_result_t *out,
-                                              int allow_active) {
+                                             const flowie_mqtt_connect_view_t *connect,
+                                             flowie_session_connect_result_t *out,
+                                             int allow_active) {
   flowie_session_connect_result_t result = FLOWIE_SESSION_CONNECT_RESULT_INIT;
   int initialized;
   int rc;
@@ -786,7 +796,7 @@ int flowie_session_owner_snapshot(const flowie_session_owner_t *owner,
   snapshot.will_retain = owner->will_retain;
   snapshot.will_delay_interval = owner->will_delay_interval;
   snapshot.will_topic = (flowie_mqtt_span_t){(const uint8_t *)owner->will_topic,
-                                              owner->will_topic ? tstr_len(owner->will_topic) : 0u};
+                                             owner->will_topic ? tstr_len(owner->will_topic) : 0u};
   snapshot.will_properties =
       (flowie_mqtt_span_t){(const uint8_t *)owner->will_properties,
                            owner->will_properties ? tstr_len(owner->will_properties) : 0u};
@@ -797,8 +807,7 @@ int flowie_session_owner_snapshot(const flowie_session_owner_t *owner,
   return SALTS_OK;
 }
 
-int flowie_session_owner_route(const flowie_session_owner_t *owner,
-                               flowie_protocol_route_t *out) {
+int flowie_session_owner_route(const flowie_session_owner_t *owner, flowie_protocol_route_t *out) {
   flowie_protocol_route_t route = FLOWIE_PROTOCOL_ROUTE_INIT;
   if (!owner || !out || out->size < sizeof(*out) ||
       out->contract_version != FLOWIE_PROTOCOL_CONTRACT_VERSION)
@@ -873,8 +882,7 @@ flowie_session_subscription_find(vec_t *subscriptions, flowie_mqtt_span_t filter
 
 static int flowie_session_subscription_apply(vec_t *subscriptions, size_t capacity,
                                              const flowie_mqtt_subscription_view_t *entry,
-                                             uint32_t subscription_identifier,
-                                             int *changed) {
+                                             uint32_t subscription_identifier, int *changed) {
   flowie_session_subscription_owned_t *existing =
       flowie_session_subscription_find(subscriptions, entry->filter);
   if (existing) {
@@ -988,8 +996,7 @@ int flowie_session_owner_subscription_at(const flowie_session_owner_t *owner, si
   if (!owner || !out || out->size < sizeof(*out) ||
       out->abi_version != FLOWIE_SESSION_INTERNAL_ABI_V1)
     return SALTS_EINVAL;
-  entry =
-      (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, index);
+  entry = (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, index);
   if (!entry || !entry->filter) return SALTS_ENOENT;
   value.filter.data = (const uint8_t *)entry->filter;
   value.filter.size = tstr_len(entry->filter);
@@ -1010,8 +1017,7 @@ int flowie_session_owner_delivery_reserve(flowie_session_owner_t *owner, uint8_t
   if (!owner || !packet_id || qos == 0u || qos > 2u) return SALTS_EINVAL;
   if (!owner->active && (!owner->initialized || owner->session_expiry_interval == 0u))
     return SALTS_EBUSY;
-  if (vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
-      owner->config.max_inflight)
+  if (vec_size(&owner->inflight) + vec_size(&owner->deliveries) >= owner->config.max_inflight)
     return SALTS_ENOSPC;
   candidate = owner->next_delivery_packet_id;
   for (size_t attempt = 0u; attempt < UINT16_MAX; ++attempt) {
@@ -1043,14 +1049,15 @@ static int flowie_session_owner_delivery_commit_state(flowie_session_owner_t *ow
     int rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, NULL);
     if (rc != SALTS_OK) return rc;
   }
-  if (delivery->state != FLOWIE_SESSION_DELIVERY_RESERVED || delivery->packet) return SALTS_EALREADY;
+  if (delivery->state != FLOWIE_SESSION_DELIVERY_RESERVED || delivery->packet)
+    return SALTS_EALREADY;
   owned = tstr_new_len(packet.data, packet.size);
   if (!owned) return SALTS_ENOMEM;
   delivery->packet = owned;
   delivery->expiry_at_epoch_seconds = expiry_at_epoch_seconds;
-  delivery->state = queued ? FLOWIE_SESSION_DELIVERY_QUEUED
-                           : delivery->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK
-                                                 : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC;
+  delivery->state = queued                ? FLOWIE_SESSION_DELIVERY_QUEUED
+                    : delivery->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK
+                                          : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC;
   if (expiry_at_epoch_seconds != 0u &&
       flowie_session_record_delivery_validate(owner, delivery) != SALTS_OK) {
     tstr_freep(&delivery->packet);
@@ -1083,16 +1090,35 @@ int flowie_session_owner_delivery_commit_queued(flowie_session_owner_t *owner, u
 }
 
 int flowie_session_owner_delivery_cancel(flowie_session_owner_t *owner, uint16_t packet_id) {
+  flowie_session_delivery_t *delivery;
   flowie_session_delivery_t removed;
   size_t index;
+  int committed;
   int rc;
   if (!owner || packet_id == 0u) return SALTS_EINVAL;
-  rc = flowie_session_delivery_lookup(owner, packet_id, NULL, &index);
+  rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, &index);
   if (rc != SALTS_OK) return rc;
+  committed = delivery->state != FLOWIE_SESSION_DELIVERY_RESERVED;
   memset(&removed, 0, sizeof(removed));
-  rc = flowie_session_delivery_remove_at(owner, index, &removed);
+  if (!committed) {
+    rc = flowie_session_delivery_remove_at(owner, index, &removed);
+  } else {
+    if (owner->resource_generation == UINT64_MAX) return SALTS_ERANGE;
+    rc = flowie_stl_error(hash_map_remove(&owner->delivery_index, &packet_id, NULL));
+    if (rc != SALTS_OK) return rc;
+    rc = flowie_stl_error(vec_erase(&owner->deliveries, index, &removed));
+  }
   if (rc != SALTS_OK) return rc;
   tstr_freep(&removed.packet);
+  if (!committed) return SALTS_OK;
+  /* Replay can discard a committed PUBLISH between two deliverable packets. */
+  for (size_t i = index; i < vec_size(&owner->deliveries); ++i) {
+    flowie_session_delivery_t *moved = vec_at(&owner->deliveries, i);
+    size_t *mapped_index = hash_map_get(&owner->delivery_index, &moved->packet_id);
+    if (!mapped_index) return SALTS_EPROTO;
+    *mapped_index = i;
+  }
+  owner->resource_generation += 1u;
   return SALTS_OK;
 }
 
@@ -1201,10 +1227,10 @@ int flowie_session_delivery_packet_expiry_refresh(flowie_mqtt_version_t version,
   return found ? SALTS_OK : SALTS_EPROTO;
 }
 
-int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner, size_t index,
-                                                uint64_t now_epoch_seconds,
-                                                flowie_mqtt_span_t *packet, uint16_t *packet_id,
-                                                uint64_t *expiry_at_epoch_seconds) {
+int flowie_session_owner_delivery_replay_at(flowie_session_owner_t *owner, size_t index,
+                                            uint64_t now_epoch_seconds, flowie_mqtt_span_t *packet,
+                                            uint16_t *packet_id, uint64_t *expiry_at_epoch_seconds,
+                                            int *queued) {
   flowie_session_delivery_t *delivery;
   int rc;
   if (!owner || !packet || !packet_id || !expiry_at_epoch_seconds) return SALTS_EINVAL;
@@ -1223,20 +1249,57 @@ int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner, s
       return SALTS_EPROTO;
     }
   }
-  if (delivery->state == FLOWIE_SESSION_DELIVERY_QUEUED) {
-    delivery->state = delivery->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK
-                                          : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC;
-  } else if ((delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_ACK ||
-              delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_PUBREC) &&
-             tstr_len(delivery->packet) != 0u &&
-             ((uint8_t)delivery->packet[0] >> 4u) == FLOWIE_MQTT_PACKET_PUBLISH) {
+  if ((delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_ACK ||
+       delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_PUBREC) &&
+      tstr_len(delivery->packet) != 0u &&
+      ((uint8_t)delivery->packet[0] >> 4u) == FLOWIE_MQTT_PACKET_PUBLISH) {
     delivery->packet[0] = (char)((uint8_t)delivery->packet[0] | UINT8_C(0x08));
   }
   packet->data = (const uint8_t *)delivery->packet;
   packet->size = tstr_len(delivery->packet);
   *packet_id = delivery->packet_id;
   *expiry_at_epoch_seconds = delivery->expiry_at_epoch_seconds;
+  if (queued) *queued = delivery->state == FLOWIE_SESSION_DELIVERY_QUEUED;
   return SALTS_OK;
+}
+
+int flowie_session_owner_delivery_start(flowie_session_owner_t *owner, uint16_t packet_id) {
+  flowie_session_delivery_t *delivery;
+  int rc;
+  if (!owner || packet_id == 0u) return SALTS_EINVAL;
+  rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, NULL);
+  if (rc != SALTS_OK) return rc;
+  if (delivery->state != FLOWIE_SESSION_DELIVERY_QUEUED) return SALTS_EPROTO;
+  if (owner->resource_generation == UINT64_MAX) return SALTS_ERANGE;
+  delivery->state =
+      delivery->qos == 1u ? FLOWIE_SESSION_DELIVERY_WAIT_ACK : FLOWIE_SESSION_DELIVERY_WAIT_PUBREC;
+  owner->resource_generation += 1u;
+  return SALTS_OK;
+}
+
+int flowie_session_owner_delivery_mark_sent(flowie_session_owner_t *owner, uint16_t packet_id) {
+  flowie_session_delivery_t *delivery;
+  int rc;
+  if (!owner || !owner->active || packet_id == 0u) return SALTS_EINVAL;
+  rc = flowie_session_delivery_lookup(owner, packet_id, &delivery, NULL);
+  if (rc != SALTS_OK) return rc;
+  if ((delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_ACK &&
+       delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBREC) ||
+      delivery->publish_generation == owner->session_generation)
+    return SALTS_EPROTO;
+  delivery->publish_generation = owner->session_generation;
+  return SALTS_OK;
+}
+
+int flowie_session_owner_delivery_pending_at_ex(flowie_session_owner_t *owner, size_t index,
+                                                uint64_t now_epoch_seconds,
+                                                flowie_mqtt_span_t *packet, uint16_t *packet_id,
+                                                uint64_t *expiry_at_epoch_seconds) {
+  int queued = 0;
+  int rc = flowie_session_owner_delivery_replay_at(owner, index, now_epoch_seconds, packet,
+                                                   packet_id, expiry_at_epoch_seconds, &queued);
+  if (rc == SALTS_OK && queued) rc = flowie_session_owner_delivery_start(owner, *packet_id);
+  return rc;
 }
 
 int flowie_session_owner_delivery_pending_at(flowie_session_owner_t *owner, size_t index,
@@ -1252,9 +1315,9 @@ int flowie_session_owner_delivery_pending_at(flowie_session_owner_t *owner, size
                                                      &expiry_at_epoch_seconds);
 }
 
-int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
-                                      const flowie_mqtt_packet_view_t *packet,
-                                      flowie_session_ack_intent_t *reply) {
+int flowie_session_owner_delivery_ack_ex(flowie_session_owner_t *owner,
+                                         const flowie_mqtt_packet_view_t *packet,
+                                         flowie_session_ack_intent_t *reply, int *quota_released) {
   flowie_mqtt_control_packet_view_t control = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
   flowie_session_delivery_t *delivery;
   flowie_session_delivery_t removed;
@@ -1263,8 +1326,9 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
   size_t written = 0u;
   size_t index;
   int rc;
-  if (!owner || !packet || packet->size < sizeof(*packet) || !reply || reply->size < sizeof(*reply) ||
-      reply->abi_version != FLOWIE_SESSION_INTERNAL_ABI_V1)
+  if (quota_released) *quota_released = 0;
+  if (!owner || !packet || packet->size < sizeof(*packet) || !reply ||
+      reply->size < sizeof(*reply) || reply->abi_version != FLOWIE_SESSION_INTERNAL_ABI_V1)
     return SALTS_EINVAL;
   if (!owner->active || packet->version != owner->version) return SALTS_EBUSY;
   if (packet->type != FLOWIE_MQTT_PACKET_PUBACK && packet->type != FLOWIE_MQTT_PACKET_PUBREC &&
@@ -1280,9 +1344,8 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
     if (delivery->qos != 1u || delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_ACK)
       return SALTS_EPROTO;
   } else if (packet->type == FLOWIE_MQTT_PACKET_PUBREC) {
-    if (delivery->qos != 2u ||
-        (delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBREC &&
-         delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP))
+    if (delivery->qos != 2u || (delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBREC &&
+                                delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP))
       return SALTS_EPROTO;
     if (control.reason_code < UINT8_C(0x80)) {
       if (delivery->state == FLOWIE_SESSION_DELIVERY_WAIT_PUBREC) {
@@ -1306,21 +1369,27 @@ int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
       owner->resource_generation += 1u;
       return SALTS_OK;
     }
-  } else if (delivery->qos != 2u ||
-             delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP) {
+  } else if (delivery->qos != 2u || delivery->state != FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP) {
     return SALTS_EPROTO;
   }
   if (owner->resource_generation == UINT64_MAX) return SALTS_ERANGE;
   memset(&removed, 0, sizeof(removed));
   rc = flowie_session_delivery_remove_at(owner, index, &removed);
   if (rc != SALTS_OK) return rc;
+  if (quota_released) *quota_released = removed.publish_generation == owner->session_generation;
   tstr_freep(&removed.packet);
   owner->resource_generation += 1u;
   return SALTS_OK;
 }
 
-static int flowie_session_subscription_remove(vec_t *subscriptions,
-                                              flowie_mqtt_span_t filter, int *removed) {
+int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
+                                      const flowie_mqtt_packet_view_t *packet,
+                                      flowie_session_ack_intent_t *reply) {
+  return flowie_session_owner_delivery_ack_ex(owner, packet, reply, NULL);
+}
+
+static int flowie_session_subscription_remove(vec_t *subscriptions, flowie_mqtt_span_t filter,
+                                              int *removed) {
   if (!subscriptions || !removed) return SALTS_EINVAL;
   *removed = 0;
   for (size_t i = 0u; i < vec_size(subscriptions); ++i) {
@@ -1421,8 +1490,7 @@ fail_reasons:
 static flowie_session_inflight_t *
 flowie_session_inflight_find(flowie_session_owner_t *owner, uint16_t packet_id, size_t *index_out) {
   for (size_t i = 0u; i < vec_size(&owner->inflight); ++i) {
-    flowie_session_inflight_t *entry =
-        (flowie_session_inflight_t *)vec_at(&owner->inflight, i);
+    flowie_session_inflight_t *entry = (flowie_session_inflight_t *)vec_at(&owner->inflight, i);
     if (entry && entry->packet_id == packet_id) {
       if (index_out) *index_out = i;
       return entry;
@@ -1458,8 +1526,7 @@ int flowie_session_ack_control_packet(const flowie_session_ack_intent_t *ack,
   flowie_mqtt_control_packet_t packet = FLOWIE_MQTT_CONTROL_PACKET_INIT;
   if (!ack || ack->size < sizeof(*ack) || ack->abi_version != FLOWIE_SESSION_INTERNAL_ABI_V1 ||
       !out || out->size < sizeof(*out) || out->abi_version != FLOWIE_MQTT_PROTOCOL_ABI_V1 ||
-      ack->packet_id == 0u ||
-      !flowie_mqtt_version_is_supported(version))
+      ack->packet_id == 0u || !flowie_mqtt_version_is_supported(version))
     return SALTS_EINVAL;
   switch (ack->kind) {
   case FLOWIE_SESSION_ACK_PUBACK:
@@ -1622,7 +1689,8 @@ static void flowie_session_record_write_u32(uint8_t *out, uint32_t value) {
 }
 
 static void flowie_session_record_write_u64(uint8_t *out, uint64_t value) {
-  for (size_t i = 0u; i < 8u; ++i) out[i] = (uint8_t)(value >> (56u - i * 8u));
+  for (size_t i = 0u; i < 8u; ++i)
+    out[i] = (uint8_t)(value >> (56u - i * 8u));
 }
 
 static uint16_t flowie_session_record_read_u16(const uint8_t *data) {
@@ -1636,7 +1704,8 @@ static uint32_t flowie_session_record_read_u32(const uint8_t *data) {
 
 static uint64_t flowie_session_record_read_u64(const uint8_t *data) {
   uint64_t value = 0u;
-  for (size_t i = 0u; i < 8u; ++i) value = (value << 8u) | data[i];
+  for (size_t i = 0u; i < 8u; ++i)
+    value = (value << 8u) | data[i];
   return value;
 }
 
@@ -1647,8 +1716,8 @@ static int flowie_session_record_size_add(size_t *total, size_t value_size) {
   return SALTS_OK;
 }
 
-static int flowie_session_record_append(uint8_t *out, size_t capacity, size_t *offset,
-                                        uint8_t type, const uint8_t *value, size_t value_size) {
+static int flowie_session_record_append(uint8_t *out, size_t capacity, size_t *offset, uint8_t type,
+                                        const uint8_t *value, size_t value_size) {
   size_t wire_size;
   size_t written;
   if (!out || !offset || type == 0u || (!value && value_size != 0u) || *offset > capacity)
@@ -1663,16 +1732,17 @@ static int flowie_session_record_append(uint8_t *out, size_t capacity, size_t *o
 
 int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint8_t *out,
                                        size_t capacity, size_t *out_size) {
-  uint8_t header[FLOWIE_SESSION_RECORD_HEADER_SIZE] = {'F', 'S', 'E', 'S', 0u,
-                                                       FLOWIE_SESSION_RECORD_VERSION_MAJOR, 0u,
-                                                       FLOWIE_SESSION_RECORD_VERSION_MINOR};
+  uint8_t header[FLOWIE_SESSION_RECORD_HEADER_SIZE] = {'F', 'S',
+                                                       'E', 'S',
+                                                       0u,  FLOWIE_SESSION_RECORD_VERSION_MAJOR,
+                                                       0u,  FLOWIE_SESSION_RECORD_VERSION_MINOR};
   uint8_t metadata[FLOWIE_SESSION_RECORD_METADATA_SIZE];
   uint8_t will_metadata[FLOWIE_SESSION_RECORD_WILL_METADATA_SIZE];
   size_t required = 0u;
   size_t offset = 0u;
   int rc;
-  if (!owner || !out_size || (!out && capacity != 0u) || !owner->initialized ||
-      !owner->client_id || owner->session_generation == 0u || owner->resource_generation == 0u)
+  if (!owner || !out_size || (!out && capacity != 0u) || !owner->initialized || !owner->client_id ||
+      owner->session_generation == 0u || owner->resource_generation == 0u)
     return SALTS_EINVAL;
   rc = flowie_session_record_size_add(&required, sizeof(header));
   if (rc == SALTS_OK) rc = flowie_session_record_size_add(&required, sizeof(metadata));
@@ -1707,12 +1777,11 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
   if (rc == SALTS_OK && owner->has_will) {
     if (!owner->will_topic || !owner->will_properties || !owner->will_payload ||
         owner->will_qos > 2u || owner->will_retain > 1u ||
-        !flowie_mqtt_topic_name_validate((flowie_mqtt_span_t){
-            (const uint8_t *)owner->will_topic, tstr_len(owner->will_topic)}))
+        !flowie_mqtt_topic_name_validate(
+            (flowie_mqtt_span_t){(const uint8_t *)owner->will_topic, tstr_len(owner->will_topic)}))
       return SALTS_EPROTO;
     rc = flowie_session_record_size_add(&required, sizeof(will_metadata));
-    if (rc == SALTS_OK)
-      rc = flowie_session_record_size_add(&required, tstr_len(owner->will_topic));
+    if (rc == SALTS_OK) rc = flowie_session_record_size_add(&required, tstr_len(owner->will_topic));
     if (rc == SALTS_OK)
       rc = flowie_session_record_size_add(&required, tstr_len(owner->will_properties));
     if (rc == SALTS_OK)
@@ -1734,14 +1803,15 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
   for (size_t i = 0u; rc == SALTS_OK && i < vec_size(&owner->subscriptions); ++i) {
     const flowie_session_subscription_owned_t *entry =
         (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
-    rc = flowie_session_record_append(out, capacity, &offset, 3u,
-                                      (const uint8_t *)entry->filter, tstr_len(entry->filter));
+    rc = flowie_session_record_append(out, capacity, &offset, 3u, (const uint8_t *)entry->filter,
+                                      tstr_len(entry->filter));
   }
   for (size_t i = 0u; rc == SALTS_OK && i < vec_size(&owner->subscriptions); ++i) {
     const flowie_session_subscription_owned_t *entry =
         (const flowie_session_subscription_owned_t *)vec_at_const(&owner->subscriptions, i);
-    uint8_t options[8] = {entry->qos, entry->no_local, entry->retain_as_published,
-                          entry->retain_handling, 0u, 0u, 0u, 0u};
+    uint8_t options[8] = {
+        entry->qos, entry->no_local, entry->retain_as_published, entry->retain_handling, 0u, 0u, 0u,
+        0u};
     flowie_session_record_write_u32(options + 4u, entry->subscription_identifier);
     rc = flowie_session_record_append(out, capacity, &offset, 4u, options, sizeof(options));
   }
@@ -1774,8 +1844,8 @@ int flowie_session_owner_record_encode(const flowie_session_owner_t *owner, uint
     const flowie_session_delivery_t *entry =
         (const flowie_session_delivery_t *)vec_at_const(&owner->deliveries, i);
     if (!entry || entry->state == FLOWIE_SESSION_DELIVERY_RESERVED) continue;
-    rc = flowie_session_record_append(out, capacity, &offset, 7u,
-                                      (const uint8_t *)entry->packet, tstr_len(entry->packet));
+    rc = flowie_session_record_append(out, capacity, &offset, 7u, (const uint8_t *)entry->packet,
+                                      tstr_len(entry->packet));
   }
   if (rc == SALTS_OK && owner->has_will) {
     will_metadata[0] = (uint8_t)(owner->will_pending || owner->active);
@@ -1869,10 +1939,9 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
   int will_payload_seen = 0;
   int rc = SALTS_EPROTO;
   if (out) *out = NULL;
-  if (!flowie_session_config_valid(config) || !out || !data || data_size == 0u ||
-      !client_id.data || client_id.size == 0u || client_id.size > UINT16_MAX ||
-      !flowie_mqtt_utf8_validate(client_id) || revision == 0u ||
-      revision > (uint64_t)INT64_MAX)
+  if (!flowie_session_config_valid(config) || !out || !data || data_size == 0u || !client_id.data ||
+      client_id.size == 0u || client_id.size > UINT16_MAX ||
+      !flowie_mqtt_utf8_validate(client_id) || revision == 0u || revision > (uint64_t)INT64_MAX)
     return SALTS_EINVAL;
   owner = flowie_session_owner_create(config);
   if (!owner) return SALTS_ENOMEM;
@@ -1904,8 +1973,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     value = message.value;
     value_size = message.value_size;
     if (type == 0u || type > 11u || type < previous_type ||
-        (type == previous_type && (type < 3u || type > 7u)) ||
-        (record_minor == 0u && type > 7u)) {
+        (type == previous_type && (type < 3u || type > 7u)) || (record_minor == 0u && type > 7u)) {
       rc = SALTS_EPROTO;
       goto fail;
     }
@@ -1928,8 +1996,8 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       }
       session_id = flowie_session_record_read_u64(value + 1u);
       session_generation = flowie_session_record_read_u64(value + 9u);
-      if (!flowie_mqtt_version_is_supported((flowie_mqtt_version_t)value[0]) ||
-          session_id == 0u || session_generation == 0u) {
+      if (!flowie_mqtt_version_is_supported((flowie_mqtt_version_t)value[0]) || session_id == 0u ||
+          session_generation == 0u) {
         rc = SALTS_EPROTO;
         goto fail;
       }
@@ -1964,8 +2032,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       flowie_session_subscription_owned_t *subscription =
           (flowie_session_subscription_owned_t *)vec_at(&owner->subscriptions, option_index);
       if (!subscription || value_size != (record_minor >= 2u ? 8u : 4u) || value[0] > 2u ||
-          value[1] > 1u ||
-          value[2] > 1u || value[3] > 2u) {
+          value[1] > 1u || value[2] > 1u || value[3] > 2u) {
         rc = SALTS_EPROTO;
         goto fail;
       }
@@ -1983,15 +2050,15 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     } else if (type == 5u) {
       flowie_session_inflight_t inflight;
       if (value_size != 3u || value[2] != 2u ||
-          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
-              config->max_inflight) {
+          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >= config->max_inflight) {
         rc = SALTS_EPROTO;
         goto fail;
       }
       inflight.packet_id = flowie_session_record_read_u16(value);
       inflight.qos = value[2];
       inflight.state = FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE;
-      if (inflight.packet_id == 0u || flowie_session_inflight_find(owner, inflight.packet_id, NULL)) {
+      if (inflight.packet_id == 0u ||
+          flowie_session_inflight_find(owner, inflight.packet_id, NULL)) {
         rc = SALTS_EPROTO;
         goto fail;
       }
@@ -2003,8 +2070,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       flowie_session_delivery_t delivery;
       int delivery_lookup_rc;
       if (value_size != (record_minor >= 3u ? 12u : 4u) ||
-          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >=
-              config->max_inflight) {
+          vec_size(&owner->inflight) + vec_size(&owner->deliveries) >= config->max_inflight) {
         rc = SALTS_EPROTO;
         goto fail;
       }
@@ -2014,8 +2080,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       delivery.state = (flowie_session_delivery_state_t)value[3];
       delivery.expiry_at_epoch_seconds =
           record_minor >= 3u ? flowie_session_record_read_u64(value + 4u) : 0u;
-      delivery_lookup_rc =
-          flowie_session_delivery_lookup(owner, delivery.packet_id, NULL, NULL);
+      delivery_lookup_rc = flowie_session_delivery_lookup(owner, delivery.packet_id, NULL, NULL);
       if (delivery.packet_id == 0u || delivery.qos == 0u || delivery.qos > 2u ||
           delivery.state < FLOWIE_SESSION_DELIVERY_WAIT_ACK ||
           delivery.state > FLOWIE_SESSION_DELIVERY_WAIT_PUBCOMP ||
@@ -2093,8 +2158,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
     offset += wire_size;
   }
   if (!header_seen || !metadata_seen || option_index != vec_size(&owner->subscriptions) ||
-      packet_index != vec_size(&owner->deliveries) ||
-      (record_minor == 0u && will_metadata_seen) ||
+      packet_index != vec_size(&owner->deliveries) || (record_minor == 0u && will_metadata_seen) ||
       (will_metadata_seen && (!will_topic_seen || !will_properties_seen || !will_payload_seen))) {
     rc = SALTS_EPROTO;
     goto fail;

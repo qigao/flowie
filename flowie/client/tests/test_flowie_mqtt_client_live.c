@@ -36,6 +36,7 @@ typedef struct flowie_mqtt_live_state_s {
   atomic_int done;
   unsigned int received_mask;
   unsigned int publish_index;
+  int verify_user_properties;
   int publishes_done;
   int shutdown_started;
   const char *stage;
@@ -74,14 +75,14 @@ typedef struct flowie_mqtt_live_alias_state_s {
 } flowie_mqtt_live_alias_state_t;
 
 #if !defined(FLOWIE_MQTT_FIXED_INTEROP)
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_HIVEMQ_TCP_3 = {
-    "HiveMQ TCP MQTT 3.1.1",          "broker.hivemq.com",      1883, NULL, NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_TCP, FLOWIE_MQTT_VERSION_3_1_1};
-static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_HIVEMQ_WS_5 = {
-    "HiveMQ WebSocket MQTT 5",       "broker.hivemq.com",  8000, "/mqtt", NULL,
-    FLOWIE_MQTT_CLIENT_TRANSPORT_WS, FLOWIE_MQTT_VERSION_5};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TCP_3 = {
     "EMQX TCP MQTT 3.1.1",    "broker.emqx.io", 1883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+    FLOWIE_MQTT_VERSION_3_1_1};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TCP_5 = {
+    "EMQX TCP MQTT 5", "broker.emqx.io", 1883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+    FLOWIE_MQTT_VERSION_5};
+static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TLS_311 = {
+    "EMQX TLS MQTT 3.1.1", "broker.emqx.io", 8883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
     FLOWIE_MQTT_VERSION_3_1_1};
 static const flowie_mqtt_live_case_t FLOWIE_MQTT_LIVE_EMQX_TLS_5 = {
     "EMQX TLS MQTT 5",    "broker.emqx.io", 8883, NULL, NULL, FLOWIE_MQTT_CLIENT_TRANSPORT_TLS,
@@ -200,6 +201,29 @@ static int flowie_mqtt_live_span_equals(flowie_mqtt_span_t span, const char *tex
   return span.size == text_size && memcmp(span.data, text, text_size) == 0;
 }
 
+static const uint8_t flowie_mqtt_live_user_properties[] = {
+    FLOWIE_MQTT_PROPERTY_USER_PROPERTY, 0u, 3u, 't', 'a', 'g', 0u, 3u, 'o', 'n', 'e',
+    FLOWIE_MQTT_PROPERTY_USER_PROPERTY, 0u, 3u, 't', 'a', 'g', 0u, 3u, 't', 'w', 'o'};
+
+static int flowie_mqtt_live_user_properties_match(const flowie_mqtt_property_block_view_t *block) {
+  flowie_mqtt_property_iterator_t iterator = FLOWIE_MQTT_PROPERTY_ITERATOR_INIT;
+  static const char *const expected[] = {"one", "two"};
+  size_t count = 0u;
+  if (flowie_mqtt_property_iterator_init(block, &iterator) != FLOWIE_MQTT_PARSE_OK) return 0;
+  for (;;) {
+    flowie_mqtt_property_view_t property = FLOWIE_MQTT_PROPERTY_VIEW_INIT;
+    int rc = flowie_mqtt_property_iterator_next(&iterator, &property);
+    if (rc == FLOWIE_MQTT_PARSE_NEED_MORE) return count == sizeof(expected) / sizeof(expected[0]);
+    if (rc != FLOWIE_MQTT_PARSE_OK) return 0;
+    if (property.identifier != FLOWIE_MQTT_PROPERTY_USER_PROPERTY) continue;
+    if (count == sizeof(expected) / sizeof(expected[0]) ||
+        !flowie_mqtt_live_span_equals(property.value, "tag") ||
+        !flowie_mqtt_live_span_equals(property.pair_value, expected[count]))
+      return 0;
+    ++count;
+  }
+}
+
 static void flowie_mqtt_live_finish(atomic_int *result, atomic_int *done, int status) {
   if (atomic_load_explicit(done, memory_order_acquire)) return;
   atomic_store_explicit(result, status, memory_order_relaxed);
@@ -309,6 +333,9 @@ static int flowie_mqtt_live_submit_publish(flowie_mqtt_live_state_t *state) {
   topic.topic = (flowie_mqtt_span_t){(const uint8_t *)state->topic, strlen(state->topic)};
   topic.payload = (flowie_mqtt_span_t){(const uint8_t *)state->payloads[state->publish_index],
                                        strlen(state->payloads[state->publish_index])};
+  if (state->verify_user_properties)
+    topic.properties = (flowie_mqtt_span_t){flowie_mqtt_live_user_properties,
+                                          sizeof(flowie_mqtt_live_user_properties)};
   return flowie_mqtt_client_publish(state->client, &publish);
 }
 
@@ -351,8 +378,11 @@ static int flowie_mqtt_live_on_publish(flowie_mqtt_client_t *client,
   flowie_mqtt_live_state_t *state = (flowie_mqtt_live_state_t *)user_data;
   (void)client;
   if (!publish || !flowie_mqtt_live_span_equals(publish->topic, state->topic)) return SALTS_EPROTO;
+  if (state->verify_user_properties && !flowie_mqtt_live_user_properties_match(&publish->properties))
+    return SALTS_EPROTO;
   for (unsigned int qos = 0u; qos < FLOWIE_MQTT_LIVE_QOS_COUNT; ++qos) {
     if (flowie_mqtt_live_span_equals(publish->payload, state->payloads[qos])) {
+      if (state->verify_user_properties && publish->qos != qos) return SALTS_EPROTO;
       state->received_mask |= 1u << qos;
       flowie_mqtt_live_maybe_shutdown(state);
       return SALTS_OK;
@@ -368,14 +398,16 @@ static void flowie_mqtt_live_on_error(flowie_mqtt_client_t *client, int status, 
 }
 
 static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
-                                flowie_mqtt_live_state_t *state) {
+                                flowie_mqtt_live_state_t *state, int verify_user_properties) {
   flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
   flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
   flowie_mqtt_client_topic_handler_t topic_handler = {0};
   uint64_t unique = hrtime();
+  int destroy_status;
   int rc;
   memset(state, 0, sizeof(*state));
   state->test_case = test_case;
+  state->verify_user_properties = verify_user_properties;
   atomic_init(&state->result, SALTS_EBUSY);
   atomic_init(&state->done, 0);
   if (snprintf(state->client_id, sizeof(state->client_id), "flowie-%llx",
@@ -408,31 +440,41 @@ static int flowie_mqtt_live_run(const flowie_mqtt_live_case_t *test_case,
   rc = flowie_mqtt_client_create(&config, &state->client);
   if (rc != SALTS_OK) return rc;
   rc = flowie_mqtt_client_set_version(state->client, test_case->version);
-  if (rc != SALTS_OK) {
-    flowie_mqtt_client_destroy(state->client);
-    state->client = NULL;
-    return rc;
+  if (rc == SALTS_OK) {
+    connect.version = test_case->version;
+    connect.clean_start = 1u;
+    connect.keep_alive = 30u;
+    connect.client_id =
+        (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
+    state->stage = "connect";
+    rc = flowie_mqtt_client_connect(state->client, &connect);
+    if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
   }
-  connect.version = test_case->version;
-  connect.clean_start = 1u;
-  connect.keep_alive = 30u;
-  connect.client_id =
-      (flowie_mqtt_span_t){(const uint8_t *)state->client_id, strlen(state->client_id)};
-  state->stage = "connect";
-  rc = flowie_mqtt_client_connect(state->client, &connect);
-  if (rc == SALTS_OK) rc = flowie_mqtt_live_wait(&state->result, &state->done);
-  flowie_mqtt_client_destroy(state->client);
-  state->client = NULL;
+  destroy_status = flowie_mqtt_client_try_destroy(state->client, FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS);
+  if (destroy_status == SALTS_OK) {
+    state->client = NULL;
+  } else if (rc == SALTS_OK) {
+    rc = destroy_status;
+  }
   return rc;
 }
 
-static void flowie_mqtt_live_check(const flowie_mqtt_live_case_t *test_case) {
-  flowie_mqtt_live_state_t state;
-  int rc = flowie_mqtt_live_run(test_case, &state);
+static void flowie_mqtt_live_check_roundtrip(const flowie_mqtt_live_case_t *test_case,
+                                            int verify_user_properties) {
+  /* Keep callback storage alive if native teardown retains the client. */
+  static flowie_mqtt_live_state_t state;
+  int rc;
+  check_null(state.client);
+  rc = flowie_mqtt_live_run(test_case, &state, verify_user_properties);
   info("endpoint=%s:%d transport=%d version=%d stage=%s", test_case->host, test_case->port,
-       (int)test_case->transport, (int)test_case->version, state.stage ? state.stage : "create");
+       (int)test_case->transport, (int)test_case->version,
+       state.client ? "incomplete teardown" : state.stage ? state.stage : "create");
   check_equal(rc, SALTS_OK);
   check_equal(state.received_mask, FLOWIE_MQTT_LIVE_RECEIVED_ALL);
+}
+
+static void flowie_mqtt_live_check(const flowie_mqtt_live_case_t *test_case) {
+  flowie_mqtt_live_check_roundtrip(test_case, 0);
 }
 
 static int flowie_mqtt_live_property_append(uint8_t identifier, const char *value, uint8_t *output,
@@ -1442,17 +1484,232 @@ static int flowie_mqtt_fixed_will_run(const flowie_mqtt_live_case_t *test_case) 
 #endif
 
 #if !defined(FLOWIE_MQTT_FIXED_INTEROP)
+enum {
+  FLOWIE_MQTT_LIVE_NO_LOCAL_SUBSCRIBED = 1u,
+  FLOWIE_MQTT_LIVE_NO_LOCAL_PUBACK = 2u,
+  FLOWIE_MQTT_LIVE_NO_LOCAL_RECEIVED = 4u,
+  FLOWIE_MQTT_LIVE_NO_LOCAL_DISCONNECTED = 8u,
+  FLOWIE_MQTT_LIVE_NO_LOCAL_OBSERVE_MS = 1000u
+};
+
+typedef struct flowie_mqtt_live_no_local_peer_s {
+  const char *topic;
+  const char *expected_payload;
+  flowie_mqtt_client_t *client;
+  atomic_uint events;
+  atomic_int error;
+} flowie_mqtt_live_no_local_peer_t;
+
+/* Each client worker reports only its own events. The test thread owns both
+ * client handles and keeps the callback context alive through destruction. */
+static void flowie_mqtt_live_no_local_report(flowie_mqtt_live_no_local_peer_t *peer, int status,
+                                             unsigned int event) {
+  if (status == SALTS_OK) {
+    atomic_fetch_or_explicit(&peer->events, event, memory_order_release);
+  } else {
+    int expected = SALTS_OK;
+    atomic_compare_exchange_strong(&peer->error, &expected, status);
+  }
+}
+
+static void flowie_mqtt_live_no_local_error(flowie_mqtt_client_t *client, int status,
+                                            void *user_data) {
+  (void)client;
+  flowie_mqtt_live_no_local_report(user_data, status, 0u);
+}
+
+static void flowie_mqtt_live_no_local_connected(
+    flowie_mqtt_client_t *client, int status, const flowie_mqtt_control_packet_view_t *response,
+    void *user_data) {
+  flowie_mqtt_live_no_local_peer_t *peer = user_data;
+  flowie_mqtt_subscription_t subscription = {0};
+  flowie_mqtt_subscribe_packet_t subscribe = FLOWIE_MQTT_SUBSCRIBE_PACKET_INIT;
+  if (status == SALTS_OK &&
+      (!response || response->type != FLOWIE_MQTT_PACKET_CONNACK ||
+       response->reason_code != 0u || response->session_present))
+    status = SALTS_EPROTO;
+  if (status == SALTS_OK) {
+    subscription.filter = (flowie_mqtt_span_t){(const uint8_t *)peer->topic, strlen(peer->topic)};
+    subscription.qos = 1u;
+    subscription.no_local = 1u;
+    subscribe.version = FLOWIE_MQTT_VERSION_5;
+    subscribe.subscriptions = &subscription;
+    subscribe.subscription_count = 1u;
+    status = flowie_mqtt_client_subscribe(client, &subscribe);
+  }
+  flowie_mqtt_live_no_local_report(peer, status, 0u);
+}
+
+static void flowie_mqtt_live_no_local_subscribed(
+    flowie_mqtt_client_t *client, int status, const flowie_mqtt_control_packet_view_t *response,
+    void *user_data) {
+  (void)client;
+  if (status == SALTS_OK &&
+      (!response || response->type != FLOWIE_MQTT_PACKET_SUBACK ||
+       response->reason_codes.size != 1u || response->reason_codes.data[0] != 1u))
+    status = SALTS_EPROTO;
+  flowie_mqtt_live_no_local_report(user_data, status, FLOWIE_MQTT_LIVE_NO_LOCAL_SUBSCRIBED);
+}
+
+static void flowie_mqtt_live_no_local_published(
+    flowie_mqtt_client_t *client, int status, const flowie_mqtt_control_packet_view_t *response,
+    void *user_data) {
+  (void)client;
+  if (status == SALTS_OK &&
+      (!response || response->type != FLOWIE_MQTT_PACKET_PUBACK || response->reason_code != 0u))
+    status = SALTS_EPROTO;
+  flowie_mqtt_live_no_local_report(user_data, status, FLOWIE_MQTT_LIVE_NO_LOCAL_PUBACK);
+}
+
+static int flowie_mqtt_live_no_local_message(flowie_mqtt_client_t *client,
+                                             const flowie_mqtt_publish_view_t *message,
+                                             void *user_data) {
+  flowie_mqtt_live_no_local_peer_t *peer = user_data;
+  int status = SALTS_OK;
+  (void)client;
+  if (!message || message->qos != 1u ||
+      !flowie_mqtt_live_span_equals(message->topic, peer->topic) ||
+      !flowie_mqtt_live_span_equals(message->payload, peer->expected_payload))
+    status = SALTS_EPROTO;
+  flowie_mqtt_live_no_local_report(peer, status, FLOWIE_MQTT_LIVE_NO_LOCAL_RECEIVED);
+  return status;
+}
+
+static void flowie_mqtt_live_no_local_disconnected(
+    flowie_mqtt_client_t *client, int status, const flowie_mqtt_control_packet_view_t *response,
+    void *user_data) {
+  (void)client;
+  if (status == SALTS_OK && response) status = SALTS_EPROTO;
+  flowie_mqtt_live_no_local_report(user_data, status, FLOWIE_MQTT_LIVE_NO_LOCAL_DISCONNECTED);
+}
+
+static int flowie_mqtt_live_no_local_start(const flowie_mqtt_live_case_t *test_case,
+                                           flowie_mqtt_live_no_local_peer_t *peer,
+                                           const char *client_id) {
+  flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
+  flowie_mqtt_connect_packet_t connect = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  flowie_mqtt_client_topic_handler_t handler = {0};
+  int rc;
+  config.host = test_case->host;
+  config.port = test_case->port;
+  config.path = test_case->path;
+  config.tls.ca_file = test_case->ca_file;
+  config.transport = test_case->transport;
+  config.timeout_ms = FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS;
+  handler.filter = (flowie_mqtt_span_t){(const uint8_t *)peer->topic, strlen(peer->topic)};
+  handler.on_message = flowie_mqtt_live_no_local_message;
+  config.topic_handlers = (flowie_mqtt_client_topic_handler_map_t){&handler, 1u};
+  config.on_connect = flowie_mqtt_live_no_local_connected;
+  config.on_subscribe = flowie_mqtt_live_no_local_subscribed;
+  config.on_publish = flowie_mqtt_live_no_local_published;
+  config.on_disconnect = flowie_mqtt_live_no_local_disconnected;
+  config.on_error = flowie_mqtt_live_no_local_error;
+  config.user_data = peer;
+  rc = flowie_mqtt_client_create(&config, &peer->client);
+  if (rc != SALTS_OK) return rc;
+  connect.version = FLOWIE_MQTT_VERSION_5;
+  connect.clean_start = 1u;
+  connect.keep_alive = 30u;
+  connect.client_id = (flowie_mqtt_span_t){(const uint8_t *)client_id, strlen(client_id)};
+  return flowie_mqtt_client_connect(peer->client, &connect);
+}
+
+static int flowie_mqtt_live_no_local_wait(flowie_mqtt_live_no_local_peer_t peers[2],
+                                          unsigned int events, uint64_t deadline) {
+  for (;;) {
+    int rc = atomic_load(&peers[0].error);
+    if (rc == SALTS_OK) rc = atomic_load(&peers[1].error);
+    if (rc != SALTS_OK) return rc;
+    if ((atomic_load_explicit(&peers[0].events, memory_order_acquire) & events) == events &&
+        (atomic_load_explicit(&peers[1].events, memory_order_acquire) & events) == events)
+      return SALTS_OK;
+    if (monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    sleep_ms(1u);
+  }
+}
+
+static int flowie_mqtt_live_no_local_run(const flowie_mqtt_live_case_t *test_case,
+                                         const char **stage) {
+  static const char *const payloads[] = {"from-a", "from-b"};
+  static char topic[FLOWIE_MQTT_LIVE_BUFFER_SIZE];
+  static flowie_mqtt_live_no_local_peer_t peers[2];
+  char client_ids[2][FLOWIE_MQTT_LIVE_BUFFER_SIZE];
+  uint64_t unique = hrtime();
+  uint64_t deadline = monotonic_ms() + FLOWIE_MQTT_LIVE_TEST_TIMEOUT_MS;
+  int rc = SALTS_OK;
+  *stage = "create";
+  if (peers[0].client || peers[1].client) return SALTS_EBUSY;
+  if (snprintf(topic, sizeof(topic), "flowie/no-local/%llx", (unsigned long long)unique) < 0)
+    return SALTS_EIO;
+  for (unsigned int i = 0u; i < 2u; ++i) {
+    peers[i].topic = topic;
+    peers[i].expected_payload = payloads[1u - i];
+    atomic_init(&peers[i].events, 0u);
+    atomic_init(&peers[i].error, SALTS_OK);
+    if (snprintf(client_ids[i], sizeof(client_ids[i]), "flowie-nl-%llx-%u",
+                 (unsigned long long)unique, i) < 0)
+      return SALTS_EIO;
+  }
+  *stage = "connect/subscribe";
+  for (unsigned int i = 0u; i < 2u && rc == SALTS_OK; ++i)
+    rc = flowie_mqtt_live_no_local_start(test_case, &peers[i], client_ids[i]);
+  if (rc == SALTS_OK)
+    rc = flowie_mqtt_live_no_local_wait(peers, FLOWIE_MQTT_LIVE_NO_LOCAL_SUBSCRIBED, deadline);
+  if (rc != SALTS_OK) goto done;
+  *stage = "publish/receive";
+  for (unsigned int i = 0u; i < 2u && rc == SALTS_OK; ++i) {
+    flowie_mqtt_client_publish_topic_t message = {0};
+    flowie_mqtt_client_publish_topic_vec_t publish = FLOWIE_MQTT_CLIENT_PUBLISH_TOPIC_VEC_INIT;
+    message.topic = (flowie_mqtt_span_t){(const uint8_t *)topic, strlen(topic)};
+    message.payload = (flowie_mqtt_span_t){(const uint8_t *)payloads[i], strlen(payloads[i])};
+    message.qos = 1u;
+    publish.version = FLOWIE_MQTT_VERSION_5;
+    publish.data = &message;
+    publish.count = 1u;
+    rc = flowie_mqtt_client_publish(peers[i].client, &publish);
+  }
+  if (rc == SALTS_OK)
+    rc = flowie_mqtt_live_no_local_wait(
+        peers, FLOWIE_MQTT_LIVE_NO_LOCAL_PUBACK | FLOWIE_MQTT_LIVE_NO_LOCAL_RECEIVED, deadline);
+  if (rc != SALTS_OK) goto done;
+  /* Both peer deliveries are observable before allowing time for a self echo. */
+  *stage = "observe";
+  sleep_ms(FLOWIE_MQTT_LIVE_NO_LOCAL_OBSERVE_MS);
+  rc = flowie_mqtt_live_no_local_wait(peers, 0u, deadline);
+  if (rc != SALTS_OK) goto done;
+  *stage = "disconnect";
+  for (unsigned int i = 0u; i < 2u && rc == SALTS_OK; ++i)
+    rc = flowie_mqtt_client_disconnect(peers[i].client, 0u, (flowie_mqtt_span_t){0});
+  if (rc == SALTS_OK)
+    rc = flowie_mqtt_live_no_local_wait(peers, FLOWIE_MQTT_LIVE_NO_LOCAL_DISCONNECTED, deadline);
+done:
+  for (unsigned int i = 0u; i < 2u; ++i) {
+    if (peers[i].client) {
+      int destroy_status =
+          flowie_mqtt_client_try_destroy(peers[i].client, FLOWIE_MQTT_LIVE_IO_TIMEOUT_MS);
+      if (destroy_status == SALTS_OK) {
+        peers[i].client = NULL;
+      } else if (rc == SALTS_OK) {
+        *stage = "destroy";
+        rc = destroy_status;
+      }
+    }
+    if (rc == SALTS_OK) rc = atomic_load(&peers[i].error);
+  }
+  return rc;
+}
+
 spec("flowie mqtt public broker integration") {
-  it("round-trips MQTT 3.1.1 QoS 0/1/2 through HiveMQ TCP") {
-    flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_HIVEMQ_TCP_3);
-  }
-
-  it("round-trips MQTT 5 QoS 0/1/2 through HiveMQ WebSocket") {
-    flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_HIVEMQ_WS_5);
-  }
-
   it("round-trips MQTT 3.1.1 QoS 0/1/2 through EMQX TCP") {
     flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_EMQX_TCP_3);
+  }
+
+  it("round-trips MQTT 5 QoS 0/1/2 through EMQX TCP") {
+    flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_EMQX_TCP_5);
+  }
+
+  it("round-trips MQTT 3.1.1 QoS 0/1/2 through EMQX TLS") {
+    flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_EMQX_TLS_311);
   }
 
   it("round-trips MQTT 5 QoS 0/1/2 through EMQX TLS") {
@@ -1467,12 +1724,24 @@ spec("flowie mqtt public broker integration") {
     flowie_mqtt_live_check(&FLOWIE_MQTT_LIVE_EMQX_WSS_5);
   }
 
-  it("round-trips MQTT 5 request-response properties through HiveMQ") {
-    flowie_mqtt_live_reqrep_check(&FLOWIE_MQTT_LIVE_HIVEMQ_WS_5);
-  }
-
   it("round-trips MQTT 5 request-response properties through EMQX") {
     flowie_mqtt_live_reqrep_check(&FLOWIE_MQTT_LIVE_EMQX_TLS_5);
+  }
+
+  it("reuses MQTT 5 Topic Alias and receives Subscription Identifier through EMQX WSS") {
+    flowie_mqtt_live_alias_check(&FLOWIE_MQTT_LIVE_EMQX_WSS_5);
+  }
+
+  it("preserves repeated MQTT 5 User Properties at QoS 0/1/2 through EMQX TLS") {
+    flowie_mqtt_live_check_roundtrip(&FLOWIE_MQTT_LIVE_EMQX_TLS_5, 1);
+  }
+
+  it("delivers MQTT 5 No Local publications to the other client through EMQX TCP") {
+    const char *stage;
+    int rc = flowie_mqtt_live_no_local_run(&FLOWIE_MQTT_LIVE_EMQX_TCP_5, &stage);
+    info("endpoint=%s:%d stage=%s", FLOWIE_MQTT_LIVE_EMQX_TCP_5.host,
+         FLOWIE_MQTT_LIVE_EMQX_TCP_5.port, stage);
+    check_equal(rc, SALTS_OK);
   }
 }
 #else

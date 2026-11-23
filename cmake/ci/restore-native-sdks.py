@@ -67,6 +67,9 @@ def write_environment_file(path, values):
     path = Path(path)
     lines = path.read_bytes().decode('utf-8-sig').splitlines(keepends=True)
     remaining = dict(values)
+    if 'RE2C_ROOT' in remaining:
+        # Slate inherits the IDE's environment, which may select another project's re2c.
+        remaining['FLOWIE_RE2C_ROOT'] = remaining['RE2C_ROOT']
     for index, line in enumerate(lines):
         name, separator, _ = line.partition('=')
         name = name.strip()

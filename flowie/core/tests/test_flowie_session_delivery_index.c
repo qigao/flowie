@@ -70,6 +70,56 @@ spec("flowie session persistence and delivery packet-id index") {
     flowie_session_owner_destroy(owner);
   }
 
+  it("keeps a queued PUBLISH as a first send until the attempt is committed") {
+    static const uint8_t publish[] = {0x32u, 7u, 0u, 1u, 'a', 0u, 1u, 0u, 'x'};
+    flowie_session_config_t config = flowie_test_session_config(7u, 11u, 8u);
+    flowie_mqtt_connect_view_t connect = flowie_test_persistent_connect("queued-resume");
+    flowie_protocol_session_row_t row = FLOWIE_PROTOCOL_SESSION_ROW_INIT;
+    flowie_session_owner_t *owner = flowie_session_owner_create(&config);
+    flowie_session_owner_t *restored = NULL;
+    flowie_mqtt_span_t packet = {0};
+    uint64_t expiry = 0u;
+    uint64_t queued_revision;
+    uint16_t id = 0u;
+    uint16_t replay_id = 0u;
+    int queued = 0;
+
+    check_not_null(owner);
+    check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
+    check_equal(flowie_session_owner_close(owner), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_reserve(owner, 1u, &id), SALTS_OK);
+    check_equal(flowie_session_owner_delivery_commit_queued(
+                    owner, id, (flowie_mqtt_span_t){publish, sizeof(publish)}, 0u), SALTS_OK);
+    check_equal(flowie_session_owner_repository_snapshot(owner, &row), SALTS_OK);
+    queued_revision = row.revision;
+    check_equal(flowie_session_owner_repository_restore(&config, &row, &restored), SALTS_OK);
+    flowie_session_owner_repository_snapshot_cleanup(&row);
+    flowie_session_owner_destroy(owner);
+
+    for (size_t i = 0u; i < 2u; ++i) {
+      check_equal(flowie_session_owner_delivery_replay_at(restored, 0u, 0u, &packet,
+                                                         &replay_id, &expiry, &queued), SALTS_OK);
+      check_true(queued);
+      check_equal(replay_id, id);
+      check_equal(packet.data[0], 0x32u);
+    }
+    check_equal(flowie_session_owner_delivery_start(restored, id), SALTS_OK);
+    check_equal(flowie_session_owner_repository_snapshot(restored, &row), SALTS_OK);
+    check_equal(row.revision, queued_revision + 1u);
+    check_equal(row.deliveries[0].state, FLOWIE_TEST_DELIVERY_WAIT_ACK);
+    owner = NULL;
+    check_equal(flowie_session_owner_repository_restore(&config, &row, &owner), SALTS_OK);
+    flowie_session_owner_repository_snapshot_cleanup(&row);
+    flowie_session_owner_destroy(restored);
+
+    check_equal(flowie_session_owner_delivery_replay_at(owner, 0u, 0u, &packet,
+                                                       &replay_id, &expiry, &queued), SALTS_OK);
+    check_false(queued);
+    check_equal(replay_id, id);
+    check_equal(packet.data[0], 0x3au);
+    flowie_session_owner_destroy(owner);
+  }
+
   it("keeps high-cardinality packet-id reservation within the session lookup budget") {
     flowie_session_config_t config = flowie_test_session_config(
         101u, 103u, FLOWIE_TEST_DELIVERY_SCALE_COUNT);
@@ -140,9 +190,10 @@ spec("flowie session persistence and delivery packet-id index") {
 
   it("rebuilds packet-id lookup from repository deliveries") {
     static const char client_id[] = "delivery-restore";
-    static const uint16_t packet_ids[] = {11u, 22u, 33u};
-    uint8_t packets[3][9] = {0};
-    flowie_protocol_delivery_row_t deliveries[3] = {0};
+    static const uint16_t packet_ids[] = {11u, 22u, 33u, 44u};
+    static const uint16_t replay_ids[] = {11u, 33u, 44u};
+    uint8_t packets[4][9] = {0};
+    flowie_protocol_delivery_row_t deliveries[4] = {0};
     flowie_protocol_session_row_t row = FLOWIE_PROTOCOL_SESSION_ROW_INIT;
     flowie_session_config_t config = flowie_test_session_config(113u, 127u, 8u);
     flowie_session_snapshot_t snapshot = FLOWIE_SESSION_SNAPSHOT_INIT;
@@ -172,15 +223,26 @@ spec("flowie session persistence and delivery packet-id index") {
     row.mqtt_version = FLOWIE_MQTT_VERSION_5;
     row.keep_alive = 30u;
     row.session_expiry_interval = 60u;
-    row.next_delivery_packet_id = packet_ids[2];
+    row.next_delivery_packet_id = packet_ids[3];
     row.deliveries = deliveries;
     row.delivery_count = sizeof(deliveries) / sizeof(deliveries[0]);
 
     check_equal(flowie_session_owner_repository_restore(&config, &row, &owner), SALTS_OK);
     check_not_null(owner);
     check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[1]), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[2]), SALTS_OK);
-    check_equal(flowie_session_owner_delivery_cancel(owner, packet_ids[0]), SALTS_OK);
+    check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
+    check_equal(snapshot.resource_generation, row.revision + 1u);
+    for (size_t i = 0; i < sizeof(replay_ids) / sizeof(replay_ids[0]); ++i) {
+      flowie_mqtt_span_t packet = {0};
+      uint16_t packet_id = 0u;
+      uint64_t expiry = 0u;
+      check_equal(flowie_session_owner_delivery_pending_at_ex(owner, i, 0u, &packet,
+                                                              &packet_id, &expiry),
+                  SALTS_OK);
+      check_equal(packet_id, replay_ids[i]);
+    }
+    for (size_t i = 0; i < sizeof(replay_ids) / sizeof(replay_ids[0]); ++i)
+      check_equal(flowie_session_owner_delivery_cancel(owner, replay_ids[i]), SALTS_OK);
     check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 0u);
     flowie_session_owner_destroy(owner);

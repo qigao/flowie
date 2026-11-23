@@ -1,0 +1,73 @@
+{
+  "include": [
+    "presets/SlateWindows.json"
+  ],
+  "modules": [
+    "vendor/croar",
+    "vendor/monocypher",
+    "flowie/protocol",
+    "flowie/transport",
+    "flowie/client",
+    "flowie/core",
+    "flowie/server",
+    "flowie/control",
+    "flowie/cluster"
+  ],
+  "moduleFiles": [
+    "presets/SlateDependencies.json"
+  ],
+  "defaultPreset": "release",
+  "env": [
+    "FLOWIE_RE2C_ROOT",
+    "LEMON_ROOT",
+    "SALTS_BASE_ROOT",
+    "CMETA_ROOT",
+    "SALTS_UTILS_ROOT",
+    "SALTS_CORE_ROOT",
+    "CHTTP_ROOT",
+    "TURBODB_ROOT",
+    "TURBORAFT_ROOT"
+  ],
+  "tools": {
+    "re2c": {
+      "program": "${envPath:FLOWIE_RE2C_ROOT}/bin/re2c.exe"
+    },
+    "lemon": {
+      "program": "${envPath:LEMON_ROOT}/bin/lemon.exe",
+      "args": [
+        "-T${envPath:LEMON_ROOT}/share/lemon/lempar.c"
+      ]
+    },
+    "salts_idlc": {
+      "program": "cmake",
+      "args": [
+        "-E",
+        "env",
+        "--modify",
+        "PATH=path_list_prepend:${envPath:SALTS_BASE_ROOT}/bin",
+        "${envPath:SALTS_UTILS_ROOT}/bin/salts-idlc.exe"
+      ]
+    }
+  },
+  "presets": {
+    "release": {
+      "config": "release",
+      "toolchain": "llvm-mingw-x64",
+      "buildDir": "build/slate-release",
+      "cStd": "c11",
+      "cxxStd": "c++17",
+      "defines": {
+        "NDEBUG": null
+      },
+      "options": {
+        "optimization": "speed"
+      },
+      "tests": false
+    },
+    "cluster": {
+      "inherits": "release",
+      "config": "cluster",
+      "buildDir": "build/slate-cluster"
+    }
+  }
+}

@@ -1,0 +1,253 @@
+{
+  "targets": {
+    "test_flowie_cluster_topology": {
+      "kind": "executable",
+      "sources": {
+        "files": ["$root/flowie/cluster/tests/test_flowie_cluster_topology.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_topology", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "topology"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_publish_event": {
+      "kind": "executable",
+      "sources": {
+        "files": ["$root/flowie/cluster/tests/test_flowie_cluster_publish_event.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_publish_event", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "publish", "event"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_peer_protocol": {
+      "kind": "executable",
+      "sources": {
+        "files": ["$root/flowie/cluster/tests/test_flowie_cluster_peer_protocol.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_peer", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "peer", "flowie/protocol"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_publish_stream": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_publish_stream.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_publish_stream", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "data-stream", "publish"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_publish_ingress": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_publish_ingress.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_publish_stream", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "data-stream", "publish", "backpressure"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_publish_egress": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_publish_egress.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_publish_stream", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "data-stream", "publish", "quorum"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_publish_router": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_publish_router.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_publish_stream", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "data-stream", "publish", "router"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_raft_store": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_raft_store.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "server/cluster", "turboraft", "storage", "recovery"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_raft_runtime": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_raft_runtime.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "runtime"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_raft_generation": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_raft_generation.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_raft_generation", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "cnet", "composition", "runtime"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_peer_authority": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_peer_authority.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "server/cluster", "membership", "security-contract"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_owner_directory": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_owner_directory.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "server/cluster", "ownership", "security-contract"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_owner_projection": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_owner_projection.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "server/cluster", "turboraft", "ownership", "recovery"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    },
+    "test_flowie_cluster_state_machine": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_cluster_state_machine.c"]
+      },
+      "private": {
+        "deps": ["flowie_cluster_runtime", "salts_tinytest"],
+        "includeDirs": ["$root/flowie/cluster/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "$root/flowie/detail"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "server/cluster", "turboraft", "ownership", "publish", "recovery"]
+      },
+      "when": {
+        "config": "cluster"
+      }
+    }
+  },
+  "forEach": [
+    {
+      "files": [
+        "test_flowie_cluster_peer_registry.c",
+        "test_flowie_cluster_peer_connect_bind.c",
+        "test_flowie_cluster_peer_connection_lost.c",
+        "test_flowie_cluster_peer_mqtt_command.c",
+        "test_flowie_cluster_peer_publish_settle.c",
+        "test_flowie_cluster_peer_mqtt_reply.c",
+        "test_flowie_cluster_peer_edge_action.c",
+        "test_flowie_cluster_peer_takeover_close.c"
+      ],
+      "target": {
+        "kind": "executable",
+        "private": {
+          "deps": ["flowie_cluster_peer", "salts_tinytest"]
+        },
+        "test": {
+          "labels": ["flowie", "server/cluster", "peer", "flowie/protocol"]
+        },
+        "when": {
+          "config": "cluster"
+        }
+      }
+    }
+  ]
+}

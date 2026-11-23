@@ -1,0 +1,404 @@
+{
+  "targets": {
+    "test_flowie_control_http_failure": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_http_failure.c"]
+      },
+      "private": {
+        "deps": ["chttp_client", "chttp_app", "cmeta_cmeta", "salts_core", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/tests/support"]
+      },
+      "test": {
+        "labels": ["flowie", "control-plane", "http", "ownership"],
+        "timeout": 30
+      }
+    },
+    "test_flowie_control_http": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_http.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_http", "chttp_client", "chttp_server", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/tests/support"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "http"]
+      }
+    },
+    "test_flowie_control_runtime": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_runtime.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_runtime", "salts_cnet", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_bootstrap_runtime": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_bootstrap_runtime.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_runtime", "salts_tinytest"],
+        "includeDirs": ["../src", "$root/tests/support"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_https_integration": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_https_integration.c"]
+      },
+      "private": {
+        "deps": [
+          "flowie_control_runtime",
+          "flowie_control_core",
+          "chttp_client",
+          "chttp_server",
+          "salts_coroutine",
+          "salts_core",
+          "salts_tinytest",
+          "gmssl",
+          "salts_crypto"
+        ],
+        "includeDirs": ["../src", "$root/tests/support"],
+        "defines": {
+          "FLOWIE_CONTROL_EXECUTABLE": "\"$builddir/bin/flowie-control.exe\""
+        },
+        "libs": ["ws2_32"]
+      },
+      "runtimeDeps": ["flowie-control"],
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "integration"],
+        "timeout": 30
+      }
+    },
+    "test_flowie_control_acl": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_acl.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "parser"]
+      }
+    },
+    "test_flowie_control_bootstrap": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_bootstrap.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_startup_options": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_startup_options.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_startup", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_config": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_config.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_startup", "salts_tinytest"],
+        "includeDirs": ["../src"],
+        "defines": {
+          "FLOWIE_CONTROL_TEST_CONFIG_PATH": "\"$root/deploy/server/control.yml.example\""
+        }
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_database": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_database.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "storage-contract"]
+      }
+    },
+    "test_flowie_control_data_schema": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_data_schema.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src", "$moduledir"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "storage-contract", "data-transfer"]
+      }
+    },
+    "test_flowie_control_store_schema": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_store_schema.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src", "$moduledir"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "storage-contract"]
+      }
+    },
+    "test_flowie_control_data_transfer": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_data_transfer.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src", "$moduledir"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "storage-contract", "data-transfer"]
+      }
+    },
+    "test_flowie_control_data_options": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_data_options.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_startup", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "data-transfer"]
+      }
+    },
+    "test_flowie_control_store": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_store.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_repository": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_repository.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "storage-contract"]
+      }
+    },
+    "test_flowie_control_auth_cache": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_auth_cache.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "mqtt-security"]
+      }
+    },
+    "test_flowie_control_external_authenticator": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_external_authenticator.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "external-auth"]
+      }
+    },
+    "test_flowie_control_external_https_authenticator": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_external_https_authenticator.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_external_https_authenticator", "salts_core", "salts_json_parser", "salts_tinytest", "gmssl"],
+        "includeDirs": ["../src", "$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "external-auth", "https"]
+      }
+    },
+    "test_flowie_control_jwt_jwks_authenticator": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_jwt_jwks_authenticator.c", "test_flowie_control_jws_backend.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_jwt_jwks_authenticator", "chttp_jwt", "chttp_client", "salts_json_parser", "salts_tinytest", "gmssl"],
+        "includeDirs": ["../src", "$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "external-auth", "jwt", "jwks"]
+      }
+    },
+    "test_flowie_control_principal_cache": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_principal_cache.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_auth_rate_limiter": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_auth_rate_limiter.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_auth_service": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_auth_service.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "mqtt-security"]
+      }
+    },
+    "test_flowie_control_management_session": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_management_session.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_service_credential": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_service_credential.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract", "mqtt-security"]
+      }
+    },
+    "test_flowie_control_management_service": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_management_service.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_auth_iris_adapter": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_auth_iris_adapter.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_iris_adapter", "salts_coroutine", "salts_json_parser", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_management_rpc": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_management_rpc.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_iris_adapter", "salts_coroutine", "salts_json_parser", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    },
+    "test_flowie_control_dashboard": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_control_dashboard.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_iris_adapter", "salts_coroutine", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/control-plane", "security-contract"]
+      }
+    }
+  }
+}

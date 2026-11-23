@@ -117,85 +117,12 @@ GitHub 凭据通过 BuildKit secret 注入恢复步骤，不进入镜像环境�
 精确的发布版本，所有发布摘要由既有共享恢复工具核验。源码含未提交改动时，应记录传输快照的
 SHA-256，并以该内容摘要作为 `FLOWIE_SOURCE_REVISION`，不能只用 HEAD 表示实际构建内容。
 
-### 历史源码构建
+### 版本与构建输入
 
-默认源码布局包含 Flowie 和四个依赖仓库：
-
-```text
-cpp/
-  turbonet/
-    chttp/
-    salts/
-    salts-utils/
-    turbodb/
-    flowie/
-```
-
-从 Flowie 仓库根目录执行：
-
-```sh
-export FLOWIE_SOURCE_REVISION="$(git rev-parse HEAD)"
-export FLOWIE_SERVER_IMAGE="flowie-server:local"
-: "${GITHUB_TOKEN:?provide a GitHub read token for shared host tools}"
-
-docker buildx build \
-  --file deploy/server/Dockerfile \
-  --secret id=github_token,env=GITHUB_TOKEN \
-  --build-context salts=../salts \
-  --build-context chttp=../chttp \
-  --build-context salts_utils=../salts-utils \
-  --build-context turbo_db=../turbodb \
-  --build-arg "SOURCE_REVISION=${FLOWIE_SOURCE_REVISION}" \
-  --tag "${FLOWIE_SERVER_IMAGE}" \
-  --load \
-  .
-```
-
-Dockerfile 先构建并安装 Salts、SaltsUtils，再向 Chttp 提供这两个 SDK；TurboDB 同样使用已安装的
-Salts 与 SaltsUtils。随后从当前 Flowie 源码安装 `flowie_server`、
-`flowie-control` 和 `flowie-control-data`。Standalone 镜像固定使用 `FLOWIE_BUILD_CLUSTER=OFF`，构建图和
-运行层均不引用 FlowMQ/TurboRaft。构建层与最终运行层分别对三个 executable 执行 `ldd`，任一动态库缺失
-都会使镜像构建失败。运行镜像不依赖宿主 SDK、源码或 TurboFlow。发布时应记录镜像 digest，并使用 digest
-或不可变 tag 部署。
-
-源码上下文须提供 Salts 2.3、SaltsUtils 4.3、CHttp 2.1 和 TurboDB 2.3.1 以上对应的
-已发布源码及其版本化 user presets；目录名称不同时调整 `--build-context` 路径。所有阶段使用
-同一组 Debug/Release configure/install presets。Release 生产方要求的
-`stage/dependencies/<package>/linux-x64` 从本轮构建的 SDK 显式填充；Debug 使用同轮
-`/opt/<package>/debug`，不会回退到宿主安装或修改依赖仓库的 presets。
-
-本镜像固定使用 `TURBODB_BUILD_ORM=ON`、`TURBODB_BUILD_TIDESSQL=OFF`，保留
-SQLite/PostgreSQL/MySQL 驱动，排除 TidesSQL 引擎及 TidesDB 驱动。TurboDB 源码必须支持这一组合；
-原始 `v2.3.2` 会在配置阶段拒绝它，需要先合入 TurboDB 的 ORM/TidesSQL 可选构建修复，
-再将该源码目录传给 `--build-context turbo_db=...`。该依赖修复尚未包含在 `v2.3.2` 发布源码中。
-
-SDK 构建入口 `Dockerfile.sdk` 从传入的精确版本参数生成构建层 `.env`，再调用共享 vcpkg-cache
-恢复 vcpkg 与 host generators，并校验原始 SDK 发布归档。版本由根目录 `.env` 通过 compose 参数传入；
-缺少版本即失败。该入口不创建或恢复产品包，也不使用仓库自有缓存代理。`github_token` 仅通过
-[BuildKit secret](https://docs.docker.com/build/building/secrets/) 注入对应 RUN，不能写进构建参数或镜像 ENV。
-
-
-需要完整 Debug 符号、tlog 文件行号以及 Debug 版依赖时，使用同一个 Dockerfile 的公开 Debug preset：
-
-```sh
-docker buildx build \
-  --build-arg FLOWIE_BUILD_PRESET=linux-dev-user \
-  --build-arg FLOWIE_INSTALL_PRESET=install-linux-dev-user \
-  --build-arg FLOWIE_PROFILE=debug \
-  --build-arg FLOWIE_ENABLE_ASAN=OFF \
-  ...
-```
-
-前三个 profile 参数必须成组切换，不能把 Debug/Release SDK 混在同一构建中。原生日志排查默认关闭
-ASan；`FLOWIE_ENABLE_ASAN` 接受 `ON` 或 `OFF`。设为 `ON` 时，运行镜像安装与 Bookworm GCC 12
-匹配的 [libasan8](https://packages.debian.org/bookworm/libasan8)，并继续执行动态库完整性检查。运行排查时设置
-`FLOWIE_LOG_LEVEL=DEBUG`；Debug 输出包含 source，INFO 生产输出不逐包记录 MQTT 数据。慢订阅者隔离只记录
-第 1 次及累计次数为 2 的幂次的摘要；QoS 2 满窗/释放每连接各最多一条。两者均不包含 client ID、用户名、
-topic 或 payload。
-
-镜像只收集所选 profile 的 vcpkg 动态库，避免 Release 文件覆盖 Debug 文件。`ldd` 命令失败或
-报告缺失库均终止构建。上述入口需要在 Linux BuildKit 中完成构建后才能作为镜像验收结果；
-Dockerfile lint 不替代编译、链接和容器运行验证。
+`compose.build.yml` 要求显式传入根仓库 `.env.example` 所列的依赖版本。将所选版本
+加载到当前 shell 或写入本次 Compose 使用的 env 文件。SDK 构建层据此生成自己的
+`.env`，并核验发布归档。`deploy/server/Dockerfile` 记录旧的单体 SDK 源码构建；
+当前 split SDK 镜像使用 [`Dockerfile.sdk`](Dockerfile.sdk)。
 
 ## Compose 部署
 
@@ -310,12 +237,9 @@ Control 通过 SDK 的内存证书入口加载 PEM 证书链与 PKCS#8 私钥，
 Control 管理 RPC 的最小相关回归为：
 
 ```sh
-cmake --build --preset linux-dev-user --target \
-  test_flowie_control_acl \
-  test_flowie_control_store \
-  test_flowie_control_management_service \
-  test_flowie_control_management_rpc
-ctest --preset linux-dev-user --output-on-failure \
+cmake --preset gcc-release-user -DBUILD_TESTS=ON -DFLOWIE_BUILD_TESTS=ON
+cmake --build --preset gcc-release-user
+ctest --preset gcc-release-user --no-tests=error --output-on-failure \
   -R '^test_flowie_control_(acl|store|management_service|management_rpc)$'
 ```
 
@@ -327,7 +251,7 @@ PostgreSQL live 验收应在不输出密码、Bearer token 或 credential 的前
 
 1. 记录 Flowie 应用容器的 `RestartCount`。
 2. 使用已认证的 Management 客户端提交一条业务期望的 `control.policy.subject_rule.put`；要求 HTTP 200、
-   JSON-RPC result 含 revision，并能按 request ID 查询到对应审计记录。
+   JSON-RPC 返回 command result，并能按 request ID 查询到对应审计记录。
 3. 再次读取 `RestartCount`，要求与步骤 1 相同；随后冷启动调用方两次，每次都要求 principal reconcile、
    `/v4/authenticate`、`/v4/acl/check` 和 MQTT CONNECT 成功，且计数不变。
 4. 失败时先保存 core、容器时间戳日志与 request ID；未满足重启计数不变时不得把健康检查恢复视为通过。

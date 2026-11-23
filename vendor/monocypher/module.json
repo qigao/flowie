@@ -1,0 +1,13 @@
+{
+  "kind": "static",
+  "sources": {
+    "files": [
+      "monocypher.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "."
+    ]
+  }
+}

@@ -1,0 +1,324 @@
+{
+  "include": ["tests/module.json"],
+  "targets": {
+    "flowie_control_core": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "$builddir/generated/control/flowie_control_acl_lexer_gen.c",
+          "$builddir/generated/control/flowie_control_acl_grammar_gen.c",
+          "$builddir/generated/control/flowie_control_data_schema.c",
+          "$builddir/generated/control/flowie_control_store_schema_sqlite.c",
+          "$builddir/generated/control/flowie_control_store_schema_postgresql.c",
+          "src/flowie_control_data_transfer.c",
+          "src/flowie_control_acl.c",
+          "src/flowie_control_auth_cache.c",
+          "src/flowie_control_bootstrap.c",
+          "src/flowie_control_auth_rate_limiter.c",
+          "src/flowie_control_principal_cache.c",
+          "src/flowie_control_repository.c",
+          "src/flowie_control_external_authenticator.c",
+          "src/flowie_control_auth_service.c",
+          "src/flowie_control_service_credential.c",
+          "src/flowie_control_credential.c",
+          "src/flowie_control_management_service.c",
+          "src/flowie_control_management_session.c",
+          "src/flowie_control_validation.c",
+          "src/flowie_control_database.c",
+          "src/flowie_control_store_schema.c",
+          "src/flowie_control_store.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["src", "$root/flowie/core/include", "$root/flowie/transport/include"],
+        "deps": ["flowie_orm_flow", "flowie_protocol"]
+      },
+      "private": {
+        "includeDirs": ["../detail", "$builddir/generated/control"],
+        "deps": ["salts_core", "cmeta_cstl", "monocypher", "flowie"]
+      },
+      "preTasks": [
+        {
+          "name": "stage_acl_grammar",
+          "builtin": "copy",
+          "inputs": ["parser/acl_grammar.y"],
+          "outputs": ["$builddir/generated/control/flowie_control_acl_grammar_gen.y"]
+        },
+        {
+          "name": "generate_acl_parser",
+          "tool": "lemon",
+          "inputs": [
+            "$builddir/generated/control/flowie_control_acl_grammar_gen.y",
+            "${envPath:LEMON_ROOT}/share/lemon/lempar.c",
+            "${envPath:LEMON_ROOT}/bin/lemon.exe"
+          ],
+          "outputs": ["$builddir/generated/control/flowie_control_acl_grammar_gen.c", "$builddir/generated/control/flowie_control_acl_grammar_gen.h"],
+          "args": ["$builddir/generated/control/flowie_control_acl_grammar_gen.y"]
+        },
+        {
+          "name": "generate_acl_lexer",
+          "tool": "re2c",
+          "inputs": ["parser/acl_lexer.re", "$builddir/generated/control/flowie_control_acl_grammar_gen.h", "${envPath:FLOWIE_RE2C_ROOT}/bin/re2c.exe"],
+          "outputs": ["$builddir/generated/control/flowie_control_acl_lexer_gen.c"],
+          "args": ["-o", "$builddir/generated/control/flowie_control_acl_lexer_gen.c", "$moduledir/parser/acl_lexer.re"]
+        },
+        {
+          "name": "generate_data_sqlite",
+          "tool": "salts_idlc",
+          "inputs": ["schema/flowie_control_data.schema", "${envPath:SALTS_UTILS_ROOT}/bin/salts-idlc.exe", "${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"],
+          "outputs": ["$builddir/generated/control/flowie-control-data.sqlite.sql"],
+          "args": [
+            "$moduledir/schema/flowie_control_data.schema",
+            "--lang",
+            "sqlite",
+            "--output",
+            "$builddir/generated/control/flowie-control-data.sqlite.sql"
+          ]
+        },
+        {
+          "name": "embed_data_sqlite",
+          "program": "cmake",
+          "inputs": ["$builddir/generated/control/flowie-control-data.sqlite.sql", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_control_data_schema.c"],
+          "args": [
+            "-DINPUT=$builddir/generated/control/flowie-control-data.sqlite.sql",
+            "-DOUTPUT=$builddir/generated/control/flowie_control_data_schema.c",
+            "-DSYMBOL=FLOWIE_CONTROL_DATA_SCHEMA_BYTES",
+            "-DHEADER=flowie_control_data_schema_internal.h",
+            "-DFUNCTION=flowie_control_data_schema_sql",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        },
+        {
+          "name": "generate_data_postgresql",
+          "tool": "salts_idlc",
+          "inputs": ["schema/flowie_control_data.schema", "${envPath:SALTS_UTILS_ROOT}/bin/salts-idlc.exe", "${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"],
+          "outputs": ["$builddir/generated/control/flowie-control-data.postgresql.sql"],
+          "args": [
+            "$moduledir/schema/flowie_control_data.schema",
+            "--lang",
+            "postgresql",
+            "--output",
+            "$builddir/generated/control/flowie-control-data.postgresql.sql"
+          ]
+        },
+        {
+          "name": "generate_store_sqlite",
+          "tool": "salts_idlc",
+          "inputs": ["schema/flowie_control_store.schema", "${envPath:SALTS_UTILS_ROOT}/bin/salts-idlc.exe", "${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"],
+          "outputs": ["$builddir/generated/control/flowie-control-store.sqlite.sql"],
+          "args": [
+            "$moduledir/schema/flowie_control_store.schema",
+            "--lang",
+            "sqlite",
+            "--output",
+            "$builddir/generated/control/flowie-control-store.sqlite.sql"
+          ]
+        },
+        {
+          "name": "embed_store_sqlite",
+          "program": "cmake",
+          "inputs": ["$builddir/generated/control/flowie-control-store.sqlite.sql", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_control_store_schema_sqlite.c"],
+          "args": [
+            "-DINPUT=$builddir/generated/control/flowie-control-store.sqlite.sql",
+            "-DOUTPUT=$builddir/generated/control/flowie_control_store_schema_sqlite.c",
+            "-DSYMBOL=FLOWIE_CONTROL_STORE_SQLITE_SCHEMA_BYTES",
+            "-DHEADER=flowie_control_store_schema_internal.h",
+            "-DFUNCTION=flowie_control_store_schema_sqlite_sql",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        },
+        {
+          "name": "generate_store_postgresql",
+          "tool": "salts_idlc",
+          "inputs": ["schema/flowie_control_store.schema", "${envPath:SALTS_UTILS_ROOT}/bin/salts-idlc.exe", "${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"],
+          "outputs": ["$builddir/generated/control/flowie-control-store.postgresql.sql"],
+          "args": [
+            "$moduledir/schema/flowie_control_store.schema",
+            "--lang",
+            "postgresql",
+            "--output",
+            "$builddir/generated/control/flowie-control-store.postgresql.sql"
+          ]
+        },
+        {
+          "name": "embed_store_postgresql",
+          "program": "cmake",
+          "inputs": ["$builddir/generated/control/flowie-control-store.postgresql.sql", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_control_store_schema_postgresql.c"],
+          "args": [
+            "-DINPUT=$builddir/generated/control/flowie-control-store.postgresql.sql",
+            "-DOUTPUT=$builddir/generated/control/flowie_control_store_schema_postgresql.c",
+            "-DSYMBOL=FLOWIE_CONTROL_STORE_POSTGRESQL_SCHEMA_BYTES",
+            "-DHEADER=flowie_control_store_schema_internal.h",
+            "-DFUNCTION=flowie_control_store_schema_postgresql_sql",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        }
+      ],
+      "install": {
+        "assets": [
+          {
+            "from": "$builddir/generated/control/flowie-control-data.sqlite.sql",
+            "to": "share/turboflow/flowie/control"
+          },
+          {
+            "from": "$builddir/generated/control/flowie-control-data.postgresql.sql",
+            "to": "share/turboflow/flowie/control"
+          },
+          {
+            "from": "$builddir/generated/control/flowie-control-store.sqlite.sql",
+            "to": "share/turboflow/flowie/control"
+          },
+          {
+            "from": "$builddir/generated/control/flowie-control-store.postgresql.sql",
+            "to": "share/turboflow/flowie/control"
+          }
+        ]
+      }
+    },
+    "flowie_control_external_https_authenticator": {
+      "kind": "static",
+      "sources": {
+        "files": ["src/flowie_control_external_https_authenticator.c"]
+      },
+      "public": {
+        "includeDirs": ["src"],
+        "deps": ["flowie_control_core"]
+      },
+      "private": {
+        "deps": ["chttp_client", "salts_core", "salts_json_parser", "salts_uri", "monocypher"]
+      }
+    },
+    "flowie_control_jwt_jwks_authenticator": {
+      "kind": "static",
+      "sources": {
+        "files": ["src/flowie_control_jwt_jwks_authenticator.c"]
+      },
+      "public": {
+        "includeDirs": ["src", "$root/flowie/core/include", "$root/flowie/transport/include"]
+      },
+      "private": {
+        "deps": ["chttp_jwt", "chttp_client", "salts_core", "salts_json_parser", "salts_uri"]
+      }
+    },
+    "flowie_control_startup": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flowie_control_config.c",
+          "src/flowie_control_database_config.c",
+          "src/flowie_control_data_options.c",
+          "src/flowie_control_startup_options.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["src", "$root/flowie/core/include", "$root/flowie/transport/include"]
+      },
+      "private": {
+        "deps": [
+          "turbodb_orm",
+          "salts_core",
+          "cmeta_cflow",
+          "salts_cmd_parser",
+          "salts_cyaml",
+          "salts_cyaml_json_adapter",
+          "salts_json_parser"
+        ]
+      }
+    },
+    "flowie_control_http": {
+      "kind": "static",
+      "sources": {
+        "files": ["src/flowie_control_http_request.c", "src/flowie_control_http_server.c", "src/flowie_control_rpc.c"]
+      },
+      "public": {
+        "includeDirs": ["src"],
+        "deps": ["salts_core"]
+      },
+      "private": {
+        "deps": ["chttp_app", "salts_json_parser"]
+      }
+    },
+    "flowie_control_iris_adapter": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flowie_control_auth_iris_adapter.c",
+          "src/flowie_control_async.c",
+          "src/flowie_control_auth_iris_endpoint.c",
+          "src/flowie_control_acl_iris_endpoint.c",
+          "src/flowie_control_dashboard.c",
+          "src/flowie_control_dashboard_view.c",
+          "src/flowie_control_management_rpc.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["src"],
+        "deps": ["flowie_control_core", "flowie_protocol"]
+      },
+      "private": {
+        "includeDirs": ["$root/flowie/core/include", "$root/flowie/transport/include"],
+        "defines": {
+          "FLOWIE_CONTROL_DASHBOARD_RESOURCE_DIR": "\"$root/flowie/control\""
+        },
+        "deps": [
+          "flowie_control_http",
+          "chttp_app",
+          "cmeta_cmeta",
+          "salts_core",
+          "salts_coroutine",
+          "salts_json_parser",
+          "monocypher",
+          "flowie"
+        ]
+      }
+    },
+    "flowie_control_runtime": {
+      "kind": "static",
+      "sources": {
+        "files": ["src/flowie_control_runtime.c"]
+      },
+      "public": {
+        "includeDirs": ["src"],
+        "deps": ["flowie_control_startup", "flowie_control_core"]
+      },
+      "private": {
+        "deps": [
+          "flowie_control_iris_adapter",
+          "chttp_server",
+          "salts_core",
+          "monocypher",
+          "flowie_control_external_https_authenticator",
+          "flowie_control_jwt_jwks_authenticator"
+        ],
+        "defines": {
+          "FLOWIE_CONTROL_HAS_EXTERNAL_HTTPS_AUTH": "1",
+          "FLOWIE_CONTROL_HAS_JWT_JWKS_AUTH": "1"
+        }
+      }
+    },
+    "flowie-control": {
+      "kind": "executable",
+      "sources": {
+        "files": ["src/flowie_control_main.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_runtime"]
+      }
+    },
+    "flowie-control-data": {
+      "kind": "executable",
+      "sources": {
+        "files": ["src/flowie_control_data_main.c"]
+      },
+      "private": {
+        "deps": ["flowie_control_startup", "flowie_control_core"]
+      }
+    }
+  }
+}

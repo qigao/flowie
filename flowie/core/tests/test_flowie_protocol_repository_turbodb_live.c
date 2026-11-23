@@ -19,7 +19,7 @@ static flowie_mqtt_span_t live_span(const void *data, size_t size) {
 static int live_drop_tables(const orm_config_t *database, const char *prefix) {
   static const char sql_format[] = "DROP TABLE IF EXISTS %s_wills,%s_deliveries,%s_inflight,"
                                    "%s_subscriptions,%s_principal_groups,%s_principal_roles,"
-                                   "%s_retained,%s_sessions,%s_meta";
+                                   "%s_retained,%s_replaced_wills,%s_sessions,%s_meta";
   char sql[1024];
   orm_connection_t *connection = NULL;
   orm_query_t *query = NULL;
@@ -27,7 +27,7 @@ static int live_drop_tables(const orm_config_t *database, const char *prefix) {
   orm_error_t error;
   orm_status_t status;
   const int written = snprintf(sql, sizeof(sql), sql_format, prefix, prefix, prefix, prefix, prefix,
-                               prefix, prefix, prefix, prefix);
+                               prefix, prefix, prefix, prefix, prefix);
   if (written <= 0 || (size_t)written >= sizeof(sql)) return SALTS_ERANGE;
   orm_error_init(&error);
   status = flowie_orm_connect(database, &connection, &error);

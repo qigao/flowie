@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳，当前适用于 `flowie/flowie/control` 内部 TurboDB 事实源。Credential 生命周期已通过内部 management RPC
+已采纳，当前适用于 `flowie/control` 内部 TurboDB 事实源。Credential 生命周期已通过 management RPC
 暴露为 `flowie.credential.generate/rotate/revoke`。未配置 `auth.external_https` 时，这些 credential
 是本地 Auth 的 verifier 事实；配置外部 Auth 时不参与认证。`flowie-control` 不增加 OIDC listener
 或第三方数据库 auth backend。
@@ -77,7 +77,7 @@ adapter 仍必须实现请求限流、失败审计和统一拒绝响应。
 
 ## Revision-aware 正向缓存
 
-`flowie/flowie/control` 提供内部 positive credential cache，仅用于本地 verifier 的内部测试与迁移工具。
+`flowie/control` 提供内部 positive credential cache，仅用于本地 verifier 的内部测试与迁移工具。
 缓存不属于 Broker HTTPS provider，也不能通过 controller 部署 schema 选择；企业第三方路径不读取
 该缓存。
 
@@ -92,7 +92,7 @@ adapter 仍必须实现请求限流、失败审计和统一拒绝响应。
   执行；cache destroy 要求调用方先停止并发认证。
 
 `flowie-control` 的本地 HTTPS Auth composition root 还把 Argon2id 与同步 TurboDB 调用
-放入专用有界 executor。每个任务拥有解码字段和 secret 副本；Iris `Req`/`Res`/socket 不跨线程。
+放入专用有界 executor。每个任务拥有解码字段和 secret 副本，Chttp App 的请求视图留在调用回调内。
 队列满返回 429，HTTP deadline 返回 503。同步工作不做不安全的强制取消：迟到结果丢弃、secret 由任务
 结束时擦除，shutdown 停止接单并 drain。第三方 HTTPS verifier 不使用该 executor。
 
@@ -116,10 +116,9 @@ Token 失效、撤销、重新启用、用户禁用和 Token wipe。缓存测试
 不入缓存、revision
 失效、撤销/禁用 fail closed、LRU 容量驱逐和并发命中。revision 与 audit 通过 TurboDB 同事务提交。
 
-- **HIGH**：在 HTTPS 认证服务、防爆破和管理权限完成前，不得把内部 store API 直接暴露到公网。
-- **MED**：credential 正向缓存、事务化 principal snapshot 和内部 auth service 已完成；最终 principal
-  cache、Iris/CNet server mTLS identity 接入和已连接 session 的撤销策略尚未实现，不能据此宣称即时
-  全局注销。
+- **HIGH**：外部请求通过 Control HTTPS API 进入，由 Control 验证 actor、Domain、权限及限额。
+- **MED**：已连接 MQTT session 的撤销传播受 principal TTL 约束。mTLS 与 service credential 的当前
+  部署边界见 [HTTPS 认证决策](ADR_HTTPS_AUTH_SERVICE.md)。
 - **MED**：发布 gate 仍需真实并发轮换/验证压力测试、故障注入和 ASan/UBSan 验证。
 - **LOW**：默认 KDF 参数为当前基线；部署前仍应在目标硬件上测量延迟和内存预算，并通过显式控制面配置
   管理后续参数升级。

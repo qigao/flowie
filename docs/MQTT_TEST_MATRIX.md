@@ -135,8 +135,8 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 
 ## B. Session owner 与 MQTT 状态机
 
-扩展 `flowie/core/tests/test_flowie_endpoint.c`，当单文件明显膨胀时拆成
-`test_flowie_session_state.c` 和 `test_flowie_session_limits.c`。所有事件通过 owner 公开/测试边界进入，
+从 [core 测试注册](../flowie/core/tests/CMakeLists.txt)中的现有 owner、session 和 repository 用例扩展。
+所有事件通过 owner 公开或测试边界进入，
 不可直接篡改内部字段制造终态。
 
 | ID | 优先级 | 支持/环境标签 | 前置条件与事件序列 | 预期 wire/错误 | 权威终态、隔离 | 标签/超时 |
@@ -144,7 +144,7 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 | MQTT-OWNER-001 | HIGH | `[🪟][🐧]` | QoS 1 PUBLISH 在 graph 成功、失败、超时和 ACK enqueue 失败点各执行一次 | 仅配置 settlement 达成后 PUBACK；失败不承诺 ACK | session inflight 为权威；已提交 Queue 记录不回滚，重投可重复 | `mqtt-fast;mqtt-negative` / 20 s |
 | MQTT-OWNER-002 | HIGH | `[🪟][🐧]` | QoS 2 在 PUBLISH、PUBREC、PUBREL、PUBCOMP 前后断开并以同 session 重连 | reason/packet ID/DUP 符合阶段；完成一次业务 settlement | durable session inflight 阶段为权威；逐阶段新 namespace | `mqtt-fast;mqtt-persistence` / 60 s |
 | MQTT-OWNER-003 | HIGH | `[🪟][🐧]` | 相同 client ID 建立第二连接，在旧连接 pending send/recv 时 takeover | 旧连接关闭，新 generation 独占 route；旧 completion 不可发到新连接 | session generation 为权威；等待旧 callback drain | `mqtt-flowie/transport;mqtt-negative` / 60 s |
-| MQTT-OWNER-004 | HIGH | `[🪟][🐧]` | Receive Maximum=1，连续生成多条 outbound QoS 1/2，再逐条 ACK | wire 同时最多一个未完成包；QoS 1 在 PUBACK、QoS 2 在 PUBCOMP 后按序释放窗口，PUBREL 不被待发送 PUBLISH 阻塞 | outbound inflight 为权威；断开并清空 session | `mqtt-fast` / 20 s |
+| MQTT-OWNER-004 | HIGH | `[🪟][🐧]` | Receive Maximum=1，连续生成多条 outbound QoS 1/2，发送 PINGREQ 和 SUBSCRIBE，再逐条 ACK | 同时最多一个未完成的 PUBLISH。满窗口仍可收到 PINGRESP、SUBACK 和已有 QoS 2 交换的 PUBREL。QoS 1 在 PUBACK、QoS 2 在 PUBCOMP 后按序继续投递 | outbound inflight 为权威。断开并清空 session | `mqtt-fast` / 20 s |
 | MQTT-OWNER-005 | HIGH | `[🪟][🐧]` | 达到 connection/session/subscription/inflight/retained/send HWM 后再加一项 | 返回版本可表达的 quota reason；无法表达时关闭；无 silent drop | 对应 owner count 不超过上限且失败项不存在 | `mqtt-negative` / 30 s |
 | MQTT-OWNER-006 | HIGH | `[🪟][🐧]` | retained 新增、替换、零 payload 删除；订阅 RAP/RH/NL 组合 | retain flag 与投递次数符合 option；删除后新订阅无历史消息 | retained store 为权威；随机 topic 清理 | `mqtt-fast` / 30 s |
 | MQTT-OWNER-007 | HIGH | `[🪟][🐧]` | persistent session 订阅后断开，期间发布，再以 Clean Start false/true 重连 | false 恢复并投递；true 丢弃旧 session；Session Present 正确 | session store 为权威；结束时显式 clean session | `mqtt-fast;mqtt-persistence` / 60 s |
@@ -176,7 +176,7 @@ CONNACK reason，否则关闭；已建连 MQTT 5 协议错误在规范允许时�
 3.1/3.1.1/5 × QoS 0/1/2 的真实 CONNECT、SUBSCRIBE、PUBLISH ACK、UNSUBSCRIBE、PING 和正常
 DISCONNECT 证据。它只关闭 NET-001 的发布基线子集；NET-002..006 的 framing、异常 shutdown、资源
 基线与 WS/WSS admission 仍需用当前 Core API 提供独立已注册结果。旧
-`flowie/core/tests/test_flowie_transport.c` 依赖已移除的 turbo-flow API，未注册到当前 CTest，不能作为通过证据。
+Transport 场景以 [core CTest 注册](../flowie/core/tests/CMakeLists.txt)及实际执行结果为准。
 
 ## D. 持久化与故障注入
 
@@ -212,6 +212,9 @@ Raft append/commit、snapshot/replay 边界，不能通过任意 sleep 猜测时
 | MQTT-SEC-008 | MED | `[🪟][🐧]` | WSS Origin 缺失/错误/允许值，仅当产品配置声明 Origin policy | 按显式 policy 接受或拒绝；未声明能力不得暗示校验 | WS handshake policy 为权威；每例新连接 | `mqtt-security;mqtt-flowie/transport` / 180 s |
 
 ## F. 跨实现互操作
+
+MQTT 5 broker 一致性测试使用固定的 mqtt-lib 版本。Topic Alias 的正向用例和错误 CONNACK
+的测试条件见 [MQTT 5 一致性测试说明](../interop/mqtt5-conformance/README.md)。
 
 新增 `flowie/interop/` runner，固定 Mosquitto、EMQX、HiveMQ CE 的发布版本或 container digest；测试报告
 记录 broker/client 版本、flowie/transport、MQTT level 和随机种子。public endpoint 只保留 smoke，不作为唯一证据。
@@ -272,6 +275,8 @@ allocation、连接、session、route、pending command 和 CNet handle 回到 f
 
 ## I. 发布门禁与执行顺序
 
+本节记录门禁设计。当前自动化范围见 [SDK 资格与产品发布要求](RELEASE_GATE.md)。
+
 | ID | 优先级 | 支持/环境标签 | 检查 | 失败条件 | 标签/超时 |
 |---|---|---|---|---|---|
 | MQTT-GATE-001 | HIGH | `[🪟][🐧]` | configure/CTest guard 枚举 `flowie-release` 必需 live tests | 任一必需测试不存在或 `Disabled` 即失败，不允许以 0 tests 通过 | `flowie-release` / 10 s |
@@ -294,9 +299,9 @@ wire、owner 和持久化三类断言同时成立。
 
 以下映射记录当前直接证据，后续扩展继续复用相同 fixture，避免复制同一 happy path：
 
-- Enhanced AUTH/re-auth、Topic Alias、Assigned Client Identifier、Keep Alive、Receive Maximum、expiry、
-  retained、Subscription Identifier、QoS 2 replay、Will/Will Delay 已在
-  `flowie/core/tests/test_flowie_endpoint.c` 覆盖，并包含相应非法组合与状态故障点。
+- AUTH、Topic Alias、Assigned Client Identifier、Receive Maximum 等属性的编解码及非法组合由
+  [协议矩阵](../flowie/protocol/tests/test_flowie_mqtt_protocol_matrix.c)验证。Endpoint 行为和会话恢复
+  证据按 [core CTest 注册](../flowie/core/tests/CMakeLists.txt)逐项核对。
 - standalone repository commit 故障、重建恢复与二进制边界由 ORM harness 复用统一
   row/revision/故障契约覆盖。
 - TCP/TLS/WS/WSS 的基本 CONNECT/SUBSCRIBE/QoS 0/1/2 PUBLISH/UNSUBSCRIBE/PING/DISCONNECT 已由
@@ -306,12 +311,12 @@ wire、owner 和持久化三类断言同时成立。
 - standalone CONNECT commit 失败、无脏 session 重试、丢失 CONNACK 后重建恢复已在
   `flowie/core/tests/test_flowie_protocol_repository.c` 覆盖；QoS checkpoint、CAS、丢失 commit reply、损坏记录、
   expiry revision fencing 和二进制边界已经进入统一 trace。
-- 单实例路由 churn、shared-group 单交付 oracle 和四类 admitted state 的 shutdown 收敛由
-  `flowie/core/tests/test_flowie_mqtt_endurance.c` 的 `MQTT-ENDURANCE-006/007` 覆盖。
+- `flowie/core/tests/test_flowie_mqtt_endurance.c` 保留单实例路由 churn、shared-group 单交付和
+  shutdown 收敛场景的源码。当前 core CMake 尚未注册该测试。
 - `flowie/cluster/tests/test_flowie_cluster_raft_store.c` 验证 term/vote、日志与快照恢复；
   `flowie/cluster/tests/test_flowie_cluster_state_machine.c` 验证 owner/PUBLISH 数据只在 commit 后应用。
-- client 本地功能测试与可选公网 smoke 已分别在 `client/tests/test_flowie_mqtt_client.c` 与
-  `test_flowie_mqtt_client_live.c`；发布兼容性证据来自固定 broker，不能依赖公网 endpoint 的可用性。
+- Client 本地功能和可选公网 smoke 见 [client CTest 注册](../flowie/client/tests/CMakeLists.txt)。
+  发布兼容性验证使用固定 broker。
 
 新增 CTest target 时，先沿用相邻 `cmake_add_test(...)`、TinyTest fixture 和 CNet helper。只有 failure
 domain 不同或需要 sanitizer/live backend 时才拆 executable。测试文件、证书、corpus 与 runner 都归属

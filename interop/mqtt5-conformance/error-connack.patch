@@ -1,0 +1,49 @@
+diff --git a/crates/mqtt5-conformance/src/conformance_tests/section3_connack.rs b/crates/mqtt5-conformance/src/conformance_tests/section3_connack.rs
+index 1583266..e379fa4 100644
+--- a/crates/mqtt5-conformance/src/conformance_tests/section3_connack.rs
++++ b/crates/mqtt5-conformance/src/conformance_tests/section3_connack.rs
+@@ -98,7 +98,10 @@ async fn connack_session_present_zero_on_error(sut: SutHandle) {
+         .await
+         .unwrap();
+
+-    raw.send_raw(&RawPacketBuilder::connect_with_protocol_version(99))
++    raw.send_raw(&RawPacketBuilder::connect_with_auth_method(
++            &unique_client_id("connack-refusal"),
++            "UNKNOWN-METHOD",
++        ))
+         .await
+         .unwrap();
+
+@@ -124,7 +127,10 @@ async fn connack_error_code_closes_connection(sut: SutHandle) {
+         .await
+         .unwrap();
+
+-    raw.send_raw(&RawPacketBuilder::connect_with_protocol_version(99))
++    raw.send_raw(&RawPacketBuilder::connect_with_auth_method(
++            &unique_client_id("connack-refusal"),
++            "UNKNOWN-METHOD",
++        ))
+         .await
+         .unwrap();
+
+@@ -166,15 +172,18 @@ async fn connack_uses_valid_reason_code(sut: SutHandle) {
+         .await
+         .unwrap();
+     raw_err
+-        .send_raw(&RawPacketBuilder::connect_with_protocol_version(99))
++        .send_raw(&RawPacketBuilder::connect_with_auth_method(
++            &unique_client_id("connack-refusal"),
++            "UNKNOWN-METHOD",
++        ))
+         .await
+         .unwrap();
+     let err_connack = raw_err.expect_connack_packet(TIMEOUT).await;
+     assert!(err_connack.is_some(), "Must receive error CONNACK");
+     assert_eq!(
+         err_connack.unwrap().reason_code,
+-        ReasonCode::UnsupportedProtocolVersion,
+-        "[MQTT-3.2.2-8] Unsupported protocol version must use reason code 0x84"
++        ReasonCode::BadAuthenticationMethod,
++        "[MQTT-3.2.2-8] Unsupported authentication method must use reason code 0x8C"
+     );
+ }

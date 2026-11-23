@@ -1,5 +1,6 @@
-#include "flowie_protocol_repository.h"
+#include "flowie.h"
 #include "flowie_orm_flow_internal.h"
+#include "flowie_test_cnet.h"
 
 #include <shared/orm/orm.h>
 #include "tinytest.h"
@@ -8,6 +9,7 @@
 #include <threads/threads.h>
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -130,6 +132,137 @@ static int repository_execute_sqlite(const char *path, const char *sql) {
   return status == ORM_STATUS_OK ? SALTS_OK : SALTS_EIO;
 }
 
+typedef struct repository_will_probe_s {
+  atomic_int dispatched;
+  atomic_int attempts;
+  atomic_int ready;
+} repository_will_probe_t;
+
+static int repository_count_will(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
+                                  flowie_publish_result_t *result, void *ctx) {
+  repository_will_probe_t *probe = ctx;
+  (void)endpoint;
+  (void)result;
+  if ((message->flags & FLOWIE_MQTT_MESSAGE_BROKER_WILL) != 0u) {
+    atomic_fetch_add(&probe->attempts, 1);
+    if (!atomic_load(&probe->ready)) return SALTS_EBUSY;
+    atomic_fetch_add(&probe->dispatched, 1);
+  }
+  return SALTS_OK;
+}
+
+static int repository_takeover_connect(flowie_test_cnet_client_t *client, int with_will) {
+  static const uint8_t expiry[] = {0x11u, 0u, 0u, 0u, 60u};
+  flowie_mqtt_connect_packet_t packet = FLOWIE_MQTT_CONNECT_PACKET_INIT;
+  uint8_t wire[128];
+  size_t written;
+  if (!client) return SALTS_EIO;
+  packet.version = FLOWIE_MQTT_VERSION_5;
+  packet.clean_start = 1u;
+  packet.has_will = (uint8_t)with_will;
+  packet.client_id = repository_span("durable-takeover", sizeof("durable-takeover") - 1u);
+  packet.properties = repository_span(expiry, sizeof(expiry));
+  if (with_will) packet.will_topic = repository_span("will", sizeof("will") - 1u);
+  if (flowie_mqtt_connect_packet_encode(&packet, wire, sizeof(wire), &written) !=
+      FLOWIE_MQTT_PARSE_OK)
+    return SALTS_EPROTO;
+  return flowie_test_cnet_send(client, wire, written);
+}
+
+static int repository_takeover_case(const char *path, flowie_protocol_repository_t *repository) {
+  static const char reject_replacement[] =
+      "CREATE TRIGGER reject_replacement BEFORE INSERT ON flowie_test_replaced_wills "
+      "BEGIN SELECT RAISE(ABORT, 'replacement rejected'); END";
+  static const uint8_t ping[] = {0xc0u, 0u};
+  static const uint8_t pong[] = {0xd0u, 0u};
+  flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_execution_binding_t execution = FLOWIE_EXECUTION_BINDING_INIT;
+  flowie_endpoint_persistence_binding_t persistence = FLOWIE_ENDPOINT_PERSISTENCE_BINDING_INIT;
+  flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
+  flowie_test_cnet_client_t *old = NULL;
+  flowie_test_cnet_client_t *replacement = NULL;
+  uint8_t reply[sizeof(pong)];
+  repository_will_probe_t will = {0};
+  const unsigned short port = flowie_test_cnet_port();
+  int rc;
+
+  if (port == 0u) return SALTS_EIO;
+  config.host = "127.0.0.1";
+  config.port = port;
+  config.max_connections = 2u;
+  config.max_sessions = 2u;
+  config.max_subscriptions_per_session = 2u;
+  config.max_inflight_per_session = 4u;
+  config.max_packet_size = 128u;
+  config.manage_sessions = 1;
+  options.on_message = repository_count_will;
+  options.message_ctx = &will;
+  persistence.repository = repository;
+  bindings.persistence = &persistence;
+
+  rc = flowie_endpoint_core_create_ex("durable-takeover", &config, &options, &execution,
+                                      &bindings, &endpoint);
+  if (rc == SALTS_OK) rc = flowie_endpoint_core_start(endpoint);
+  if (rc != SALTS_OK) goto done;
+  old = flowie_test_cnet_connect(port);
+  rc = repository_takeover_connect(old, 1);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(old, 0u, 4u, 128u);
+  if (rc == SALTS_OK) rc = repository_execute_sqlite(path, reject_replacement);
+  if (rc != SALTS_OK) goto done;
+
+  replacement = flowie_test_cnet_connect(port);
+  rc = repository_takeover_connect(replacement, 0);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_wait(replacement, &replacement->closed, 3000u);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_send(old, ping, sizeof(ping));
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_exact(old, reply, sizeof(reply));
+  if (rc != SALTS_OK) goto done;
+  if (memcmp(reply, pong, sizeof(pong)) != 0 || atomic_load(&will.attempts) != 0) {
+    rc = SALTS_EPROTO;
+    goto done;
+  }
+
+  rc = repository_execute_sqlite(path, "DROP TRIGGER reject_replacement");
+  if (rc != SALTS_OK) goto done;
+  flowie_test_cnet_close(replacement);
+  replacement = flowie_test_cnet_connect(port);
+  rc = repository_takeover_connect(replacement, 0);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_recv_mqtt5_connack(replacement, 0u, 4u, 128u);
+  if (rc == SALTS_OK) rc = flowie_test_cnet_wait(old, &old->closed, 3000u);
+  if (rc == SALTS_OK) {
+    const uint64_t deadline = monotonic_ms() + 3000u;
+    while (atomic_load(&will.attempts) == 0 && monotonic_ms() < deadline) sleep_ms(1u);
+    if (atomic_load(&will.attempts) == 0 || atomic_load(&will.dispatched) != 0) rc = SALTS_EPROTO;
+  }
+  if (rc != SALTS_OK) goto done;
+  rc = flowie_endpoint_core_stop(endpoint);
+  if (rc != SALTS_OK) goto done;
+  flowie_endpoint_core_destroy(endpoint);
+  endpoint = NULL;
+  config.port = flowie_test_cnet_port();
+  if (config.port == 0) { rc = SALTS_EIO; goto done; }
+  atomic_store(&will.ready, 1);
+  rc = flowie_endpoint_core_create_ex("restored-takeover", &config, &options, &execution,
+                                      &bindings, &endpoint);
+  if (rc == SALTS_OK) rc = flowie_endpoint_core_start(endpoint);
+  if (rc == SALTS_OK) {
+    const uint64_t deadline = monotonic_ms() + 3000u;
+    while (atomic_load(&will.dispatched) == 0 && monotonic_ms() < deadline) sleep_ms(1u);
+    if (atomic_load(&will.dispatched) != 1) rc = SALTS_EPROTO;
+  }
+
+done:
+  if (endpoint) {
+    int stop_rc = flowie_endpoint_core_stop(endpoint);
+    if (rc == SALTS_OK) rc = stop_rc;
+  }
+  flowie_test_cnet_close(replacement);
+  flowie_test_cnet_close(old);
+  flowie_endpoint_core_destroy(endpoint);
+  return rc;
+}
+
 spec("flowie typed protocol repository") {
   static flowie_protocol_repository_t *repository;
   static char *path;
@@ -150,6 +283,19 @@ spec("flowie typed protocol repository") {
       path = NULL;
       check_equal(remove_status, 0);
     }
+  }
+
+  it("rolls back a failed replacement and restores a committed predecessor Will") {
+    flowie_protocol_repository_config_t config = repository_config(1);
+    orm_config_t database = *config.database;
+    orm_option_t filename = *database.options;
+    path = tt_make_temp_file("flowie-takeover", ".sqlite3");
+    check_not_null(path);
+    filename.value = orm_view(path);
+    database.options = &filename;
+    config.database = &database;
+    check_equal(flowie_protocol_repository_open(&config, &repository), SALTS_OK);
+    check_equal(repository_takeover_case(path, repository), SALTS_OK);
   }
 
   it("keeps storage on one owner across caller threads and rejects callback reentry") {

@@ -672,6 +672,24 @@ spec("flowie mqtt protocol") {
                  FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
   }
 
+  it("allows the legacy MQTT 3.1 PUBREL DUP flag") {
+    static const uint8_t pubrel[] = {0x6au, 0x02u, 0x00u, 0x2au};
+    flowie_mqtt_parse_options_t options = FLOWIE_MQTT_PARSE_OPTIONS_INIT;
+    flowie_mqtt_packet_view_t packet = FLOWIE_MQTT_PACKET_VIEW_INIT;
+    flowie_mqtt_control_packet_view_t decoded = FLOWIE_MQTT_CONTROL_PACKET_VIEW_INIT;
+    options.version = FLOWIE_MQTT_VERSION_3_1;
+    check_equal(flowie_mqtt_packet_parse(pubrel, sizeof(pubrel), &options, &packet, NULL, NULL),
+                FLOWIE_MQTT_PARSE_OK);
+    check_equal(flowie_mqtt_control_packet_parse(&packet, &decoded), FLOWIE_MQTT_PARSE_OK);
+    check_equal(decoded.packet_id, 42u);
+    options.version = FLOWIE_MQTT_VERSION_3_1_1;
+    check_equal(flowie_mqtt_packet_parse(pubrel, sizeof(pubrel), &options, &packet, NULL, NULL),
+                FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
+    options.version = FLOWIE_MQTT_VERSION_5;
+    check_equal(flowie_mqtt_packet_parse(pubrel, sizeof(pubrel), &options, &packet, NULL, NULL),
+                FLOWIE_MQTT_PARSE_PROTOCOL_ERROR);
+  }
+
   it("decodes PUBREL packet identifiers and rejects MQTT 3.1.1 reason bytes") {
     static const uint8_t pubrel[] = {0x62u, 0x02u, 0x00u, 0x2au};
     static const uint8_t invalid_puback[] = {0x40u, 0x03u, 0x00u, 0x2au, 0x00u};

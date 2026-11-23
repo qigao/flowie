@@ -1,0 +1,130 @@
+{
+  "include": ["tests/module.json"],
+  "targets": {
+    "flowie_cluster_peer": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": [
+          "src/flowie_cluster_peer_connect_bind.c",
+          "src/flowie_cluster_peer_connection_lost.c",
+          "src/flowie_cluster_peer_edge_action.c",
+          "src/flowie_cluster_peer_mqtt_command.c",
+          "src/flowie_cluster_peer_publish_settle.c",
+          "src/flowie_cluster_peer_mqtt_reply.c",
+          "src/flowie_cluster_peer_protocol.c",
+          "src/flowie_cluster_peer_registry.c",
+          "src/flowie_cluster_peer_takeover_close.c",
+          "src/flowie_cluster_peer_transport.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": ["flowie", "salts_cnet"]
+      },
+      "private": {
+        "deps": ["flowie_protocol", "salts_core", "cmeta_cstl"]
+      }
+    },
+    "flowie_cluster_topology": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": ["src/flowie_cluster_topology.c"]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": ["flowie"]
+      },
+      "private": {
+        "deps": ["salts_core", "cmeta_cstl"]
+      }
+    },
+    "flowie_cluster_publish_event": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": ["src/flowie_cluster_publish_event.c"]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": ["flowie_cluster_peer", "flowie"]
+      },
+      "private": {
+        "deps": ["salts_core"]
+      }
+    },
+    "flowie_cluster_publish_stream": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": [
+          "src/flowie_cluster_publish_stream.c",
+          "src/flowie_cluster_publish_ingress.c",
+          "src/flowie_cluster_publish_egress.c",
+          "src/flowie_cluster_publish_router.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": ["flowie_cluster_publish_event", "turboraft_data_stream", "flowie_cluster_runtime"]
+      },
+      "private": {
+        "deps": ["salts_core", "cmeta_cstl"]
+      }
+    },
+    "flowie_cluster_runtime": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": [
+          "src/flowie_cluster_raft_store.c",
+          "src/flowie_cluster_raft_runtime.c",
+          "src/flowie_cluster_owner_directory.c",
+          "src/flowie_cluster_owner_projection.c",
+          "src/flowie_cluster_state_machine.c",
+          "src/flowie_cluster_peer_authority.c"
+        ]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": [
+          "flowie_cluster_peer",
+          "flowie",
+          "flowie_transport",
+          "turboraft_service",
+          "turboraft_wal_storage",
+          "turboraft_cnet",
+          "turboraft_data_stream",
+          "salts_core"
+        ]
+      },
+      "private": {
+        "deps": ["cmeta_cstl", "monocypher"]
+      }
+    },
+    "flowie_cluster_raft_generation": {
+      "kind": "static",
+      "when": {
+        "config": "cluster"
+      },
+      "sources": {
+        "files": ["src/flowie_cluster_raft_generation.c"]
+      },
+      "public": {
+        "includeDirs": ["$moduledir/src", "$root/flowie/core/src", "$root/flowie/core/src/cluster", "../detail"],
+        "deps": ["flowie_cluster_runtime", "flowie_cluster_publish_stream"]
+      }
+    }
+  }
+}

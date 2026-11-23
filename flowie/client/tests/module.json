@@ -1,0 +1,70 @@
+{
+  "targets": {
+    "test_flowie_mqtt_client": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_client_transport.c"]
+      },
+      "private": {
+        "deps": ["flowie_client", "flowie_protocol", "flowie_connection", "salts_core", "salts_tinytest", "gmssl"],
+        "includeDirs": ["$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt", "client", "mqtt-security", "mqtt-negative"]
+      }
+    },
+    "test_flowie_mqtt_client_contracts": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_client_contracts.c"]
+      },
+      "private": {
+        "deps": ["flowie_client", "flowie_protocol", "flowie_connection", "salts_core", "salts_tinytest", "gmssl"],
+        "includeDirs": ["$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt", "client", "mqtt-security", "mqtt-negative", "lifetime"],
+        "timeout": 60
+      }
+    },
+    "flowie_client_close_fault": {
+      "kind": "shared",
+      "outputPrefix": "lib",
+      "testOnly": true,
+      "sources": {
+        "files": ["../src/flowie_mqtt_client.c"]
+      },
+      "public": {
+        "includeDirs": ["../include", "../../protocol/include"]
+      },
+      "private": {
+        "includeDirs": ["../../detail"],
+        "defines": {
+          "FLOWIE_MQTT_CLIENT_BUILD": null,
+          "FLOWIE_CLIENT_FAULT_TEST": null
+        },
+        "deps": ["flowie_protocol", "salts_core", "cmeta_cstl", "salts_cnet", "chttp_client", "monocypher"]
+      }
+    },
+    "test_flowie_mqtt_client_close_full": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_client_transport.c"]
+      },
+      "private": {
+        "deps": ["flowie_client_close_fault", "flowie_protocol", "flowie_connection", "salts_core", "salts_tinytest", "gmssl"],
+        "includeDirs": ["$root/tests/support"],
+        "defines": {
+          "FLOWIE_CLIENT_FAULT_TEST": null
+        },
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt", "client", "fault-injection", "lifetime"],
+        "timeout": 60
+      }
+    }
+  }
+}

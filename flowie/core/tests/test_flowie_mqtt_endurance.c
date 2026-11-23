@@ -1,4 +1,5 @@
 #include "flowie.h"
+#include "flowie_endpoint_internal.h"
 #include "flowie_test_cnet.h"
 
 #include "tinytest.h"
@@ -123,9 +124,7 @@ typedef struct flowie_endurance_message_key_s {
 } flowie_endurance_message_key_t;
 
 typedef struct flowie_endurance_final_snapshot_s {
-  turbo_flow_connection_snapshot_t connection;
-  turbo_flow_resource_snapshot_t queue;
-  turbo_flow_resource_snapshot_t sessions;
+  flowie_endpoint_core_snapshot_t endpoint;
   uint64_t stop_elapsed_ms;
 } flowie_endurance_final_snapshot_t;
 
@@ -461,8 +460,8 @@ static int flowie_endurance_recv_shared_publish(flowie_endurance_client_t *first
       first->client == FLOWIE_TEST_INVALID_CNET_CLIENT || second->client == FLOWIE_TEST_INVALID_CNET_CLIENT)
     return SALTS_EINVAL;
   for (size_t step = 0u; step < FLOWIE_ENDURANCE_WAIT_STEPS; ++step) {
-    first_ready = flowie_test_cnet_readable(first->client, 0u);
-    second_ready = flowie_test_cnet_readable(second->client, 0u);
+    first_ready = flowie_test_cnet_readable(first->client, 1u);
+    second_ready = flowie_test_cnet_readable(second->client, 1u);
     if (first_ready && second_ready) return SALTS_EPROTO;
     if (first_ready || second_ready) {
       *winner_index = first_ready ? 0u : 1u;
@@ -699,29 +698,31 @@ static int flowie_endurance_expect_takeover(flowie_endurance_client_t *client) {
   return flowie_endurance_transition(client, FLOWIE_ENDURANCE_STATE_REMOVED);
 }
 
-static int flowie_endurance_wait_connections(turbo_flow_t *flow, size_t expected) {
-  turbo_flow_connection_snapshot_t snapshot = {0};
+static int flowie_endurance_wait_connections(flowie_endpoint_core_t *endpoint, size_t expected) {
+  flowie_endpoint_core_snapshot_t snapshot = FLOWIE_ENDPOINT_CORE_SNAPSHOT_INIT;
   for (size_t i = 0u; i < FLOWIE_ENDURANCE_WAIT_STEPS; ++i) {
-    int rc = turbo_flow_adapter_connection_snapshot_at(flow, 0u, &snapshot);
+    int rc = flowie_endpoint_core_snapshot(endpoint, &snapshot);
     if (rc != SALTS_OK) return rc;
-    if (snapshot.connections_current == expected) return SALTS_OK;
+    if (snapshot.connection.connections_current == expected) return SALTS_OK;
     sleep_ms(1u);
   }
   return SALTS_ETIMEDOUT;
 }
 
-static turbo_flow_t *flowie_endurance_flow_with_limits(unsigned short port, size_t send_hwm_bytes,
-                                                       size_t max_inflight_per_session) {
-  static const char graph[] = "source mqtt_in adapter flowie.endpoint\n"
-                              "stage mqtt_fanout adapter flowie.endpoint\n"
-                              "stage main {\n"
-                              "  mqtt_in -> mqtt_fanout\n"
-                              "}\n";
+static int flowie_endurance_fanout(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
+                                   flowie_publish_result_t *result, void *ctx) {
+  (void)ctx;
+  result->status = flowie_endpoint_core_send_message(endpoint, message);
+  return result->status;
+}
+
+static flowie_endpoint_core_t *
+flowie_endurance_flow_with_limits(unsigned short port, size_t send_hwm_bytes,
+                                  size_t max_inflight_per_session) {
   flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
-  turbo_flow_t *flow;
+  flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+  flowie_endpoint_core_t *endpoint = NULL;
   if (port == 0u || send_hwm_bytes == 0u || max_inflight_per_session == 0u) return NULL;
-  flow = turbo_flow_create();
-  if (!flow) return NULL;
   config.host = "127.0.0.1";
   config.port = (int)port;
   config.max_packet_size = FLOWIE_ENDURANCE_PACKET_CAPACITY;
@@ -733,43 +734,36 @@ static turbo_flow_t *flowie_endurance_flow_with_limits(unsigned short port, size
   config.max_sessions = FLOWIE_ENDURANCE_MAX_SESSIONS;
   config.max_subscriptions_per_session = FLOWIE_ENDURANCE_MAX_SUBSCRIPTIONS_PER_SESSION;
   config.max_inflight_per_session = max_inflight_per_session;
-  if (flowie_register_endpoint(flow, "flowie.endpoint", &config) != SALTS_OK ||
-      turbo_flow_parse_string(flow, graph, sizeof(graph) - 1u) != SALTS_OK ||
-      turbo_flow_compile(flow) != SALTS_OK) {
-    turbo_flow_destroy(flow);
-    return NULL;
-  }
-  return flow;
+  options.on_message = flowie_endurance_fanout;
+  return flowie_endpoint_core_create("mqtt-endurance", &config, &options, &endpoint) == SALTS_OK
+             ? endpoint
+             : NULL;
 }
 
-static turbo_flow_t *flowie_endurance_flow(unsigned short port) {
+static flowie_endpoint_core_t *flowie_endurance_flow(unsigned short port) {
   return flowie_endurance_flow_with_limits(port, FLOWIE_ENDURANCE_SEND_HWM_BYTES,
                                            FLOWIE_ENDURANCE_MAX_INFLIGHT_PER_SESSION);
 }
 
-static int flowie_endurance_stop_drained(turbo_flow_t *flow, size_t expected_sessions,
+static int flowie_endurance_stop_drained(flowie_endpoint_core_t *endpoint, size_t expected_sessions,
                                          flowie_endurance_final_snapshot_t *result) {
   int rc;
   uint64_t stopped_at;
-  if (!flow || !result) return SALTS_EINVAL;
+  if (!endpoint || !result) return SALTS_EINVAL;
   memset(result, 0, sizeof(*result));
-  result->queue = (turbo_flow_resource_snapshot_t)TURBO_FLOW_RESOURCE_SNAPSHOT_INIT;
-  result->sessions = (turbo_flow_resource_snapshot_t)TURBO_FLOW_RESOURCE_SNAPSHOT_INIT;
+  result->endpoint = (flowie_endpoint_core_snapshot_t)FLOWIE_ENDPOINT_CORE_SNAPSHOT_INIT;
   stopped_at = monotonic_ms();
-  rc = turbo_flow_stop(flow);
+  rc = flowie_endpoint_core_stop(endpoint);
   result->stop_elapsed_ms = monotonic_ms() - stopped_at;
   if (rc != SALTS_OK) return rc;
   if (result->stop_elapsed_ms > FLOWIE_ENDURANCE_STOP_MAX_MS) return SALTS_ETIMEDOUT;
-  rc = turbo_flow_adapter_connection_snapshot_at(flow, 0u, &result->connection);
+  rc = flowie_endpoint_core_snapshot(endpoint, &result->endpoint);
   if (rc != SALTS_OK) return rc;
-  rc = turbo_flow_resource_snapshot_at(flow, 1u, &result->queue);
-  if (rc != SALTS_OK) return rc;
-  rc = turbo_flow_resource_snapshot_at(flow, 2u, &result->sessions);
-  if (rc != SALTS_OK) return rc;
-  if (result->connection.state != TURBO_FLOW_CONNECTION_STOPPED ||
-      result->connection.connections_current != 0u || result->connection.in_flight_messages != 0u ||
-      result->connection.in_flight_bytes != 0u || result->queue.load != 0u ||
-      result->sessions.load != expected_sessions)
+  if (result->endpoint.connection.state != FLOWIE_CONNECTION_STOPPED ||
+      result->endpoint.connection.connections_current != 0u ||
+      result->endpoint.connection.in_flight_messages != 0u ||
+      result->endpoint.connection.in_flight_bytes != 0u || result->endpoint.queued_replies != 0u ||
+      result->endpoint.sessions != expected_sessions)
     return SALTS_EPROTO;
   return SALTS_OK;
 }
@@ -860,7 +854,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     size_t message_count = 0u;
     uint64_t operation_id = 1u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
@@ -868,7 +862,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     info("seed=%llu configured_messages=%zu", (unsigned long long)root_seed, message_count);
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
 
     for (size_t i = 0u; i < FLOWIE_ENDURANCE_PROFILE_COUNT; ++i)
       check_equal(flowie_endurance_connect_at(&clients[i], port, 0u), SALTS_OK);
@@ -955,10 +949,12 @@ spec("Flowie MQTT persistent-instance endurance") {
            root_seed, (size_t)FLOWIE_ENDURANCE_PROFILE_COUNT,
            message_count + FLOWIE_ENDURANCE_OFFLINE_MESSAGES,
            message_count * 2u + FLOWIE_ENDURANCE_OFFLINE_MESSAGES * 2u, hrtime() - started_at,
-           FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count, final.connection.connections_current,
-           final.connection.in_flight_messages, final.queue.load, final.sessions.load,
+           FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count,
+           final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions,
            final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-002 preserves one persistent session through repeated client-ID takeover") {
@@ -978,7 +974,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t operation_id = 1u;
     size_t takeover_count = 0u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
@@ -986,7 +982,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     info("seed=%llu configured_takeovers=%zu", (unsigned long long)root_seed, takeover_count);
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&publisher, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(current, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_subscribe(current), SALTS_OK);
@@ -1047,9 +1043,10 @@ spec("Flowie MQTT persistent-instance endurance") {
            " stop_ms=%" PRIu64 "\n",
            root_seed, takeover_count, takeover_count * 2u, takeover_count * 2u,
            hrtime() - started_at, FLOWIE_ENDURANCE_HISTORY_CAPACITY, history.count,
-           final.connection.connections_current, final.connection.in_flight_messages,
-           final.queue.load, final.sessions.load, final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+           final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions, final.stop_elapsed_ms);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-003 isolates an inflight-stalled subscriber while a healthy peer advances") {
@@ -1075,7 +1072,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint64_t root_seed = 0u;
     uint64_t operation_id = 1u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow =
+    flowie_endpoint_core_t *flow =
         flowie_endurance_flow_with_limits(port, FLOWIE_ENDURANCE_SEND_HWM_BYTES, 1u);
     uint64_t started_at = hrtime();
     flowie_endurance_message_key_t unsettled;
@@ -1084,7 +1081,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&publisher, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&slow, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&healthy, port, 0u), SALTS_OK);
@@ -1123,9 +1120,10 @@ spec("Flowie MQTT persistent-instance endurance") {
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
            root_seed, FLOWIE_ENDURANCE_HEALTHY_AFTER_ISOLATION + 2u,
            FLOWIE_ENDURANCE_HEALTHY_AFTER_ISOLATION + 2u, hrtime() - started_at,
-           final.connection.connections_current, final.connection.in_flight_messages,
-           final.queue.load, final.sessions.load, final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+           final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions, final.stop_elapsed_ms);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-004 resumes both broker-owned QoS 2 acknowledgement stages") {
@@ -1152,13 +1150,13 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint16_t replay_packet_id = 0u;
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&publisher, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&subscriber, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_subscribe_qos(&subscriber, 2u), SALTS_OK);
@@ -1223,10 +1221,11 @@ spec("Flowie MQTT persistent-instance endurance") {
            " clients=2 qos=2 reconnects=2 publications=1 deliveries=2 duration_ns=%" PRIu64
            " connections_final=%" PRIu64 " inflight_final=%" PRIu64 " queue_final=%" PRIu64
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, hrtime() - started_at, final.connection.connections_current,
-           final.connection.in_flight_messages, final.queue.load, final.sessions.load,
+           root_seed, hrtime() - started_at, final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions,
            final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-005 resolves delayed Will reconnect and session-expiry ordering") {
@@ -1268,7 +1267,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     flowie_endurance_will_t expiry_will;
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
@@ -1295,7 +1294,7 @@ spec("Flowie MQTT persistent-instance endurance") {
 
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&subscriber, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_subscribe(&subscriber), SALTS_OK);
 
@@ -1325,10 +1324,11 @@ spec("Flowie MQTT persistent-instance endurance") {
            " clients=3 canceled_wills=1 expiry_forced_wills=1 duration_ns=%" PRIu64
            " connections_final=%" PRIu64 " inflight_final=%" PRIu64 " queue_final=%" PRIu64
            " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, hrtime() - started_at, final.connection.connections_current,
-           final.connection.in_flight_messages, final.queue.load, final.sessions.load,
+           root_seed, hrtime() - started_at, final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions,
            final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-006 preserves routing truth through subscription churn") {
@@ -1407,13 +1407,13 @@ spec("Flowie MQTT persistent-instance endurance") {
     size_t shared_deliveries[2] = {0u, 0u};
     int exact_active = 1;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&publisher, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&exact, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&plus, port, 0u), SALTS_OK);
@@ -1475,9 +1475,10 @@ spec("Flowie MQTT persistent-instance endurance") {
            " queue_final=%" PRIu64 " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
            root_seed, FLOWIE_ENDURANCE_ROUTING_ROUNDS, exact_deliveries, plus_deliveries,
            hash_deliveries, shared_deliveries[0], shared_deliveries[1], hrtime() - started_at,
-           final.connection.connections_current, final.connection.in_flight_messages,
-           final.queue.load, final.sessions.load, final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+           final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions, final.stop_elapsed_ms);
+    flowie_endpoint_core_destroy(flow);
   }
 
   it("ENDURANCE-007 converges compound admitted state during shutdown") {
@@ -1547,7 +1548,7 @@ spec("Flowie MQTT persistent-instance endurance") {
     uint16_t slow_packet_id = 0u;
     uint64_t root_seed = 0u;
     unsigned short port = flowie_test_cnet_port();
-    turbo_flow_t *flow = flowie_endurance_flow(port);
+    flowie_endpoint_core_t *flow = flowie_endurance_flow(port);
     uint64_t started_at = hrtime();
 
     check_equal(flowie_endurance_seed(&root_seed), SALTS_OK);
@@ -1565,7 +1566,7 @@ spec("Flowie MQTT persistent-instance endurance") {
 
     check_greater(port, 0);
     check_not_null(flow);
-    check_equal(turbo_flow_start(flow), SALTS_OK);
+    check_equal(flowie_endpoint_core_start(flow), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&publisher, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_connect_at(&qos2, port, 0u), SALTS_OK);
     check_equal(flowie_endurance_subscribe_filter_qos(&qos2, qos2_topic, 2u), SALTS_OK);
@@ -1613,9 +1614,10 @@ spec("Flowie MQTT persistent-instance endurance") {
            " pending_qos2=1 pending_offline=1 pending_inflight=1 pending_will=1"
            " duration_ns=%" PRIu64 " connections_final=%" PRIu64 " inflight_final=%" PRIu64
            " queue_final=%" PRIu64 " sessions_final=%" PRIu64 " stop_ms=%" PRIu64 "\n",
-           root_seed, hrtime() - started_at, final.connection.connections_current,
-           final.connection.in_flight_messages, final.queue.load, final.sessions.load,
+           root_seed, hrtime() - started_at, final.endpoint.connection.connections_current,
+           final.endpoint.connection.in_flight_messages, final.endpoint.queued_replies,
+           final.endpoint.sessions,
            final.stop_elapsed_ms);
-    turbo_flow_destroy(flow);
+    flowie_endpoint_core_destroy(flow);
   }
 }

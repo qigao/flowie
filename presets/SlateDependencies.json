@@ -1,0 +1,363 @@
+{
+  "targets": {
+    "salts_core": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libsalts.dll.a"],
+        "defines": {
+          "HAS_ZSTD": "1"
+        }
+      },
+      "runtimeBins": ["${envPath:SALTS_BASE_ROOT}/bin/libsalts.dll"]
+    },
+    "salts_tinytest": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libsaltscore_tinytest.a"]
+      }
+    },
+    "salts_coroutine": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libcoroutine.a"],
+        "deps": ["salts_core"]
+      }
+    },
+    "salts_native_io": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libnative_io.a", "ws2_32"],
+        "deps": ["salts_core"]
+      },
+      "private": {
+        "deps": ["salts_coroutine"]
+      }
+    },
+    "salts_cserde": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libsaltscore_cserde.a"]
+      }
+    },
+    "salts_query_vm": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libquery_vm.a"]
+      }
+    },
+    "salts_uri": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/liburi_parser.a"]
+      }
+    },
+    "salts_ltv_parser": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libltv_parser.a"],
+        "deps": ["salts_uri"]
+      }
+    },
+    "salts_json_parser": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libjson_parser.a"],
+        "deps": ["salts_core", "salts_query_vm"]
+      }
+    },
+    "salts_cyaml": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libcyaml.a"],
+        "deps": ["salts_query_vm"]
+      },
+      "private": {
+        "deps": ["salts_core"]
+      }
+    },
+    "salts_cyaml_json_adapter": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libcyaml_json_adapter.a"],
+        "deps": ["salts_cyaml", "salts_json_parser"]
+      }
+    },
+    "salts_dotenv_parser": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libdotenv_parser.a"],
+        "deps": ["salts_core"]
+      }
+    },
+    "salts_cmd_parser": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libcmd_parser.a"]
+      },
+      "private": {
+        "deps": ["salts_dotenv_parser"]
+      }
+    },
+    "cmeta_cmeta": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CMETA_ROOT}/include"],
+        "libs": ["${envPath:CMETA_ROOT}/lib/libcmeta_cmeta.a"],
+        "deps": ["salts_core"]
+      }
+    },
+    "cmeta_cstl": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CMETA_ROOT}/include"],
+        "libs": ["${envPath:CMETA_ROOT}/lib/libcmeta_cstl.a"],
+        "deps": ["cmeta_cmeta"]
+      }
+    },
+    "cmeta_cflow": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CMETA_ROOT}/include"],
+        "libs": ["${envPath:CMETA_ROOT}/lib/libcmeta_cflow.a", "ws2_32"],
+        "deps": ["cmeta_cmeta", "salts_native_io", "salts_core"],
+        "defines": {
+          "CFLOW_MACHINE_MAX_STATES": "65536",
+          "CFLOW_MACHINE_MAX_EVENTS": "65536",
+          "CFLOW_MACHINE_MAX_GUARDS": "65536",
+          "CFLOW_MACHINE_MAX_ACTIONS": "65536",
+          "CFLOW_MACHINE_MAX_TRANSITIONS": "1048576",
+          "CFLOW_STATECHART_MAX_ACTION_REFS": "1048576",
+          "CFLOW_STATECHART_MAX_INSTANCE_BYTES": "67108864"
+        }
+      }
+    },
+    "cmeta_plugin": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CMETA_ROOT}/include"],
+        "libs": ["${envPath:CMETA_ROOT}/lib/libcmeta_plugin.a"],
+        "deps": ["cmeta_cmeta"]
+      },
+      "private": {
+        "deps": ["salts_core"]
+      }
+    },
+    "cmeta_ace": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CMETA_ROOT}/include"],
+        "libs": ["${envPath:CMETA_ROOT}/lib/libcmeta_ace.a"],
+        "deps": ["cmeta_cmeta"]
+      },
+      "private": {
+        "deps": ["cmeta_plugin", "salts_core"]
+      }
+    },
+    "salts_jinja_cmeta": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_UTILS_ROOT}/include", "${envPath:SALTS_UTILS_ROOT}/include/jinja"],
+        "libs": ["${envPath:SALTS_UTILS_ROOT}/lib/libjinja_cmeta.dll.a"],
+        "deps": ["cmeta_cmeta", "salts_core"]
+      },
+      "runtimeBins": ["${envPath:SALTS_UTILS_ROOT}/bin/libjinja_cmeta.dll"]
+    },
+    "salts_data_bind": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_UTILS_ROOT}/include"],
+        "libs": ["${envPath:SALTS_UTILS_ROOT}/lib/libdata_bind.dll.a"],
+        "deps": ["salts_core", "cmeta_cmeta", "cmeta_cstl", "salts_cserde", "cmeta_cflow"]
+      },
+      "runtimeBins": ["${envPath:SALTS_UTILS_ROOT}/bin/libdata_bind.dll"]
+    },
+    "salts_crypto": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_CORE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_CORE_ROOT}/lib/libsalts_crypto.dll.a", "bcrypt", "ws2_32", "crypt32"]
+      },
+      "runtimeDeps": ["salts_core"],
+      "runtimeBins": ["${envPath:SALTS_CORE_ROOT}/bin/salts_crypto.dll"]
+    },
+    "salts_cnet": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_CORE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_CORE_ROOT}/lib/libcnet.dll.a"],
+        "deps": ["salts_native_io"]
+      },
+      "runtimeDeps": ["salts_crypto"],
+      "runtimeBins": ["${envPath:SALTS_CORE_ROOT}/bin/cnet.dll"]
+    },
+    "chttp_client": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CHTTP_ROOT}/include"],
+        "libs": ["${envPath:CHTTP_ROOT}/lib/libchttp_client.dll.a"],
+        "deps": ["salts_cnet", "cmeta_cmeta", "salts_cserde", "salts_data_bind"]
+      },
+      "runtimeBins": ["${envPath:CHTTP_ROOT}/bin/libchttp_client.dll"]
+    },
+    "chttp_server": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CHTTP_ROOT}/include"],
+        "libs": ["${envPath:CHTTP_ROOT}/lib/libchttp_server.dll.a"],
+        "deps": ["salts_cnet", "cmeta_cmeta", "salts_cserde", "salts_data_bind"]
+      },
+      "runtimeBins": ["${envPath:CHTTP_ROOT}/bin/libchttp_server.dll"]
+    },
+    "chttp_app": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CHTTP_ROOT}/include"],
+        "libs": ["${envPath:CHTTP_ROOT}/lib/libchttp_app.dll.a"],
+        "deps": ["chttp_server", "cmeta_ace", "cmeta_cmeta", "salts_data_bind", "cmeta_plugin", "cmeta_cflow"]
+      },
+      "private": {
+        "deps": ["salts_jinja_cmeta"]
+      },
+      "runtimeBins": ["${envPath:CHTTP_ROOT}/bin/libchttp_app.dll"]
+    },
+    "chttp_jwt": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:CHTTP_ROOT}/include"],
+        "libs": ["${envPath:CHTTP_ROOT}/lib/libchttp_cjwt.a"],
+        "deps": ["salts_json_parser"]
+      },
+      "private": {
+        "deps": ["salts_crypto", "salts_core"]
+      }
+    },
+    "turbodb_orm": {
+      "kind": "prebuilt",
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBODB_ROOT}/include", "${envPath:TURBODB_ROOT}/include/shared/orm"],
+        "libs": ["${envPath:TURBODB_ROOT}/lib/libturbo_orm.dll.a"],
+        "deps": ["salts_core", "cmeta_cflow"]
+      },
+      "runtimeBins": ["${envPath:TURBODB_ROOT}/bin/libturbo_orm.dll"]
+    },
+    "turboraft_core": {
+      "kind": "prebuilt",
+      "when": { "config": "cluster" },
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBORAFT_ROOT}/include"],
+        "libs": ["${envPath:TURBORAFT_ROOT}/lib/libturboraft_core.a"],
+        "deps": ["salts_core"]
+      },
+      "private": {
+        "deps": ["cmeta_cstl", "salts_data_bind"]
+      }
+    },
+    "turboraft_service": {
+      "kind": "prebuilt",
+      "when": { "config": "cluster" },
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBORAFT_ROOT}/include"],
+        "libs": ["${envPath:TURBORAFT_ROOT}/lib/libturboraft_service.a"],
+        "deps": ["turboraft_core"]
+      }
+    },
+    "turboraft_data_stream": {
+      "kind": "prebuilt",
+      "when": { "config": "cluster" },
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBORAFT_ROOT}/include"],
+        "libs": ["${envPath:TURBORAFT_ROOT}/lib/libturboraft_data_stream.a"],
+        "deps": ["turboraft_core"]
+      },
+      "private": {
+        "deps": ["salts_core", "salts_crypto"]
+      }
+    },
+    "turboraft_wal_storage": {
+      "kind": "prebuilt",
+      "when": { "config": "cluster" },
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBORAFT_ROOT}/include"],
+        "libs": ["${envPath:TURBORAFT_ROOT}/lib/libturboraft_wal_storage.a"],
+        "deps": ["turboraft_core"]
+      },
+      "private": {
+        "deps": ["salts_core", "salts_crypto", "xxhash"]
+      }
+    },
+    "turboraft_cnet": {
+      "kind": "prebuilt",
+      "when": { "config": "cluster" },
+      "public": {
+        "requiredIncludeDirs": ["${envPath:TURBORAFT_ROOT}/include"],
+        "libs": ["${envPath:TURBORAFT_ROOT}/lib/libturboraft_cnet.a"],
+        "deps": ["turboraft_core", "salts_cnet"]
+      },
+      "private": {
+        "deps": ["cmeta_cstl", "cmeta_cmeta"]
+      }
+    },
+    "xxhash": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "xxhash",
+        "pc": "libxxhash"
+      }
+    },
+    "sqlite3": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "sqlite3"
+      }
+    },
+    "libpq": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "libpq"
+      }
+    },
+    "gmssl": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "gmssl"
+      },
+      "public": {
+        "defines": {
+          "ENABLE_TLS": null,
+          "ENABLE_SECP256R1": null,
+          "ENABLE_SECP384R1": null,
+          "ENABLE_SHA1": null,
+          "ENABLE_SHA2": null,
+          "ENABLE_AES": null,
+          "ENABLE_SM9": null,
+          "ENABLE_ZUC": null,
+          "ENABLE_CMS": null,
+          "ENABLE_SM4_ECB": null,
+          "ENABLE_SM4_OFB": null,
+          "ENABLE_SM4_CFB": null,
+          "ENABLE_SM4_CCM": null,
+          "ENABLE_SM4_XTS": null,
+          "ENABLE_SM4_CBC_MAC": null
+        },
+        "libs": ["ws2_32"]
+      }
+    }
+  }
+}

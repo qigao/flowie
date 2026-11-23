@@ -1,0 +1,43 @@
+{
+  "name": "flowie_client",
+  "kind": "shared",
+  "outputPrefix": "lib",
+  "include": [
+    "tests/module.json"
+  ],
+  "sources": {
+    "files": [
+      "src/flowie_mqtt_client.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "include",
+      "../protocol/include"
+    ]
+  },
+  "private": {
+    "includeDirs": [
+      "../detail"
+    ],
+    "defines": {
+      "FLOWIE_MQTT_CLIENT_BUILD": null
+    },
+    "deps": [
+      "flowie_protocol",
+      "salts_core",
+      "cmeta_cstl",
+      "salts_cnet",
+      "chttp_client",
+      "monocypher"
+    ]
+  },
+  "install": {
+    "headers": [
+      {
+        "from": "include/flowie_mqtt_client.h",
+        "to": "include"
+      }
+    ]
+  }
+}

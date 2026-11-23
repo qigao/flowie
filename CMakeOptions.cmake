@@ -1,45 +1,15 @@
 # Iron rule: every Flowie feature/build switch is declared in this file.
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
-# Accept the published Flowie switches and CTest's switch at the input boundary.
-foreach(_flowie_switch IN ITEMS TESTS BENCHMARKS CLUSTER)
-    if(DEFINED FLOWIE_BUILD_${_flowie_switch})
-        if(DEFINED BUILD_${_flowie_switch})
-            if((BUILD_${_flowie_switch} AND NOT FLOWIE_BUILD_${_flowie_switch})
-               OR (NOT BUILD_${_flowie_switch} AND FLOWIE_BUILD_${_flowie_switch})
-            )
-                message(
-                    FATAL_ERROR
-                        "Conflicting BUILD_${_flowie_switch} and FLOWIE_BUILD_${_flowie_switch}"
-                )
-            endif()
-        endif()
-        set(BUILD_${_flowie_switch}
-            "${FLOWIE_BUILD_${_flowie_switch}}"
-            CACHE BOOL "Build ${_flowie_switch}"
-        )
-    endif()
-endforeach()
-if(NOT DEFINED BUILD_TESTS AND DEFINED BUILD_TESTING)
-    set(BUILD_TESTS
-        "${BUILD_TESTING}"
-        CACHE BOOL "Build tests"
-    )
-endif()
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" OFF)
 option(BUILD_BENCHMARKS "Build network and send-path benchmarks" OFF)
-option(BUILD_CLUSTER "Build the experimental TurboRaft-backed cluster runtime" OFF)
+option(BUILD_CLUSTER
+	"Build the experimental TurboRaft-backed cluster runtime"
+	OFF
+)
 option(FLOWIE_BUILD_CONTROL "Build the Flowie control plane" ON)
 option(FLOWIE_BUILD_SERVER "Build the Flowie server executable" ON)
-set(BUILD_TESTING
-    "${BUILD_TESTS}"
-    CACHE BOOL "Build and register tests" FORCE
-)
-foreach(_flowie_switch IN ITEMS TESTS BENCHMARKS CLUSTER)
-    set(FLOWIE_BUILD_${_flowie_switch} "${BUILD_${_flowie_switch}}")
-endforeach()
-unset(_flowie_switch)
 
 option(ENABLE_SANITIZER_ADDRESS "Enable AddressSanitizer" OFF)
 option(ENABLE_SANITIZER_UNDEFINED "Enable UndefinedBehaviorSanitizer" OFF)
@@ -48,66 +18,81 @@ option(ENABLE_SANITIZER_THREAD "Enable ThreadSanitizer" OFF)
 option(ENABLE_SANITIZER_MEMORY "Enable MemorySanitizer (Clang only)" OFF)
 
 option(FLOWIE_MQTT_PUBLIC_LIVE_TESTS
-       "Enable optional Flowie MQTT client external-connectivity smoke tests" OFF
+	"Enable optional Flowie MQTT client external-connectivity smoke tests"
+	OFF
 )
-option(FLOWIE_TURBODB_LIVE_TESTS "Enable TurboDB cross-driver live persistence contract tests" OFF)
-option(FLOWIE_MQTT_FIXED_INTEROP_TESTS "Run interoperability against one fixed broker" OFF)
+option(FLOWIE_TURBODB_LIVE_TESTS
+	"Enable TurboDB cross-driver live persistence contract tests"
+	OFF
+)
+option(FLOWIE_MQTT_FIXED_INTEROP_TESTS
+	"Run interoperability against one fixed broker"
+	OFF
+)
 option(FLOWIE_MQTT_FUZZ_TARGETS "Build MQTT libFuzzer targets" OFF)
-option(FLOWIE_MQTT_SOAK_TESTS "Register scheduled MQTT soak tests" OFF)
 option(FLOWIE_MQTT_RELEASE_GATE "Register the strict MQTT release manifest" OFF)
 
-set(FLOWIE_RELEASE_REVISION
-    ""
-    CACHE STRING "Immutable source revision written into Flowie release/nightly evidence"
+set(
+	FLOWIE_RELEASE_REVISION
+	""
+	CACHE
+		STRING
+		"Immutable source revision written into Flowie release/nightly evidence"
 )
-set(FLOWIE_MQTT_NIGHTLY_SEED
-    "11794061671962178383"
-    CACHE STRING "Reproducible Flowie nightly seed"
+set(
+	FLOWIE_MQTT_NIGHTLY_SEED
+	"11794061671962178383"
+	CACHE
+		STRING
+		"Reproducible Flowie nightly seed"
 )
-set(FLOWIE_MQTT_FUZZ_RUNS
-    100000
-    CACHE STRING "Flowie nightly fuzz input count"
+set(FLOWIE_MQTT_FUZZ_RUNS 100000 CACHE STRING "Flowie nightly fuzz input count")
+set(
+	FLOWIE_MQTT_NIGHTLY_SOAK_SHORT_MS
+	1800000
+	CACHE
+		STRING
+		"Short Flowie nightly soak duration"
 )
-set(FLOWIE_MQTT_NIGHTLY_SOAK_SHORT_MS
-    1800000
-    CACHE STRING "Short Flowie nightly soak duration"
-)
-set(FLOWIE_MQTT_NIGHTLY_SOAK_LONG_MS
-    3600000
-    CACHE STRING "Long Flowie nightly soak duration"
+set(
+	FLOWIE_MQTT_NIGHTLY_SOAK_LONG_MS
+	3600000
+	CACHE
+		STRING
+		"Long Flowie nightly soak duration"
 )
 
-set(FLOWIE_MQTT_FIXED_BROKER_NAME
-    "Mosquitto-2.0.22"
-    CACHE STRING "Fixed broker implementation and exact version"
+set(
+	FLOWIE_MQTT_FIXED_BROKER_NAME
+	"Mosquitto-2.0.22"
+	CACHE
+		STRING
+		"Fixed broker implementation and exact version"
 )
-set(FLOWIE_MQTT_FIXED_HOST
-    "127.0.0.1"
-    CACHE STRING "Fixed broker host"
+set(FLOWIE_MQTT_FIXED_HOST "127.0.0.1" CACHE STRING "Fixed broker host")
+set(FLOWIE_MQTT_FIXED_TCP_PORT 1883 CACHE STRING "Fixed broker MQTT TCP port")
+set(FLOWIE_MQTT_FIXED_TLS_PORT 8883 CACHE STRING "Fixed broker MQTT TLS port")
+set(FLOWIE_MQTT_FIXED_WS_PORT 8083 CACHE STRING "Fixed broker MQTT WS port")
+set(FLOWIE_MQTT_FIXED_WSS_PORT 8084 CACHE STRING "Fixed broker MQTT WSS port")
+set(
+	FLOWIE_MQTT_FIXED_WS_PATH
+	"/mqtt"
+	CACHE
+		STRING
+		"Fixed broker MQTT WS/WSS path"
 )
-set(FLOWIE_MQTT_FIXED_TCP_PORT
-    1883
-    CACHE STRING "Fixed broker MQTT TCP port"
+set(
+	FLOWIE_MQTT_FIXED_CA_FILE
+	""
+	CACHE
+		FILEPATH
+		"CA certificate used to verify the fixed broker TLS/WSS listeners"
 )
-set(FLOWIE_MQTT_FIXED_TLS_PORT
-    8883
-    CACHE STRING "Fixed broker MQTT TLS port"
+option(FLOWIE_MQTT_FIXED_SUPPORT_31
+	"Fixed broker accepts MQTT 3.1 on TCP and TLS"
+	ON
 )
-set(FLOWIE_MQTT_FIXED_WS_PORT
-    8083
-    CACHE STRING "Fixed broker MQTT WS port"
+option(FLOWIE_MQTT_FIXED_SUPPORT_31_WS
+	"Fixed broker accepts MQTT 3.1 over WS and WSS"
+	ON
 )
-set(FLOWIE_MQTT_FIXED_WSS_PORT
-    8084
-    CACHE STRING "Fixed broker MQTT WSS port"
-)
-set(FLOWIE_MQTT_FIXED_WS_PATH
-    "/mqtt"
-    CACHE STRING "Fixed broker MQTT WS/WSS path"
-)
-set(FLOWIE_MQTT_FIXED_CA_FILE
-    ""
-    CACHE FILEPATH "CA certificate used to verify the fixed broker TLS/WSS listeners"
-)
-option(FLOWIE_MQTT_FIXED_SUPPORT_31 "Fixed broker accepts MQTT 3.1 on TCP and TLS" ON)
-option(FLOWIE_MQTT_FIXED_SUPPORT_31_WS "Fixed broker accepts MQTT 3.1 over WS and WSS" ON)

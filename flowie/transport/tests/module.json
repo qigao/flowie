@@ -1,0 +1,42 @@
+{
+  "targets": {
+    "test_flowie_connection": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_connection.c"]
+      },
+      "private": {
+        "deps": ["flowie_connection", "chttp_client", "salts_tinytest"],
+        "includeDirs": ["$root/tests/support"],
+        "libs": ["ws2_32"]
+      },
+      "test": {
+        "labels": ["flowie", "connection"]
+      }
+    },
+    "test_flowie_send_batch": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_send_batch.c"]
+      },
+      "private": {
+        "deps": ["flowie_connection", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "connection", "ownership"]
+      }
+    },
+    "test_flow_execution": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flow_execution.c"]
+      },
+      "private": {
+        "deps": ["flowie_transport", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie/transport", "execution", "coroutine"]
+      }
+    }
+  }
+}

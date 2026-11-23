@@ -268,6 +268,16 @@ FLOWIE_C_API int flowie_session_owner_delivery_pending_at_ex(flowie_session_owne
                                                           flowie_mqtt_span_t *packet,
                                                           uint16_t *packet_id,
                                                           uint64_t *expiry_at_epoch_seconds);
+/** Prepare a borrowed replay packet without advancing a queued delivery. */
+FLOWIE_C_API int flowie_session_owner_delivery_replay_at(
+    flowie_session_owner_t *owner, size_t index, uint64_t now_epoch_seconds,
+    flowie_mqtt_span_t *packet, uint16_t *packet_id, uint64_t *expiry_at_epoch_seconds, int *queued);
+/** Mark a queued delivery as attempted and advance the durable resource generation. */
+FLOWIE_C_API int flowie_session_owner_delivery_start(flowie_session_owner_t *owner,
+                                                   uint16_t packet_id);
+/** Charge a PUBLISH admitted for this connection generation. The charge is transient. */
+FLOWIE_C_API int flowie_session_owner_delivery_mark_sent(flowie_session_owner_t *owner,
+                                                        uint16_t packet_id);
 /** Rewrite the fixed-width MQTT 5 Message Expiry value without changing packet ownership/size. */
 FLOWIE_C_API int flowie_session_delivery_packet_expiry_refresh(flowie_mqtt_version_t version,
                                                             uint8_t *packet, size_t packet_size,
@@ -277,6 +287,10 @@ FLOWIE_C_API int flowie_session_delivery_packet_expiry_refresh(flowie_mqtt_versi
 FLOWIE_C_API int flowie_session_owner_delivery_ack(flowie_session_owner_t *owner,
                                                 const flowie_mqtt_packet_view_t *packet,
                                                 flowie_session_ack_intent_t *reply);
+FLOWIE_C_API int flowie_session_owner_delivery_ack_ex(flowie_session_owner_t *owner,
+                                                    const flowie_mqtt_packet_view_t *packet,
+                                                    flowie_session_ack_intent_t *reply,
+                                                    int *quota_released);
 /** Apply one complete UNSUBSCRIBE atomically and emit MQTT 5 per-filter reasons on success. */
 FLOWIE_C_API int flowie_session_owner_unsubscribe(
     flowie_session_owner_t *owner, const flowie_mqtt_packet_view_t *packet,
