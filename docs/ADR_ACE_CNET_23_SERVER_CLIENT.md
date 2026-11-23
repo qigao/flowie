@@ -1,8 +1,9 @@
 # ACE + CNet 2.3: Flowie Server and Client ownership
 
-**Status:** phased integration against the published Salts 2.3 RC SDK. Static
-Server Configurator/Interceptor composition and Client Manager/Managed Dial
-are implemented; mixed Server/Client SG hosting and general recovery remain open. Follow
+**Status:** accepted ownership decision. The initial integration used a Salts 2.3 RC SDK.
+The current split SDK releases are documented in [the build guide](../README.md#upstream-dependency-versions).
+Static Server Configurator/Interceptor composition and Client Manager/Managed Dial are implemented.
+Mixed Server/Client SG hosting and general recovery were follow-up work at the time of the decision. See
 [Flowie #42](https://github.com/qigao/flowie/issues/42),
 [Server #56](https://github.com/qigao/flowie/issues/56),
 [Client #61](https://github.com/qigao/flowie/issues/61),
@@ -18,16 +19,16 @@ are implemented; mixed Server/Client SG hosting and general recovery remain open
 | Physical client connection and reconnect | Salts::CNet | owner-local Manager/Managed Dial/Recovery |
 | MQTT CONNECT/AUTH/CONNACK, QoS and session | Flowie | flowie/protocol FSM/ACK truth, generation fencing |
 | MQTT fanout and retained/session index | Flowie endpoint | owner-local delivery, bounded cross-Owner descriptors |
-| WS/WSS flowie/transport | CHttp 2.1 | owns fixed Owners, CNet placement, Manager and Handoff |
+| WS/WSS transport | Chttp App | owns fixed Owners, CNet placement, Manager and Handoff |
 | Cluster peer and consensus | TurboRaft/CNet | independent flowie/transport peer and committed facts |
-| Static service composition | Salts::Component + CMeta | Component Configurator, typed Strategy/Factory/Adapter |
+| Static service composition | CMeta ACE | Component Configurator, typed Strategy/Factory/Adapter |
 | Dynamic provider lifetime | Salts::Plugin | outer ComponentPlugin generation Scope |
 
 Do not create a Flowie Reactor, CNet-Actor bridge, global connection pool,
 second CNet Manager DSO, plugin registry or per-packet Component lookup.
 ACE Leader/Followers is **not** the SG fixed-owner model.
 
-## Server flowie/transport slice (in this branch)
+## Server transport ownership
 
 ```text
 listener -> canonical CNet RR/LOWEST_PRESSURE chooser
@@ -164,9 +165,13 @@ and CPU-policy rejection followed by corrected activation.
 authentication/ACL decoding and remote denial. The flowie/transport baseline separately
 exercises MQTT 3.1/3.1.1/5 and QoS0/1/2 across CHttp WS/WSS owners.
 
-## Mandatory downstream gate
+## Original downstream qualification scope
 
-- An **immutable verified installed Salts 2.3 candidate**, rebuilt coherent
+The initial migration evaluated the following downstream combinations.
+The executable SDK qualification workflow and product acceptance requirements are documented
+in [the release guide](RELEASE_GATE.md).
+
+- An immutable verified installed Salts 2.3 candidate, rebuilt coherent
   producer SDKs, C11/C++17 and real Linux/Windows/macOS conformance (as supported).
 - Server and Client-only, combined gateway fixed-Owner 1/2/4; real TCP/TLS,
   CHttp WS/WSS and CNet server/cluster without double Observe/second Manager.
@@ -174,7 +179,7 @@ exercises MQTT 3.1/3.1.1/5 and QoS0/1/2 across CHttp WS/WSS owners.
   cancellation/late completion and QoS0/1/2 no-replay, bounded pressure.
 - Component: real YAML preflight/DAG, failure-atomic activate/rollback, static
   providers, and dynamic Plugin Scope lifetime where used.
-- Exact-HEAD CI, installed SDK consumers, real benchmark CPU/op, p99,
+- Qualification at the tested source revision, downstream compatibility, benchmark CPU/op, p99,
   copied/retained bytes, cross-owner hops and queue occupancy.
 
 Client TCP/TLS physical admission now uses exactly **one CNet Manager** on
@@ -297,9 +302,8 @@ that actually consumes them, and kept a second crypto dependency in the build.
 
 TLS preflight now constructs and destroys a CHttp TLS profile using the same
 CNet configuration as the client. It preserves CA, client identity, password
-lease cleanup and fail-closed errors. JWS uses the SaltsUtils 4.3 Crypto API via
-the adapter already maintained by CHttp (source revision in the vendor
-provenance), preserving the existing HMAC, RSA/PSS, EC and EdDSA algorithms.
+lease cleanup and fail-closed errors. JWS uses Salts Crypto through Chttp's
+`CHttp::JWT` target, preserving the HMAC, RSA/PSS, EC and EdDSA algorithms.
 Independent PEM/JWK vectors and signature rejection tests cover the adapter;
 JWE remains explicitly unsupported. No alternate crypto provider or retry
 fallback is introduced.
@@ -308,11 +312,9 @@ The shared TLS peer and generated HTTPS integration identities use GmSSL.
 P-256 disposable identities preserve CA/SAN/EKU and certificate fingerprint
 checks; tests observe handshake rejection and verified peer identity rather
 than an OpenSSL-specific alert callback. Flowie's build no longer requests
-OpenSSL/BoringSSL or the C++ linker workaround for BoringSSL. Existing TLS
-configuration and JWT interfaces are unchanged. This raises the consumer SDK
-minimum to SaltsUtils 4.3; deployment must update the SDK and application
-together. Rollback requires the prior coherent dependency set and adapter,
-not a runtime fallback to a second verifier.
+OpenSSL/BoringSSL or its C++ linker workaround. The current package records
+exact split SDK versions in its [CMake config](../cmake/FlowieConfig.cmake.in).
+Deployment and rollback select a matching SDK and application set.
 
 The native SDK pipeline selects exact split SDK releases from the job's `.env` file and
 verifies their release manifests and archive digests. Shared vcpkg-cache owns restoration of

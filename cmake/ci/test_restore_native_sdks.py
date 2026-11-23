@@ -132,6 +132,13 @@ class EnvironmentFileTests(unittest.TestCase):
         self.assertEqual(selected['SALTS_CORE_ROOT'], 'C:/shared/cnet')
         self.assertNotIn('GITHUB_TOKEN', selected)
 
+    def test_slate_re2c_root_tracks_restored_re2c(self):
+        self.write('RE2C_ROOT=C:/old/re2c\n')
+        for root in ('C:/restored/re2c-1', 'C:/restored/re2c-2'):
+            restore.write_environment_file(self.path, {'RE2C_ROOT': root})
+            self.assertEqual(self.path.read_text().splitlines(), [
+                f'RE2C_ROOT={root}', f'FLOWIE_RE2C_ROOT={root}'])
+
 
 if __name__ == '__main__':
     unittest.main()

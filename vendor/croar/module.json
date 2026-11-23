@@ -1,0 +1,14 @@
+{
+  "name": "roaring",
+  "kind": "static",
+  "sources": {
+    "files": [
+      "roaring.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "."
+    ]
+  }
+}

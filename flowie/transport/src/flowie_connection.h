@@ -124,6 +124,8 @@ int flowie_server_send(flowie_server *server, flowie_connection connection, cons
 int flowie_server_send_slicev(flowie_server *server, flowie_connection connection,
                               const mem_slice_t *segments, size_t segment_count);
 int flowie_server_close(flowie_server *server, flowie_connection connection, int status);
+int flowie_server_send_and_close(flowie_server *server, flowie_connection connection,
+                                 const void *data, size_t size, int status);
 
 int flowie_server_stop(flowie_server *server, uint32_t timeout_ms);
 int flowie_server_destroy(flowie_server *server);

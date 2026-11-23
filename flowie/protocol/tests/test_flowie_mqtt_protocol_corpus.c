@@ -283,9 +283,10 @@ static void check_parse_invariants(const uint8_t *bytes, size_t size,
 
 static uint32_t corpus_xorshift32(uint32_t *state) {
   uint32_t value = *state;
-  value ^= value << 13u;
+  /* Xorshift32 discards bits above the 32-bit state after each shift. */
+  value ^= (uint32_t)((uint64_t)value << 13u);
   value ^= value >> 17u;
-  value ^= value << 5u;
+  value ^= (uint32_t)((uint64_t)value << 5u);
   *state = value;
   return value;
 }

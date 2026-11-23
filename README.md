@@ -12,11 +12,14 @@ independent tabs can share Collections and keep separate connections and histori
 Run `bin/flowie_mqtt_workbench.exe` from the native build
 or normal installation directory. Its selected GUI dependency is recorded in `.env`.
 
+See the [documentation index](docs/README.md) for guides, deployment and architecture decisions.
+
 ## Built on Salts
 
 Flowie is intentionally layered on the shared Salts foundation:
 
-**Package policy:** source builds consume the SDK set selected by the configured install roots. The restore step selects explicit release versions, and the installed Flowie package records its exact SDK versions. Missing or incompatible packages fail fast. Chttp 0.1.2 supplies the required App and shared JWT interfaces.
+Source builds use the SDK versions selected in `.env`. The installed Flowie package
+records the exact versions it links. Chttp supplies the required App and shared JWT interfaces.
 
 Flowie consumes the split `SaltsBase`, `CMeta`, `SaltsUtils` and `SaltsCNet`
 packages. Core facilities use headers such as `<core/error.h>`,
@@ -24,7 +27,7 @@ packages. Core facilities use headers such as `<core/error.h>`,
 `<cmeta/...>` and `<cflow/...>`. Rebuild Flowie against one consistent SDK set
 after upgrading these dependencies.
 
-CNet 2.1 accepts retained buffers for stream sends. Flowie's byte-oriented
+CNet accepts retained buffers for stream sends. Flowie's byte-oriented
 send paths copy into an immutable `mem_buffer_t`, release their local reference
 after admission, and let CNet retain the payload until terminal completion.
 This preserves caller-buffer and mailbox reuse, including after a client
@@ -141,13 +144,12 @@ Windows development build:
 
 ```powershell
 ./cmake/ci/restore-native-sdks.ps1 -Rid windows-x64 -Profile windows-llvm-mingw-x64 -Local
-# Select a separately installed, compatible TurboDB SDK as described below.
-cmake --preset native-release-user
+cmake --preset native-release-user -DBUILD_TESTS=ON -DBUILD_TESTING=ON -DFLOWIE_BUILD_TESTS=ON
 cmake --build --preset native-release-user
 ctest --preset native-release-user --output-on-failure
 ```
 
-All feature switches are declared centrally in `CMakeOptions.cmake`.
+The build options are listed in `CMakeOptions.cmake` and the module CMake files.
 
 The native workflows use the same complete preset build graph and formal CTest entry points.
 Linux GCC and Windows MSVC run their tests; Android arm64 performs cross-build, installation and
@@ -174,9 +176,37 @@ Manual workflow dispatch can validate those changes. Version tags trigger the re
 Common options include:
 
 - `FLOWIE_BUILD_SERVER` — build the standalone MQTT server.
-- `FLOWIE_BUILD_TESTS` — build tests.
-- `FLOWIE_BUILD_CLUSTER` — enable experimental TurboRaft server/cluster integration (default `OFF`).
+- `BUILD_TESTS` and `FLOWIE_BUILD_TESTS` enable module test directories. Set both
+  to `ON` when configuring a full local regression run. `BUILD_TESTING` controls CTest and protocol tests.
+- `FLOWIE_BUILD_CLUSTER` includes the experimental TurboRaft cluster module. See
+  the cluster configuration below.
 - `FLOWIE_BUILD_CONTROL` — enable optional flowie/control-plane components.
+
+### Slate 本地构建
+
+Windows x64 可使用 Slate 0.1.14、Ninja、CMake 和 `pkgconf` 构建。
+先按上述 Windows 流程恢复 LLVM-MinGW 的 SDK。Slate 直接读取根目录的 `.env`，
+进程环境中的同名变量优先，须指向同一轮恢复的 SDK。
+SDK 恢复会从 `RE2C_ROOT` 写入 Slate 专用的 `FLOWIE_RE2C_ROOT`，避免 VS Code
+继承其他项目的 re2c 路径。更新 re2c 后通过同一恢复流程同步这两个字段。
+
+```powershell
+slate doctor --preset release
+slate build --preset release
+slate test --preset release --list
+slate test --preset release --build-dir build/slate-tests
+```
+
+`release` 构建 MQTT 协议库、Client 和 Broker DLL、`flowie_server`、
+`flowie-control` 与 `flowie-control-data`。本地 Control 进程从源码目录读取 Dashboard 资源。
+测试随所属模块注册，可按名称用
+`--filter` 选择，或按标签用 `--label` 选择。
+已配置匹配的 `TURBORAFT_ROOT` 时，使用 `--preset cluster` 构建集群扩展，
+并使用 `slate test --preset cluster --label server/cluster` 运行集群测试。
+完整测试图可用 `slate graph --preset cluster --format json --tests` 查看。
+
+Workbench、Linux、MSVC、Android、发布打包、夜间 soak/fuzz 及外部服务资格测试
+沿用上文的 CMake/CTest 流程。
 
 ## Upstream dependency versions
 
@@ -191,7 +221,7 @@ The selected family is SaltsBase 0.1.8, CMeta 0.1.8, SaltsUtils 0.1.6, SaltsCNet
 with vcpkg-cache 0.1.3. Versions and roots are selected in `.env`:
 
 - `SALTS_BASE_ROOT`, `CMETA_ROOT`, `SALTS_UTILS_ROOT`, `SALTS_CORE_ROOT` / `SALTS_CNET_ROOT`;
-- `CHTTP_ROOT`, `TURBODB_ROOT`, and `TURBORAFT_ROOT` for cluster builds;
+- `CHTTP_ROOT` and `TURBODB_ROOT`, plus `TURBORAFT_ROOT` for cluster builds;
 - `VCPKG_CACHE_REPOSITORY_ROOT` selects the matching shared infrastructure checkout;
 - `VCPKG_INSTALLED_DIR`, `RE2C_ROOT`, `LEMON_ROOT` reference its restored installations.
 
@@ -201,7 +231,7 @@ then select their returned roots in `.env`. The SDK restore entry points are:
 
 ```powershell
 ./cmake/ci/restore-native-sdks.ps1 -Rid windows-x64 -Profile windows-llvm-mingw-x64 -Local
-cmake --fresh --preset native-release-user
+cmake --fresh --preset native-release-user -DBUILD_TESTS=ON -DBUILD_TESTING=ON -DFLOWIE_BUILD_TESTS=ON
 cmake --build --preset native-release-user
 ctest --preset native-release-user --output-on-failure -j 1
 ```
@@ -210,12 +240,15 @@ Restore verifies release manifests, producer CI and archive digests before commi
 SDK roots back to `.env`. TurboDB uses the published SDK; source-build GUI dependencies are not
 part of the Flowie build graph. SDK/compiler/triplet changes require an explicit fresh configure.
 
-Cluster builds select `BUILD_CLUSTER=ON` and the exact `TURBORAFT_VERSION` / `TURBORAFT_ROOT`.
+Cluster builds use `-DBUILD_CLUSTER=ON -DFLOWIE_BUILD_CLUSTER=ON` and the exact
+`TURBORAFT_VERSION` / `TURBORAFT_ROOT`.
 TurboRaft 0.3.2 uses `TurboRaft::CNet`; no additional messaging package is required.
 Its release has no Windows LLVM-MinGW archive. This profile was built from the exact
 [0.3.2 source revision](https://github.com/qigao/turboraft/tree/3e311ba3e23585a75c16cea1a5d462edcf332c09)
 using its existing native preset and the same SDK family; its formal CTests passed before use.
-Missing or incompatible roots fail; CMake does not download dependencies or select alternatives.
+Restore verifies that the selected archives match the requested releases. Source configuration
+supplies the SDK roots to CMake `find_package`, which can also search its default paths.
+The installed `FlowieConfig.cmake` confines SDK lookup to its explicit paths.
 
 ## HTTP and WebSocket integration
 
@@ -241,13 +274,13 @@ These are independent component dependencies, not evidence that Flowie owns a pa
 ## Run the standalone broker
 
 ```powershell
-flowie_server --host 0.0.0.0 --port 1883 --transport tcp
+flowie_server --host 127.0.0.1 --port 1883 --transport tcp
 ```
 
 WebSocket listener example:
 
 ```powershell
-flowie_server --host 0.0.0.0 --port 8080 --transport ws --path /mqtt
+flowie_server --host 127.0.0.1 --port 8080 --transport ws --path /mqtt
 ```
 
 TLS/WSS certificate configuration uses:
@@ -260,7 +293,7 @@ SALTS_TLS_KEY_FILE
 Validate startup configuration without listening:
 
 ```powershell
-flowie_server --check
+flowie_server --check --protocol-store-driver sqlite --protocol-store-options '{"filename":":memory:"}'
 ```
 
 TCP/TLS brokers can opt into multiple fixed CNet owners with `--network-workers 4`
@@ -310,7 +343,7 @@ Explicit CPU binding occurs at `flowie_endpoint_core_start`; check its result
 before accepting the endpoint as running. Rebuild C API consumers for the expanded
 configuration struct; existing zero-initialized settings preserve the defaults.
 
-## CNet 2.3 connection management and Server composition
+## CNet connection management and Server composition
 
 TCP/TLS owners use the Manager API in `Salts::CNet` for bounded attachment reservation,
 adoption and retirement. Each owner initializes, advances and destroys its
@@ -331,10 +364,9 @@ owners and the listener (including final wake) before destroy frees inboxes and
 clients. Timeout ownership, stale public handles, MQTT semantics, UDP/KCP and
 CHTTP WebSocket flowie/protocol ownership are preserved.
 
-This branch requires a Salts 2.3 SDK, including the published 2.3.0 RC line,
-with GmSSL TLS, plus SaltsUtils 4.3 for the JWS Crypto adapter. The standalone Server composes Security, Repository and Endpoint
-through `Salts::Component`, and uses CMeta Interceptors for HTTP auth/ACL request
-admission and cleanup. `--check` assembles the same graph without opening the
+The standalone Server uses the split SDK set described above and GmSSL for TLS.
+It composes Security, Repository and Endpoint through CMeta ACE and uses
+Interceptors for HTTP Auth/ACL request admission and cleanup. `--check` assembles the same graph without opening the
 listener. Startup failure rolls back before publication; shutdown releases the
 Endpoint before its dependencies. WS/WSS placement remains owned by CHttp.
 See [the ACE/CNet decision](docs/ADR_ACE_CNET_23_SERVER_CLIENT.md) for ownership,
@@ -346,6 +378,11 @@ validation and rollback boundaries. No performance gain is claimed.
 find_package(Flowie CONFIG REQUIRED)
 target_link_libraries(my_broker PRIVATE Flowie::Flowie)
 ```
+
+Point `CMAKE_PREFIX_PATH` or `Flowie_DIR` at the Flowie installation and set the
+dependency roots and vcpkg triplet listed in [SDK configuration](#upstream-dependency-versions).
+The package requires the split SDK versions recorded at install time, including
+Chttp App/JWT, plus GmSSL from the selected vcpkg installation.
 
 Consumers may also use the narrower exported targets:
 

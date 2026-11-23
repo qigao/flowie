@@ -2,8 +2,8 @@
 
 ## 状态
 
-已采纳。独立 `flowie-control` 进程、严格配置 schema 和 HTTPS/mTLS listener 已接入；完整生产开放仍受
-`ACL_AUTH_CONTROL_TODO.md` 中 bootstrap、限流、HA/migration 与安全发布门槛约束。
+已采纳。独立 `flowie-control` 进程使用严格配置 schema 和 HTTPS/mTLS listener。
+部署配置与产品验收分别见 [Control 指南](CONTROL_GUIDE.md)和 [发布要求](RELEASE_GATE.md)。
 
 ## 背景
 

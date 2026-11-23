@@ -21,6 +21,32 @@ rejects an unknown version and never rewrites it in place. Values passed into a 
 supplied to a synchronous visitor are borrowed for that call only. ORM handles remain private to
 the repository.
 
+### Pending Will after session replacement
+
+The `replaced_wills` table stores one pending predecessor Will per Client ID. A replacement saves the
+new session and the previous generation's encoded PUBLISH in the same serializable transaction.
+Ordinary updates preserve this record. Recovery resumes dispatch and removes the record by Client ID
+and generation after the application accepts the message. A process crash between acceptance and
+removal can repeat dispatch. If removal fails while the process remains up, it retries removal.
+
+This additive V2 change preserves existing rows. The standalone server creates the table when it
+opens the repository. For applications opening with `create_schema = 0`, provision it before using
+this release. Use the repository's actual namespace in place of the default `flowie_protocol` below.
+Both SQLite and PostgreSQL accept the following definition.
+
+```sql
+CREATE TABLE IF NOT EXISTS flowie_protocol_replaced_wills (
+    client_id TEXT PRIMARY KEY,
+    session_generation BIGINT NOT NULL,
+    mqtt_version INTEGER NOT NULL,
+    packet BYTEA NOT NULL
+);
+```
+
+For rollback, stop admission, allow pending Wills to drain, and verify the table is empty before
+starting a binary that predates this table. Keep the table so the current binary can open it again.
+The earlier binary reads the existing V2 session rows and uses its earlier Will behavior.
+
 Queries use the TurboDB typed CFlow API. Each query declares an explicit CMeta row shape and
 consumes its `cflow_source` synchronously; `VALUE` storage is destroyed immediately after its
 visitor returns. A `WAIT` result is rejected because the standalone repository is a synchronous
@@ -39,7 +65,7 @@ its state-machine snapshots and committed-log replay rebuild the in-memory serve
 
 ## Consequences
 
-### TurboDB 2.3.1 driver runtime
+### TurboDB driver runtime
 
 Protocol and Control storage share the internal `flowie_orm_connect` boundary. Linking
 `Orm::C` no longer registers native drivers. Each open creates a caller-blocking runtime

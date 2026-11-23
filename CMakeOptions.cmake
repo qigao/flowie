@@ -30,7 +30,6 @@ option(FLOWIE_MQTT_FIXED_INTEROP_TESTS
 	OFF
 )
 option(FLOWIE_MQTT_FUZZ_TARGETS "Build MQTT libFuzzer targets" OFF)
-option(FLOWIE_MQTT_SOAK_TESTS "Register scheduled MQTT soak tests" OFF)
 option(FLOWIE_MQTT_RELEASE_GATE "Register the strict MQTT release manifest" OFF)
 
 set(

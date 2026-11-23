@@ -19,6 +19,8 @@ static int flowie_mqtt_fixed_header_valid(uint8_t first, flowie_mqtt_version_t v
     uint8_t duplicate = (uint8_t)((flags >> 3u) & 0x01u);
     return qos != 0x03u && !(qos == 0u && duplicate);
   }
+  if (type == FLOWIE_MQTT_PACKET_PUBREL && version == FLOWIE_MQTT_VERSION_3_1)
+    return (flags & 0x07u) == 0x02u;
   return flags == required_flags[type];
 }
 

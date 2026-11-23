@@ -102,18 +102,32 @@ static int flowie_test_owner_round_trip(flowie_session_owner_t *owner,
   return rc;
 }
 
+static int flowie_test_endpoint_dispatch(flowie_endpoint_core_t *endpoint,
+                                         flowie_message_t *message,
+                                         flowie_publish_result_t *result, void *ctx) {
+  (void)endpoint;
+  (void)message;
+  (void)ctx;
+  if (!result) return SALTS_EINVAL;
+  result->status = SALTS_OK;
+  return SALTS_OK;
+}
+
 spec("flowie application bridges") {
   it("rejects a truncated endpoint bindings v1 prefix") {
     flowie_endpoint_config_t config = FLOWIE_ENDPOINT_CONFIG_INIT;
+    flowie_endpoint_core_options_t options = FLOWIE_ENDPOINT_CORE_OPTIONS_INIT;
+    flowie_execution_binding_t execution = FLOWIE_EXECUTION_BINDING_INIT;
     flowie_endpoint_persistence_binding_t persistence = FLOWIE_ENDPOINT_PERSISTENCE_BINDING_INIT;
     flowie_endpoint_bindings_t bindings = FLOWIE_ENDPOINT_BINDINGS_INIT;
-    turbo_flow_t *flow = turbo_flow_create();
-    check_not_null(flow);
+    flowie_endpoint_core_t *endpoint = NULL;
+    options.on_message = flowie_test_endpoint_dispatch;
     bindings.size = FLOWIE_ENDPOINT_BINDINGS_V1_SIZE - 1u;
     bindings.persistence = &persistence;
-    check_equal(flowie_register_bound_endpoint(flow, "mqtt.endpoint", &config, &bindings),
-                 SALTS_EINVAL);
-    turbo_flow_destroy(flow);
+    check_equal(flowie_endpoint_core_create_ex("mqtt.endpoint", &config, &options, &execution,
+                                               &bindings, &endpoint),
+                SALTS_EINVAL);
+    check_null(endpoint);
   }
 
   it("maps a parsed publish into pointer-free protocol metadata and an owned route token") {
@@ -130,8 +144,8 @@ spec("flowie application bridges") {
 
     check_equal(flowie_publish_message_map(&publish, FLOWIE_MQTT_VERSION_5, 7u, 9u, 11u, &message),
                  SALTS_OK);
-    check_equal(turbo_flow_protocol_message_validate(&message.metadata), SALTS_OK);
-    check_equal(message.metadata.protocol, TURBO_FLOW_PROTOCOL_MQTT);
+    check_equal(flowie_protocol_message_validate(&message.metadata), SALTS_OK);
+    check_equal(message.metadata.protocol, FLOWIE_PROTOCOL_MQTT);
     check_equal(message.metadata.packet_id, 42u);
     check_equal(message.route.owner_instance_id, 7u);
     check_equal(message.route.session_id, 9u);
@@ -144,26 +158,26 @@ spec("flowie application bridges") {
   }
 
   it("injects MQTT topic-filter semantics into SecurityRealm") {
-    turbo_flow_security_rule_t rule = TURBO_FLOW_SECURITY_RULE_INIT;
-    turbo_flow_security_matcher_t matcher = TURBO_FLOW_SECURITY_MATCHER_INIT;
-    turbo_flow_security_realm_config_t config = TURBO_FLOW_SECURITY_REALM_CONFIG_INIT;
-    turbo_flow_security_principal_t principal = TURBO_FLOW_SECURITY_PRINCIPAL_INIT;
-    turbo_flow_security_request_t request = TURBO_FLOW_SECURITY_REQUEST_INIT;
-    turbo_flow_security_decision_t decision = TURBO_FLOW_SECURITY_DECISION_INIT;
-    turbo_flow_security_decision_t expected = TURBO_FLOW_SECURITY_DECISION_INIT;
+    flowie_security_rule_t rule = FLOWIE_SECURITY_RULE_INIT;
+    flowie_security_matcher_t matcher = FLOWIE_SECURITY_MATCHER_INIT;
+    flowie_security_realm_config_t config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    flowie_security_request_t request = FLOWIE_SECURITY_REQUEST_INIT;
+    flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
+    flowie_security_decision_t expected = FLOWIE_SECURITY_DECISION_INIT;
     flowie_mqtt_security_context_t context = FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
     flowie_mqtt_validated_security_context_t validated_context =
         FLOWIE_MQTT_VALIDATED_SECURITY_CONTEXT_INIT;
-    turbo_flow_security_realm_t *realm = NULL;
+    flowie_security_realm_t *realm = NULL;
     tstr validated_resource = NULL;
 
-    rule.effect = TURBO_FLOW_SECURITY_ALLOW;
-    rule.subject_kind = TURBO_FLOW_SECURITY_SUBJECT_ROLE;
+    rule.effect = FLOWIE_SECURITY_ALLOW;
+    rule.subject_kind = FLOWIE_SECURITY_SUBJECT_ROLE;
     flowie_copy(rule.subject, sizeof(rule.subject), "writer");
     flowie_copy(rule.domain_id, sizeof(rule.domain_id), "root-a");
-    rule.action_mask = TURBO_FLOW_SECURITY_ACTION_PUBLISH | TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
-    rule.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
-    rule.match_kind = TURBO_FLOW_SECURITY_MATCH_ADAPTER;
+    rule.action_mask = FLOWIE_SECURITY_ACTION_PUBLISH | FLOWIE_SECURITY_ACTION_SUBSCRIBE;
+    rule.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
+    rule.match_kind = FLOWIE_SECURITY_MATCH_ADAPTER;
     flowie_copy(rule.pattern, sizeof(rule.pattern), "root-a/+/events/#");
     check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
     config.resource_uid = "security:flowie";
@@ -172,71 +186,71 @@ spec("flowie application bridges") {
     config.rules = &rule;
     config.rule_count = 1u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
+    check_equal(flowie_security_realm_create(&config, &realm), SALTS_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
     flowie_copy(principal.domain_id, sizeof(principal.domain_id), "root-a");
     flowie_copy(principal.auth_method, sizeof(principal.auth_method), "token");
-    principal.scope = TURBO_FLOW_SECURITY_SCOPE_DOMAIN;
+    principal.scope = FLOWIE_SECURITY_SCOPE_DOMAIN;
     principal.role_count = 1u;
     flowie_copy(principal.roles[0], sizeof(principal.roles[0]), "writer");
     principal.policy_version = 3u;
     check_equal(flowie_security_principal_validate(&principal), SALTS_OK);
     request.principal = &principal;
     request.domain_id = "root-a";
-    request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
-    request.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
+    request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
+    request.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
     request.resource = "root-a/device-1/events/temperature";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
-    check_equal(decision.effect, TURBO_FLOW_SECURITY_ALLOW);
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(decision.effect, FLOWIE_SECURITY_ALLOW);
 
     request.resource = "root-a/device-1/commands/reboot";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
 
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
     request.protocol_context = &context;
-    request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/+/events/temperature";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/device-1/events";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/#";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_EPERM);
 
-    request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
+    request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
     request.protocol_context = NULL;
     request.resource = "root-a/+/events/temperature";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPROTO);
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
-    request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/#/invalid";
     request.protocol_context = &context;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPROTO);
     context.kind = (flowie_mqtt_security_resource_kind_t)99;
-    request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
+    request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
     request.resource = "root-a/device-1/events/temperature";
     request.protocol_context = &context;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPROTO);
     context = (flowie_mqtt_security_context_t)FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
     context.size = sizeof(context.size);
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPROTO);
 
     request.protocol_context = NULL;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     expected = decision;
     validated_resource = tstr_new_len("root-a/device-1/events/temperature",
                                       sizeof("root-a/device-1/events/temperature") - 1u);
@@ -246,26 +260,26 @@ spec("flowie application bridges") {
                  SALTS_OK);
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
     check_equal(decision.policy_version, expected.policy_version);
 
     validated_context.provenance = NULL;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPROTO);
     tstr_freep(&validated_resource);
 
     context = (flowie_mqtt_security_context_t)FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
-    request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/+/events/temperature";
     request.protocol_context = &context;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     expected = decision;
     validated_resource =
         tstr_new_len("root-a/+/events/temperature", sizeof("root-a/+/events/temperature") - 1u);
@@ -273,42 +287,42 @@ spec("flowie application bridges") {
     check_equal(flowie_mqtt_validated_security_context_init(
                      &validated_context, FLOWIE_MQTT_SECURITY_TOPIC_FILTER, validated_resource),
                  SALTS_OK);
-    request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = validated_resource;
     request.protocol_context = &validated_context;
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     check_equal(decision.effect, expected.effect);
     check_equal(decision.reason, expected.reason);
     check_equal(decision.matched_rule, expected.matched_rule);
     check_equal(decision.policy_version, expected.policy_version);
     tstr_freep(&validated_resource);
-    turbo_flow_security_realm_destroy(realm);
+    flowie_security_realm_destroy(realm);
   }
 
   it("resolves ACL username and client-id placeholders as exact topic segments") {
-    turbo_flow_security_rule_t rules[2] = {TURBO_FLOW_SECURITY_RULE_INIT,
-                                           TURBO_FLOW_SECURITY_RULE_INIT};
-    turbo_flow_security_matcher_t matcher = TURBO_FLOW_SECURITY_MATCHER_INIT;
-    turbo_flow_security_realm_config_t config = TURBO_FLOW_SECURITY_REALM_CONFIG_INIT;
-    turbo_flow_security_principal_t principal = TURBO_FLOW_SECURITY_PRINCIPAL_INIT;
-    turbo_flow_security_request_t request = TURBO_FLOW_SECURITY_REQUEST_INIT;
-    turbo_flow_security_decision_t decision = TURBO_FLOW_SECURITY_DECISION_INIT;
+    flowie_security_rule_t rules[2] = {FLOWIE_SECURITY_RULE_INIT,
+                                           FLOWIE_SECURITY_RULE_INIT};
+    flowie_security_matcher_t matcher = FLOWIE_SECURITY_MATCHER_INIT;
+    flowie_security_realm_config_t config = FLOWIE_SECURITY_REALM_CONFIG_INIT;
+    flowie_security_principal_t principal = FLOWIE_SECURITY_PRINCIPAL_INIT;
+    flowie_security_request_t request = FLOWIE_SECURITY_REQUEST_INIT;
+    flowie_security_decision_t decision = FLOWIE_SECURITY_DECISION_INIT;
     flowie_mqtt_security_context_t context = FLOWIE_MQTT_SECURITY_CONTEXT_INIT;
-    turbo_flow_security_realm_t *realm = NULL;
+    flowie_security_realm_t *realm = NULL;
 
     for (size_t index = 0u; index < 2u; ++index) {
-      rules[index].effect = TURBO_FLOW_SECURITY_ALLOW;
-      rules[index].subject_kind = TURBO_FLOW_SECURITY_SUBJECT_PRINCIPAL;
+      rules[index].effect = FLOWIE_SECURITY_ALLOW;
+      rules[index].subject_kind = FLOWIE_SECURITY_SUBJECT_PRINCIPAL;
       flowie_copy(rules[index].subject, sizeof(rules[index].subject), "device-1");
       flowie_copy(rules[index].domain_id, sizeof(rules[index].domain_id), "root-a");
-      rules[index].resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
-      rules[index].match_kind = TURBO_FLOW_SECURITY_MATCH_ADAPTER;
+      rules[index].resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
+      rules[index].match_kind = FLOWIE_SECURITY_MATCH_ADAPTER;
     }
-    rules[0].action_mask = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
+    rules[0].action_mask = FLOWIE_SECURITY_ACTION_PUBLISH;
     flowie_copy(rules[0].pattern, sizeof(rules[0].pattern),
                 "root-a/groups/operators/devices/%u/event");
-    rules[1].action_mask = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    rules[1].action_mask = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     flowie_copy(rules[1].pattern, sizeof(rules[1].pattern),
                 "root-a/groups/operators/devices/%c/command");
     check_equal(flowie_mqtt_security_matcher_init(&matcher), SALTS_OK);
@@ -318,44 +332,44 @@ spec("flowie application bridges") {
     config.rules = rules;
     config.rule_count = 2u;
     config.matcher = matcher;
-    check_equal(turbo_flow_security_realm_create(&config, &realm), SALTS_OK);
+    check_equal(flowie_security_realm_create(&config, &realm), SALTS_OK);
 
     flowie_copy(principal.principal_id, sizeof(principal.principal_id), "device-1");
     flowie_copy(principal.principal_type, sizeof(principal.principal_type), "device");
     flowie_copy(principal.domain_id, sizeof(principal.domain_id), "root-a");
     flowie_copy(principal.auth_method, sizeof(principal.auth_method), "token");
-    principal.scope = TURBO_FLOW_SECURITY_SCOPE_DOMAIN;
+    principal.scope = FLOWIE_SECURITY_SCOPE_DOMAIN;
     principal.policy_version = 4u;
     context.username = (flowie_mqtt_span_t){(const uint8_t *)"mqtt-user", 9u};
     context.client_id = (flowie_mqtt_span_t){(const uint8_t *)"client-a", 8u};
     request.principal = &principal;
     request.domain_id = "root-a";
-    request.resource_type = TURBO_FLOW_SECURITY_RESOURCE_MQTT_TOPIC;
+    request.resource_type = FLOWIE_SECURITY_RESOURCE_MQTT_TOPIC;
     request.protocol_context = &context;
 
-    request.action = TURBO_FLOW_SECURITY_ACTION_PUBLISH;
+    request.action = FLOWIE_SECURITY_ACTION_PUBLISH;
     request.resource = "root-a/groups/operators/devices/mqtt-user/event";
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/groups/operators/devices/device-1/event";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPERM);
 
     context.kind = FLOWIE_MQTT_SECURITY_TOPIC_FILTER;
-    request.action = TURBO_FLOW_SECURITY_ACTION_SUBSCRIBE;
+    request.action = FLOWIE_SECURITY_ACTION_SUBSCRIBE;
     request.resource = "root-a/groups/operators/devices/client-a/command";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision), SALTS_OK);
     request.resource = "root-a/groups/operators/devices/+/command";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPERM);
     context.client_id = (flowie_mqtt_span_t){NULL, 0u};
     request.resource = "root-a/groups/operators/devices/client-a/command";
-    decision = (turbo_flow_security_decision_t)TURBO_FLOW_SECURITY_DECISION_INIT;
-    check_equal(turbo_flow_security_realm_authorize(realm, &request, 10u, &decision),
+    decision = (flowie_security_decision_t)FLOWIE_SECURITY_DECISION_INIT;
+    check_equal(flowie_security_realm_authorize(realm, &request, 10u, &decision),
                  SALTS_EPERM);
-    turbo_flow_security_realm_destroy(realm);
+    flowie_security_realm_destroy(realm);
   }
 }
 
@@ -418,7 +432,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   flowie_mqtt_connect_view_t connect =
       flowie_test_connect(FLOWIE_MQTT_VERSION_5, "state-model", 0, 60u);
   flowie_session_snapshot_t snapshot = FLOWIE_SESSION_SNAPSHOT_INIT;
-  turbo_flow_protocol_route_t route = TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+  flowie_protocol_route_t route = FLOWIE_PROTOCOL_ROUTE_INIT;
   flowie_session_owner_t *owner = NULL;
   size_t active_count = 0u;
   size_t step = 0u;
@@ -430,8 +444,8 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
   config.session_id = 103u;
   config.max_subscriptions = 4u;
   config.max_inflight = FLOWIE_OWNER_MODEL_HWM;
-  config.settlement.qos1 = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-  config.settlement.qos2 = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
+  config.settlement.qos1 = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
+  config.settlement.qos2 = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
   owner = flowie_session_owner_create(&config);
   if (!owner) return SALTS_ENOMEM;
   rc = flowie_session_owner_open(owner, &connect);
@@ -467,7 +481,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
             (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
         rc = flowie_session_owner_publish_begin(owner, &publish, &begin);
         if (entry->active) {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && !begin.admit_graph);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && !begin.admit_application);
           if (entry->pubrec_sent)
             FLOWIE_OWNER_MODEL_REQUIRE(begin.has_ack &&
                                        begin.ack.kind == FLOWIE_SESSION_ACK_PUBREC &&
@@ -475,7 +489,7 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
         } else if (active_count == FLOWIE_OWNER_MODEL_HWM) {
           FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_ENOSPC);
         } else {
-          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && begin.admit_graph && !begin.has_ack);
+          FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && begin.admit_application && !begin.has_ack);
           entry->begin = begin;
           entry->active = 1u;
           entry->qos = publish.qos;
@@ -486,11 +500,11 @@ static int flowie_owner_model_replay(const flowie_owner_model_event_t *events, s
       }
       case FLOWIE_OWNER_MODEL_SETTLE:
         if (entry->active && !entry->pubrec_sent) {
-          turbo_flow_protocol_settlement_request_t settlement =
-              TURBO_FLOW_PROTOCOL_SETTLEMENT_REQUEST_INIT;
+          flowie_protocol_settlement_request_t settlement =
+              FLOWIE_PROTOCOL_SETTLEMENT_REQUEST_INIT;
           flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
           settlement.message = entry->begin.message.metadata;
-          settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
+          settlement.point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
           settlement.status = SALTS_OK;
           rc = flowie_session_owner_publish_settle(owner, &route, &settlement, &ack);
           FLOWIE_OWNER_MODEL_REQUIRE(rc == SALTS_OK && ack.packet_id == packet_id);
@@ -683,8 +697,8 @@ spec("flowie internal session owner") {
     flowie_mqtt_connect_view_t connect =
         flowie_test_connect(FLOWIE_MQTT_VERSION_5, "device-1", 0, 60u);
     flowie_session_snapshot_t snapshot = FLOWIE_SESSION_SNAPSHOT_INIT;
-    turbo_flow_protocol_route_t first = TURBO_FLOW_PROTOCOL_ROUTE_INIT;
-    turbo_flow_protocol_route_t second = TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+    flowie_protocol_route_t first = FLOWIE_PROTOCOL_ROUTE_INIT;
+    flowie_protocol_route_t second = FLOWIE_PROTOCOL_ROUTE_INIT;
     flowie_session_owner_t *owner;
 
     config.owner_instance_id = 7u;
@@ -830,9 +844,9 @@ spec("flowie internal session owner") {
     flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
     flowie_session_publish_begin_result_t begin = FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
     flowie_session_ack_intent_t ack = FLOWIE_SESSION_ACK_INTENT_INIT;
-    turbo_flow_protocol_settlement_request_t settlement =
-        TURBO_FLOW_PROTOCOL_SETTLEMENT_REQUEST_INIT;
-    turbo_flow_protocol_route_t route = TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+    flowie_protocol_settlement_request_t settlement =
+        FLOWIE_PROTOCOL_SETTLEMENT_REQUEST_INIT;
+    flowie_protocol_route_t route = FLOWIE_PROTOCOL_ROUTE_INIT;
     flowie_session_snapshot_t snapshot = FLOWIE_SESSION_SNAPSHOT_INIT;
     flowie_session_owner_t *owner;
 
@@ -840,8 +854,8 @@ spec("flowie internal session owner") {
     config.session_id = 29u;
     config.max_subscriptions = 2u;
     config.max_inflight = 2u;
-    config.settlement.qos1 = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
-    config.settlement.qos2 = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
+    config.settlement.qos1 = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
+    config.settlement.qos2 = FLOWIE_PROTOCOL_SETTLE_DURABLE;
     owner = flowie_session_owner_create(&config);
     check_not_null(owner);
     check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
@@ -853,7 +867,7 @@ spec("flowie internal session owner") {
     publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
     publish.properties = (flowie_mqtt_property_block_view_t)FLOWIE_MQTT_PROPERTY_BLOCK_VIEW_INIT;
     check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
-    check_equal(begin.admit_graph, 1);
+    check_equal(begin.admit_application, 1);
     check_equal(begin.has_ack, 0);
     settlement.message = begin.message.metadata;
     settlement.status = SALTS_EIO;
@@ -862,10 +876,10 @@ spec("flowie internal session owner") {
     check_equal(flowie_session_owner_snapshot(owner, &snapshot), SALTS_OK);
     check_equal(snapshot.inflight_count, 1u);
     settlement.status = SALTS_OK;
-    settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_RECEIVED;
+    settlement.point = FLOWIE_PROTOCOL_SETTLE_RECEIVED;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_EBUSY);
-    settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
+    settlement.point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBACK);
     check_equal(ack.packet_id, 71u);
@@ -887,7 +901,7 @@ spec("flowie internal session owner") {
     check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     settlement.message = begin.message.metadata;
     settlement.status = SALTS_ETIMEDOUT;
-    settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_ACCEPTED;
+    settlement.point = FLOWIE_PROTOCOL_SETTLE_ACCEPTED;
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_ETIMEDOUT);
@@ -904,11 +918,11 @@ spec("flowie internal session owner") {
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
     check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
     settlement.message = begin.message.metadata;
-    settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
+    settlement.point = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack),
                  SALTS_EBUSY);
-    settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_DURABLE;
+    settlement.point = FLOWIE_PROTOCOL_SETTLE_DURABLE;
     check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &ack), SALTS_OK);
     check_equal(ack.kind, FLOWIE_SESSION_ACK_PUBREC);
 
@@ -916,12 +930,12 @@ spec("flowie internal session owner") {
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
     check_equal(flowie_session_owner_qos2_release(owner, &route, 72u, &ack), SALTS_EBUSY);
     check_equal(flowie_session_owner_open(owner, &connect), SALTS_OK);
-    route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+    route = (flowie_protocol_route_t)FLOWIE_PROTOCOL_ROUTE_INIT;
     check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
     publish.duplicate = 1u;
     begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
     check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
-    check_equal(begin.admit_graph, 0);
+    check_equal(begin.admit_application, 0);
     check_equal(begin.has_ack, 1);
     check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
     ack = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
@@ -1108,19 +1122,19 @@ spec("flowie internal session owner") {
     {
       flowie_mqtt_publish_view_t publish = FLOWIE_MQTT_PUBLISH_VIEW_INIT;
       flowie_session_publish_begin_result_t begin = FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
-      turbo_flow_protocol_settlement_request_t settlement =
-          TURBO_FLOW_PROTOCOL_SETTLEMENT_REQUEST_INIT;
-      turbo_flow_protocol_route_t route = TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+      flowie_protocol_settlement_request_t settlement =
+          FLOWIE_PROTOCOL_SETTLEMENT_REQUEST_INIT;
+      flowie_protocol_route_t route = FLOWIE_PROTOCOL_ROUTE_INIT;
       publish.qos = 2u;
       publish.packet_id = 77u;
       publish.topic = (flowie_mqtt_span_t){topic, sizeof(topic) - 1u};
       publish.payload = (flowie_mqtt_span_t){payload, sizeof(payload) - 1u};
       check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
       check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
-      check_true(begin.admit_graph);
+      check_true(begin.admit_application);
       settlement.message = begin.message.metadata;
       settlement.status = SALTS_OK;
-      settlement.point = TURBO_FLOW_PROTOCOL_SETTLE_PROCESSED;
+      settlement.point = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
       check_equal(flowie_session_owner_publish_settle(owner, &route, &settlement, &reply),
                    SALTS_OK);
       check_equal(reply.kind, FLOWIE_SESSION_ACK_PUBREC);
@@ -1133,10 +1147,10 @@ spec("flowie internal session owner") {
       publish.duplicate = 1u;
       begin = (flowie_session_publish_begin_result_t)FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT;
       check_equal(flowie_session_owner_publish_begin(owner, &publish, &begin), SALTS_OK);
-      check_false(begin.admit_graph);
+      check_false(begin.admit_application);
       check_true(begin.has_ack);
       check_equal(begin.ack.kind, FLOWIE_SESSION_ACK_PUBREC);
-      route = (turbo_flow_protocol_route_t)TURBO_FLOW_PROTOCOL_ROUTE_INIT;
+      route = (flowie_protocol_route_t)FLOWIE_PROTOCOL_ROUTE_INIT;
       check_equal(flowie_session_owner_route(owner, &route), SALTS_OK);
       reply = (flowie_session_ack_intent_t)FLOWIE_SESSION_ACK_INTENT_INIT;
       check_equal(flowie_session_owner_qos2_release(owner, &route, 77u, &reply), SALTS_OK);

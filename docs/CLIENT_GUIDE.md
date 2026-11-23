@@ -22,7 +22,7 @@ target_link_libraries(flowie_client_example PRIVATE
 仓库内构建目标：
 
 ```powershell
-cmake --build --preset win-release-user --target flowie_client
+cmake --build --preset native-release-user --target flowie_client
 ```
 
 公开头文件是 `flowie_mqtt_client.h`。所有配置结构必须从对应 `*_INIT` 宏初始化。
@@ -38,7 +38,7 @@ CNet 应用于 TCP/TLS，或经 CHTTP WebSocket 配置应用于 WS/WSS。socket 
 
 ```c
 #include "flowie_mqtt_client.h"
-#include "turbo_error.h"
+#include <core/error.h>
 
 #include <stdio.h>
 
@@ -50,7 +50,7 @@ static int on_message(flowie_mqtt_client_t *client,
   printf("message topic=%.*s payload=%.*s\n",
          (int)message->topic.size, (const char *)message->topic.data,
          (int)message->payload.size, (const char *)message->payload.data);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void on_complete(flowie_mqtt_client_t *client, int status,
@@ -59,7 +59,7 @@ static void on_complete(flowie_mqtt_client_t *client, int status,
   (void)client;
   (void)response;
   (void)user_data;
-  if (status != TURBO_OK) fprintf(stderr, "MQTT operation failed: %d\n", status);
+  if (status != SALTS_OK) fprintf(stderr, "MQTT operation failed: %d\n", status);
 }
 
 static void on_error(flowie_mqtt_client_t *client, int status, void *user_data) {
@@ -88,7 +88,7 @@ int main(void) {
   handler.on_message = on_message;
   config.host = "127.0.0.1";
   config.port = 1883;
-  config.flowie/transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TCP;
+  config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TCP;
   config.topic_handlers =
       (flowie_mqtt_client_topic_handler_map_t){&handler, 1u};
   config.on_connect = on_complete;
@@ -98,7 +98,7 @@ int main(void) {
   config.on_error = on_error;
 
   rc = flowie_mqtt_client_create(&config, &client);
-  if (rc != TURBO_OK) return 1;
+  if (rc != SALTS_OK) return 1;
 
   connect.clean_start = 1u;
   connect.keep_alive = 30u;
@@ -115,9 +115,9 @@ int main(void) {
   publish.count = 1u;
 
   rc = flowie_mqtt_client_connect(client, &connect);
-  if (rc == TURBO_OK) rc = flowie_mqtt_client_subscribe(client, &subscribe);
-  if (rc == TURBO_OK) rc = flowie_mqtt_client_publish(client, &publish);
-  if (rc != TURBO_OK) {
+  if (rc == SALTS_OK) rc = flowie_mqtt_client_subscribe(client, &subscribe);
+  if (rc == SALTS_OK) rc = flowie_mqtt_client_publish(client, &publish);
+  if (rc != SALTS_OK) {
     fprintf(stderr, "command admission failed: %d\n", rc);
     flowie_mqtt_client_destroy(client);
     return 1;
@@ -131,7 +131,7 @@ int main(void) {
 }
 ```
 
-CONNECT、SUBSCRIBE、PUBLISH 会按有界 command queue 的顺序执行。API 返回 `TURBO_OK` 只表示命令已被
+CONNECT、SUBSCRIBE、PUBLISH 会按有界 command queue 的顺序执行。API 返回 `SALTS_OK` 只表示命令已被
 client 接管；协议或网络结果通过对应 callback 返回。
 
 ## 3. MQTT 版本
@@ -145,14 +145,14 @@ MQTT 5 示例不需要逐包填写版本。
 
 ```c
 #include "flowie_mqtt_client.h"
-#include "turbo_error.h"
+#include <core/error.h>
 
 int flowie_create_mqtt311(const flowie_mqtt_client_config_t *config,
                           flowie_mqtt_client_t **out) {
   int rc = flowie_mqtt_client_create(config, out);
-  if (rc != TURBO_OK) return rc;
+  if (rc != SALTS_OK) return rc;
   rc = flowie_mqtt_client_set_version(*out, FLOWIE_MQTT_VERSION_3_1_1);
-  if (rc != TURBO_OK) {
+  if (rc != SALTS_OK) {
     flowie_mqtt_client_destroy(*out);
     *out = NULL;
   }
@@ -164,10 +164,10 @@ int flowie_create_mqtt311(const flowie_mqtt_client_config_t *config,
 
 - `FLOWIE_MQTT_VERSION_3_1`、`FLOWIE_MQTT_VERSION_3_1_1` 和
   `FLOWIE_MQTT_VERSION_5` 是仅有的可选具体版本。
-- setter 对空 client、`UNSPECIFIED` 或不支持的值返回 `TURBO_EINVAL`；锁定后返回
-  `TURBO_EALREADY`；shutdown 开始后返回 `SALTS_ESHUTDOWN`。
+- setter 对空 client、`UNSPECIFIED` 或不支持的值返回 `SALTS_EINVAL`；锁定后返回
+  `SALTS_EALREADY`；shutdown 开始后返回 `SALTS_ESHUTDOWN`。
 - packet 可继续显式填写版本，但必须与 client 选择一致；不一致的命令在入队前返回
-  `TURBO_EPROTO`，不会自动降级或协商回退。
+  `SALTS_EPROTO`，不会自动降级或协商回退。
 - 自动重连与 `refresh_connect` 也沿用同一选择；刷新后的 CONNECT 不得切换版本。
 
 MQTT 3.x 不支持 MQTT 5 properties、AUTH 与 MQTT 5 reason-code 语义。packet-specific 字段仍由协议
@@ -234,8 +234,8 @@ rc = flowie_mqtt_client_create_ex(&config, &resilience, &client);
 已有独立重连监督器的封装不应再启用 `create_ex`，否则会形成两个连接状态推进者。此类封装可在
 `on_error` 或失败的 operation completion 回调内调用
 `flowie_mqtt_client_server_disconnect_reason()`：MQTT 5 服务端 DISCONNECT 返回具体 reason，普通
-EOF/传输错误返回 `TURBO_ENOENT`。该事件状态仅在当前 worker callback 内有效；回调外返回
-`TURBO_EBUSY`，即使其他线程调用时该 worker 正在执行回调也一样。例如 `0x87` 可触发监督器重新
+EOF/传输错误返回 `SALTS_ENOENT`。该事件状态仅在当前 worker callback 内有效；回调外返回
+`SALTS_EBUSY`，即使其他线程调用时该 worker 正在执行回调也一样。例如 `0x87` 可触发监督器重新
 CONNECT 并恢复订阅，但初始 CONNACK 鉴权拒绝仍应按终止错误处理。
 
 此机制与 MQTT enhanced authentication 不同：`flowie_mqtt_client_authenticate()` 的 AUTH `0x19`
@@ -250,7 +250,7 @@ TLS：
 flowie_mqtt_client_config_t config = FLOWIE_MQTT_CLIENT_CONFIG_INIT;
 config.host = "broker.example.com";
 config.port = 8883;
-config.flowie/transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
+config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_TLS;
 config.tls.ca_file = "broker-ca.pem";
 config.tls.cert_file = "client.pem";
 config.tls.key_file = "client-key.pem";
@@ -260,7 +260,7 @@ config.tls.key_password = key_provider_password;
 WSS 使用相同 TLS 配置，并设置：
 
 ```c
-config.flowie/transport = FLOWIE_MQTT_CLIENT_TRANSPORT_WSS;
+config.transport = FLOWIE_MQTT_CLIENT_TRANSPORT_WSS;
 config.port = 443;
 config.path = "/mqtt";
 ```
@@ -283,7 +283,7 @@ config.path = "/mqtt";
 - callback 内不能销毁同一个 client，也不要阻塞等待同一 client 的 callback。
 - `flowie_mqtt_client_destroy()` 必须从 callback 外调用；它会停止 admission、取消 I/O、完成已接管命令并 join worker。
 
-Topic handler 使用 MQTT filter；多个 filter 匹配时按配置顺序调用，首个非 `TURBO_OK` 返回会停止后续 handler。
+Topic handler 使用 MQTT filter；多个 filter 匹配时按配置顺序调用，首个非 `SALTS_OK` 返回会停止后续 handler。
 
 ## 8. 命令与错误语义
 
@@ -314,9 +314,9 @@ MQTT 5 成功 CONNACK 中的 Maximum Packet Size、Maximum QoS、Retain Availabl
 Linux 可启用正式 CTest benchmark，使用与产品相同的 Release preset 和 SDK：
 
 ```sh
-cmake --preset linux-release-user -DFLOWIE_BUILD_TESTS=OFF -DFLOWIE_BUILD_BENCHMARKS=ON
-cmake --build --preset linux-release-user --parallel 2
-ctest --preset linux-release-user -LE '^$' -V -R '^benchmark_flowie_mqtt_progress$'
+cmake --preset gcc-release-user -DBUILD_TESTS=OFF -DBUILD_TESTING=OFF -DFLOWIE_BUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON -DFLOWIE_BUILD_BENCHMARKS=ON
+cmake --build --preset gcc-release-user --parallel 2
+ctest --preset gcc-release-user --no-tests=error -V -R '^benchmark_flowie_mqtt_progress$'
 ```
 
 `-LE '^$'` 覆盖普通测试预设对 `benchmark` label 的排除。测试入口为
@@ -332,7 +332,7 @@ ctest --preset linux-release-user -LE '^$' -V -R '^benchmark_flowie_mqtt_progres
 - 每轮随后按绝对计划、7 ms 间隔发送 512 个 MQTT 5 QoS0 PUBLISH，payload 为 64 字节。
   CONNECT 后客户端不提交 PING、PUBLISH 或其他 MQTT 命令，入站进度完全由独立发送端触发。
   `keep_alive=0`，client `timeout_ms=30000`，以覆盖空闲窗口；这不是默认超时配置的测量。
-- `SAMPLE` 行保留 flowie/transport、轮次、序号、计划发送、首次发送尝试、验证完成后的接收时间，
+- `SAMPLE` 行保留传输方式、轮次、序号、计划发送、首次发送尝试、验证完成后的接收时间，
   时间戳单位为单调时钟纳秒。接收端校验 topic、QoS、完整 payload 和 FIFO 序号。
 - `METRIC` 分别报告源端 release lag、首次尝试到接收、计划发送到接收的 P50/P95/P99/最大值。
   发送接纳重试从首次尝试计时，重试有界且单独计数；源端迟到时按原计划追赶，可能形成短暂突发。

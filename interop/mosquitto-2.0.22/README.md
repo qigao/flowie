@@ -9,7 +9,7 @@
 serverAuth 用途和 SAN `DNS:localhost`、`IP:127.0.0.1`。Mosquitto 使用未加密的 PEM 私钥；
 这些材料只用于 loopback 互操作测试。Flowie 的构建和测试不依赖 OpenSSL 命令行工具。
 
-将证书目录挂载到固定 broker：
+从 Flowie 仓库根目录将证书目录挂载到固定 broker：
 
 ```powershell
 $certDir = Join-Path $env:TEMP "flowie-mqtt-interop-certs"
@@ -17,7 +17,7 @@ foreach ($name in @("ca.pem", "server.pem", "server.key")) {
   if (-not (Test-Path -LiteralPath (Join-Path $certDir $name))) { throw "Missing $name" }
 }
 $env:FLOWIE_MQTT_INTEROP_CERT_DIR = $certDir
-docker compose -f flowie/interop/mosquitto-2.0.22/compose.yml up -d --wait
+docker compose -f interop/mosquitto-2.0.22/compose.yml up -d --wait
 ```
 
 配置时必须把同一个 CA 传给固定 broker suite：
@@ -39,6 +39,6 @@ fail fast，不会以 SKIP 或零用例伪装成功。
 结束后删除本次 compose project 和测试证书目录：
 
 ```powershell
-docker compose -f flowie/interop/mosquitto-2.0.22/compose.yml down -v
+docker compose -f interop/mosquitto-2.0.22/compose.yml down -v
 Remove-Item -Recurse -Force -LiteralPath $env:FLOWIE_MQTT_INTEROP_CERT_DIR
 ```

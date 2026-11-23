@@ -1,71 +1,25 @@
-# Flowie release gate
+# Flowie SDK 资格与产品发布要求
 
-## 当前实现状态（1.0.4 准备）
+## 当前自动化
 
-本文件下文描述的是产品发布要求，并非当前 checkout 已实现的自动门禁。
-2026-10-11 核对发现 `LINUX_REMOTE_TEST_RUNBOOK.md`、
-`cmake/VerifyReleaseEvidence.cmake`、`cmake/VerifyNightlyEvidence.cmake` 与
-`flowie_release_gate_manifest` 的实现均缺失；`FLOWIE_MQTT_RELEASE_GATE` 目前只有选项声明。
-因此下文命令不能作为已通过证据，也不能以普通 CI 成功代替这些产品要求。
+[原生 SDK 资格验证](../.github/workflows/native-sdk-qualification.yml)调用
+[共享管线](../.github/workflows/native-sdk-pipeline.yml)，构建、安装和打包 Linux GCC、Windows MSVC、
+Android arm64 SDK。Linux 和 Windows job 通过 CTest 运行其配置注册的用例。
+Android job 检查安装产物的 16 KiB ELF 对齐。版本 tag 通过
+[SDK 发布 workflow](../.github/workflows/native-sdk-release.yml)发布归档、manifest 和校验和。
 
-当前可执行的 SDK 资格验证为
-[`native-sdk-qualification.yml`](../.github/workflows/native-sdk-qualification.yml)，
-支持分支推送、PR 和手动运行，调用
-[`native-sdk-pipeline.yml`](../.github/workflows/native-sdk-pipeline.yml)
-构建和打包 Linux、Windows 与 Android SDK，并在 Linux 和 Windows 上运行原生回归。
-发布准备状态与尚缺证据见 [1.0.4 发布说明](RELEASE_1.0.4.md)。
+本地复验使用 [根 README](../README.md#build-and-test) 中的 SDK 恢复、完整构建和 CTest 命令。
+已有场景和待补覆盖见 [MQTT 测试矩阵](MQTT_TEST_MATRIX.md)，固定 broker 的准备见
+[Mosquitto 互操作环境](../interop/mosquitto-2.0.22/README.md)。
+`test_flowie_mqtt_client_live` 只验证公共 broker 的连通性。固定 broker 互操作使用独立测试配置。
 
-下列产品门槛继续保留；补齐实现与对应证据前，不宣称完整产品 release gate 通过。
+## 产品发布验收
 
-本 gate 是 Flowie MQTT flowie/protocol/client、managed endpoint、产品 host 与持久化组合的最低可复验条件，
-不扩大 [ARCHITECTURE.md](ARCHITECTURE.md) 声明的产品边界。
-待补齐的协议、状态机、故障注入、安全、互操作与长稳场景统一记录在
-[`MQTT_TEST_MATRIX.md`](MQTT_TEST_MATRIX.md)；矩阵中的规划项在实现并进入相应 CTest gate 前，不得视为
-本 gate 已有覆盖。
-
-在 `root@eu:/root/dev` 上打包源码仓库、启动 Mosquitto 测试服务并执行
-Linux release/nightly gate，使用 [`LINUX_REMOTE_TEST_RUNBOOK.md`](LINUX_REMOTE_TEST_RUNBOOK.md)。
-
-## 运行
-
-`test_flowie_mqtt_client_live` 是可选公网连通性 smoke；它访问 HiveMQ 与 EMQX 公共端点，
-不属于 release gate，也不作为固定 broker 兼容性证据。
-
-```powershell
-cmake --preset win-release-user `
-  -DFLOWIE_MQTT_RELEASE_GATE=ON `
-  -DFLOWIE_MQTT_PUBLIC_LIVE_TESTS=OFF `
-  -DFLOWIE_MQTT_FIXED_INTEROP_TESTS=ON `
-  -DFLOWIE_MQTT_FIXED_CA_FILE=C:/path/to/mosquitto/ca.crt `
-  -DFLOWIE_MQTT_FIXED_SUPPORT_31=ON `
-  -DFLOWIE_MQTT_FIXED_SUPPORT_31_WS=ON `
-  -DFLOWIE_MQTT_SOAK_TESTS=ON
-cmake --build --preset win-release-user --parallel
-ctest --preset win-release-user -N -L flowie-release
-ctest --preset win-release-user -L flowie-release --output-on-failure
-ctest --preset win-release-user --output-on-failure
-```
-
-普通开发配置不会注册严格发布门禁；只有显式设置 `FLOWIE_MQTT_RELEASE_GATE=ON` 才会注册
-`flowie_release_gate_manifest`。该测试会强制检查固定 broker interop、协议矩阵与 corpus、
-typed ORM repository 故障边界、`test_flowie_transport_baseline`、TurboRaft log/snapshot recovery 和
-`flowie_server_check_https_auth_provider` 均已注册且未被标为 `Disabled`。整个 gate 只允许
-`flowie_server_check_smb_product` 因未提供 PostgreSQL 测试数据库而 Disabled；出现其他 Disabled 项时
-manifest 自检直接失败。Gate 与全量回归必须零失败；不能用未启用 live suite 的结果替代。
-
-测试完成后还必须生成带 revision、label、backend/version、TLS 模式和结果的 JSON 证据，
-并执行：
-
-```powershell
-cmake -DEVIDENCE_FILE=build/flowie-release-evidence.json `
-      -P flowie/cmake/VerifyReleaseEvidence.cmake
-cmake -DEVIDENCE_FILE=build/flowie-nightly-evidence.json `
-      -P flowie/cmake/VerifyNightlyEvidence.cmake
-```
-
-release evidence 缺 Redis、fixed interop、真实 TLS 或 mTLS 时失败；nightly evidence
-必须包含同一 revision 的 corpus、soak、sanitizer 记录、非空 seed，并明确报告资源没有单调增长。
-脚本只验证实际证据，不会把未运行的 live/scheduled 用例自动视为通过。
+下列门槛适用于 MQTT 协议、客户端、Broker endpoint、应用宿主和持久化的组合验收。
+仓库当前仅声明 `FLOWIE_MQTT_RELEASE_GATE`，尚未注册综合 manifest 自检或证据校验脚本。
+执行实际注册的分项测试时，记录源码 revision、平台、SDK/backend 版本、TLS 模式、结果和未执行的用例。
+长稳验证还需记录同 revision 的 corpus、soak、sanitizer、seed 与资源增长证据。
+原生 SDK 资格验证只覆盖其各 job 注册和执行的测试。
 
 ## 固定门槛
 
@@ -85,7 +39,8 @@ release evidence 缺 Redis、fixed interop、真实 TLS 或 mTLS 时失败；nig
   未授权 publish/subscribe 均须通过。
 - Backpressure/resource：per-connection 与 aggregate send HWM、慢订阅者隔离、最大连接数、session、
   subscription、inflight 和 retained 容量都必须有确定的拒绝与终态，不允许 silent drop。
-- Persistence：真实 Redis 与 PostgreSQL 的 `flowie_server --check` 必须创建并扫描选定 record store；
+- Persistence：`flowie_server --check` 必须创建并扫描部署所选 TurboDB record store。
+  PostgreSQL 部署需连接隔离的真实 PostgreSQL 验证此路径；
   endpoint 重建、binary retained key、pending Will、incompatible record 以及 provider commit 故障注入
   必须通过。CONNECT 的 durable commit 失败不得发送 CONNACK 或留下半提交 session；请求持久化时不得
   回退到进程内状态。
@@ -97,8 +52,8 @@ release evidence 缺 Redis、fixed interop、真实 TLS 或 mTLS 时失败；nig
    使用外部模式的发布证据必须显示 `flowie.auth.external_https.stats` 的 `enabled: true`；本地 Auth
    模式应为 `enabled: false`，并通过本地 credential contract、executor queue-full 429、deadline
    503 和 shutdown drain gate。显式 `local_executor` 与 `external_https` 必须在配置期判定为冲突。
-- Product host：provider preflight、独立 YAML/Graph 解析、RuleSet/socket 装配、supervisor
-  lifecycle、输出上限及 `--check` 必须通过。
+- Product host：standalone 验证 YAML、provider 与 repository 装配、`--check` 和进程关闭。
+  Compose 部署验证 Broker/Control 子进程启动、退出和清理。采用 TurboFlow 的宿主另验 Graph 与 RuleSet。
 
 ## 明确边界
 
@@ -106,12 +61,10 @@ release evidence 缺 Redis、fixed interop、真实 TLS 或 mTLS 时失败；nig
 Flowie 只访问 HTTPS Auth/ACL 服务，不接受 Redis/SQLite/PostgreSQL 或其他身份/ACL 数据库连接配置；
 数据库网络 ACL 必须只允许 `flowie-control` 或第三方认证服务访问。认证服务 token 只能通过
 key-provider reference 注入。TLS 始终校验服务主机名；
-私有 CA 与 mTLS 客户端证书可按 provider 注入，私钥密码只能通过 key-provider reference 获取。生产网络还必须限制 Flowie 仅能出站到认证服务地址，
-认证数据库不得暴露到 Flowie 网段或公网。内置 HTTPS provider 当前把 MQTT 5 Authentication Data
+私有 CA 与 mTLS 客户端证书可按 provider 注入，私钥密码只能通过 key-provider reference 获取。生产网络按配置
+限制 Broker 出站到 HTTPS Auth/ACL 和所选协议数据库。认证数据库只向认证服务开放。内置 HTTPS provider 当前把 MQTT 5 Authentication Data
 作为一次性 HTTPS credential 完成认证；需要多轮 challenge 的部署必须注入实现 enhanced provider ABI
-的认证模块。真实 mTLS gate 必须证明服务端要求且验证客户端证书，缺失证书时拒绝握手，并得到
-`X509_verify_ok`；仅成功解析配置不算传输证据。多轮认证边界关闭或被产品契约明确排除前，不应把 bundled
-server 宣称为通用、完整 MQTT broker。
+的认证模块。真实 mTLS 验收需要观察双向证书验证成功，以及缺失客户端证书时握手被拒绝。
+多轮认证能力以部署所选 provider 的契约为准。
 
-PostgreSQL live test 不属于 Flowie gate；全量回归允许它在未提供测试数据库时保持 Disabled，但发布
-记录必须明确这一点。
+没有隔离数据库的常规 CTest 配置可以省略 PostgreSQL live suite，发布证据中应记录其执行状态。

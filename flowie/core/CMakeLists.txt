@@ -59,7 +59,8 @@ cmake_config_target(
   EXPORT_NAME
   Flowie)
 add_library(Flowie::App ALIAS ${TARGET_NAME})
-target_compile_definitions(${TARGET_NAME} PRIVATE FLOWIE_BUILD)
+target_compile_definitions(
+  ${TARGET_NAME} PRIVATE FLOWIE_BUILD FLOWIE_BROKER_VERSION="${PROJECT_VERSION}")
 target_include_directories(
   ${TARGET_NAME}
   PRIVATE

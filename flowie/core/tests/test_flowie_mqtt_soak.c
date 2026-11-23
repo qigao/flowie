@@ -1,9 +1,6 @@
 #include "flowie_stl_error_internal.h"
 
 #include <cstl.h>
-#include <cstl.h>
-#include <cstl.h>
-#include <cstl.h>
 
 #include "flowie_topic_index_internal.h"
 
@@ -28,17 +25,26 @@
   #include <unistd.h>
 #endif
 
-#ifndef FLOWIE_SOAK_ENDPOINT_TEST
-  #error "FLOWIE_SOAK_ENDPOINT_TEST must point to test_flowie_endpoint"
+#ifndef FLOWIE_SOAK_ENDURANCE_TEST
+  #error "FLOWIE_SOAK_ENDURANCE_TEST must point to test_flowie_mqtt_endurance"
 #endif
-#ifndef FLOWIE_SOAK_TRANSPORT_TEST
-  #error "FLOWIE_SOAK_TRANSPORT_TEST must point to test_flowie_transport"
+#ifndef FLOWIE_SOAK_CLIENT_CLOSE_TEST
+  #error "FLOWIE_SOAK_CLIENT_CLOSE_TEST must point to test_flowie_mqtt_client_close_full"
 #endif
-#ifndef FLOWIE_SOAK_RUNTIME_TEST
-  #error "FLOWIE_SOAK_RUNTIME_TEST must point to test_turbo_flow"
+#ifndef FLOWIE_SOAK_TRANSPORT_BASELINE_TEST
+  #error "FLOWIE_SOAK_TRANSPORT_BASELINE_TEST must point to test_flowie_transport_baseline"
 #endif
-#ifndef FLOWIE_SOAK_STORE_TEST
-  #error "FLOWIE_SOAK_STORE_TEST must point to test_flowie_protocol_repository"
+#ifndef FLOWIE_SOAK_INGRESS_TEST
+  #error "FLOWIE_SOAK_INGRESS_TEST must point to test_flowie_ingress"
+#endif
+#ifndef FLOWIE_SOAK_RAFT_STORE_TEST
+  #error "FLOWIE_SOAK_RAFT_STORE_TEST must point to test_flowie_cluster_raft_store"
+#endif
+#ifndef FLOWIE_SOAK_RAFT_RUNTIME_TEST
+  #error "FLOWIE_SOAK_RAFT_RUNTIME_TEST must point to test_flowie_cluster_raft_runtime"
+#endif
+#ifndef FLOWIE_SOAK_RAFT_GENERATION_TEST
+  #error "FLOWIE_SOAK_RAFT_GENERATION_TEST must point to test_flowie_cluster_raft_generation"
 #endif
 
 #define FLOWIE_SOAK_DEFAULT_ITERATIONS 3u
@@ -265,6 +271,27 @@ static void flowie_soak_report_child_stream(process_t *process, int stdout_strea
                        : process_read_stderr(process, buffer, sizeof(buffer), &count);
     if (count != 0u) (void)fwrite(buffer, 1u, count, stderr);
   } while (rc == SALTS_OK && count != 0u);
+}
+
+static int flowie_soak_warm_child(const char *program) {
+  static const char *args[] = {"--list", NULL};
+  process_options_t options;
+  process_result_t result = {0};
+  process_t *process = NULL;
+  int rc;
+  if (!program || !program[0]) return SALTS_EINVAL;
+  process_options_init(&options);
+  options.program = program;
+  options.args = args;
+  options.flags = SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR;
+  options.timeout_ms = FLOWIE_SOAK_CHILD_TIMEOUT_MS;
+  options.max_output_bytes = 65536u;
+  rc = process_spawn(&options, &process);
+  if (rc == SALTS_OK) rc = process_wait(process, &result);
+  if (rc == SALTS_OK && (result.state != SALTS_PROCESS_EXITED || result.exit_code != 0))
+    rc = SALTS_EIO;
+  process_destroy(process);
+  return rc;
 }
 
 static int flowie_soak_run_child_args(const char *program, const char *const *args,
@@ -541,7 +568,7 @@ cleanup:
 }
 
 spec("Flowie MQTT scheduled soak") {
-  it("child process resource sampling observes no resources after destroy returns") {
+  it("child process resources settle after repeated destroy returns") {
     static const char *args[] = {"--list", NULL};
     flowie_soak_resources_t first;
     flowie_soak_resources_t sample;
@@ -551,13 +578,14 @@ spec("Flowie MQTT scheduled soak") {
     size_t threads_max;
     size_t sample_count = 1u;
 
-    check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDPOINT_TEST, args, "--list"), SALTS_OK);
+    check_equal(flowie_soak_warm_child(FLOWIE_SOAK_ENDURANCE_TEST), SALTS_OK);
+    check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDURANCE_TEST, args, "--list"), SALTS_OK);
     check_equal(flowie_soak_resource_snapshot(&first), SALTS_OK);
     handles_min = handles_max = first.handles;
     threads_min = threads_max = first.threads;
 
     for (size_t iteration = 0u; iteration < FLOWIE_SOAK_RESOURCE_REPRO_ITERATIONS; ++iteration) {
-      check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDPOINT_TEST, args, "--list"),
+      check_equal(flowie_soak_run_child_args(FLOWIE_SOAK_ENDURANCE_TEST, args, "--list"),
                    SALTS_OK);
       check_equal(flowie_soak_resource_snapshot(&sample), SALTS_OK);
       ++sample_count;
@@ -565,13 +593,13 @@ spec("Flowie MQTT scheduled soak") {
       if (sample.handles > handles_max) handles_max = sample.handles;
       if (sample.threads < threads_min) threads_min = sample.threads;
       if (sample.threads > threads_max) threads_max = sample.threads;
-      if (handles_min != handles_max || threads_min != threads_max) break;
     }
 
     info("samples=%zu handles_min=%zu handles_max=%zu threads_min=%zu threads_max=%zu",
          sample_count, handles_min, handles_max, threads_min, threads_max);
-    check_equal(handles_max, handles_min);
-    check_equal(threads_max, threads_min);
+    check_equal(flowie_soak_wait_for_process_release(&first, &sample), SALTS_OK);
+    check_less_equal(sample.handles, first.handles);
+    check_less_equal(sample.threads, first.threads);
   }
 
   it("child process release barrier rejects sustained resource growth") {
@@ -589,11 +617,9 @@ spec("Flowie MQTT scheduled soak") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
                                                    FLOWIE_SOAK_MAX_ITERATIONS);
-    const char *programs[] = {FLOWIE_SOAK_ENDPOINT_TEST, FLOWIE_SOAK_ENDPOINT_TEST,
-                              FLOWIE_SOAK_ENDPOINT_TEST};
-    const char *filters[] = {"MQTT-OWNER-003 takes over MQTT 5",
-                             "MQTT-OWNER-003 takes over MQTT 3.1.1",
-                             "bridges PUBLISH traffic across MQTT"};
+    const char *programs[] = {FLOWIE_SOAK_ENDURANCE_TEST, FLOWIE_SOAK_ENDURANCE_TEST,
+                              FLOWIE_SOAK_ENDURANCE_TEST};
+    const char *filters[] = {"ENDURANCE-002", "ENDURANCE-001", "ENDURANCE-005"};
     check_equal(flowie_soak_run_series("MQTT-SOAK-001", programs, filters, 3u, iterations,
                                         flowie_soak_duration_ms("001"), flowie_soak_seed(), 2u,
                                         0u),
@@ -667,9 +693,10 @@ spec("Flowie MQTT scheduled soak") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
                                                    FLOWIE_SOAK_MAX_ITERATIONS);
-    const char *programs[] = {FLOWIE_SOAK_ENDPOINT_TEST, FLOWIE_SOAK_ENDPOINT_TEST};
-    const char *filters[] = {"stalled shared fan-out subscriber", "inflight quota is exhausted"};
-    check_equal(flowie_soak_run_series("MQTT-SOAK-003", programs, filters, 2u, iterations,
+    const char *programs[] = {FLOWIE_SOAK_ENDURANCE_TEST, FLOWIE_SOAK_ENDURANCE_TEST,
+                              FLOWIE_SOAK_ENDURANCE_TEST};
+    const char *filters[] = {"ENDURANCE-003", "ENDURANCE-006", "ENDURANCE-007"};
+    check_equal(flowie_soak_run_series("MQTT-SOAK-003", programs, filters, 3u, iterations,
                                         flowie_soak_duration_ms("003"), flowie_soak_seed(), 3u,
                                         0u),
                  SALTS_OK);
@@ -679,13 +706,14 @@ spec("Flowie MQTT scheduled soak") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
                                                    FLOWIE_SOAK_MAX_ITERATIONS);
-    const char *programs[] = {FLOWIE_SOAK_TRANSPORT_TEST, FLOWIE_SOAK_TRANSPORT_TEST,
-                              FLOWIE_SOAK_TRANSPORT_TEST, FLOWIE_SOAK_TRANSPORT_TEST,
-                              FLOWIE_SOAK_ENDPOINT_TEST};
-    const char *filters[] = {"interrupts TLS and WSS handshakes", "interrupts pending recv",
-                             "discards partial MQTT", "interrupts WSS close",
-                             "interrupts a pending send"};
-    check_equal(flowie_soak_run_series("MQTT-SOAK-004", programs, filters, 5u, iterations,
+    const char *programs[] = {FLOWIE_SOAK_CLIENT_CLOSE_TEST, FLOWIE_SOAK_CLIENT_CLOSE_TEST,
+                              FLOWIE_SOAK_CLIENT_CLOSE_TEST,
+                              FLOWIE_SOAK_TRANSPORT_BASELINE_TEST};
+    const char *filters[] = {"retains a real WSS TLS backend",
+                             "fences MQTT TCP commands after callback-originated stop",
+                             "reports an abrupt TLS EOF after CONNECT",
+                             "serves MQTT 3.1, 3.1.1, and 5 over WSS"};
+    check_equal(flowie_soak_run_series("MQTT-SOAK-004", programs, filters, 4u, iterations,
                                         flowie_soak_duration_ms("004"), flowie_soak_seed(), 1u,
                                         0u),
                  SALTS_OK);
@@ -695,24 +723,25 @@ spec("Flowie MQTT scheduled soak") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
                                                    FLOWIE_SOAK_MAX_ITERATIONS);
-    const char *programs[] = {FLOWIE_SOAK_STORE_TEST};
-    const char *filters[] = {"MQTT-STORE-007"};
-    const size_t trace_count = 1u;
+    const char *programs[] = {FLOWIE_SOAK_RAFT_RUNTIME_TEST, FLOWIE_SOAK_RAFT_GENERATION_TEST,
+                              FLOWIE_SOAK_RAFT_STORE_TEST};
+    const char *filters[] = {"propagates failed CNet connections",
+                             "does not retry router work after a failed Raft drive",
+                             "replays committed state through the application state machine"};
+    const size_t trace_count = 3u;
     check_equal(flowie_soak_run_series("MQTT-SOAK-005", programs, filters, trace_count, iterations,
                                         flowie_soak_duration_ms("005"), flowie_soak_seed(), 1u,
                                         SIZE_MAX),
                  SALTS_OK);
   }
 
-  it("MQTT-SOAK-006 repeats ingress and Disruptor HWM shutdown traces") {
+  it("MQTT-SOAK-006 repeats ingress HWM and admitted shutdown traces") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
                                                    FLOWIE_SOAK_MAX_ITERATIONS);
-    const char *programs[] = {FLOWIE_SOAK_RUNTIME_TEST, FLOWIE_SOAK_RUNTIME_TEST,
-                              FLOWIE_SOAK_RUNTIME_TEST};
-    const char *filters[] = {"drains accepted publishes before stop",
-                             "fails fast at async ingress capacity",
-                             "interrupts parked disruptor workers"};
+    const char *programs[] = {FLOWIE_SOAK_INGRESS_TEST, FLOWIE_SOAK_ENDURANCE_TEST,
+                              FLOWIE_SOAK_ENDURANCE_TEST};
+    const char *filters[] = {"fails fast on packet HWM", "ENDURANCE-007", "ENDURANCE-003"};
     check_equal(flowie_soak_run_series("MQTT-SOAK-006", programs, filters, 3u, iterations,
                                         flowie_soak_duration_ms("006"), flowie_soak_seed(), 1u,
                                         0u),

@@ -52,11 +52,11 @@ TurboDB 的 `mysql` 配置入口在适配层映射到当前插件标识 `drivers
 其私有 provider 对象合入同一归档；Flowie 不安装第二套 provider。
 CRoaring 和 Monocypher 仍为必要 vendor，保留其上游许可。
 
-正式 [Chttp 0.1.1](https://github.com/qigao/chttp/releases/tag/v0.1.1) 已包含
-`CHttp::JWT` 和 `chttp_invocation_select_websocket_subprotocol`。
-`.env.example` 选择该版本，恢复脚本直接校验并安装发布归档，设置 `CHTTP_ROOT`。
-无需本地构建 `http-services`，也不能修改带恢复回执的发布包。
-Flowie 的安装配置记录实际链接的 Chttp 精确版本。TurboDB 仍必须与所选编译器匹配。
+迁移时 Chttp 0.1.1 提供了所需的 `CHttp::JWT` 与
+`chttp_invocation_select_websocket_subprotocol`。
+当前版本由 [`.env.example`](../.env.example) 选择。恢复脚本校验并安装发布归档，
+设置 `CHTTP_ROOT`。Flowie 的安装配置记录实际链接的 Chttp 精确版本。
+TurboDB SDK 也必须与所选编译器匹配。
 
 回滚需同时恢复迁移前的 Flowie 源码及对应 SDK 集合并重新构建；
 不能将依赖私有引擎的旧 Flowie 与当前 Chttp 混用。不涉及业务数据迁移。
@@ -66,21 +66,21 @@ Flowie 的安装配置记录实际链接的 Chttp 精确版本。TurboDB 仍必�
 最小验证覆盖控制面 TLS 实际响应和响应头、复制/分配失败后的服务复用、
 MQTT WS/WSS 消息与关闭、JWT/JWKS 认证。Chttp 增加 H1/H2 子协议协商、
 未提供协议、保留头限制、非法 token 和 sealed draft 测试。
-独立安装消费工程分别以 C11/C++17 链接 `Flowie::Protocol`、
-`Flowie::Client`、`Flowie::Flowie`；Chttp 通过其正式 C/C++ API 测试验证 `CHttp::JWT`。
-本轮本地完整构建与回归使用 Windows llvm-mingw；其他平台及实验集群集成
-仍需要各自工具链和外部服务验证。
+迁移时的本地回归使用 Windows LLVM-MinGW。当前验证使用各模块正式 CTest
+与正常安装入口，平台范围见 [SDK 资格与产品发布要求](RELEASE_GATE.md)。
 
 按根 README 恢复环境并选择兼容 SDK 后，可重复运行：
 
 ```powershell
-cmake --preset native-release-user
+cmake --preset native-release-user -DBUILD_TESTS=ON -DFLOWIE_BUILD_TESTS=ON
 cmake --build --preset native-release-user
-ctest --test-dir build/native-release-user --output-on-failure --parallel 1 --timeout 60
+ctest --preset native-release-user --no-tests=error --output-on-failure -j 1
 python -B -m unittest discover -s cmake/ci -p 'test_*.py'
 ```
 
-本轮另有一项 MED 测试风险：一次并行全量中，
+## 2026-11-16 迁移与部署记录
+
+迁移时一次并行全量测试出现 MED 问题，
 `test_flowie_control_management_session.c` 的 `tt_make_temp_file` 返回 NULL；
 随后该测试独立连续 12 次通过。事实：SaltsBase TinyTest 的 Windows 实现通过
 `GetTempFileNameA` 预留临时文件后，再以 `MoveFileExA(..., MOVEFILE_REPLACE_EXISTING)`
@@ -88,13 +88,7 @@ python -B -m unittest discover -s cmake/ci -p 'test_*.py'
 推论：改后缀释放原临时名称可能导致并发重用，仍需在 SaltsBase 中独立复现和修复。
 本次未通过重试、关闭测试或修改生产行为来掩盖该失败。
 
-当时的 CI 仍恢复单体 Salts、导出 `SALTS_ROOT`，并使用旧的
-`ci-win-release-user` 等 preset。当前 SDK 资格验证由
-[`native-sdk-qualification.yml`](../.github/workflows/native-sdk-qualification.yml)
-调用共享管线，按提交中的依赖版本恢复 split SDK，再执行各平台 preset。
-当前发布 SDK 镜像使用 `deploy/server/Dockerfile.sdk` 和 `compose.build.yml`：
-构建与运行均采用匹配 SDK 的 Ubuntu 24.04，复用发布归档恢复工具，保留 TurboDB 插件
-的绝对路径和原有进程、端口、配置及数据卷契约。本地验证不能证明旧远端入口可用。
+当前部署入口见[发布 SDK 镜像与 Compose](../deploy/server/README.md#发布-sdk-与-compose)。
 
 2026-11-16 EU 首次部署验收发现 HIGH 阻塞（已按下述方案修复，事实）：发布 SDK 镜像的 Control 可通过
 常规 TLS 1.2/1.3、管理登录、Auth 和 ACL 检查，但 MQTT CONNECT 后没有 CONNACK。

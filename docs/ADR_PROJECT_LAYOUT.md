@@ -30,7 +30,7 @@ schema、parser、assets、templates 保留独立资源目录。
 根 `CMakeLists.txt` 依次加载依赖、工具、vendor、产品模块、运行时复制和安装导出。
 `flowie/CMakeLists.txt` 按 protocol、transport、client、core、可选 cluster、server、control
 的顺序声明 target。`cmake/FlowieDependencies.cmake`、`FlowieRuntime.cmake`、
-`FlowieInstall.cmake` 分别承接原有构建逻辑，不引入新依赖或自动回退。
+`FlowieInstall.cmake` 分别负责依赖查找、运行时文件和安装导出。
 
 ## 状态、接口与兼容性
 
@@ -40,7 +40,7 @@ standalone 协议事实仍由 repository 拥有，可选集群事实仍由 Turbo
 
 公开 target `Flowie::Protocol`、`Flowie::Client`、`Flowie::Flowie`、平铺安装头文件名、
 CLI、配置和容器部署入口保持不变。`flowie_execution.h` 源文件归入 transport，仍以原名安装，
-core 的构建接口同时传递该头文件目录。Chttp 使用 0.1.2，集群适配遵循 TurboRaft 0.3.2。
+core 的构建接口同时传递该头文件目录。SDK 发行版本见[根 README](../README.md#upstream-dependency-versions)。
 
 LOW 兼容性影响（事实）：直接引用旧仓库源码路径的外部脚本需要更新路径；使用安装包 target 的
 消费者无须调整 include。旧 build tree 需要重新 configure，生成器会重建发生路径变化的对象。
@@ -48,10 +48,26 @@ LOW 兼容性影响（事实）：直接引用旧仓库源码路径的外部脚�
 
 ## 验证与回滚
 
-验证复用 `native-release-user` 的完整构建图与正式 CTest，安装使用正常的 `cmake --install`。
-不创建独立 consumer/smoke 验证工程。当前 Windows LLVM-MinGW 已启用集群扩展，覆盖 CNet peer
-边界、队列容量、关闭后对象保留、快照 source 恢复及相邻协议和控制面回归。
-Linux、MSVC 与远端部署需要分别验证；本地结果不能替代这些平台的证据。
+验证入口为 `native-release-user` 的完整构建图、正式 CTest 和 `cmake --install`。
+目录迁移时的 Windows LLVM-MinGW 集群回归覆盖 CNet peer、容量、关闭、快照恢复和相邻模块。
+当前 CI 的平台及覆盖范围见[发布要求](RELEASE_GATE.md)。
 
 回滚只需反向迁移目录并恢复对应 CMake、CI 和文档路径，再重新 configure/build；不涉及数据回滚。
 应保留同时存在的运行时修复，不能用重置整个工作区的方式撤销目录整理。
+
+## Slate 本地构建入口
+
+Windows x64 LLVM-MinGW 开发构建新增 Slate 入口，覆盖协议、传输、Client、Core、
+Server、Control 和可选集群扩展。考虑过由 Slate 包装 CMake 与直接声明 Ninja 图。
+采用模块自有的 Slate 清单，让 Ninja 跟踪生成文件、源码和链接输入，让 Slate 发现原有 TinyTest
+测试。CMake 继续承担仓库的发布矩阵、安装导出和 Workbench。
+
+两套清单共享源码、测试夹具与已恢复 SDK。当前 SDK 发布仅提供 CMake 元数据，因此
+`presets/SlateDependencies.json` 声明已验证 ABI 所需的库、头文件、编译定义和 DLL。
+升级 SDK 时需对照上游 CMake 导出核对这些声明。Flowie 自身发版时同步根
+`CMakeLists.txt` 与 Core 清单的 Broker 版本。生成结果写入各自的构建目录，
+共用现有 re2c、Lemon、salts-idlc 和 SQL 嵌入脚本。该构建入口没有运行时数据迁移步骤。
+
+验证采用 Slate 的完整 Release build、模块测试、集群测试及 Ninja 增量构建。
+用既有同 ABI CMake 产物比对 Client 与 Broker 的 PE 导出。回滚可删除 Slate 配置和
+模块清单，随后用原 CMake preset 构建。

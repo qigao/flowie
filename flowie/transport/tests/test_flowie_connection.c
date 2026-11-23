@@ -770,6 +770,49 @@ static void flowie_ws_multi_close(void *user, flowie_connection connection,
   atomic_fetch_add(&probe->closed, 1);
 }
 
+static const uint8_t flowie_test_earlier_write[] = {'d', 'a', 't', 'a'};
+static const uint8_t flowie_test_final_write[] = {0xe0u, 1u, 0x93u};
+
+typedef struct flowie_final_write_probe {
+  flowie_server *server;
+  atomic_int closed;
+  int close_status;
+  uint64_t final_completed_ms;
+  uint64_t closed_ms;
+} flowie_final_write_probe;
+
+static int flowie_final_write_open(void *user, flowie_connection connection,
+                                   const flowie_peer_info *peer) {
+  flowie_final_write_probe *probe = user;
+  int rc;
+  (void)peer;
+  rc = flowie_server_send(probe->server, connection, flowie_test_earlier_write,
+                          sizeof(flowie_test_earlier_write));
+  if (rc != SALTS_OK) return rc;
+  return flowie_server_send_and_close(probe->server, connection, flowie_test_final_write,
+                                      sizeof(flowie_test_final_write),
+                                      FLOWIE_CONNECTION_TEST_CLOSE_STATUS);
+}
+
+static void flowie_final_write_sent(void *user, flowie_connection connection, size_t size) {
+  flowie_final_write_probe *probe = user;
+  (void)connection;
+  if (size == sizeof(flowie_test_earlier_write)) {
+    /* Hold the owner before it observes terminal completion, even on fast loopback. */
+    sleep_ms(750u);
+  } else if (size == sizeof(flowie_test_final_write)) {
+    probe->final_completed_ms = monotonic_ms();
+  }
+}
+
+static void flowie_final_write_closed(void *user, flowie_connection connection, int status) {
+  flowie_final_write_probe *probe = user;
+  (void)connection;
+  probe->closed_ms = monotonic_ms();
+  probe->close_status = status;
+  atomic_store_explicit(&probe->closed, 1, memory_order_release);
+}
+
 spec("Flowie CNet and CHTTP transport connection") {
   it("formats copied IPv4 peer metadata without transport-owned pointers") {
     flowie_peer_info peer = {0};
@@ -780,6 +823,37 @@ spec("Flowie CNet and CHTTP transport connection") {
     peer.peer.address[3] = 1u;
     check_equal(flowie_peer_format(&peer, text, sizeof(text)), SALTS_OK);
     check_equal(strcmp(text, "127.0.0.1:1883"), 0);
+  }
+
+  it("starts the TCP close grace period after the terminal write completes") {
+    flowie_server server = {0};
+    flowie_final_write_probe probe = {.server = &server};
+    flowie_server_config config = flowie_connection_test_config(NULL, TF_NET_TRANSPORT_TCP);
+    flowie_test_cnet_client_t *client;
+    uint8_t received[sizeof(flowie_test_earlier_write)];
+    uint8_t terminal[sizeof(flowie_test_final_write)];
+    uint16_t port;
+
+    config.observer.on_open = flowie_final_write_open;
+    config.observer.on_close = flowie_final_write_closed;
+    config.observer.on_send = flowie_final_write_sent;
+    config.observer.user = &probe;
+    check_equal(flowie_server_init(&server, &config), SALTS_OK);
+    check_equal(flowie_server_start(&server), SALTS_OK);
+    check_equal(flowie_server_port(&server, &port), SALTS_OK);
+    client = flowie_test_cnet_connect(port);
+    check_not_null(client);
+    check_equal(flowie_connection_test_wait(&probe.closed), SALTS_OK);
+    check_equal(probe.close_status, FLOWIE_CONNECTION_TEST_CLOSE_STATUS);
+    check_true(probe.final_completed_ms != 0u);
+    check_true(probe.closed_ms >= probe.final_completed_ms + 450u);
+    check_equal(flowie_test_cnet_recv_exact(client, received, sizeof(received)), SALTS_OK);
+    check_equal(memcmp(received, flowie_test_earlier_write, sizeof(received)), 0);
+    check_equal(flowie_test_cnet_recv_exact(client, terminal, sizeof(terminal)), SALTS_OK);
+    check_equal(memcmp(terminal, flowie_test_final_write, sizeof(terminal)), 0);
+    flowie_test_cnet_close(client);
+    check_equal(flowie_server_stop(&server, FLOWIE_CONNECTION_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(flowie_server_destroy(&server), SALTS_OK);
   }
 
   it("accepts TCP and admits a copied send from a non-owner thread") {

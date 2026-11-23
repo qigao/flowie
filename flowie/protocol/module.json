@@ -1,0 +1,81 @@
+{
+  "name": "flowie_protocol",
+  "kind": "static",
+  "include": [
+    "tests/module.json"
+  ],
+  "sources": {
+    "files": [
+      "src/flowie_mqtt_protocol.c",
+      "src/flowie_mqtt_packet_views.c",
+      "$builddir/generated/mqtt/flowie_mqtt_lexer_gen.c",
+      "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.c"
+    ]
+  },
+  "public": {
+    "includeDirs": [
+      "include"
+    ],
+    "deps": [
+      "salts_core"
+    ]
+  },
+  "private": {
+    "includeDirs": [
+      "src",
+      "$builddir/generated/mqtt"
+    ]
+  },
+  "preTasks": [
+    {
+      "name": "stage_grammar",
+      "builtin": "copy",
+      "inputs": [
+        "parser/flowie_mqtt_parser.y"
+      ],
+      "outputs": [
+        "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.y"
+      ]
+    },
+    {
+      "name": "generate_parser",
+      "tool": "lemon",
+      "inputs": [
+        "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.y",
+        "${envPath:LEMON_ROOT}/share/lemon/lempar.c",
+        "${envPath:LEMON_ROOT}/bin/lemon.exe"
+      ],
+      "outputs": [
+        "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.c",
+        "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.h"
+      ],
+      "args": [
+        "$builddir/generated/mqtt/flowie_mqtt_grammar_gen.y"
+      ]
+    },
+    {
+      "name": "generate_lexer",
+      "tool": "re2c",
+      "inputs": [
+        "parser/flowie_mqtt_lexer.re",
+        "${envPath:FLOWIE_RE2C_ROOT}/bin/re2c.exe"
+      ],
+      "outputs": [
+        "$builddir/generated/mqtt/flowie_mqtt_lexer_gen.c"
+      ],
+      "args": [
+        "-o",
+        "$builddir/generated/mqtt/flowie_mqtt_lexer_gen.c",
+        "$moduledir/parser/flowie_mqtt_lexer.re"
+      ]
+    }
+  ],
+  "install": {
+    "headers": [
+      {
+        "from": "include/*.h",
+        "to": "include"
+      }
+    ]
+  }
+}

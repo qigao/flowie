@@ -21,6 +21,30 @@ set_tests_properties(test_flowie_mqtt_client
 )
 
 cmake_add_test(
+	test_flowie_mqtt_client_contracts
+	SOURCES
+	${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_contracts.c
+	LIBS
+	Flowie::Client
+	Flowie::Protocol
+	Flowie::Connection
+	Salts::Core
+	Salts::TinyTest
+	FOLDER
+	"flowie/client/tests"
+)
+
+target_link_libraries(test_flowie_mqtt_client_contracts PRIVATE GmSSL::GmSSL)
+if(WIN32)
+	target_link_libraries(test_flowie_mqtt_client_contracts PRIVATE ws2_32)
+endif()
+set_tests_properties(test_flowie_mqtt_client_contracts
+	PROPERTIES
+		LABELS "flowie;flowie-release;mqtt;client;mqtt-security;mqtt-negative;lifetime"
+		TIMEOUT 60
+)
+
+cmake_add_test(
 	test_flowie_mqtt_client_live
 	SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/test_flowie_mqtt_client_live.c

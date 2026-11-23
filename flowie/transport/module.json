@@ -1,0 +1,52 @@
+{
+  "include": [
+    "tests/module.json"
+  ],
+  "targets": {
+    "flowie_connection": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flowie_connection.c",
+          "src/flowie_send_batch.c",
+          "src/flowie_affinity.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "src"
+        ],
+        "deps": [
+          "salts_core",
+          "salts_cnet",
+          "chttp_app"
+        ]
+      },
+      "options": {
+        "symbolVisibility": "hidden"
+      }
+    },
+    "flowie_transport": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flow_connection.c",
+          "src/flow_execution.c",
+          "src/flow_io_policy.c"
+        ]
+      },
+      "public": {
+        "includeDirs": [
+          "include"
+        ],
+        "deps": [
+          "salts_core",
+          "salts_coroutine"
+        ]
+      },
+      "options": {
+        "symbolVisibility": "hidden"
+      }
+    }
+  }
+}

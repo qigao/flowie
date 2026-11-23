@@ -2,9 +2,9 @@
 
 ## 1. 定义范围
 
-本文规定 Flowie 服务端文档、配置和架构讨论中的术语。这里的“配置模式”不是一个运行时布尔
-开关，而是一种产品装配方式：`flowie_server` 从 provider registry 获取宿主能力，从 YAML
-创建具名实例，再用 `.flow` Graph 连接这些实例。
+本文规定 Flowie 服务端配置与应用集成的术语。独立 `flowie_server` 支持 CLI 和 YAML 两种入口。
+使用 TurboFlow 的宿主还可从 provider registry 选择能力、用 YAML 创建具名实例，再用 `.flow` Graph
+连接它们。
 
 只有这一完整的配置式 broker 才是本文所说的“基于 TurboFlow 的典型消息处理应用”：
 
@@ -16,14 +16,14 @@ Flowie MQTT flowie/protocol/session owner
   = configured Flowie broker
 ```
 
-以下三种使用方式不能混称：
+Flowie 的使用方式如下：
 
 | 使用方式 | Flowie 提供什么 | 是否是配置式 TurboFlow 应用 |
 |---|---|---|
 | 协议库 | MQTT parser、packet view、编码与校验 | 否；没有运行时或 Graph |
 | 嵌入式 endpoint Core | 调用方直接创建/持有的 MQTT owner 与同步 dispatch callback | 否；不创建 Graph |
 | Endpoint + Graph adapter | 同一 Core 的可选 TurboFlow source/sink 边界 | 不一定；取决于宿主是否完成产品拓扑 |
-| `flowie_server` 配置式 broker | YAML、Graph、provider registry、endpoint/session owner 的完整装配 | 是 |
+| 独立 `flowie_server` | 从 CLI 或 YAML 装配 endpoint、协议 repository 与可选 HTTPS Auth/ACL | 否 |
 
 Endpoint Core 可以经薄 adapter 成为另一个 TurboFlow 应用的一部分，但 Core 本身不代表已经存在
 data source、data sink、持久化和业务处理拓扑。
@@ -32,15 +32,14 @@ data source、data sink、持久化和业务处理拓扑。
 
 | 产品模式 | MQTT session / retained | Cluster 业务数据 | 日志与快照 | MQTT ACK 边界 |
 |---|---|---|---|---|
-| standalone | `Orm::C` SQLite `:memory:` repository | 不适用 | 不适用 | 配置的 received/accepted/processed 边界 |
-| server/cluster | TurboRaft committed state machine | TurboRaft committed owner/PUBLISH 数据 | `TurboRaft::WalStorage` | quorum commit 后的 owner settlement |
+| standalone | `Orm::C` repository，原生默认使用文件 SQLite | 不适用 | 不适用 | Endpoint 选择的 settlement 边界 |
+| 实验 server/cluster | TurboRaft committed state machine | TurboRaft committed owner/PUBLISH 数据 | `TurboRaft::WalStorage` | quorum commit 后的 owner settlement |
 
 standalone 用于开发和单机运行，repository 是该进程代际的唯一协议事实源。server/cluster 不创建独立
 ORM、Redis、PostgreSQL、FlowStore、route store 或 outbox；业务命令和 Raft 日志使用同一
 `TurboRaft::Service` 提交序列，state machine 只能应用已提交 entry。
 
-对应示例位于 `examples/products/flowie-dev.*` 与 `examples/products/flowie-smb.*`。SMB 示例
-中的 `conninfo` 是部署模板；生产环境必须通过受限配置或 secret provider 注入真实凭据。
+部署参数、协议数据库和凭据注入见 [服务端指南](SERVER_GUIDE.md)与[容器部署](../deploy/server/README.md)。
 
 ## 2. 规范术语
 
@@ -112,8 +111,8 @@ HTTP request view、Redis entry view 等短生命周期对象不能直接跨异�
 
 TurboDB ORM 独立于 Flowie。standalone 的 `flowie_protocol_repository` 直接依赖
 `Orm::C`，用类型化 schema、serializable transaction 和 revision CAS 保存 session、
-subscription、inflight、delivery、retained 与 Will 事实。当前 bundled server 只接受 SQLite
-`:memory:`，打开、建表或事务失败即停止启动，不选择其他 backend 作为 fallback。该 repository
+subscription、inflight、delivery、retained 与 Will 事实。独立 Broker 通过
+`--protocol-store-driver` 和 `--protocol-store-options` 选择驱动。打开、建表或恢复失败会使启动失败。该 repository
 不参与 server/cluster；server/cluster 的业务数据、Raft log 和 snapshot 全部由 TurboRaft 拥有。
 
 ### Session owner 与 session store
@@ -195,14 +194,11 @@ network bytes
 3. TurboDB ORM 只服务 standalone flowie/protocol repository；server/cluster 业务数据与日志由 TurboRaft 统一拥有。
 4. Graph admission、处理完成和 durable commit 是三个不同边界。
 5. 未出现在 Graph 中的 adapter 不参与消息处理；Flowie 不猜测或自动添加存储节点。
-6. `--check` 证明配置解析、repository/TurboRaft owner 装配和 Graph 编译成功；持续可用与恢复仍由
-   standalone ORM transaction tests 或 server/cluster log/snapshot replay tests 证明。
+6. 外部宿主负责解析和编译其 Graph，并装配所选存储 owner。独立 `flowie_server --check`
+   校验 Broker 配置与 standalone repository 装配。持续可用和恢复由各模式的事务或 log/snapshot 测试验证。
 
-## 6. 配置示例的阅读方式
+## 6. 配置参考
 
-仓库默认示例应按以下顺序阅读：
-
-1. [flowie.yml](examples/flowie.yml)：查看允许的实例、backend 和资源上限；
-2. [flowie.flow](examples/flowie.flow)：查看实际 source/sink 和处理顺序；
-3. [服务端使用指南](SERVER_GUIDE.md)：查看启动、安全与 settlement 操作要求；
-4. [消息与 Graph 边界 ADR](../turbo_flow/ADR_MESSAGE_GRAPH_BOUNDARY.md)：查看消息所有权契约。
+- [Broker YAML 测试 fixture](../flowie/server/tests/flowie_server_https_secure.yml)展示 profile、endpoint 和 HTTPS provider 结构。
+- [服务端使用指南](SERVER_GUIDE.md)给出当前独立 Broker 的预检、启动和存储配置。
+- [协议数据与业务数据边界](ADR_PROTOCOL_BUSINESS_STORAGE.md)记录外部 Graph 宿主的状态所有权与 settlement 约束。

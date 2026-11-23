@@ -1,0 +1,44 @@
+{
+  "forEach": [
+    {
+      "files": ["test_flowie_mqtt_protocol.c"],
+      "target": {
+        "kind": "executable",
+        "private": {
+          "deps": ["flowie_protocol", "salts_tinytest"]
+        },
+        "test": {
+          "labels": ["flowie", "flowie-release"]
+        }
+      }
+    }
+  ],
+  "targets": {
+    "test_flowie_mqtt_protocol_matrix": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_protocol_matrix.c"]
+      },
+      "private": {
+        "deps": ["flowie_protocol", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "mqtt-negative"],
+        "timeout": 20
+      }
+    },
+    "test_flowie_mqtt_protocol_corpus": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_mqtt_protocol_corpus.c"]
+      },
+      "private": {
+        "deps": ["flowie_protocol", "salts_tinytest"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "mqtt-fast", "mqtt-negative", "mqtt-fuzz"],
+        "timeout": 20
+      }
+    }
+  }
+}

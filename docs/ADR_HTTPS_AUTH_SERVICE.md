@@ -359,10 +359,9 @@ TLS 测试的动态 PKI 和阻塞测试服务端使用 GmSSL，动态证书为 P
 信任根、服务端身份、客户端身份、过期证书、不匹配私钥和不受信客户端。
 测试 provider 统一后，独立实现的互操作性仍由固定 Mosquitto gate 验证。
 
-这次迁移要求升级 SDK，并适配其 `cmeta_*`/`coro_*` 入口。CI 和 SDK 发布 manifest 记录构建所用
-SDK（包括 RC）版本；`FlowieConfig.cmake` 不限制版本号，按消费方指定的 SDK 根发现依赖。
-无版本限制不承诺跨版本 ABI 兼容。升级时须成组重建 Flowie 及消费方；回滚时恢复整套
-旧二进制与 SDK，不混用旧静态库和新头文件。用户配置、凭据数据格式不因本次迁移改变。
+这次迁移要求升级 SDK，并适配其 `cmeta_*`/`coro_*` 入口。CI 与 SDK 发布 manifest 记录构建来源。
+[安装包配置](../cmake/FlowieConfig.cmake.in)按消费方指定的 SDK 根查找构建时记录的精确版本。
+升级时成组重建 Flowie、SDK 与消费方，回滚时恢复对应的整套二进制。用户配置与凭据格式沿用原契约。
 
 ## 验证范围与剩余风险
 

@@ -140,10 +140,9 @@ Coroutine, and shared error codes.
 ### Control dashboard rendering
 
 The dashboard uses `CHttp::App` with its Jinja renderer and read-only CMeta
-models, replacing the intermediate JSON/Mustache presentation model. This
-integration is built against SaltsUtils 4.3.0-rc.8 and CHTTP 2.1.0-rc.3. HTTP
-routes, session authority, authorization, database schema and browser forms
-remain owned by the existing Flowie Control services.
+models. HTTP routes, session authority, authorization, database schema and browser
+forms remain owned by Flowie Control. The shipped SDK versions are selected through
+[the dependency configuration](../README.md#upstream-dependency-versions).
 
 Each dashboard view owns one renderer and serializes render calls with a mutex.
 Request models and borrowed strings remain alive until synchronous rendering
@@ -167,12 +166,11 @@ In standalone mode MQTT flowie/protocol facts have one source of truth: Flowie's
 over `Orm::C`. Session, subscription, inflight, retained, and Will mutations commit to that
 repository before Flowie swaps its owner/cache state. The in-process vectors, maps, and topic
 trie are rebuildable indexes and scheduling caches only; they must never advance independently or
-serve as a fallback fact source. Standalone composition binds a process-local SQLite `:memory:` ORM
-connection. Its owner-exclusive
-connection is the sole flowie/protocol fact source for that application generation, and closing it removes
-all flowie/protocol facts. Business TurboDB ORM channels remain Graph-owned and cannot restore or substitute
-flowie/protocol state. The legacy `session_store` name is accepted only as a mutually exclusive
-compatibility alias; no backend is silently substituted.
+serve as a fallback fact source. The standalone executable opens the configured TurboDB
+driver and defaults to a persistent SQLite file. The connection is owned by the repository,
+which restores the broker indexes from durable records at startup. Application hosts can
+explicitly select an in-memory SQLite repository for ephemeral state. Graph-owned business
+sinks have their own storage and cannot restore protocol state.
 
 Cluster mode has a different, exclusive owner. Business owner/PUBLISH commands enter
 `TurboRaft::Service`; the Flowie state machine applies them only after quorum commit.
@@ -354,20 +352,14 @@ commit point. No implicit fallback between policies is allowed.
 
 ## Configuration contract
 
-Human configuration is YAML and uses the `.yml` suffix. JSON may exist only as an internal
-resolved projection. The target composition is illustrated by
-[`examples/flowie.yml`](examples/flowie.yml). The `adapters.mqtt.endpoint` entry has a strict
-typed projection for its flowie/transport, bounded reply Queue, and optional managed-session fields.
-The process-level `runtime.ingress` entry configures the single Flow-owned bounded asynchronous
-handoff used by timer and I/O producers; it is not an adapter, profile, or second graph ingress.
-Unknown fields and wrong types fail before registration. The profile selects the MQTT endpoint
-and Queue sink/source; it selects a `rule_set` channel resource only when the Graph uses
-`rules.apply`. Business data sources and sinks are explicit
-Graph adapter references; they are not inferred from a single profile `output`. The RuleSet
-owns its stable identity, evaluation mode, quotas, and ordered `{when, action}` entries; the graph
-binds it through `operation rules.apply resource <channel-name>`. Security remains explicit target
-composition until its host binding is complete. Session and retained persistence share the explicit
-ORM repository binding but remain different versioned record kinds.
+The standalone `flowie_server` accepts listener options or a YAML file selected with
+`--config` and `--profile`. The profile selects an endpoint and, when configured, HTTPS
+Auth/ACL providers. Standalone protocol storage is selected by CLI or environment. The
+[server guide](SERVER_GUIDE.md) describes validation and the exact startup commands.
+
+The optional TurboFlow host described in the [composition concepts](CONFIGURED_BROKER_CONCEPTS.md)
+owns Graph DSL, RuleSet and business adapters. Its Graph explicitly binds sources, sinks and
+settlement points. A YAML endpoint and a TurboFlow Graph have separate ownership and validation.
 The settlement-, retained-, slow-subscriber-, coroutine-capacity-, and receive-buffer-aware endpoint
 configuration is the only public endpoint layout. Local endpoint/client ABI version numbers are not
 part of the API; MQTT 3.1/3.1.1/5 remain the flowie/protocol version facts.
@@ -375,13 +367,46 @@ TurboFlow graph topology remains DSL; `flowie.yml` does not invent an unsupporte
 
 ### MQTT 5 managed-session contract
 
-The managed endpoint negotiates Receive Maximum and Maximum Packet Size in both directions, applies the client
-Receive Maximum as the broker-owned QoS 1/2 send window, and derives idle receive timeout from
-1.5 times the CONNECT Keep Alive without exceeding an explicitly tighter endpoint timeout. An empty
+The managed endpoint negotiates Receive Maximum and Maximum Packet Size in both directions. The
+connection owner charges the client Receive Maximum for QoS 1/2 PUBLISH on the current connection.
+An acknowledgement releases a slot only if that connection sent the corresponding PUBLISH.
+If the window stalls the front of the send queue, control packets, including replayed PUBREL,
+can advance using the same queue and byte budget. Pending PUBLISH packets keep their relative order.
+Online and offline deliveries remain queued until their first send attempt. A persistent endpoint
+commits that transition before handing the packet to the network owner, so a restart during the
+handoff conservatively sets DUP on replay. The broker skips PUBLISH packets
+that exceed a recipient's Maximum Packet Size, including retained and offline replay.
+
+The TCP/TLS owner admits a terminal MQTT response after previously admitted writes. CNet retains
+the bytes until the write settles. TLS uses the CNet final-write close. TCP requests send-side FIN
+and discards late input. The 500 ms wait for peer EOF starts when CNet completes the last write.
+The transport write timeout applies while the write is pending. The endpoint stops MQTT admission
+when it submits the final write. The bounded command mailbox owns the bytes until CNet accepts them.
+
+During session replacement, the endpoint stages an owned copy of any due predecessor Will before
+committing the replacement. Persistent endpoints save that Will and the replacement session in one
+transaction. The commit must succeed before the old connection is fenced or the Will is eligible for
+dispatch. Startup restores one pending predecessor Will per session. The expiry task keeps it in the
+repository until application dispatch accepts it. A process crash after acceptance and before record
+deletion can repeat dispatch. [Repository upgrade and rollback](ADR_TYPED_ORM_PERSISTENCE_V2.md).
+
+The standalone managed endpoint serves a read-only, retained QoS 0 `$SYS/broker/version` message to
+authorized matching subscriptions. It is generated from the build version on subscription, follows
+Retain Handling, and does not occupy a repository slot. Other `$SYS/` topics follow the normal ACL
+and retention rules. Root wildcard subscriptions do not match topic names that begin with `$`.
+
+After CONNACK, the connection owner measures MQTT idle time from the last complete incoming packet.
+The deadline is 1.5 times the CONNECT Keep Alive, capped by an explicitly tighter endpoint timeout.
+A zero CONNECT Keep Alive disables this MQTT deadline. The endpoint expiry task closes idle
+connections through the normal connection-loss path. Anonymous listeners return CONNACK reason
+0x8C when a client requests an unsupported Authentication Method. An empty
 clean-start Client Identifier is replaced by a UUIDv7-based identifier returned in CONNACK; an empty
 non-clean identifier is rejected. `topic_alias_maximum` bounds a connection-owner alias table. Alias
 resolution occurs before ACL evaluation, session admission, and graph publication, so downstream
 code never authorizes an empty or stale topic.
+
+A resume of the same MQTT 5 session within its Will Delay suppresses the old Will. A fresh MQTT 5
+session ends the old session, and an MQTT 3.x takeover closes the old connection with its Will.
 
 Subscription Identifier is owned by each subscription and deduplicated across overlapping matches
 for one delivery. It is appended to the outbound MQTT 5 PUBLISH while inbound Subscription
@@ -411,6 +436,13 @@ the endpoint drains that already committed ACK and then closes the connection. T
 limited to flowie/protocol replies whose owner transition already committed; it does not turn graph
 failure into success or keep the connection accepting new work.
 
+For locally managed persistent retained PUBLISH packets using `received` or `processed`
+settlement, the endpoint queues the QoS 1/2 settlement behind any fanout admitted by the
+application callback. The fanout applies the retained write or deletion before the protocol owner
+can send PUBACK or PUBREC. A failed fanout closes the publisher and discards the pending ACK.
+This ordering adds storage latency to retained acknowledgements. It uses the existing repository and
+reply queue and requires no storage migration. Roll back by restoring the previous server version.
+
 | YAML value | ACK prerequisite | Required graph boundary |
 | --- | --- | --- |
 | omitted or `received` | Session owner receive transition | None; legacy-compatible default |
@@ -418,8 +450,7 @@ failure into success or keep the connection accepting new work.
 | `processed` | Successful synchronous graph publication | All configured inline/worker stages complete |
 | `durable` | Successful persistent commit | PostgreSQL COMMIT or Redis Stream XADD acknowledgement |
 
-QoS 0 remains receive-settled and has no MQTT ACK. There is no implicit promotion, downgrade, or
-fallback between the four policies. Moving away from `received` changes ACK latency and the
+QoS 0 remains receive-settled and has no MQTT ACK. Moving away from `received` changes ACK latency and the
 failure/redelivery window, so deployment must quiesce ingress, drain or explicitly disposition
 inflight work, stop the endpoint, change the YAML policy and graph boundary together, validate the
 resolved profile, and then restart it. These fields are not hot-reloaded. Rollback uses the same
@@ -429,26 +460,15 @@ at another boundary. Endpoint config ABI v8 is the public layout for this contra
 
 ## Worker process topology
 
-The product host has two process-level roles. `flowie_server` is the Worker/data-plane owner: one
-invocation resolves exactly one YAML configuration, one profile, and one graph, then owns that
-configuration generation until shutdown. `flowie_supervisor` is an optional flowie/control-plane owner
-that starts exactly one Worker through `turbo_process_t`. It passes arguments directly without a
-shell, sets no execution deadline for the long-running Worker, owns the child process tree, and
-terminates/reaps it on Supervisor shutdown. The Supervisor does not access Flow, Queue, CNet,
-session, or storage state and does not automatically restart a failed Worker.
+`flowie_server` owns the MQTT listener, endpoint lifecycle and protocol repository.
+`flowie-control` owns its HTTPS listener, Repository and management services.
+The bundled Compose entrypoint starts both child processes, forwards termination signals,
+and terminates the remaining child if the other exits. Native deployments can supervise
+the executables independently. [Deployment guide](../deploy/server/README.md).
 
-Worker stdout/stderr inherit the Supervisor streams by default, so normal long-running logs do not
-accumulate in Supervisor memory. `--capture-output BYTES` is an explicit bounded diagnostic mode;
-the byte limit is cumulative for the Worker lifetime and exceeding it terminates the Worker. This
-mode is therefore intended for configuration checks and controlled runs, not as a log transport.
-An explicit restart/backoff policy may be added later only as configuration-owned deployment
-behavior; it must not be inferred from a child failure.
-
-Configuration creates resources and binds them; it does not instantiate hidden MQTT queues or
-processors. A Flowie endpoint owns its shared CNet socket binding, framing, and parser on one
-lane, and declares the TurboFlow source that receives complete owned MQTT packets. A graph
-declares flowie/protocol/session processors, worker capacity, and sinks. Persistence is an injected
-resource selected explicitly per state class.
+The legacy `flowie_supervisor` source records a separate Worker process design. Current CMake
+builds the Broker executable and Control tools. External TurboFlow hosts own Graph startup and
+shutdown when composing the broker core.
 
 Security uses the same composition rule. YAML selects `security_realm`, its exact HTTPS
 `policy_source`, and `auth_method`; it does not contain ACL rules or a policy version. The host
@@ -493,7 +513,8 @@ local immutable snapshot lookup.
 2. endpoint/session tests with synthetic primitive completions and no network;
 3. real CNet TCP/TLS/UDP/KCP runtime tests plus CHTTP WebSocket flowie/protocol integration tests;
 4. standalone ORM transaction/recovery tests and server/cluster TurboRaft log/snapshot replay tests;
-5. FMQ release regression and full TurboFlow CTest.
+5. Product acceptance requirements and the current SDK pipeline are documented in
+   [SDK qualification and release requirements](RELEASE_GATE.md).
 
 ## Current implementation boundary
 
@@ -543,34 +564,15 @@ bytes, nonzero offsets, copy limits, caller lifetime, flowie/transport delivery 
 close/drain. Throughput and tail-latency improvements require separate measured
 qualification; fewer ranges alone are not a performance result.
 
-The formal `benchmark_flowie_send_batch` compares retained-vector preparation
-with the added small-packet lowering for 32 ranges of 2, 64, 256, 8192 bytes and
-mixed sizes. One operation is a whole vector. On the Windows Release development
-host, a 10,000-sample run measured 0.332 vs 0.457 microseconds for 2-byte ranges
-and 0.294 vs 0.534 microseconds for 64-byte ranges. The added preparation cost is
-expected: this benchmark excludes the downstream native/TLS work whose range
-count is reduced. It does not establish a throughput or p99 improvement.
+The historical Windows Release `benchmark_flowie_send_batch` measured retained-vector preparation
+for 32 ranges. A 10,000-sample run measured 0.332 vs 0.457 microseconds for 2-byte ranges
+and 0.294 vs 0.534 microseconds for 64-byte ranges. The comparison excludes native and TLS
+work. The source remains in [transport tests](../flowie/transport/tests), while the current
+CTest registers `test_flowie_send_batch` for correctness.
 
-Reproduce from a VS developer shell using the versioned presets (restore the
-ordinary test configuration after the benchmark):
-
-```text
-cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=OFF -DFLOWIE_BUILD_BENCHMARKS=ON
-cmake --build --preset win-release-user
-ctest --preset win-release-user -LE "^$" -R benchmark_flowie_send_batch -V
-cmake --preset win-release-user -DFLOWIE_BUILD_TESTS=ON -DFLOWIE_BUILD_BENCHMARKS=OFF
-cmake --build --preset win-release-user
-ctest --preset win-release-user --output-on-failure
-```
-
-Local qualification passed the new storage cases and the TCP/TLS burst cases
-with one and multiple owners. The full Release run passed 46/49 enabled tests;
-the MQTT client, external HTTPS authenticator and JWKS authenticator suites also
-failed on the unchanged `bd84cac` baseline with the same local SDKs during
-GmSSL handshakes. Debug/ASan configuration was blocked by the installed Debug
-SaltsUtils package requiring `unofficial-lua`, absent from the current manifest
-dependency set. Neither those failures nor ASan qualification are claimed fixed
-by this send-path change.
+That historical run passed 46 of 49 enabled tests. Three GmSSL handshake suites also failed
+on its unchanged `bd84cac` baseline. Its Debug/ASan configuration was blocked by the
+`unofficial-lua` dependency. These results describe that build and SDK combination.
 
 Shared bounded stream primitives provide a
 demand-grown, single-owner framing accumulator. A private Flowie connection ingress handles
@@ -673,6 +675,20 @@ reuse inactive entry slots, so subscribe/unsubscribe churn does not retain remov
 CRoaring deduplicates overlapping ordinary matches and selects shared members by rank without
 copying a candidate array. Unrelated mutations preserve each shared filter's cursor. The trie also
 enforces the MQTT `$SYS` root-wildcard boundary before the defensive flowie/protocol matcher.
+
+The standalone endpoint selects one recipient per shared subscription. The endpoint owner prefers
+a connected member. If every member is offline, a QoS 1 or 2 delivery can be assigned to one
+unexpired persistent session with space in its existing delivery quota. Selection follows the
+same round-robin traversal. Once assigned, the session owner holds the encoded packet and Packet
+Identifier through reconnect, acknowledgement or expiry. The configured repository commits this
+state through the ordinary session-delivery path. The session's expiry, capacity limits and
+shutdown rules apply to the queued copy. Offline QoS 0 has no queued copy.
+
+Assigning the message at publish time lets the endpoint reuse session storage, replay and
+backpressure. A separate group queue would allow another member to claim the message after
+reconnect and would require group-owned quota, expiry and persistence. The session-based policy
+requires no schema migration. The previous standalone version can read the same delivery records.
+
 The repository-owned remote load runner at
 `deploy/server/tests/run-mqtt-scale-load.sh` is the current executable capacity evidence. Its default
 tiers create 96, 192, and 384 simultaneous MQTT 5 clients across QoS 0/1/2 and validate exact payload
@@ -772,33 +788,12 @@ now has a tested graph-to-socket flowie/control reply path, but it is not yet a 
 The flowie/transport contract runs real MQTT 3.1, MQTT 3.1.1, and MQTT 5 CONNECT, PING, and shutdown
 traffic over TCP, TLS, WS, and WSS. TLS/WSS use a verified test CA and certificate; a
 successful config projection is not accepted as flowie/transport evidence.
-`flowie_server` is the first product host migrated to the shared product-provider registry. It
-resolves one Flowie profile as the allowed product boundary, preflights all adapter kinds before
-native resource creation, parses the separate TurboFlow DSL graph, then creates only optional
-RuleSet resources, the endpoint, and injected data source/sink adapters referenced by that Graph.
-The bundled composition root injects socket and optional Graph-facing network/data adapters.
-Standalone flowie/protocol persistence is constructed directly through `Orm::C`; server/cluster
-composition constructs `TurboRaft::Service` and `TurboRaft::WalStorage` instead and never opens
-the standalone repository. Repository owner creation, schema validation, transactions, and teardown
-stay in the standalone owner lifecycle; Flowie does not expose database handles to endpoint logic.
-Resource providers run
-before adapter providers; repeated references to the same endpoint binding do not create
-a second owner. The profile constrains the endpoint plus a RuleSet name
-when Policy is configured; the
-Graph is the authority for business source/sink names. It then compiles the
-Graph and owns start/signal/stop order. `--check` performs the same resolution, resource creation,
-provider assembly, and graph compilation without binding the listener.
-The current host supports unsecured endpoints and an optional explicit `protocol_store` ORM
-repository channel. When the field is absent in standalone mode, it injects a process-local SQLite
-`:memory:` repository. The standalone product currently requires SQLite `:memory:` for implicit and
-explicit flowie/protocol channels. It creates the repository from the resolved snapshot, injects the
-borrowed repository through `flowie_endpoint_bindings_t`, and destroys the endpoint before the
-repository. Malformed fields, connection failure, or incompatible stored records fail before the
-listener starts. `--check` creates and scans the repository, then tears it down without starting the
-listener. Cluster configuration rejects any simultaneous endpoint-local `protocol_store`; its
-persistence and recovery contracts are covered by the TurboRaft log/snapshot and state-machine
-tests. Configured
-security bindings and disabled/unknown adapter kinds still fail rather than silently degrading.
+The standalone server assembly creates the configured TurboDB repository and injects the
+borrowed persistence binding into the endpoint. It closes the endpoint before closing the
+repository. `--check` assembles this graph of components and validates the selected record
+store without starting the MQTT listener. The independent TurboFlow host builds and validates
+its own Graph. Experimental cluster composition creates `TurboRaft::Service` and
+`TurboRaft::WalStorage` for cluster facts.
 Authentication providers are selected from `profiles.<name>.auth_provider` and the referenced
 `kind: auth_provider` channel. The worker reads `config.backend`, selects exactly one factory
 registered by the product composition root, and fails before listener startup when the backend is
@@ -816,19 +811,12 @@ sizes and timeouts are bounded, the service token is acquired by reference for e
 all flowie/transport, certificate, status, content-type, version, or principal-validation failures deny
 authentication without a database or anonymous fallback. The returned principal is then evaluated
 by the local SecurityRealm; publish/subscribe ACL checks never perform an HTTP or database call.
-Managed sessions, retained publications, and pending Wills use the standalone SQLite `:memory:`
-flowie/protocol repository over `Orm::C`. Open or schema failure aborts startup; application restart
-intentionally begins with empty flowie/protocol state, so clients reconnect and resubscribe. Graph-facing
-data sinks never restore flowie/protocol state.
-See [ADR_HTTPS_AUTH_SERVICE.md](ADR_HTTPS_AUTH_SERVICE.md) for the trust boundary and deployment
-requirements.
-External-session mode remains available for later composition. A requested
-`protocol_store` never falls back to another backend, and malformed or incompatible records fail
-endpoint registration before the listener starts.
+See [HTTPS authentication](ADR_HTTPS_AUTH_SERVICE.md) for trust and
+[server storage configuration](SERVER_GUIDE.md#sessionretained-与持久化) for runtime options.
 
-### Internal ACL management plane
+### ACL management plane
 
-`flowie/flowie/control` now contains an internal, non-installed management plane. Its TurboDB-backed
+`flowie/control` builds the installable `flowie-control` and `flowie-control-data` tools. Its TurboDB-backed
 flowie/control store is the single fact source for root-scoped users, credentials, hierarchical groups,
 roles, subject-keyed ACL draft rules and audit records. Draft rules are canonical subject-scoped
 documents. A publish command runs under one
@@ -842,19 +830,11 @@ identity supplied by a trusted flowie/transport adapter and the `viewer`, `user_
 `security_admin` permission matrix. Read APIs use bounded keyset pages; no HTTP or Dashboard handler
 receives a database handle.
 
-The optional Iris JSON-RPC adapter binds a caller-owned `rpc_context_t` to an explicit app/path and
-registers 28 bounded management methods. Introspection, batch and notifications are disabled; body
-fields cannot supply domain, actor or audit time. Global external-HTTPS adapter counters are
-available only to `security_admin` through `flowie.auth.external_https.stats`; root-scoped viewers
-cannot observe cross-root traffic. The SSR Dashboard uses the same service,
-normal POST/Redirect/GET forms, constant-time CSRF validation, strict security headers and escaped
-dynamic output. It has no CDN or client framework dependency.
-
-These targets remain internal and create no executable or listener. A production management
-session adapter, login rate limit, HTTPS-only independent `flowie-control` composition root,
-bootstrap flow and operational gates are still required before the management paths may be exposed.
-The live app must stop before Dashboard/RPC objects are destroyed; the caller-owned RPC context is
-destroyed last.
+The Chttp App adapter exposes the bounded JSON-RPC methods in the
+[management API reference](MANAGEMENT_RPC_API.md). Introspection, batch and notifications
+are disabled. Actor and Domain come from trusted session context. The server-rendered
+Dashboard uses the same service, local HTMX assets, CSRF validation, security headers and
+escaping. The App must finish shutdown before runtime dependencies are released.
 
 The managed runtime supports explicit `received`, `accepted`, `processed`, and `durable` QoS
 settlement policies. `received` advances the session owner before graph admission. `processed` advances it
