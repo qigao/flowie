@@ -669,14 +669,22 @@ spec("Flowie MQTT scheduled soak") {
         duration_ms != 0u ? monotonic_ms() + (uint64_t)duration_ms : 0u;
     const size_t publisher_count = flowie_soak_env_size(
         "FLOWIE_MQTT_SOAK_PUBLISHERS", FLOWIE_SOAK_DEFAULT_PUBLISHERS, 64u);
+#if defined(__APPLE__)
+    /* Warm the macOS allocator across publisher generations before sampling. */
+    const size_t warmup_cycles = 4u;
+#else
+    const size_t warmup_cycles = 1u;
+#endif
     size_t concurrent_publishes = 0u;
     size_t cycles = 0u;
     size_t latency_count = 0u;
     size_t total_publishes = 0u;
     uint64_t random_state = seed;
     check_less_equal(duration_ms, FLOWIE_SOAK_MAX_DURATION_MS);
-    check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
-    check_true(concurrent_publishes != 0u);
+    for (size_t warmup = 0u; warmup < warmup_cycles; ++warmup) {
+      check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
+      check_true(concurrent_publishes != 0u);
+    }
     check_equal(flowie_soak_index_snapshot(&baseline), SALTS_OK);
     while (cycles < iterations ||
            (deadline_ms != 0u && monotonic_ms() < deadline_ms)) {

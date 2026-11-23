@@ -29,7 +29,7 @@ typedef int flow_mtls_test_socket_t;
 #endif
 
 #define FLOW_MTLS_TEST_REQUEST_CAPACITY 4096u
-#define FLOW_MTLS_TEST_EOF_HOLD_MS 5000u
+#define FLOW_MTLS_TEST_SOCKET_HOLD_MS 5000u
 
 typedef struct flow_mtls_test_server_s {
   flow_mtls_test_socket_t listener;
@@ -44,6 +44,7 @@ typedef struct flow_mtls_test_server_s {
   int peer_verified;
   int handshake_rejected;
   int abrupt_close;
+  int hold_after_response;
   int eof_sent;
   atomic_int release_socket;
   uint8_t request[FLOW_MTLS_TEST_REQUEST_CAPACITY];
@@ -168,21 +169,21 @@ static void flow_mtls_test_server_main(void *arg) {
   }
   server->status = 0;
   if (server->abrupt_close) {
-    /* This case needs TCP FIN without TLS close_notify. A full close can race
-     * pending peer I/O and deliver a reset instead of the EOF under test.
-     * The worker keeps ownership until join releases it after the client has
-     * observed the result; a bounded wait still catches a missing teardown. */
+    /* Deliver TCP FIN without TLS close_notify, retaining the receive half. */
 #ifdef _WIN32
     const int send_direction = SD_SEND;
 #else
     const int send_direction = SHUT_WR;
 #endif
-    const uint64_t deadline = monotonic_ms() + FLOW_MTLS_TEST_EOF_HOLD_MS;
     if (shutdown(client, send_direction) != 0) {
       server->status = -1;
       goto done;
     }
     server->eof_sent = 1;
+  }
+  if (server->abrupt_close || server->hold_after_response) {
+    /* Keep worker ownership until the test has observed the response or EOF. */
+    const uint64_t deadline = monotonic_ms() + FLOW_MTLS_TEST_SOCKET_HOLD_MS;
     while (!atomic_load_explicit(&server->release_socket, memory_order_acquire)) {
       if (monotonic_ms() >= deadline) {
         server->status = -1;
@@ -201,7 +202,8 @@ done:
 }
 static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const uint8_t *response,
                                           size_t response_size, uint32_t response_delay_ms,
-                                          int require_peer_certificate, int abrupt_close) {
+                                          int require_peer_certificate, int abrupt_close,
+                                          int hold_after_response) {
   struct sockaddr_storage address;
   int family = AF_INET6;
 #ifdef _WIN32
@@ -217,6 +219,7 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
   atomic_init(&server->release_socket, 0);
   server->require_peer_certificate = require_peer_certificate ? 1 : 0;
   server->abrupt_close = abrupt_close ? 1 : 0;
+  server->hold_after_response = hold_after_response ? 1 : 0;
   server->listener = socket(family, SOCK_STREAM, IPPROTO_TCP);
   if (server->listener != FLOW_MTLS_TEST_INVALID_SOCKET) {
     int ipv6_only = 0;
@@ -270,21 +273,21 @@ static int flow_mtls_test_server_start_ex(flow_mtls_test_server_t *server, const
 static int flow_mtls_test_server_start_delayed(flow_mtls_test_server_t *server,
                                                const uint8_t *response, size_t response_size,
                                                uint32_t response_delay_ms) {
-  return flow_mtls_test_server_start_ex(server, response, response_size, response_delay_ms, 1, 0);
+  return flow_mtls_test_server_start_ex(server, response, response_size, response_delay_ms, 1, 0, 0);
 }
 
 static int flow_tls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
                                       size_t response_size) {
-  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 0, 0);
+  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 0, 0, 0);
 }
 
 static int flow_tls_test_server_start_abrupt(flow_mtls_test_server_t *server) {
-  return flow_mtls_test_server_start_ex(server, NULL, 0u, 0u, 0, 1);
+  return flow_mtls_test_server_start_ex(server, NULL, 0u, 0u, 0, 1, 0);
 }
 
 static int flow_mtls_test_server_start(flow_mtls_test_server_t *server, const uint8_t *response,
                                        size_t response_size) {
-  return flow_mtls_test_server_start_delayed(server, response, response_size, 0u);
+  return flow_mtls_test_server_start_ex(server, response, response_size, 0u, 1, 0, 1);
 }
 
 static void flow_mtls_test_server_join(flow_mtls_test_server_t *server) {
