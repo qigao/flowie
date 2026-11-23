@@ -233,6 +233,8 @@ if(BUILD_CLUSTER)
 endif()
 if(WIN32)
   target_link_libraries(test_flowie_mqtt_soak PRIVATE psapi)
+elseif(APPLE)
+  target_link_libraries(test_flowie_mqtt_soak PRIVATE proc)
 endif()
 set_tests_properties(
   test_flowie_mqtt_soak
