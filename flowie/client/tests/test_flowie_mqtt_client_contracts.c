@@ -681,24 +681,26 @@ static int flowie_client_mtls_start(flowie_client_mtls_fixture *fixture,
   return flowie_mqtt_client_connect(fixture->client, &connect);
 }
 
-static void flowie_client_mtls_finish(flowie_client_mtls_fixture *fixture) {
-  if (!fixture) return;
+static int flowie_client_mtls_finish(flowie_client_mtls_fixture *fixture) {
+  int rc = SALTS_OK;
+  flow_mtls_test_server_release(&fixture->server);
   if (fixture->client) {
-    flowie_mqtt_client_destroy(fixture->client);
-    fixture->client = NULL;
+    rc = flowie_mqtt_client_try_destroy(fixture->client, FLOWIE_CLIENT_CONTRACT_TIMEOUT_MS);
+    if (rc == SALTS_OK) fixture->client = NULL;
   }
   flow_mtls_test_server_join(&fixture->server);
+  return rc;
 }
 
-static void flowie_client_mtls_cleanup(flowie_client_mtls_fixture *fixture) {
-  if (!fixture) return;
-  flowie_client_mtls_finish(fixture);
+static int flowie_client_mtls_cleanup(flowie_client_mtls_fixture *fixture) {
+  const int rc = flowie_client_mtls_finish(fixture);
   tls_test_remove_file(fixture->key_file);
   tls_test_remove_file(fixture->cert_file);
   tls_test_remove_file(fixture->ca_file);
   fixture->key_file[0] = '\0';
   fixture->cert_file[0] = '\0';
   fixture->ca_file[0] = '\0';
+  return rc;
 }
 
 typedef enum flowie_client_command_broker_mode_e {
@@ -1270,14 +1272,17 @@ spec("Flowie MQTT client enhanced authentication") {
 spec("Flowie MQTT client TLS identity") {
   static flowie_client_mtls_fixture fixture;
 
-  before_each() { memset(&fixture, 0, sizeof(fixture)); }
+  before_each() {
+    memset(&fixture, 0, sizeof(fixture));
+    fixture.server.listener = FLOW_MTLS_TEST_INVALID_SOCKET;
+  }
 
-  after_each() { flowie_client_mtls_cleanup(&fixture); }
+  after_each() { check_equal(flowie_client_mtls_cleanup(&fixture), SALTS_OK); }
 
   it("presents a configured client certificate to an mTLS broker") {
     check_equal(flowie_client_mtls_start(&fixture, 1), SALTS_OK);
     check_equal(flowie_client_contract_wait(&fixture.completions, 1), SALTS_OK);
-    flowie_client_mtls_finish(&fixture);
+    check_equal(flowie_client_mtls_finish(&fixture), SALTS_OK);
     check_equal(atomic_load(&fixture.status), SALTS_OK);
     check_equal(atomic_load(&fixture.response_type), FLOWIE_MQTT_PACKET_CONNACK);
     check_equal(fixture.server.status, 0);
@@ -1289,7 +1294,7 @@ spec("Flowie MQTT client TLS identity") {
   it("fails closed when an mTLS broker requires an absent client certificate") {
     check_equal(flowie_client_mtls_start(&fixture, 0), SALTS_OK);
     check_equal(flowie_client_contract_wait(&fixture.completions, 1), SALTS_OK);
-    flowie_client_mtls_finish(&fixture);
+    check_equal(flowie_client_mtls_finish(&fixture), SALTS_OK);
     check_not_equal(atomic_load(&fixture.status), SALTS_OK);
     check_equal(fixture.server.handshake_rejected, 1);
     check_equal(fixture.server.peer_verified, 0);

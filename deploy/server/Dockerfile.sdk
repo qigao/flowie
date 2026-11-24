@@ -122,9 +122,10 @@ SH
 
 FROM ubuntu:24.04 AS runtime
 ARG SOURCE_REVISION=unknown
+ARG CHTTP_VERSION
 LABEL org.opencontainers.image.title="Flowie Server and Control" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.description="Flowie with released split SDKs and Chttp 0.1.1"
+      org.opencontainers.image.description="Flowie with released split SDKs and CHttp ${CHTTP_VERSION}"
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libgcc-s1 libstdc++6 netcat-openbsd \

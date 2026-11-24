@@ -54,10 +54,15 @@ class EnvironmentFileTests(unittest.TestCase):
 
     def test_android_selects_a_native_sdk_profile_for_the_idl_compiler(self):
         self.assertEqual(restore.android_idlc_profile('linux-x64'), 'linux-gcc-x64')
-        for host in ('linux-x64', 'linux-arm64', 'windows-x64', 'macos-arm64'):
+        for host in ('linux-x64', 'linux-arm64', 'windows-x64', 'windows-arm64', 'macos-arm64'):
             with self.subTest(host=host):
                 profile = restore.android_idlc_profile(host)
                 self.assertEqual(restore.SDK_PROFILES[profile][0], host)
+
+    def test_windows_native_arm64_machine_name(self):
+        with patch.object(restore.platform, 'system', return_value='Windows'):
+            with patch.object(restore.platform, 'machine', return_value='ARM64'):
+                self.assertEqual(restore.host_rid(), 'windows-arm64')
 
     def test_unknown_fields_do_not_enter_environment_or_output(self):
         self.write('GITHUB_TOKEN=file-secret\nUNRELATED_SETTING=value\n')

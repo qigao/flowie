@@ -1,6 +1,22 @@
 # Iron rule: every Flowie feature/build switch is declared in this file.
 set(CMAKE_COLOR_DIAGNOSTICS ON)
 
+# Normalize the published Flowie and CTest switches at the configure boundary.
+foreach(_flowie_switch IN ITEMS TESTS BENCHMARKS CLUSTER)
+	if(DEFINED FLOWIE_BUILD_${_flowie_switch})
+		if(DEFINED BUILD_${_flowie_switch} AND
+		   ((BUILD_${_flowie_switch} AND NOT FLOWIE_BUILD_${_flowie_switch}) OR
+		    (NOT BUILD_${_flowie_switch} AND FLOWIE_BUILD_${_flowie_switch})))
+			message(FATAL_ERROR
+				"Conflicting BUILD_${_flowie_switch} and FLOWIE_BUILD_${_flowie_switch}")
+		endif()
+		set(BUILD_${_flowie_switch} "${FLOWIE_BUILD_${_flowie_switch}}" CACHE BOOL "Build ${_flowie_switch}")
+	endif()
+endforeach()
+if(NOT DEFINED BUILD_TESTS AND DEFINED BUILD_TESTING)
+	set(BUILD_TESTS "${BUILD_TESTING}" CACHE BOOL "Build tests")
+endif()
+
 option(BUILD_TESTS "Build tests" ON)
 option(BUILD_EXAMPLES "Build examples" OFF)
 option(BUILD_BENCHMARKS "Build network and send-path benchmarks" OFF)
@@ -10,6 +26,12 @@ option(BUILD_CLUSTER
 )
 option(FLOWIE_BUILD_CONTROL "Build the Flowie control plane" ON)
 option(FLOWIE_BUILD_SERVER "Build the Flowie server executable" ON)
+
+set(BUILD_TESTING "${BUILD_TESTS}" CACHE BOOL "Build and register tests" FORCE)
+foreach(_flowie_switch IN ITEMS TESTS BENCHMARKS CLUSTER)
+	set(FLOWIE_BUILD_${_flowie_switch} "${BUILD_${_flowie_switch}}")
+endforeach()
+unset(_flowie_switch)
 
 option(ENABLE_SANITIZER_ADDRESS "Enable AddressSanitizer" OFF)
 option(ENABLE_SANITIZER_UNDEFINED "Enable UndefinedBehaviorSanitizer" OFF)

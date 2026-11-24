@@ -93,9 +93,9 @@ credential 与对应 Role。
 
 ### 发布 SDK 与 Compose
 
-当前分包 SDK 使用 `Dockerfile.sdk`。它在 Ubuntu 24.04 中恢复并校验 SaltsBase 0.1.8、
-CMeta 0.1.7、SaltsUtils 0.1.4、SaltsCNet 0.1.12、Chttp 0.1.1 和 TurboDB 0.1.1，
-通过现有 native presets 构建 Flowie。Ubuntu 24.04 运行层与发布 SDK 的 glibc 相匹配；
+当前分包 SDK 使用 `Dockerfile.sdk`。它在 Ubuntu 24.04 中恢复并校验
+[根配置模板](../../.env.example)所选的上游 SDK，通过现有 CMake presets 构建 Flowie。
+Ubuntu 24.04 运行层与发布 SDK 的 glibc 相匹配。
 Debian 12 宿主可以直接运行该镜像。运行时保留三个 executable、Dashboard 资源、依赖许可、
 共享库和 TurboDB 插件的原绝对安装路径，并检查动态库解析是否完整。
 构建使用带 SHA-256 校验的 CMake 3.31.0，避免旧版 CMake 在嵌套依赖查找时

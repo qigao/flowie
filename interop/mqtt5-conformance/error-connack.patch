@@ -47,4 +47,3 @@ index 1583266..e379fa4 100644
 +        "[MQTT-3.2.2-8] Unsupported authentication method must use reason code 0x8C"
      );
  }
-

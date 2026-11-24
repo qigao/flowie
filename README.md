@@ -149,20 +149,36 @@ cmake --build --preset native-release-user
 ctest --preset native-release-user --output-on-failure
 ```
 
+On Windows ARM64, restore with `-Rid windows-arm64` and select the matching
+profile and preset. Use an ARM64 Visual Studio developer shell for MSVC.
+
+| SDK profile | Local configure, build and test preset |
+| --- | --- |
+| `windows-msvc-arm64` | `msvc-arm64-release-user` |
+| `windows-llvm-mingw-arm64` | `llvm-mingw-native-arm64-release-user` |
+
 The build options are listed in `CMakeOptions.cmake` and the module CMake files.
 
-The native workflows use the same complete preset build graph and formal CTest entry points.
-Linux GCC and Windows MSVC run their tests; Android arm64 performs cross-build, installation and
-16 KiB ELF alignment checks. Android device execution is not implied. Successful runs produce
-original SDK TAR archives, a release manifest and SHA256SUMS. Tag releases publish these files to
-GitHub Releases. Distribution and dependency restoration no longer use a product-owned package
-feed, package client or cache proxy.
+The native client SDK is built in eleven configurations. Each job restores upstream
+SDKs that match its compiler and target architecture and builds the complete preset graph.
 
-CI generates each job's `.env` from the dependency releases committed in `.env.example`.
-The matrix selects `x64-linux`, `x64-windows` or `arm64-android` through the SDK profile.
-The bootstrap sets workspace-local paths for the shared checkout and installation. Android uses
-the runner's `ANDROID_NDK_HOME`, and Windows copies the pinned OpenWTL version and SHA-256.
-Credentials come from the runner token environment.
+| Platform | Architecture | Toolchain |
+| --- | --- | --- |
+| Windows | x64, arm64 | MSVC, LLVM-MinGW |
+| Linux | x64, arm64 | GCC, Clang |
+| macOS | arm64 | Clang |
+| Android | x86_64, arm64-v8a | NDK Clang |
+
+Native jobs run CTest on the target architecture. Android jobs cross-compile,
+install and check 16 KiB ELF alignment on Ubuntu. The OpenWTL Workbench ships
+with the Windows SDKs. The workflow checks the installed architecture of the
+client library and Windows Workbench before producing the SDK archives, release
+manifest and SHA256SUMS. Version tags publish those
+files to GitHub Releases.
+
+CI generates each job's `.env` from `.env.example` and sets workspace-local
+paths. Android uses the runner's `ANDROID_NDK_HOME`. Windows copies the pinned
+OpenWTL version and SHA-256. Credentials come from the runner token environment.
 
 The shared vcpkg-cache release provides the installed dependencies and the re2c and Lemon
 archives. The bootstrap restores them through the selected shared checkout and records the
@@ -224,10 +240,9 @@ merge selected fields into `.env` while preserving credentials and machine setti
 The restore loader replaces inherited build settings with the selected file values and never
 imports credentials from the file. CMake consumes the loaded environment and does not read dotenv.
 
-The selected family is SaltsBase 0.1.8, CMeta 0.1.8, SaltsUtils 0.1.6, SaltsCNet 0.1.16,
-[Chttp 0.1.2](https://github.com/qigao/chttp/releases/tag/v0.1.2),
-[TurboRaft 0.3.2](https://github.com/qigao/turboraft/releases/tag/v0.3.2) and TurboDB 0.1.2,
-with vcpkg-cache 0.1.3. Versions and roots are selected in `.env`:
+[.env.example](.env.example) pins the matching vcpkg-cache, SaltsBase, CMeta, SaltsUtils,
+SaltsCNet, CHttp, and TurboDB releases. Cluster builds also select TurboRaft.
+Set the corresponding roots in `.env`.
 
 - `SALTS_BASE_ROOT`, `CMETA_ROOT`, `SALTS_UTILS_ROOT`, `SALTS_CORE_ROOT` / `SALTS_CNET_ROOT`;
 - `CHTTP_ROOT` and `TURBODB_ROOT`, plus `TURBORAFT_ROOT` for cluster builds;
@@ -235,7 +250,7 @@ with vcpkg-cache 0.1.3. Versions and roots are selected in `.env`:
 - `VCPKG_INSTALLED_DIR`, `RE2C_ROOT`, `LEMON_ROOT` reference its restored installations.
 
 Flowie does not maintain copies of vcpkg or host-tool release declarations. Restore these
-through the [shared vcpkg-cache entry point](https://github.com/qigao/vcpkg-cache/blob/v0.1.3/docs/restore-native-dependency.md),
+through the [shared vcpkg-cache entry point](https://github.com/qigao/vcpkg-cache/blob/v0.1.9/docs/restore-native-dependency.md),
 then select their returned roots in `.env`. The SDK restore entry points are:
 
 ```powershell

@@ -22,6 +22,13 @@
   #include <windows.h>
 #elif defined(__linux__)
   #include <dirent.h>
+  #if defined(__GLIBC__)
+    #include <malloc.h>
+  #endif
+  #include <unistd.h>
+#elif defined(__APPLE__)
+  #include <libproc.h>
+  #include <malloc/malloc.h>
   #include <unistd.h>
 #endif
 
@@ -36,15 +43,6 @@
 #endif
 #ifndef FLOWIE_SOAK_INGRESS_TEST
   #error "FLOWIE_SOAK_INGRESS_TEST must point to test_flowie_ingress"
-#endif
-#ifndef FLOWIE_SOAK_RAFT_STORE_TEST
-  #error "FLOWIE_SOAK_RAFT_STORE_TEST must point to test_flowie_cluster_raft_store"
-#endif
-#ifndef FLOWIE_SOAK_RAFT_RUNTIME_TEST
-  #error "FLOWIE_SOAK_RAFT_RUNTIME_TEST must point to test_flowie_cluster_raft_runtime"
-#endif
-#ifndef FLOWIE_SOAK_RAFT_GENERATION_TEST
-  #error "FLOWIE_SOAK_RAFT_GENERATION_TEST must point to test_flowie_cluster_raft_generation"
 #endif
 
 #define FLOWIE_SOAK_DEFAULT_ITERATIONS 3u
@@ -189,17 +187,17 @@ static int flowie_soak_resource_snapshot(flowie_soak_resources_t *out) {
   }
 #elif defined(__linux__)
   {
-    FILE *statm = fopen("/proc/self/statm", "r");
-    unsigned long rss_pages = 0u;
+    FILE *smaps = fopen("/proc/self/smaps_rollup", "r");
+    char line[160];
+    size_t rss_kib = 0u;
     DIR *directory;
     struct dirent *entry;
-    const long page_size = sysconf(_SC_PAGESIZE);
-    if (!statm || fscanf(statm, "%*lu %lu", &rss_pages) != 1 || page_size <= 0) {
-      if (statm) fclose(statm);
-      return SALTS_EIO;
-    }
-    fclose(statm);
-    out->rss_bytes = (size_t)rss_pages * (size_t)page_size;
+    if (!smaps) return SALTS_EIO;
+    while (fgets(line, sizeof(line), smaps))
+      if (sscanf(line, "Rss: %zu kB", &rss_kib) == 1) break;
+    fclose(smaps);
+    if (rss_kib == 0u || rss_kib > SIZE_MAX / 1024u) return SALTS_EIO;
+    out->rss_bytes = rss_kib * 1024u;
     directory = opendir("/proc/self/fd");
     if (!directory) return SALTS_EIO;
     while ((entry = readdir(directory)) != NULL)
@@ -211,10 +209,41 @@ static int flowie_soak_resource_snapshot(flowie_soak_resources_t *out) {
       if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) ++out->threads;
     closedir(directory);
   }
+#elif defined(__APPLE__)
+  {
+    const int pid = getpid();
+    struct proc_taskinfo task;
+    if (proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, (int)sizeof(task)) != (int)sizeof(task) ||
+        task.pti_threadnum <= 0)
+      return SALTS_EIO;
+
+    const int capacity = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, NULL, 0);
+    if (capacity < (int)sizeof(struct proc_fdinfo)) return SALTS_EIO;
+    struct proc_fdinfo *files = malloc((size_t)capacity);
+    if (!files) return SALTS_ENOMEM;
+    const int bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, files, capacity);
+    free(files);
+    if (bytes <= 0 || bytes >= capacity || (size_t)bytes % sizeof(*files) != 0u)
+      return SALTS_EIO;
+
+    out->rss_bytes = (size_t)task.pti_resident_size;
+    out->handles = (size_t)bytes / sizeof(*files);
+    out->threads = (size_t)task.pti_threadnum;
+  }
 #else
   return SALTS_ENOTSUP;
 #endif
   return SALTS_OK;
+}
+
+static int flowie_soak_index_snapshot(flowie_soak_resources_t *out) {
+  /* Sample after publisher teardown and return free allocator pages before measuring RSS. */
+#if defined(__GLIBC__)
+  malloc_trim(0);
+#elif defined(__APPLE__)
+  malloc_zone_pressure_relief(NULL, 0);
+#endif
+  return flowie_soak_resource_snapshot(out);
 }
 
 static int flowie_soak_wait_for_process_release(const flowie_soak_resources_t *baseline,
@@ -640,15 +669,23 @@ spec("Flowie MQTT scheduled soak") {
         duration_ms != 0u ? monotonic_ms() + (uint64_t)duration_ms : 0u;
     const size_t publisher_count = flowie_soak_env_size(
         "FLOWIE_MQTT_SOAK_PUBLISHERS", FLOWIE_SOAK_DEFAULT_PUBLISHERS, 64u);
+#if defined(__APPLE__)
+    /* Warm the macOS allocator across publisher generations before sampling. */
+    const size_t warmup_cycles = 4u;
+#else
+    const size_t warmup_cycles = 1u;
+#endif
     size_t concurrent_publishes = 0u;
     size_t cycles = 0u;
     size_t latency_count = 0u;
     size_t total_publishes = 0u;
     uint64_t random_state = seed;
     check_less_equal(duration_ms, FLOWIE_SOAK_MAX_DURATION_MS);
-    check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
-    check_true(concurrent_publishes != 0u);
-    check_equal(flowie_soak_resource_snapshot(&baseline), SALTS_OK);
+    for (size_t warmup = 0u; warmup < warmup_cycles; ++warmup) {
+      check_equal(flowie_soak_index_cycle(&concurrent_publishes), SALTS_OK);
+      check_true(concurrent_publishes != 0u);
+    }
+    check_equal(flowie_soak_index_snapshot(&baseline), SALTS_OK);
     while (cycles < iterations ||
            (deadline_ms != 0u && monotonic_ms() < deadline_ms)) {
       const uint64_t started_at = hrtime();
@@ -665,14 +702,15 @@ spec("Flowie MQTT scheduled soak") {
         if (slot < FLOWIE_SOAK_LATENCY_SAMPLES) latencies[slot] = latency;
       }
     }
-    check_equal(flowie_soak_resource_snapshot(&current), SALTS_OK);
-    check_true(current.handles <= baseline.handles);
-    check_true(current.threads <= baseline.threads);
-    check_true(current.rss_bytes <=
-               baseline.rss_bytes +
-                   flowie_soak_env_size("FLOWIE_MQTT_SOAK_RSS_TOLERANCE_BYTES",
-                                        FLOWIE_SOAK_DEFAULT_RSS_TOLERANCE,
-                                        1024u * 1024u * 1024u));
+    check_equal(flowie_soak_wait_for_process_release(&baseline, &current), SALTS_OK);
+    check_equal(flowie_soak_index_snapshot(&current), SALTS_OK);
+    check_less_equal(current.handles, baseline.handles);
+    check_less_equal(current.threads, baseline.threads);
+    check_less_equal(current.rss_bytes,
+                     baseline.rss_bytes +
+                         flowie_soak_env_size("FLOWIE_MQTT_SOAK_RSS_TOLERANCE_BYTES",
+                                              FLOWIE_SOAK_DEFAULT_RSS_TOLERANCE,
+                                              1024u * 1024u * 1024u));
     printf("SOAK_RESULT id=MQTT-SOAK-002 seed=%" PRIu64
            " operations=%zu failures=0 duration_ns=%" PRIu64
            " messages=%zu payload_distribution=topic-index concurrency=%zu backend_retries=0 "
@@ -719,6 +757,7 @@ spec("Flowie MQTT scheduled soak") {
                  SALTS_OK);
   }
 
+#ifdef FLOWIE_SOAK_WITH_RAFT
   it("MQTT-SOAK-005 repeats provider outage and lost-commit recovery traces") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",
                                                    FLOWIE_SOAK_DEFAULT_ITERATIONS,
@@ -734,6 +773,7 @@ spec("Flowie MQTT scheduled soak") {
                                         SIZE_MAX),
                  SALTS_OK);
   }
+#endif
 
   it("MQTT-SOAK-006 repeats ingress HWM and admitted shutdown traces") {
     const size_t iterations = flowie_soak_env_size("FLOWIE_MQTT_SOAK_ITERATIONS",

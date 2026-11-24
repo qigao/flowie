@@ -323,6 +323,57 @@ Android 打包检查发现 NDK r27 产出的 `libflowie.so` 未达到 16 KiB ELF
 标签，保留原生滚动行为。传输下拉框测试使用控件报告的行高和选项数，避免
 受固定像素阈值影响。两处修复通过本地 `ci-msvc-release-user` Workbench CTest。
 
+## 2026-11-20：原生客户端 SDK 矩阵
+
+发布配置来自 `cmake/ci/setup_native_ci.py --matrix`。它为 Windows x64/arm64
+选择 MSVC 和 LLVM-MinGW，为 Linux x64/arm64 选择 GCC 和 Clang，为
+macOS arm64 选择 Clang，为 Android x86_64/arm64-v8a 选择 NDK Clang。
+归档步骤复用同一配置，逐一核对 profile、源码 SHA 和原生 CTest 状态。
+
+Windows ARM64 的 MSVC 和 LLVM-MinGW 分别使用 ARM64 vcpkg triplet。LLVM-MinGW
+的原生 preset 清除从交叉编译 preset 继承的 CMAKE_SYSTEM_NAME 后在 ARM runner
+执行 CTest。归档检查客户端库和 Workbench 的 PE 机器类型，避免把 x64 产物
+标成 ARM64。本地使用现有 MSVC 和 LLVM-MinGW 安装产物确认两种 x64 包通过，
+并在将其标为 ARM64 时被拒绝。
+
+共享 LLVM-MinGW action 返回 Windows 路径。preset 使用 FILEPATH 声明编译器、
+归档器和 windres，CMake 因此在生成资源编译器配置前规范化路径。SaltsBase 的
+C11 扫描头显式引入 stdatomic.h，使 MSVC ARM64 编译 SIMDe 内的原子栅栏。
+两项问题在 [SaltsBase 首轮 CI](https://github.com/qigao/salts-base/actions/runs/44694282141)
+复现，修复后 Windows ARM64 的两种配置都进入完整构建。
+MSVC ARM64 随后在 Disruptor 链接时报告 x86 的 _mm_pause 未定义。Windows
+路径改用 Windows SDK 的 YieldProcessor()，由 SDK 为目标架构选择处理器提示。
+[SaltsBase 链接日志](https://github.com/qigao/salts-base/actions/runs/44695017585/job/136150104644)
+
+Windows SDK 的 rpcndr.h 将 small 定义为 char。SaltsBase 的 JSON SAX 数字临时
+缓冲区、CHttp 测试和 TurboDB MySQL 解码中的同名局部变量改为描述其用途的名称。
+9 项相关本地 CTest 通过。
+[SaltsBase 编译日志](https://github.com/qigao/salts-base/actions/runs/44696074550/job/136153577769)
+
+两种 Android ABI 都需要宿主机版 SaltsBase 和 SaltsUtils。Linux GCC
+arm64 使用独立的 SaltsCNet GCC 包，Clang arm64 使用 `linux-arm64` 包。
+`.env.example` 选择同一组发布，切换平台需重新恢复匹配的依赖并执行
+`cmake --fresh --preset <preset>`。
+
+MSVC 19.52.37029 的 ARM64 代码生成会在结构体字段赋值后写入重叠的零值。
+反汇编中，向偏移 0x38 写入生命周期 size 后，偏移 0x20 处的 32 字节清零
+覆盖了该字段。Actor 的 Action binding 也有同样的写入次序。
+[CMeta 诊断](https://github.com/qigao/cmeta/actions/runs/44701573552)
+
+受影响的 MSVC ARM64 Release preset 使用 `/Od /DNDEBUG`。
+`/O1` 和 `/Qvec-` 的验证仍有失败，`/Od` 通过 CMeta 的 120 项 CTest。
+恢复优化的验收条件是修正的工具链通过相同的原生和下游测试。性能影响未测量。
+[CMeta ARM64 验证](https://github.com/qigao/cmeta/actions/runs/44703550580)
+
+macOS ARM64 首轮构建完成后，6 项 ORM、Server 和 Control 的 CTest 在加载
+`libturbo_orm.dylib` 时找不到 `@rpath/libdata_bind.dylib`。补齐 SaltsUtils 后，
+`test_flowie_orm_runtime` 仍无法加载 PostgreSQL 驱动。发布包的 Mach-O 加载命令
+显示 PostgreSQL 和 MySQL 模块还依赖 SaltsCNet 的 `libcnet.dylib` 和
+`libsalts_crypto.dylib`。Flowie 将这两个 SDK 的库目录加入 macOS 构建 RPATH。
+归档保留独立 SDK 的安装布局。
+[Flowie 首轮 macOS CTest](https://github.com/qigao/flowie/actions/runs/44707944027/job/136192209383)
+[Flowie ORM 驱动 CTest](https://github.com/qigao/flowie/actions/runs/44708848545/job/136195221247)
+
 ## 2026-11-21：Paho 外部互操作和 Windows CTest 依赖
 
 已使用 [Paho `fdab9d2b`](https://github.com/eclipse-paho/paho.mqtt.testing/tree/fdab9d2b1ce125385135e5d9f282a0ad315268cc/interoperability)
