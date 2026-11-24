@@ -1,6 +1,7 @@
 #include "loopback_broker.h"
 #include "routing_broker.h"
 #include "tool_peer.h"
+#include <core/error.h>
 #include <fstream>
 #include <functional>
 #include <memory>
@@ -129,7 +130,7 @@ namespace {
         Runtime() {
           INITCOMMONCONTROLSEX controls{sizeof(controls),
                                         ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES |
-                                            ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES};
+                                            ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES};
           if (!InitCommonControlsEx(&controls))
             throw std::runtime_error("InitCommonControlsEx failed: " +
                                      std::to_string(GetLastError()));
@@ -194,6 +195,8 @@ namespace {
     int field_id = IDC_BROKER_HOST;
     int error_id = IDC_CONNECTION_ERROR;
     bool seen = false;
+    int followup = 0;
+    bool confirmed = false;
     std::exception_ptr error;
     UINT_PTR timer = 0;
     static thread_local DialogAction *pending;
@@ -202,7 +205,14 @@ namespace {
       if (!pending || pending->timer != id) return;
       auto &action = *pending;
       const auto dialog = GetLastActivePopup(action.owner);
-      if (!GetDlgItem(dialog, action.field_id) || action.seen) return;
+      if (action.seen) {
+        if (action.followup && !action.confirmed && GetDlgItem(dialog, action.followup)) {
+          action.confirmed = true;
+          SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(action.followup, BN_CLICKED), 0);
+        }
+        return;
+      }
+      if (!GetDlgItem(dialog, action.field_id)) return;
       action.seen = true;
       try {
         if (action.prepare) action.prepare(dialog);
@@ -247,11 +257,12 @@ namespace {
 
   class ImportFiles {
   public:
-    ImportFiles() {
+    explicit ImportFiles(std::wstring_view suffix = {}) {
       static unsigned sequence = 0;
       dir = std::filesystem::temp_directory_path() /
             (L"flowie-import-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
-             std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(++sequence));
+             std::to_wstring(GetTickCount64()) + L"-" + std::to_wstring(++sequence) +
+             std::wstring(suffix));
       if (!std::filesystem::create_directory(dir))
         throw std::runtime_error("Could not create test files directory");
     }
@@ -357,6 +368,39 @@ namespace {
       int size = GetWindowTextW(control, value.data(), static_cast<int>(value.size()));
       value.resize(size);
       return value;
+    }
+    std::wstring status(int part) {
+      const auto bar = find_control(window, WorkbenchWindow::remote_status);
+      const auto length = LOWORD(SendMessageW(bar, SB_GETTEXTLENGTHW, part, 0));
+      std::wstring value(length + 1, L'\0');
+      SendMessageW(bar, SB_GETTEXTW, part, reinterpret_cast<LPARAM>(value.data()));
+      value.resize(length);
+      return value;
+    }
+    CToolBarCtrl toolbar() {
+      const auto handle = find_control(window, WorkbenchWindow::command_toolbar);
+      if (!handle) throw std::runtime_error("Could not find the Workbench toolbar");
+      return CToolBarCtrl(handle);
+    }
+    std::wstring command_text(int id) {
+      wchar_t caption[64]{};
+      TBBUTTONINFOW info{sizeof(info), TBIF_TEXT};
+      info.pszText = caption;
+      info.cchText = static_cast<int>(std::size(caption));
+      if (toolbar().GetButtonInfo(id, &info) < 0)
+        throw std::runtime_error("Could not read a Workbench toolbar command");
+      return caption;
+    }
+    void click_toolbar(int id) {
+      auto bar = toolbar();
+      RECT button{};
+      if (!bar.IsButtonEnabled(id) || !bar.GetRect(id, &button))
+        throw std::runtime_error("The toolbar command is unavailable");
+      const auto point = MAKELPARAM((button.left + button.right) / 2,
+                                     (button.top + button.bottom) / 2);
+      SendMessageW(bar, WM_MOUSEMOVE, 0, point);
+      SendMessageW(bar, WM_LBUTTONDOWN, MK_LBUTTON, point);
+      SendMessageW(bar, WM_LBUTTONUP, 0, point);
     }
     static bool ready(HWND pane) {
       return IsWindowEnabled(find_control(pane, MainWindow::ping_button)) != FALSE;
@@ -473,11 +517,72 @@ suite("Workbench native window") {
 }
 
 suite("Workbench protocol tools") {
+  it("sends JSON and reuses session cookies only on eligible HTTP requests") {
+    ToolPeer peer(ToolPeer::Mode::http, "session echo",
+                  "Set-Cookie: session=opaque-test-value; Path=/api; HttpOnly\r\n"
+                  "Set-Cookie: tls_only=private; Path=/; Secure\r\n", 6);
+    ToolPeer other(ToolPeer::Mode::http, "other echo");
+    WorkspaceFixture view(false);
+    view.action(WorkbenchWindow::add_http);
+    const HWND pane = view.active();
+    const auto send_to = [&](ToolPeer &server, std::wstring_view path) {
+      const auto count = server.request_count.load() + 1;
+      const auto previous = SendMessageW(find_control(pane, ProtocolWindow::rows), LB_GETCOUNT, 0, 0);
+      const auto url = L"http://127.0.0.1:" + std::to_wstring(server.port) + std::wstring(path);
+      view.set(pane, ProtocolWindow::target, url.c_str());
+      view.click_toolbar(WorkbenchWindow::primary_request);
+      check_true(pump_until([&] {
+        return server.request_count.load() == count &&
+               view.toolbar().IsButtonEnabled(WorkbenchWindow::primary_request) &&
+               SendMessageW(find_control(pane, ProtocolWindow::rows), LB_GETCOUNT, 0, 0) >
+                   previous + 1;
+      }));
+      check_true(view.text(pane, ProtocolWindow::detail).find(L"HTTP 200") != std::wstring::npos);
+      return server.request();
+    };
+    SendMessageW(find_control(pane, ProtocolWindow::method), CB_SETCURSEL, 2, 0);
+    SendMessageW(find_control(pane, ProtocolWindow::json_body), BM_SETCHECK, BST_CHECKED, 0);
+    SendMessageW(find_control(pane, ProtocolWindow::use_cookies), BM_SETCHECK, BST_CHECKED, 0);
+    const auto login = L"http://127.0.0.1:" + std::to_wstring(peer.port) + L"/api/login";
+    view.set(pane, ProtocolWindow::target, login.c_str());
+    view.set(pane, ProtocolWindow::body, L"{");
+    view.click_toolbar(WorkbenchWindow::primary_request);
+    const auto invalid = flowie::app::utf8_to_wide(error_code_string(SALTS_EINVAL));
+    check_true(pump_until([&] {
+      return view.toolbar().IsButtonEnabled(WorkbenchWindow::primary_request) &&
+             view.text(pane, ProtocolWindow::detail).find(invalid) != std::wstring::npos;
+    }));
+    check_false(peer.received.load());
+    view.set(pane, ProtocolWindow::body, L"{\"ready\":true}");
+    const auto initial = send_to(peer, L"/api/login");
+    check_true(initial.find("Content-Type: application/json\r\n") != initial.npos);
+    check_true(initial.find("{\"ready\":true}") != initial.npos);
+    check_true(initial.find("\r\nCookie:") == initial.npos);
+    const auto response = view.text(pane, ProtocolWindow::detail);
+    check_true(response.find(L"Set-Cookie: [redacted]") != response.npos);
+    check_true(response.find(L"opaque-test-value") == response.npos);
+    const auto followed = send_to(peer, L"/api/echo");
+    check_true(followed.find("Cookie: session=opaque-test-value\r\n") != followed.npos);
+    check_true(followed.find("tls_only") == followed.npos);
+    check_true(send_to(peer, L"/apix").find("\r\nCookie:") == std::string::npos);
+    check_true(send_to(other, L"/api/echo").find("\r\nCookie:") == std::string::npos);
+    view.set(pane, ProtocolWindow::headers, L"Cookie: manual=one");
+    const auto overridden = send_to(peer, L"/api/echo");
+    check_true(overridden.find("Cookie: manual=one\r\n") != overridden.npos);
+    check_true(overridden.find("opaque-test-value") == overridden.npos);
+    view.set(pane, ProtocolWindow::headers, L"");
+    SendMessageW(find_control(pane, ProtocolWindow::clear_cookies), BM_CLICK, 0, 0);
+    check_true(send_to(peer, L"/api/echo").find("\r\nCookie:") == std::string::npos);
+    SendMessageW(find_control(pane, ProtocolWindow::use_cookies), BM_SETCHECK, BST_UNCHECKED, 0);
+    check_true(send_to(peer, L"/api/echo").find("\r\nCookie:") == std::string::npos);
+  }
+
   it("sends an HTTP request and shows the response headers and body in the added tab") {
-    ToolPeer peer(ToolPeer::Mode::http, "hello from HTTP");
+    const std::string body = "{\n  \"message\": \"hello from HTTP\",\n  \"ready\": true\n}";
+    ToolPeer peer(ToolPeer::Mode::http, body, "Content-Type: application/json\r\n");
     WorkspaceFixture view;
     const HWND mqtt = view.active();
-    check_true(IsWindowEnabled(find_control(view.window, WorkbenchWindow::choose_new_request)));
+    check_true(view.toolbar().IsButtonEnabled(WorkbenchWindow::choose_new_request));
     const HMENU file = GetSubMenu(GetMenu(view.window), 0);
     const HMENU requests = GetSubMenu(file, 0);
     check_equal(GetMenuItemCount(requests), 5);
@@ -486,15 +591,39 @@ suite("Workbench protocol tools") {
     view.action(http_item);
     const HWND pane = view.active();
     check_not_equal(pane, mqtt);
-    const HWND primary = find_control(view.window, WorkbenchWindow::primary_request);
-    check_true(view.text(view.window, WorkbenchWindow::primary_request) == L"Send Request");
-    check_false(IsWindowEnabled(find_control(view.window, WorkbenchWindow::disconnect_active)));
-    view.set(pane, ProtocolWindow::target,
-             (L"http://127.0.0.1:" + std::to_wstring(peer.port) + L"/hello?q=one").c_str());
+    check_true(view.command_text(WorkbenchWindow::primary_request) == L"Send Request");
+    check_false(view.toolbar().IsButtonEnabled(WorkbenchWindow::disconnect_active));
+    const auto open_section = [&](ProtocolWindow::Id id, int index) {
+      const HWND tabs = find_control(pane, id);
+      TabCtrl_SetCurSel(tabs, index);
+      const NMHDR notification{tabs, static_cast<UINT_PTR>(id), TCN_SELCHANGE};
+      SendMessageW(GetParent(tabs), WM_NOTIFY, id, reinterpret_cast<LPARAM>(&notification));
+    };
+    const auto visible = [&](ProtocolWindow::Id id) {
+      return visible_in_request(find_control(pane, id), pane);
+    };
+    const auto url = L"http://127.0.0.1:" + std::to_wstring(peer.port) + L"/hello";
+    view.set(pane, ProtocolWindow::target, (url + L"?q=one").c_str());
+    check_true(visible(ProtocolWindow::query_text));
+    check_false(visible(ProtocolWindow::headers));
+    check_true(view.text(pane, ProtocolWindow::query_text) == L"q=one");
+    view.set(pane, ProtocolWindow::query_text, L"q=two&mode=brief");
+    check_true(view.text(pane, ProtocolWindow::target) == url + L"?q=two&mode=brief");
+    open_section(ProtocolWindow::request_tabs, 1);
+    check_true(visible(ProtocolWindow::headers));
+    check_false(visible(ProtocolWindow::query_text));
     view.set(pane, ProtocolWindow::headers, L"X-Workbench: test");
-    SendMessageW(primary, BM_CLICK, 0, 0);
+    open_section(ProtocolWindow::request_tabs, 2);
+    check_true(visible(ProtocolWindow::body) && visible(ProtocolWindow::json_body));
+    open_section(ProtocolWindow::request_tabs, 3);
+    check_true(visible(ProtocolWindow::use_cookies) && visible(ProtocolWindow::clear_cookies));
+    check_false(visible(ProtocolWindow::body));
+    open_section(ProtocolWindow::request_tabs, 1);
+    view.click_toolbar(WorkbenchWindow::primary_request);
     const bool completed = pump_until([&] {
-      return view.text(pane, ProtocolWindow::detail).find(L"hello from HTTP") != std::wstring::npos;
+      return view.status(1) == L"Connection: HTTP 200" &&
+             view.text(pane, ProtocolWindow::response_body) ==
+                 L"{\r\n  \"message\": \"hello from HTTP\",\r\n  \"ready\": true\r\n}";
     });
     check(completed, "HTTP status: %ls; details: %ls; peer received: %d",
           view.text(pane, ProtocolWindow::report).c_str(),
@@ -502,8 +631,37 @@ suite("Workbench protocol tools") {
     check_true(view.text(pane, ProtocolWindow::detail).find(L"HTTP 200") != std::wstring::npos);
     check_true(view.text(pane, ProtocolWindow::detail).find(L"X-Fixture: loopback") !=
                std::wstring::npos);
-    check_true(peer.request().find("GET /hello?q=one HTTP/1.1") != std::string::npos);
+    check_true(peer.request().find("GET /hello?q=two&mode=brief HTTP/1.1") != std::string::npos);
     check_true(peer.request().find("X-Workbench: test") != std::string::npos);
+    check_true(visible(ProtocolWindow::response_body));
+    check_true(view.text(pane, ProtocolWindow::response_summary).find(L"HTTP 200") == 0);
+    check_true(view.text(pane, ProtocolWindow::response_summary)
+                   .find(std::to_wstring(body.size()) + L" B") != std::wstring::npos);
+    open_section(ProtocolWindow::response_tabs, 1);
+    check_true(visible(ProtocolWindow::response_headers));
+    check_false(visible(ProtocolWindow::response_body));
+    check_true(view.text(pane, ProtocolWindow::response_headers).find(L"X-Fixture: loopback") !=
+               std::wstring::npos);
+    open_section(ProtocolWindow::response_tabs, 2);
+    check_true(visible(ProtocolWindow::rows) && visible(ProtocolWindow::detail));
+    open_section(ProtocolWindow::response_tabs, 0);
+    view.window.MoveWindow(0, 0, 900, 480, TRUE);
+    RECT toolbar_client{}, last_command{};
+    check_true(GetClientRect(view.toolbar(), &toolbar_client));
+    check_true(view.toolbar().GetRect(WorkbenchWindow::request_actions, &last_command));
+    check_true(last_command.right <= toolbar_client.right);
+    for (const auto id : {ProtocolWindow::method, ProtocolWindow::target, ProtocolWindow::run}) {
+      const auto control = find_control(pane, id);
+      RECT bounds{}, field{}, intersection{};
+      check_true(GetClientRect(GetParent(control), &bounds));
+      check_true(GetWindowRect(control, &field));
+      MapWindowPoints(nullptr, GetParent(control), reinterpret_cast<POINT *>(&field), 2);
+      check_true(IntersectRect(&intersection, &bounds, &field) != FALSE);
+      check(EqualRect(&field, &intersection) != FALSE,
+            "Control %d rect %ld,%ld,%ld,%ld exceeds request viewport %ld x %ld",
+            static_cast<int>(id), field.left, field.top, field.right, field.bottom,
+            bounds.right, bounds.bottom);
+    }
     view.window.MoveWindow(0, 0, 1440, 1000, TRUE);
     view.window.ShowWindow(SW_SHOWNOACTIVATE);
     view.window.UpdateWindow();
@@ -511,7 +669,7 @@ suite("Workbench protocol tools") {
     SendMessageW(view.close_button(1), BM_CLICK, 0, 0);
     check_true(pump_until([&] { return view.count() == 1; }));
     check_true(view.active() == mqtt);
-    check_true(view.text(view.window, WorkbenchWindow::primary_request) == L"Connect");
+    check_true(view.command_text(WorkbenchWindow::primary_request) == L"Connect");
   }
 
   it("correlates a JSON-RPC result and closes an unrelated pending HTTP request safely") {
@@ -540,11 +698,15 @@ suite("Workbench protocol tools") {
     view.set(pending, ProtocolWindow::target,
              (L"http://127.0.0.1:" + std::to_wstring(silent.port) + L"/waiting").c_str());
     view.click(pending, ProtocolWindow::run);
-    const HWND stop = find_control(view.window, WorkbenchWindow::disconnect_active);
-    check_true(pump_until([&] { return silent.received.load() && IsWindowEnabled(stop); }));
-    check_true(view.text(view.window, WorkbenchWindow::disconnect_active) == L"Cancel Request");
-    SendMessageW(stop, BM_CLICK, 0, 0);
-    check_true(pump_until([&] { return silent.disconnected.load() && !IsWindowEnabled(stop); }));
+    check_true(pump_until([&] {
+      return silent.received.load() && view.toolbar().IsButtonEnabled(WorkbenchWindow::disconnect_active);
+    }));
+    check_true(view.command_text(WorkbenchWindow::disconnect_active) == L"Cancel Request");
+    view.click_toolbar(WorkbenchWindow::disconnect_active);
+    check_true(pump_until([&] {
+      return silent.disconnected.load() &&
+             !view.toolbar().IsButtonEnabled(WorkbenchWindow::disconnect_active);
+    }));
     check_equal(view.count(), 2);
     SendMessageW(view.close_button(1), BM_CLICK, 0, 0);
     check_true(pump_until([&] { return view.count() == 1 && silent.disconnected.load(); }));
@@ -580,11 +742,11 @@ suite("Workbench protocol tools") {
     const HWND tcp = view.active();
     view.set(tcp, ProtocolWindow::target,
              (L"tcp://127.0.0.1:" + std::to_wstring(peer.port)).c_str());
-    check_true(view.text(view.window, WorkbenchWindow::primary_request) == L"Connect");
+    check_true(view.command_text(WorkbenchWindow::primary_request) == L"Connect");
     view.action(WorkbenchWindow::connect_active);
     check_true(pump_until([&] {
       return IsWindowEnabled(find_control(tcp, ProtocolWindow::send)) &&
-             view.text(view.window, WorkbenchWindow::primary_request) == L"Send Bytes";
+             view.command_text(WorkbenchWindow::primary_request) == L"Send Bytes";
     }));
     view.set(tcp, ProtocolWindow::body, L"00 FF 41");
     SendMessageW(find_control(tcp, ProtocolWindow::hex), BM_SETCHECK, BST_CHECKED, 0);
@@ -597,13 +759,13 @@ suite("Workbench protocol tools") {
     view.action(WorkbenchWindow::add_serial);
     const HWND serial = view.active();
     view.set(serial, ProtocolWindow::target, L"COM65535");
-    check_true(view.text(view.window, WorkbenchWindow::primary_request) == L"Open Port");
+    check_true(view.command_text(WorkbenchWindow::primary_request) == L"Open Port");
     const HMENU session = GetSubMenu(GetMenu(view.window), 1);
     SendMessageW(view.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(session), 0);
     check_equal(GetMenuState(session, WorkbenchWindow::refresh_ports_active, MF_BYCOMMAND) &
                     MF_GRAYED,
                 UINT{0});
-    SendMessageW(find_control(view.window, WorkbenchWindow::primary_request), BM_CLICK, 0, 0);
+    view.click_toolbar(WorkbenchWindow::primary_request);
     check_true(pump_until([&] {
       return SendMessageW(find_control(serial, ProtocolWindow::rows), LB_GETCOUNT, 0, 0) > 0;
     }));
@@ -776,6 +938,287 @@ suite("Workbench connection menu and history") {
 }
 
 suite("Workbench saved Collections") {
+  it("round-trips request notes and HTTP options through Save Request and the sidebar") {
+    ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    const std::wstring notes = L"Check echo JSON.\r\nSecond line: \u6d4b\u8bd5";
+    using flowie::app::CollectionStore;
+    {
+      WorkspaceFixture view(false, {}, library);
+      view.action(WorkbenchWindow::add_http);
+      const auto pane = view.active();
+      view.set(pane, ProtocolWindow::headers, L"Accept: application/json\r\nAuthorization: Bearer local-only");
+      SendMessageW(find_control(pane, ProtocolWindow::json_body), BM_SETCHECK, BST_CHECKED, 0);
+      SendMessageW(find_control(pane, ProtocolWindow::use_cookies), BM_SETCHECK, BST_CHECKED, 0);
+      DialogAction save{view.window, IDOK, [&](HWND dialog) {
+                          SetDlgItemTextW(dialog, IDC_SAVE_REQUEST_NAME, L"HTTP options");
+                          SetDlgItemTextW(dialog, IDC_SAVE_REQUEST_NOTES, notes.c_str());
+                        }};
+      save.field_id = IDC_SAVE_REQUEST_NAME;
+      save.error_id = IDC_SAVE_REQUEST_ERROR;
+      save.run(WorkbenchWindow::save_request);
+      check_true(save.seen);
+      const auto entries = CollectionStore(library).load(true);
+      check_equal(entries.size(), size_t{1});
+      check_true(flowie::app::utf8_to_wide(entries.front().notes) == notes);
+      check_true(entries.front().tool && entries.front().tool->json_body &&
+                 entries.front().tool->use_cookies);
+      check_equal(entries.front().tool->headers, std::string("Accept: application/json"));
+    }
+    {
+      WorkspaceFixture view(false, {}, library);
+      const auto tree = find_control(view.window, WorkbenchWindow::collections_tree);
+      const auto node = TreeView_GetChild(tree, TreeView_GetChild(tree, TreeView_GetRoot(tree)));
+      wchar_t tooltip[128]{};
+      NMTVGETINFOTIPW tip{{tree, WorkbenchWindow::collections_tree, TVN_GETINFOTIPW}, tooltip,
+                         static_cast<int>(std::size(tooltip)), node, -1};
+      SendMessageW(view.window, WM_NOTIFY, WorkbenchWindow::collections_tree,
+                   reinterpret_cast<LPARAM>(&tip));
+      check_true(std::wstring_view(tooltip) == notes);
+      view.open_request(tree, node);
+      const auto pane = view.active();
+      check_equal(SendMessageW(find_control(pane, ProtocolWindow::json_body), BM_GETCHECK, 0, 0),
+                  LRESULT(BST_CHECKED));
+      check_equal(SendMessageW(find_control(pane, ProtocolWindow::use_cookies), BM_GETCHECK, 0, 0),
+                  LRESULT(BST_CHECKED));
+      check_true(view.text(pane, ProtocolWindow::headers) == L"Accept: application/json");
+      view.set(pane, ProtocolWindow::headers,
+               L"Accept: text/plain\r\nX-Workbench: updated\r\nCookie: local-only");
+      DialogAction replace{view.window, IDOK, {}};
+      replace.field_id = IDC_SAVE_REQUEST_NAME;
+      replace.error_id = IDC_SAVE_REQUEST_ERROR;
+      replace.followup = IDYES;
+      replace.run(WorkbenchWindow::save_request);
+      check_true(replace.seen && replace.confirmed);
+      const auto updated = CollectionStore(library).load(true);
+      check_equal(updated.size(), size_t{1});
+      check_equal(updated.front().tool->headers,
+                  std::string("Accept: text/plain\nX-Workbench: updated"));
+    }
+  }
+
+  it("runs one selected collection in file order and stops after the first failure") {
+    ToolPeer session(ToolPeer::Mode::http, "ready", "Set-Cookie: run=ready; Path=/\r\n", 2,
+                     "302 Found");
+    ToolPeer failure(ToolPeer::Mode::http, "unavailable", {}, 1, "503 Service Unavailable");
+    ToolPeer skipped(ToolPeer::Mode::http, "unexpected");
+    ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    const flowie::app::CollectionStore store(library);
+    const auto append = [&](const char *group, const char *name, ToolPeer &peer, const char *path) {
+      flowie::app::SavedRequest entry;
+      entry.collection = group;
+      entry.name = name;
+      entry.tool = flowie::app::ToolDraft{
+          flowie::app::ToolKind::http,
+          "http://127.0.0.1:" + std::to_string(peer.port) + path, "GET"};
+      entry.tool->headers = "X-Workbench: collection";
+      entry.tool->use_cookies = true;
+      check_true(store.save(entry, false).has_value());
+    };
+    append("Sequence", "Zulu login", session, "/login");
+    append("Other group", "Unexpected", skipped, "/outside-group");
+    append("Sequence", "Alpha read", session, "/read");
+    append("Sequence", "Failure", failure, "/failure");
+    append("Sequence", "After failure", skipped, "/after-failure");
+
+    WorkspaceFixture view(false, {}, library);
+    const auto tree = find_control(view.window, WorkbenchWindow::collections_tree);
+    const auto root = TreeView_GetRoot(tree);
+    const auto group = TreeView_GetChild(tree, root);
+    const auto first = TreeView_GetChild(tree, group);
+    wchar_t name[64]{};
+    TVITEMW label{TVIF_TEXT, first};
+    label.pszText = name;
+    label.cchTextMax = static_cast<int>(std::size(name));
+    check_true(TreeView_GetItem(tree, &label));
+    check_true(std::wstring_view(name) == L"Zulu login");
+    TreeView_SelectItem(tree, group);
+    SendMessageW(find_control(view.window, WorkbenchWindow::run_collection), BM_CLICK, 0, 0);
+    check_true(pump_until([&] {
+      return view.status(1).find(L"Collection stopped at step 3") != std::wstring::npos;
+    }));
+    check_true(view.status(0) == L"Remote: http://127.0.0.1:" + std::to_wstring(failure.port));
+    check_equal(session.request_count.load(), size_t{2});
+    check_true(session.request().find("GET /read HTTP/1.1") != std::string::npos);
+    check_true(session.request().find("Cookie: run=ready") != std::string::npos);
+    check_true(session.request().find("X-Workbench: collection") != std::string::npos);
+    check_true(failure.received.load());
+    check_false(skipped.received.load());
+    check_true(view.text(view.active(), ProtocolWindow::detail).find(L"HTTP 503") !=
+               std::wstring::npos);
+
+    const auto other = TreeView_GetNextSibling(tree, group);
+    TreeView_SelectItem(tree, other);
+    view.action(WorkbenchWindow::run_collection);
+    check_true(pump_until([&] {
+      return view.status(1).find(L"Collection completed") != std::wstring::npos;
+    }));
+    check_true(skipped.request().find("GET /outside-group HTTP/1.1") != std::string::npos);
+  }
+
+  it("cancels the current collection request without starting the next one") {
+    ToolPeer blocked(ToolPeer::Mode::silent_http);
+    ToolPeer next(ToolPeer::Mode::http, "unexpected");
+    ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    const flowie::app::CollectionStore store(library);
+    for (auto *peer : {&blocked, &next}) {
+      flowie::app::SavedRequest entry;
+      entry.collection = "Cancel";
+      entry.name = std::to_string(peer->port);
+      entry.tool = flowie::app::ToolDraft{
+          flowie::app::ToolKind::http, "http://127.0.0.1:" + entry.name + "/", "GET"};
+      check_true(store.save(entry, false).has_value());
+    }
+    WorkspaceFixture view(false, {}, library);
+    view.action(WorkbenchWindow::run_collection);
+    check_true(pump_until([&] { return blocked.received.load(); }));
+    check_true(view.status(0) == L"Remote: http://127.0.0.1:" + std::to_wstring(blocked.port));
+    check_true(view.status(1).find(L"Step 1 / 2") != std::wstring::npos);
+    view.action(WorkbenchWindow::disconnect_active);
+    check_true(pump_until([&] { return view.status(1) == L"Connection: Collection canceled"; }));
+    check_false(next.received.load());
+  }
+
+  it("rejects unsupported entries before contacting the collection endpoints") {
+    ToolPeer peer(ToolPeer::Mode::http, "unexpected");
+    ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    const flowie::app::CollectionStore store(library);
+    flowie::app::SavedRequest entry;
+    entry.collection = "Mixed";
+    entry.name = "HTTP first";
+    entry.tool = flowie::app::ToolDraft{
+        flowie::app::ToolKind::http, "http://127.0.0.1:" + std::to_string(peer.port) + "/", "GET"};
+    check_true(store.save(entry, false).has_value());
+    entry.name = "MQTT second";
+    entry.tool.reset();
+    check_true(store.save(entry, false).has_value());
+    WorkspaceFixture view(false, {}, library);
+    view.action(WorkbenchWindow::run_collection);
+    check_true(pump_until([&] {
+      return view.status(1).find(L"Check MQTT second") != std::wstring::npos;
+    }));
+    check_equal(view.count(), 0);
+    check_false(peer.received.load());
+  }
+
+  it("stops a collection when a JSON-RPC response contains an application error") {
+    ToolPeer rpc(ToolPeer::Mode::http,
+                 R"({"jsonrpc":"2.0","id":"flowie-workbench","error":{"code":-32000,"message":"denied"}})");
+    ToolPeer skipped(ToolPeer::Mode::http, "unexpected");
+    ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    const flowie::app::CollectionStore store(library);
+    flowie::app::SavedRequest entry;
+    entry.collection = "RPC";
+    entry.name = "RPC error";
+    entry.tool = flowie::app::ToolDraft{
+        flowie::app::ToolKind::rpc, "http://127.0.0.1:" + std::to_string(rpc.port) + "/rpc",
+        "workbench.fail"};
+    check_true(store.save(entry, false).has_value());
+    entry.name = "After RPC";
+    entry.tool = flowie::app::ToolDraft{
+        flowie::app::ToolKind::http, "http://127.0.0.1:" + std::to_string(skipped.port) + "/", "GET"};
+    check_true(store.save(entry, false).has_value());
+    WorkspaceFixture view(false, {}, library);
+    view.action(WorkbenchWindow::run_collection);
+    check_true(pump_until([&] {
+      return view.status(1).find(L"Collection stopped at step 1") != std::wstring::npos;
+    }));
+    check_true(rpc.request().find("POST /rpc HTTP/1.1") != std::string::npos);
+    check_true(view.text(view.active(), ProtocolWindow::detail).find(L"JSON-RPC remote error") !=
+               std::wstring::npos);
+    check_false(skipped.received.load());
+  }
+
+  it("reopens recent collection files across workspaces without mixing them with MQTT history") {
+    ImportFiles profile, first, second(L"-\u4e2d\u6587;#%");
+    const auto library = profile.write(L"collections.json", "[]");
+    const auto settings = profile.reserve(L"collections.ini");
+    const auto first_file = std::filesystem::canonical(first.write(L"lab & staging.json", "[]"));
+    const auto latest_file = std::filesystem::canonical(second.write(L"lab & staging.json", "[]"));
+    const auto invalid_file = first.write(L"invalid.json", "invalid collection");
+    const auto latest_directory = latest_file.parent_path();
+    using flowie::app::read_collections_directory;
+    using flowie::app::read_recent_collections;
+    {
+      WorkspaceFixture view(false, {}, library);
+      check_true(read_collections_directory(settings).empty());
+      const auto file_menu = GetSubMenu(GetMenu(view.window), 0);
+      const auto recent = GetSubMenu(file_menu, 2);
+      SendMessageW(view.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(recent), 2);
+      check_equal(GetMenuItemCount(recent), 1);
+      check_true((GetMenuState(recent, 0, MF_BYPOSITION) & MF_GRAYED) != 0);
+      view.window.load_collections(first_file);
+      check_true(read_collections_directory(settings) == first_file.parent_path());
+      view.window.load_collections(latest_file);
+      check_true(read_collections_directory(settings) == latest_directory);
+      check_throws_as(view.window.load_collections(invalid_file), std::runtime_error);
+      check_true(read_collections_directory(settings) == latest_directory);
+      const auto files = read_recent_collections(settings);
+      check_equal(files.size(), size_t(2));
+      check_true(files[0] == latest_file && files[1] == first_file);
+    }
+    {
+      WorkspaceFixture view(false, {}, library);
+      check_true(read_collections_directory(settings) == latest_directory);
+      DialogAction cancel{view.window, IDCANCEL, {}};
+      cancel.field_id = IDCANCEL;
+      cancel.error_id = 0;
+      cancel.run(WorkbenchWindow::browse_collections);
+      check_true(cancel.seen);
+      check_true(read_collections_directory(settings) == latest_directory);
+      const auto file_menu = GetSubMenu(GetMenu(view.window), 0);
+      const auto recent = GetSubMenu(file_menu, 2);
+      SendMessageW(view.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(recent), 2);
+      check_equal(GetMenuItemCount(recent), 2);
+      check_equal(GetMenuItemID(recent, 0), static_cast<UINT>(WorkbenchWindow::first_recent_collection));
+      wchar_t label[1024]{};
+      GetMenuStringW(recent, 0, label, static_cast<int>(std::size(label)), MF_BYPOSITION);
+      const std::wstring_view displayed(label);
+      check_true(displayed.find(latest_directory.wstring()) == 0);
+      check_true(displayed.find(L"lab && staging.json") != displayed.npos);
+      view.action(static_cast<int>(GetMenuItemID(recent, 1)));
+      check_equal(view.count(), 0);
+      const auto tree = find_control(view.window, WorkbenchWindow::collections_tree);
+      check_true(TreeView_GetNextSibling(tree, TreeView_GetRoot(tree)) != nullptr);
+      const auto files = read_recent_collections(settings);
+      check_equal(files.size(), size_t(2));
+      check_true(files[0] == first_file && files[1] == latest_file);
+      check_true(read_collections_directory(settings) == first_file.parent_path());
+      const auto mqtt = GetSubMenu(GetSubMenu(GetMenu(view.window), 1), 4);
+      SendMessageW(view.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(mqtt), 4);
+      check_equal(GetMenuItemCount(mqtt), 1);
+      check_true((GetMenuState(mqtt, 0, MF_BYPOSITION) & MF_GRAYED) != 0);
+    }
+  }
+
+  it("keeps a bounded recent collection list and reads the existing last-directory setting") {
+    ImportFiles files;
+    const auto settings = files.write(L"collections.ini",
+                                      "[collections]\nlast_directory_base64=QzpcTGVnYWN5\n");
+    using namespace flowie::app;
+    check_true(read_collections_directory(settings) == std::filesystem::path(L"C:\\Legacy"));
+    check_true(read_recent_collections(settings).empty());
+    const auto library = files.reserve(L"collections.json");
+    WorkspaceFixture view(false, {}, library);
+    for (size_t i = 0; i <= kRecentCollectionLimit; ++i)
+      view.window.load_collections(
+          files.write((L"collection-" + std::to_wstring(i) + L".json").c_str(), "[]"));
+    auto recent = read_recent_collections(settings);
+    check_equal(recent.size(), kRecentCollectionLimit);
+    check_true(recent.front().filename() ==
+               std::filesystem::path(L"collection-" + std::to_wstring(kRecentCollectionLimit) + L".json"));
+    check_true(recent.back().filename() == L"collection-1.json");
+    view.window.load_collections(recent.back());
+    recent = read_recent_collections(settings);
+    check_equal(recent.size(), kRecentCollectionLimit);
+    check_true(recent.front().filename() == L"collection-1.json");
+    check_true(recent.back().filename() == L"collection-2.json");
+  }
+
   it("saves a named request from the UI and restores an offline tab without broker credentials") {
     RoutingBroker broker;
     ImportFiles files;
@@ -805,8 +1248,7 @@ suite("Workbench saved Collections") {
                         }};
       save.field_id = IDC_SAVE_REQUEST_NAME;
       save.error_id = IDC_SAVE_REQUEST_ERROR;
-      save.run(WorkbenchWindow::save_request,
-               find_control(view.window, WorkbenchWindow::save_request));
+      save.run([&] { view.click_toolbar(WorkbenchWindow::save_request); });
       check_true(save.seen);
       const auto requests = flowie::app::CollectionStore(library).load();
       check_equal(requests.size(), size_t{1});
@@ -864,6 +1306,8 @@ suite("Workbench saved Collections") {
 
   it("loads distinct files and manages them without changing open requests or deleting data") {
     ImportFiles files;
+    const auto library = files.reserve(L"collections.json");
+    files.reserve(L"collections.ini");
     const auto first = files.reserve(L"lab.json");
     const auto second = files.reserve(L"staging.json");
     flowie::app::SavedRequest request;
@@ -874,11 +1318,19 @@ suite("Workbench saved Collections") {
     request.tool->endpoint = "tcp://127.0.0.1:9002";
     check_true(flowie::app::CollectionStore(second).save(request, false).has_value());
 
-    WorkspaceFixture view(false);
-    const HWND toolbar = find_control(view.window, WorkbenchWindow::browse_collections);
+    WorkspaceFixture view(false, {}, library);
+    const auto toolbar = view.toolbar();
     check_true(GetParent(toolbar) == view.window);
+    wchar_t classname[64]{};
+    check_true(GetClassNameW(toolbar, classname, static_cast<int>(std::size(classname))) > 0);
+    check_true(std::wstring_view(classname) == TOOLBARCLASSNAMEW);
+    TBBUTTON new_request{};
+    check_true(toolbar.GetButton(toolbar.CommandToIndex(WorkbenchWindow::choose_new_request),
+                                &new_request));
+    check_true((new_request.fsStyle & BTNS_WHOLEDROPDOWN) != 0);
     const HWND tree = find_control(view.window, WorkbenchWindow::collections_tree);
-    check_true(GetParent(find_control(view.window, WorkbenchWindow::save_request)) == view.window);
+    check_true(toolbar.CommandToIndex(WorkbenchWindow::browse_collections) >= 0);
+    check_true(toolbar.CommandToIndex(WorkbenchWindow::save_request) >= 0);
     check_true(find_control(view.window, WorkbenchWindow::open_saved_request) == nullptr);
     const HMENU file = GetSubMenu(GetMenu(view.window), 0);
     check_true(GetMenuState(file, WorkbenchWindow::browse_collections, MF_BYCOMMAND) != UINT(-1));
@@ -1093,8 +1545,12 @@ suite("Workbench multiple publishers and subscribers") {
     RoutingBroker broker;
     WorkspaceFixture view;
     HWND first = view.active();
+    check_true(view.status(1) == L"Connection: Disconnected");
     view.connect(first, broker.port);
-    check_true(pump_until([&] { return view.ready(first); }));
+    check_true(pump_until([&] {
+      return view.ready(first) && view.status(1) == L"Connection: Connected";
+    }));
+    check_true(view.status(0) == L"Remote: 127.0.0.1:" + std::to_wstring(broker.port));
     view.click(first, MainWindow::subscribe_button);
     check_true(pump_until([&] { return view.ready(first); }));
     view.action(WorkbenchWindow::add_publisher);
@@ -1252,13 +1708,14 @@ suite("Workbench multiple publishers and subscribers") {
     render_workspace(view.window, "workbench-studio.bmp");
     select_request_page(pane, L"Topics");
     render_workspace(view.window, "workbench-subscriptions.bmp");
-    HWND command = find_control(view.window, WorkbenchWindow::primary_request);
-    HWND previous_focus = SetFocus(command);
+    auto toolbar = view.toolbar();
+    HWND previous_focus = SetFocus(toolbar);
+    toolbar.SetHotItem(toolbar.CommandToIndex(WorkbenchWindow::primary_request));
     SendMessageW(view.window, WM_CHANGEUISTATE,
                  MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
-    SendMessageW(command, BM_SETSTATE, TRUE, 0);
+    toolbar.PressButton(WorkbenchWindow::primary_request, TRUE);
     render_workspace(view.window, "workbench-command-focus.bmp");
-    SendMessageW(command, BM_SETSTATE, FALSE, 0);
+    toolbar.PressButton(WorkbenchWindow::primary_request, FALSE);
     if (IsWindow(previous_focus)) SetFocus(previous_focus);
     check_true(view.counters(pane, 1, 1));
     check_true(view.text(pane, MainWindow::details).find(L"sensor-17") != std::wstring::npos);

@@ -18,6 +18,13 @@ from **New Request** in the toolbar or **File → New Request**.
 HTTP and JSON-RPC have a 10-second request deadline, up to 8 KiB of headers and up
 to 64 KiB per encoded body. TCP and Serial accept up to 64 KiB in the composer.
 
+In HTTP and JSON-RPC, the method, URL and send action share the request bar.
+**Query** edits the URL's query string, and **Headers** edits request headers.
+Use **Body** to edit the HTTP payload or **Params** for JSON-RPC. The HTTP
+**Session** section holds cookie controls. The response shows the HTTP status
+and body size. Switch between **Body**, **Headers** and **Activity** to inspect
+the selected response and its history. Collection runs start in **Activity**.
+
 ## Workspace commands
 
 - **New Request** and **Ctrl+N** open the protocol picker. MQTT includes Client,
@@ -148,6 +155,16 @@ collection name. Select a request and press Enter or double-click to open it in
 a new tab. **History** lists recent successful MQTT connections. Open an entry to
 review its settings in the connection dialog.
 
+When available, the folder of the last successfully opened collection is the
+starting point for the file picker, including after a restart. Workbench stores it in
+`%LOCALAPPDATA%\Flowie\MQTT Workbench\collections.ini`. Canceling the picker or
+opening an invalid file leaves the saved folder unchanged.
+
+**File → Recent Collections** reopens up to 12 distinct collection files from
+the same settings file, including after a restart. Each menu item shows the full
+path. Successfully reopening a file moves it to the top. **Session → Recent MQTT
+Connections** tracks successful broker connections.
+
 **Manage** in the sidebar opens a separate workbench tab, also available under
 **File → Manage Collections**. It shows the full paths and request counts of the
 loaded files. **Reload** reads the selected file from disk. **Unload** removes a
@@ -156,11 +173,16 @@ keep their drafts. **View → Sidebar** hides or restores the navigation.
 
 **Save Request** in the toolbar or **File** takes a snapshot of the active request
 tab. The dialog names the destination file. An opened request saves to its original
-file while that file is loaded. For a new request, select a file or any of its entries
+file while that file is loaded. Edit the request, then use **Save Request** or
+**Ctrl+S** and confirm replacement to update it. For a new request, select a file or any of its entries
 in the sidebar before saving. With no selection, the last file in the sidebar is
 used. With no loaded files, saving uses the default library. Type a new collection
 name or select an existing one, then give the request a name. Replacing an existing
 request asks for confirmation.
+
+Use the **Notes** field to document a request. The Collections sidebar shows
+these notes when you hover over the request. Collection files use an optional
+`notes` string on each request.
 
 A saved MQTT request keeps the role, broker endpoint, protocol, transport, TLS paths,
 and WebSocket path without query parameters. It also keeps the publish draft
@@ -170,8 +192,36 @@ already in the tab. Username, password and the generated client ID are excluded.
 Message payloads are saved as entered.
 
 HTTP, JSON-RPC, TCP and Serial entries keep their protocol, endpoint, body and
-applicable options. HTTP headers, URL query parameters and fragments are excluded
-from the file. Request bodies are saved as entered.
+applicable options. In HTTP and JSON-RPC, edit **Headers** with one `Name: value`
+per line. Collection files store these lines in the optional `tool.headers` string.
+Authorization, Proxy-Authorization, Cookie, X-API-Key, X-Auth-Token,
+X-Access-Token and X-CSRF-Token stay in the editable tab. URL query parameters and
+fragments are excluded from the file. Request bodies are saved as entered.
+
+HTTP entries also remember **JSON body** and **Use cookies** with optional
+`tool.json_body` and `tool.use_cookies` booleans. Both default to off. **JSON body**
+validates a nonempty body before sending and supplies `Content-Type:
+application/json` when the request has no explicit content type.
+
+**Use cookies** keeps a session in the current HTTP tab. It reads `Set-Cookie`
+from completed responses and attaches matching cookies to later requests in
+the same tab and origin (scheme, host and port). It honors path and expiry, uses
+Secure cookies over HTTPS, and accepts a Domain attribute only when it names
+the request host. An explicit `Cookie` header takes precedence. **Clear cookies**
+empties the session. Cookie values stay in memory, and the response details
+redact `Set-Cookie` values. The tab holds up to 32 cookies and sends up to 4 KiB
+of automatic Cookie headers per request. For a redirect, send the next request from the same
+tab to continue the session. See [HTTP State Management](https://www.rfc-editor.org/rfc/rfc6265)
+for cookie attributes and path matching.
+
+Select a file or a named group in the sidebar and choose **Run Collection** to
+send its saved HTTP and JSON-RPC requests one at a time in file order. Selecting
+a request runs its group. The results tab shows each response. A run checks all
+selected requests before sending, stops on HTTP 4xx/5xx, JSON-RPC errors or
+transport failures, and can be interrupted with **Cancel Run**. Enabled requests
+share an in-memory cookie session for that run. A 3xx response completes the step
+and the next saved request starts. The bottom status bar shows the active tab's
+remote endpoint and connection state or collection progress.
 
 Opening a request creates an idle tab. For MQTT, supply any credentials and choose
 **Connect**. On the **Topics** page, choose a **Saved topic** to fill the filter

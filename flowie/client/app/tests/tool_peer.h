@@ -10,8 +10,10 @@
 class ToolPeer {
 public:
   enum class Mode { echo, http, silent_http };
-  explicit ToolPeer(Mode mode, std::string response = {})
-      : mode_(mode), response_(std::move(response)) {
+  explicit ToolPeer(Mode mode, std::string response = {}, std::string response_headers = {},
+                    size_t exchanges = 1, std::string status = "200 OK")
+      : mode_(mode), response_(std::move(response)), response_headers_(std::move(response_headers)),
+        status_(std::move(status)), exchanges_(exchanges) {
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data)) throw std::runtime_error("WSAStartup failed");
     try {
@@ -41,6 +43,7 @@ public:
   }
   int port = 0;
   std::atomic<bool> received{false}, disconnected{false};
+  std::atomic<size_t> request_count{0};
   std::string request() {
     std::lock_guard guard(lock_);
     return request_;
@@ -63,11 +66,17 @@ private:
     }
   }
   void serve() noexcept {
-    while (!stop_ && !readable(listener_)) {
+    for (size_t i = 0; i < exchanges_; ++i) {
+      while (!stop_ && !readable(listener_)) {
+      }
+      if (stop_) return;
+      const auto peer = accept(listener_, nullptr, nullptr);
+      if (peer == INVALID_SOCKET) return;
+      exchange(peer);
+      closesocket(peer);
     }
-    if (stop_) return;
-    const auto peer = accept(listener_, nullptr, nullptr);
-    if (peer == INVALID_SOCKET) return;
+  }
+  void exchange(SOCKET peer) noexcept {
     try {
       char bytes[4096];
       std::string input;
@@ -104,19 +113,21 @@ private:
           request_ = input;
         }
         received = true;
+        ++request_count;
         if (mode_ == Mode::silent_http) continue;
-        const auto output = "HTTP/1.1 200 OK\r\nConnection: close\r\nX-Fixture: loopback\r\n"
-                            "Content-Length: " +
+        const auto output = "HTTP/1.1 " + status_ +
+                            "\r\nConnection: close\r\nX-Fixture: loopback\r\n" +
+                            response_headers_ + "Content-Length: " +
                             std::to_string(response_.size()) + "\r\n\r\n" + response_;
         write(peer, output.data(), static_cast<int>(output.size()));
         break;
       }
     } catch (...) {
     }
-    closesocket(peer);
   }
   Mode mode_;
-  std::string response_;
+  std::string response_, response_headers_, status_;
+  size_t exchanges_;
   SOCKET listener_ = INVALID_SOCKET;
   std::atomic<bool> stop_{false};
   std::thread thread_;

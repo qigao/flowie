@@ -1,0 +1,12 @@
+{
+  "name": "test_flowie_workbench",
+  "kind": "executable",
+  "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+  "sources": {"files": ["test_window.cpp", "test_workbench.cpp"]},
+  "private": {
+    "includeDirs": ["$root/tests/support", "$root/flowie/detail"],
+    "deps": ["flowie_workbench_ui", "flowie_workbench_resources", "flowie_protocol", "salts_tinytest"],
+    "libs": ["ws2_32"]
+  },
+  "test": {"labels": ["flowie", "mqtt", "client", "workbench", "lifetime"], "timeout": 90}
+}

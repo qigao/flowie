@@ -94,6 +94,33 @@
         "environment": ["FLOWIE_AUTH_SERVICE_TOKEN=test-only-token"]
       }
     },
+    "flowie_server_check_debug_logging": {
+      "kind": "header_only",
+      "runtimeDeps": ["flowie_server"],
+      "test": {
+        "tool": "cmake",
+        "args": [
+          "-DLOG_LEVEL=DEBUG",
+          "-DMAX_INFLIGHT=17",
+          "-DEXPECT=[[]DEBUG[]].*[[]Flowie.Server[]].*effective-config.*max_inflight_per_session=17",
+          "-P", "$moduledir/check_server_log.cmake", "--", "${artifact:flowie_server}"
+        ],
+        "labels": ["flowie", "flowie-release", "product-contract", "diagnostics"]
+      }
+    },
+    "flowie_server_check_logging_shutdown_snapshot": {
+      "kind": "header_only",
+      "runtimeDeps": ["flowie_server"],
+      "test": {
+        "tool": "cmake",
+        "args": [
+          "-DLOG_LEVEL=INFO",
+          "-DEXPECT=logging-shutdown written_before_summary=[0-9]+ dropped_total=0 pending_before_summary=0",
+          "-P", "$moduledir/check_server_log.cmake", "--", "${artifact:flowie_server}"
+        ],
+        "labels": ["flowie", "flowie-release", "product-contract", "diagnostics"]
+      }
+    },
     "test_flowie_server_turbodb_config": {
       "kind": "executable",
       "sources": {

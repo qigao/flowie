@@ -286,7 +286,9 @@ static cnet_client_config flowie_mqtt_client_network_config(
                                 .max_send_bytes = max_send_bytes,
                                 .receive_buffer_bytes = receive_buffer_bytes,
                                 .connect_timeout_ms = (uint32_t)client->timeout_ms,
-                                .read_timeout_ms = (uint32_t)client->timeout_ms,
+                                /* A pending read can serve both idle receive and the next command.
+                                 * MQTT applies its own read deadlines on the worker. */
+                                .read_timeout_ms = 0u,
                                 .write_timeout_ms = (uint32_t)client->timeout_ms};
   if (client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_TLS ||
       client->transport == FLOWIE_MQTT_CLIENT_TRANSPORT_WSS) {
@@ -1054,11 +1056,14 @@ static int flowie_mqtt_client_send(flowie_mqtt_client_t *client, size_t written)
                                            : SALTS_ECONNRESET);
 }
 
-static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
+static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client,
+                                                int at_packet_boundary) {
   uint64_t deadline_ms;
   int rc;
   if (!client) return SALTS_EINVAL;
   deadline_ms = flowie_mqtt_client_deadline(client);
+  /* An empty wait between commands yields to the worker without closing the connection. */
+  const int deadline_status = !client->busy && at_packet_boundary ? SALTS_EINTR : SALTS_ETIMEDOUT;
   rc = flowie_mqtt_client_should_interrupt(client);
   if (rc != SALTS_OK) return rc;
   if (flowie_mqtt_client_is_websocket(client)) {
@@ -1068,7 +1073,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
       uint32_t slice;
       rc = flowie_mqtt_client_should_interrupt(client);
       if (rc != SALTS_OK) return rc;
-      if (monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+      if (monotonic_ms() >= deadline_ms) return deadline_status;
       slice = flowie_mqtt_client_poll_slice(deadline_ms);
       rc = chttp_websocket_client_receive(&client->websocket, slice, &event);
       if (rc == SALTS_ETIMEDOUT) continue;
@@ -1102,7 +1107,7 @@ static int flowie_mqtt_client_transport_receive(flowie_mqtt_client_t *client) {
     size_t events = 0u;
     rc = flowie_mqtt_client_should_interrupt(client);
     if (rc != SALTS_OK) return rc;
-    if (monotonic_ms() >= deadline_ms) return SALTS_ETIMEDOUT;
+    if (monotonic_ms() >= deadline_ms) return deadline_status;
     rc = flowie_mqtt_client_poll_managed(client, flowie_mqtt_client_poll_slice(deadline_ms), &events);
     if (rc != SALTS_OK) return rc;
   }
@@ -1260,7 +1265,7 @@ static int flowie_mqtt_client_receive_packet(flowie_mqtt_client_t *client,
       if (client->recv_offset == client->recv_size) flowie_mqtt_client_recv_release(client);
       continue;
     }
-    rc = flowie_mqtt_client_transport_receive(client);
+    rc = flowie_mqtt_client_transport_receive(client, bytes.size == 0u);
     if (rc != SALTS_OK) return rc;
     client->recv_offset = 0u;
     if (!client->recv_data && client->recv_size == 0u) return SALTS_ECONNRESET;

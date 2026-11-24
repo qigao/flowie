@@ -240,7 +240,8 @@ typedef struct flowie_mqtt_client_config_s {
   /** Whole executing command budget, including transport connect, AUTH and all
    * response stages; queue wait and resource cleanup are excluded. Zero selects
    * the default. Callbacks cannot be preempted and must not block. Also bounds
-   * the existing idle receive wait when no command is executing. */
+   * each background receive wait. If no packet is in progress, an expired
+   * background wait leaves the connection open. */
   uint64_t timeout_ms;
   size_t max_packet_size;
   size_t max_inbound_qos2;

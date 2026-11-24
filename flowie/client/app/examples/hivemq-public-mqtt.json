@@ -1,0 +1,234 @@
+[
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 5 · TCP",
+    "notes": "Connect using MQTT 5 over TCP on port 1883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 1883,
+      "transport": "tcp",
+      "protocol": "5",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"tcp\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 5 · TLS",
+    "notes": "Connect using MQTT 5 over TLS on port 8883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8883,
+      "transport": "tls",
+      "protocol": "5",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"tls\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 5 · WS",
+    "notes": "Connect using MQTT 5 over WebSocket on port 8000 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8000,
+      "transport": "ws",
+      "protocol": "5",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"ws\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 5 · WSS",
+    "notes": "Connect using MQTT 5 over WebSocket over TLS on port 8884 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8884,
+      "transport": "wss",
+      "protocol": "5",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"wss\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 3.1.1 · TCP",
+    "notes": "Connect using MQTT 3.1.1 over TCP on port 1883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 1883,
+      "transport": "tcp",
+      "protocol": "3.1.1",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"tcp\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 3.1.1 · TLS",
+    "notes": "Connect using MQTT 3.1.1 over TLS on port 8883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8883,
+      "transport": "tls",
+      "protocol": "3.1.1",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"tls\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 3.1.1 · WS",
+    "notes": "Connect using MQTT 3.1.1 over WebSocket on port 8000 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8000,
+      "transport": "ws",
+      "protocol": "3.1.1",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"ws\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "HiveMQ Public Broker",
+    "name": "MQTT 3.1.1 · WSS",
+    "notes": "Connect using MQTT 3.1.1 over WebSocket over TLS on port 8884 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.hivemq.com",
+      "port": 8884,
+      "transport": "wss",
+      "protocol": "3.1.1",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/hivemq/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"hivemq\",\"transport\":\"wss\",\"mqtt\":\"3.1.1\"}"
+    }
+  }
+]

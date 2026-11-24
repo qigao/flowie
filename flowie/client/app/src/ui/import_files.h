@@ -25,5 +25,6 @@ namespace flowie::app {
   std::string load_payload_sample(const std::filesystem::path &file, size_t limit);
   std::wstring utf8_to_wide(std::string_view value);
   std::optional<std::filesystem::path> choose_import_file(HWND owner, bool connection);
-  std::optional<std::filesystem::path> choose_collection_file(HWND owner);
+  std::optional<std::filesystem::path> choose_collection_file(
+      HWND owner, const std::filesystem::path &directory);
 } // namespace flowie::app

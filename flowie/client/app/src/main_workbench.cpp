@@ -38,9 +38,9 @@ namespace flowie::app {
     return std::get<MainWindow>(client.window);
   }
 
-  ProtocolWindow &WorkbenchWindow::add_tool(ToolKind kind, std::wstring name) {
+  ProtocolWindow &WorkbenchWindow::add_tool(ToolKind kind, std::wstring name, bool runner) {
     if (name.empty()) name = std::wstring(tool_label(kind)) + L" " + std::to_wstring(next_id_);
-    auto &client = add_tab(std::make_unique<Client>(kind, std::move(name)));
+    auto &client = add_tab(std::make_unique<Client>(kind, std::move(name), runner));
     if (next_id_ != (std::numeric_limits<uint64_t>::max)()) ++next_id_;
     return std::get<ProtocolWindow>(client.window);
   }
@@ -139,7 +139,6 @@ namespace flowie::app {
       ::GetWindowTextW(client.close_button, previous, 96);
       if (close_label != previous) ::SetWindowTextW(client.close_button, close_label.c_str());
     }
-    ::EnableWindow(new_request_, can_add());
     update_request_toolbar();
     update_collection_actions();
     RECT status{};
@@ -150,22 +149,49 @@ namespace flowie::app {
                                             : std::to_wstring(request_count()) +
                                                   (compact ? L" / 8" : L" / 8 requests");
     if (!has_error_ || closing_) ::SetWindowTextW(summary_, summary.c_str());
+    update_status_bar();
     position_close_buttons();
+  }
+  void WorkbenchWindow::update_status_bar() {
+    std::wstring remote, connection = L"Ready";
+    if (const auto *tab = active_tab()) {
+      if (const auto *tool = std::get_if<ProtocolWindow>(&tab->window)) {
+        remote = tool->remote_endpoint();
+        const auto &reported = tool->connection_status();
+        connection = !reported.empty() && tool->state() != State::close_failed &&
+                             (tool->runner() || tool->state() == State::idle)
+                         ? reported
+                         : state_label(tool->state(), request_tool(tool->kind()));
+      } else {
+        remote = std::get<MainWindow>(tab->window).remote_endpoint();
+        connection = state_label(tab->state(), false);
+      }
+    }
+    if (closing_) connection = L"Closing";
+    else if (has_error_) {
+      std::wstring message(static_cast<size_t>(::GetWindowTextLengthW(summary_)) + 1, L'\0');
+      message.resize(::GetWindowTextW(summary_, message.data(), static_cast<int>(message.size())));
+      if (!message.empty()) connection = std::move(message);
+    }
+    const auto set_part = [&](int part, std::wstring text, std::wstring &shown) {
+      if (text == shown) return;
+      ::SendMessageW(status_bar_, SB_SETTEXTW, part, reinterpret_cast<LPARAM>(text.c_str()));
+      ::SendMessageW(status_bar_, SB_SETTIPTEXTW, part, reinterpret_cast<LPARAM>(text.c_str()));
+      shown = std::move(text);
+    };
+    set_part(0, L"Remote: " + (remote.empty() ? std::wstring(L"—") : remote), shown_remote_);
+    set_part(1, L"Connection: " + connection, shown_connection_);
   }
   void WorkbenchWindow::layout() {
     RECT rect{};
     GetClientRect(&rect);
-    const int width = MulDiv(rect.right, 96, dpi_);
-    auto place = [&](HWND control, int x, int y, int w, int h) {
-      ::MoveWindow(control, scale(x), scale(y), scale(w), scale(h), TRUE);
-    };
-    place(new_request_, 12, 4, 130, 28);
-    place(browse_collections_, 146, 4, 150, 28);
-    place(save_request_, 300, 4, 123, 28);
-    place(primary_, 435, 4, 144, 28);
-    place(stop_, 583, 4, 134, 28);
-    place(request_actions_, 721, 4, 104, 28);
-    place(summary_, 838, 9, std::max(0, width - 848), 24);
+    layout_toolbar(rect.right);
+    ::SendMessageW(status_bar_, WM_SIZE, 0, 0);
+    const int parts[] = {MulDiv(rect.right, 55, 100), -1};
+    ::SendMessageW(status_bar_, SB_SETPARTS, std::size(parts), reinterpret_cast<LPARAM>(parts));
+    RECT footer{};
+    ::GetClientRect(status_bar_, &footer);
+    rect.bottom -= footer.bottom;
     const int left = collections_width();
     ::MoveWindow(tabs_, left, scale(38), std::max(0L, rect.right - left), scale(30), TRUE);
     const auto height = std::max(0L, rect.bottom - scale(70));
@@ -203,14 +229,9 @@ namespace flowie::app {
         ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
         return control;
       };
-      new_request_ = create(choose_new_request, L"BUTTON", L"&New Request...", WS_TABSTOP);
-      browse_collections_ =
-          create(browse_collections, L"BUTTON", L"Open Collections...", WS_TABSTOP);
-      save_request_ = create(save_request, L"BUTTON", L"Save Request", WS_TABSTOP);
-      primary_ = create(primary_request, L"BUTTON", L"Run", WS_TABSTOP);
-      stop_ = create(disconnect_active, L"BUTTON", L"Stop", WS_TABSTOP);
-      request_actions_ = create(request_actions, L"BUTTON", L"Actions...", WS_TABSTOP);
-      summary_ = create(workspace_status, L"STATIC", L"", 0);
+      create_toolbar();
+      summary_ = create(workspace_status, L"STATIC", L"", SS_ENDELLIPSIS | SS_NOPREFIX);
+      status_bar_ = create(remote_status, STATUSCLASSNAMEW, L"", SBARS_TOOLTIPS);
       tabs_ = create(client_tabs, WC_TABCONTROLW, L"Requests",
                      WS_TABSTOP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | TCS_SINGLELINE |
                          TCS_FOCUSONBUTTONDOWN);
@@ -234,9 +255,9 @@ namespace flowie::app {
       if (!tooltip_) throw std::runtime_error("Could not create tab close tooltips");
       create_menu();
       create_collections();
+      layout();
       update();
       if (!SetTimer(2, 50)) throw std::runtime_error("Could not start workspace timer");
-      layout();
       return 0;
     } catch (const std::exception &error) {
       ::MessageBoxA(m_hWnd, error.what(), "Flowie Workbench", MB_OK | MB_ICONERROR);
@@ -298,6 +319,9 @@ namespace flowie::app {
       case manage_collections:
         open_collections_manager();
         break;
+      case run_collection:
+        run_selected_collection();
+        break;
       case reload_collection_file:
       case unload_collection_file:
         change_collection_file(id == unload_collection_file);
@@ -306,14 +330,14 @@ namespace flowie::app {
         open_sidebar_history();
         break;
       case choose_new_request:
-        if (can_add()) show_toolbar_menu(new_request_, new_tool_menu_);
+        if (can_add()) show_toolbar_menu(choose_new_request, new_tool_menu_);
         break;
       case primary_request:
         invoke_request(shown_primary_);
         break;
       case request_actions:
         if (request_command(RequestAction::sample).enabled)
-          show_toolbar_menu(request_actions_, request_menu_);
+          show_toolbar_menu(request_actions, request_menu_);
         break;
       case add_publisher:
         open_connection(ClientRole::publisher);
@@ -364,7 +388,11 @@ namespace flowie::app {
           }
         break;
       default:
-        if (id >= first_recent && static_cast<size_t>(id - first_recent) < menu_recent_.size())
+        if (id >= first_recent_collection &&
+            static_cast<size_t>(id - first_recent_collection) < menu_recent_collections_.size()) {
+          if (!opening_ && !closing_ && !faulted_)
+            load_collections(menu_recent_collections_[id - first_recent_collection]);
+        } else if (id >= first_recent && static_cast<size_t>(id - first_recent) < menu_recent_.size())
           show_connection(menu_recent_[id - first_recent].role, menu_recent_, id - first_recent);
         break;
       }
@@ -395,18 +423,10 @@ namespace flowie::app {
         }
       return 0;
     }
-    if (notification.code == NM_CUSTOMDRAW &&
-        (notification.idFrom == choose_new_request ||
-         notification.hwndFrom == browse_collections_ || notification.hwndFrom == save_request_ ||
-         notification.hwndFrom == primary_ || notification.hwndFrom == stop_ ||
-         notification.hwndFrom == request_actions_)) {
-      const auto glyph = notification.hwndFrom == browse_collections_ ? CommandGlyph::open
-                         : notification.hwndFrom == save_request_     ? CommandGlyph::save
-                         : notification.idFrom == choose_new_request  ? CommandGlyph::request
-                         : notification.hwndFrom == primary_          ? CommandGlyph::run
-                         : notification.hwndFrom == stop_             ? CommandGlyph::stop
-                                                                      : CommandGlyph::actions;
-      return draw_command(*reinterpret_cast<NMCUSTOMDRAW *>(lparam), theme_, glyph, dpi_);
+    if (notification.hwndFrom == toolbar_ && notification.code == TBN_DROPDOWN) {
+      const auto command = reinterpret_cast<const NMTOOLBARW *>(lparam)->iItem;
+      SendMessageW(m_hWnd, WM_COMMAND, MAKEWPARAM(command, BN_CLICKED), 0);
+      return TBDDRET_DEFAULT;
     }
 
     if (notification.idFrom == client_tabs && notification.code == TCN_SELCHANGE) {
@@ -426,7 +446,7 @@ namespace flowie::app {
     HDC dc = reinterpret_cast<HDC>(wparam);
     ::FillRect(dc, &rect, color_brush(dc, theme_.ink, theme_.surface));
     rect.bottom = scale(38);
-    ::FillRect(dc, &rect, color_brush(dc, theme_.chrome_text, theme_.chrome));
+    ::FillRect(dc, &rect, ::GetSysColorBrush(COLOR_BTNFACE));
     return 1;
   }
   LRESULT WorkbenchWindow::OnControlColor(UINT, WPARAM wparam, LPARAM lparam, BOOL &) {
@@ -435,9 +455,9 @@ namespace flowie::app {
       return reinterpret_cast<LRESULT>(color_brush(
           reinterpret_cast<HDC>(wparam), id == collection_files_title ? theme_.ink : theme_.muted,
           id == collection_files_title ? theme_.paper : theme_.surface));
-    return reinterpret_cast<LRESULT>(
-        color_brush(reinterpret_cast<HDC>(wparam),
-                    theme_.system ? theme_.chrome_text : theme_.chrome_muted, theme_.chrome));
+    return reinterpret_cast<LRESULT>(color_brush(reinterpret_cast<HDC>(wparam),
+                                                 GetSysColor(COLOR_BTNTEXT),
+                                                 GetSysColor(COLOR_BTNFACE)));
   }
   LRESULT WorkbenchWindow::OnTheme(UINT message, WPARAM wparam, LPARAM lparam, BOOL &) {
     try {

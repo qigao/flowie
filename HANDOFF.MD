@@ -682,6 +682,170 @@ Windows Release 完整 CTest 75 项通过、1 项禁用。适配后的 MQTT 5 TC
   Control 的本地资源路径改用 `$root/flowie/control`，通过 `compile_commands.json`
   核对展开后的路径。Slate 0.1.14 在此编译定义内保留字面量 `$moduledir`。
 - Windows x64 LLVM-MinGW 下，`slate build --preset release` 与
-  `slate build --preset cluster` 通过。Release 测试 54/54，`server/cluster` 标签
-  23/23。相同 Release 图再次运行 Ninja 时没有编译或链接工作。与已有
+  `slate build --preset cluster` 通过。Release 测试 56/56，集群预设 78/78，
+  两个预设均覆盖服务器日志检查。相同 Release 图再次运行 Ninja 时没有编译或链接工作。与已有
   `native-release-user` DLL 比对，Broker 144 个、Client 15 个 PE 导出的名称与序号一致。
+- Workbench 的 `windres` 任务读取 `.rc`、应用 manifest 和对话框 ID 头文件，生成 GUI 与
+  测试共用的 `workbench.res`。Slate 在 `libs` 中识别已选任务的输出。删除资源后，Ninja
+  重新生成资源并重新链接两个可执行文件。使用 `workbench` 预设，并将 `FLOWIE_OPENWTL_ROOT`
+  指向经固定摘要验证的 OpenWTL 解压目录。Workbench 39 个用例通过，安装的 GUI 保留了
+  Windows 对话框和 manifest 资源。
+
+## 2026-11-24：EU Flowie 镜像更新预检
+
+- 将已提交的 `191a8b44eba37688af269ae5d6c6b389346d52c7` 归档到 EU 独立构建目录，使用
+  `deploy/server/Dockerfile.sdk` 和提交中的精确依赖版本构建。共享 vcpkg、宿主工具、
+  SaltsBase、CMeta、SaltsUtils 和 SaltsCNet 恢复成功。
+- Chttp `0.1.2` 的发布清单指定生产者 CI run `44231158815`，GitHub 返回 404。发布资产仍可查，
+  但按清单中的完整提交查询 workflow 同样没有记录。TurboDB `0.1.2` 的生产者 run 可读取且成功。
+  本次构建在 CMake 前停止。恢复发布来源验证后重跑镜像构建及配置预检。
+- EU 运行实例仍使用 `flowie-server:chttp-0.1.1-20261116t055005z-584668800c0d`，复查 healthy，
+  启动时间未变。Compose 已验证候选只变更 Flowie 镜像。`flowie_control` 的 PostgreSQL 备份以
+  0600 写入候选构建目录，并通过 `pg_restore --list` 与 SHA-256 检查。
+- 改选 CHttp `0.1.5` 后，Linux Clang x64 发布资产存在，生产者 CI `45055188746` 成功且与
+  发布提交一致。该 SDK 要求 `vcpkg-cache 0.1.9`、SaltsBase `0.1.10`、CMeta `0.1.10`、
+  SaltsCNet `0.1.19` 与 SaltsUtils `0.1.9`。已发布的 Base `0.1.10`、CMeta `0.1.10` 和
+  TurboDB `0.1.3` Linux SDK 清单均对应 cache `0.1.8`。当前恢复工具要求精确共用 cache 版本，
+  因此发布预检未通过，未启动新构建或替换线上容器。线上复查 healthy。
+
+## 2026-11-24：匹配 vcpkg-cache 0.1.9 的发布链
+
+- 已使用原 CMake 矩阵发布 SaltsBase `0.1.11`、SaltsCNet `0.1.20`、CMeta `0.1.11`
+  和 SaltsUtils `0.1.10`。发布资产来自对应提交的成功 CI，上传前后核对大小、SHA-256
+  和清单。CMeta 使用同一个 CNet 提交构建测试依赖，SaltsUtils 使用同一个 CMeta 提交构建 SDK。
+- 已发布从 `0.1.5` 重新构建的 CHttp `0.1.6` 和从 `0.1.3` 重新构建的 TurboDB `0.1.4`。
+  上游候选通过 workflow dispatch 选择精确依赖版本。Flowie 发布分支从 `v1.0.6` 合并
+  主干 `191a8b4`，保留 11 个原生和交叉构建配置及正式 CTest，并在 `.env.example` 固定整组版本。
+- Flowie 候选提交 `bd2b33020a5e82624579bff4f219ab35b0a4348d`。Core MQTT soak 的
+  Raft 子场景随 Cluster 构建启用。Linux RSS 使用 `smaps_rollup`，订阅循环在发布线程退出后
+  回收分配器空闲页再取样。macOS 使用 libproc 读取线程、文件描述符和 RSS。
+- Windows LLVM-MinGW 发布预设通过 58 项 CTest，另跑 EMQX 公网 CTest 1/1。
+  现有 TurboRaft `0.3.2` 发布清单选择 cache `0.1.3` 和 CNet `0.1.16`，
+  因此这一轮匹配 SDK 验证范围采用默认发布配置。Cluster 测试需匹配的新 TurboRaft SDK。
+- EU 源码归档已在 `/root/dev/builds/flowie-1.0.7-bd2b330.ve9flmTw` 独立目录校验。Compose 切换以
+  上游 CI、Flowie CI、镜像构建及隔离 PostgreSQL 配置检查通过为条件。
+- 资格验证 `45239521058` 首轮通过 10 个配置。macOS ARM64 等待约 15 分钟后被 GitHub 取消，
+  check annotation 明确记录 hosted runner 容量约束。通过 `gh run rerun 45239521058 --repo qigao/flowie --failed`
+  在相同提交上补跑，复用已通过任务的 CI 资产。
+- macOS 补跑通过编译，暴露两处夹具问题。客户端 mTLS 的测试 peer 在发送 CONNACK 后立即关闭，
+  导致 `SALTS_ESHUTDOWN`。夹具改为在客户端观察到响应后由 teardown 释放 socket。
+  订阅 soak 在四轮后观测到 43,171,840 字节 RSS，随后相邻场景保持约 43 MB。
+  macOS 采样前先预热四轮，再用原 8 MiB 容差验证资源。mTLS teardown 先释放服务端 socket
+  等待，再调用 `flowie_mqtt_client_try_destroy` 并核对结果。Windows 定向 CTest 4/4，
+  最新完整矩阵看 run `45244865340`。
+- `45244865340` 的第二次尝试完成 11 个 SDK 配置。Windows/Linux/macOS 的正式 CTest 通过，
+  两个 Android 配置通过构建、安装和 16 KiB LOAD 段对齐检查。核对每个归档的大小、SHA-256
+  和 CPU 架构后推送 `v1.0.7`。正式发布 workflow 为 `45248216781`。
+- Tag workflow 的所有构建、CTest、安装和归档校验均通过，发布命令的
+  `--fail-on-no-commits` 报告无新提交。GitHub 比较 `v1.0.6...v1.0.7` 确认新 tag
+  领先 9 个提交。使用成功的 `45244865340` 原始归档发布，同一 tag 的 13 个公开资产均核对大小
+  和 SHA-256。[Flowie v1.0.7](https://github.com/qigao/flowie/releases/tag/v1.0.7)
+- EU 在 03:34（Asia/Shanghai）切换到 `flowie-server:1.0.7-bd2b33020a5e`。
+  PostgreSQL 的 Control 和 Broker schema 复核为 7 和 2，其余 Compose 容器 ID 相同。
+  隔离环境通过 18 项检查及 MQTT 5 会话重启恢复。线上通过 Control TLS 1.2/1.3、
+  公网 HTTPS 和 TLS 1.3 上 MQTT 3.1.1/5 的 CONNECT/PING。隔离容器和测试数据库已清理，
+  回滚镜像和 PostgreSQL 快照已保留。
+
+## 2026-11-24：Workbench Collections 打开目录
+
+- Salts INI 解析器会将值里的 `#` 和 `;` 识别为注释。目录以 UTF-8 后的 Base64
+  写入本地 `collections.ini`，由 `Salts::IniParser` 读取，沿用 Collections 的原子文件替换。
+- LLVM-MinGW 在 OpenWTL 的现有定义下隐藏 `SHCreateItemFromParsingName` 声明。
+  文件对话框通过 `SHParseDisplayName` 和 `SHCreateShellItem` 设置起始目录。
+  Windows `native-release-user` 构建通过，`test_flowie_workbench` 的 40 个用例通过，
+  包含跨窗口恢复、中文目录和注释字符，以及取消或打开失败后保留上次目录。
+
+## 2026-11-24：Workbench HTTP 会话
+
+- 当前 CHttp 原始异步客户端将响应头借用给完成回调。Workbench 在回调内复制 Cookie 数据，
+  在每个 HTTP 标签页的 worker 上维护 Cookie，清除时先回收 worker。使用 Salts DateTime 处理
+  `Expires`，同一来源内使用 Cookie 的路径和时效约束。
+- Windows `native-release-user` 的 `test_flowie_workbench` 通过 44 个用例。
+  Loopback 验证了 JSON 请求的实际字节，Cookie 回传、隔离、清除及容量限制。
+  用 curl 验证 httpbin 示例的设置端点返回 302 并发出示例 Cookie，读取端点回显该值。
+
+## 2026-11-24：Workbench 集合顺序与运行状态
+
+- 集合树按请求首次出现的顺序建立分组，保留文件数组作为执行顺序。替换指定请求时沿用
+  原有原子保存逻辑，选中分组时从文件顺序中过滤该组。
+- 运行页复用一个 `ToolSession`。观察到 worker 空闲后排空该步骤的结果事件，再提交下一步，
+  使同一运行内的 HTTP Cookie 状态可用，并防止取消或失败时提交后续请求。
+- Windows `native-release-user` 的 `test_flowie_workbench` 通过 48 个用例，覆盖请求头写回、
+  MQTT 状态栏、HTTP 503 和 JSON-RPC 错误停止、多步 Cookie 会话、取消和运行前检查。
+
+## 2026-11-24：Workbench Recent Collections
+
+- `collections.ini` 保留原目录键，以新增 INI 段记录最多 12 个最近成功打开的集合路径。
+  写入使用与集合相同的文件锁和原子替换。Windows 测试覆盖旧 INI、同名文件、去重、重启恢复
+  以及 MQTT 菜单隔离。
+- Windows 正在运行的 Workbench 会阻止链接器更新原 EXE。保留窗口和草稿，用
+  `cmake --preset native-release-user -B build/native-release-recent-collections -DBUILD_TESTS=ON`
+  在独立目录构建，`test_flowie_workbench` 49 个用例通过。
+
+## 2026-11-24：Workbench 公网 TLS 握手返回 -4008
+
+- 两个正在运行的开发构建均加载 SaltsCNet `0.1.16`、CHttp `0.1.2` 及原
+  `salts_crypto.dll`（SHA-256 前缀 `094F782BDCBA`）。系统 DNS 可以解析
+  httpbin、EMQX 和 HiveMQ。旧构建的 EMQX CTest 四个明文场景通过，六个 TLS/WSS
+  场景返回 `-4008`，日志在 GmSSL 查找系统根证书时中止。
+- 同一 Workbench 源码的临时 HTTPS 夹具用旧 SDK 复现
+  `handshake (-4008) connection aborted`。换用经过发布验证的匹配 SDK
+  （SaltsCNet `0.1.20`、CHttp `0.1.6`）后，Workbench 对 `https://httpbin.org/get`
+  返回 HTTP 200，保留系统信任和主机名校验。
+- 使用 `.worktrees/flowie-release-1.0.7/build/native-sdk-environment.json` 的非密钥构建项，
+  用 `native-release-user` preset 配置 `build/native-release-workbench-tls`。
+  该目录的 Workbench 49 个用例及 EMQX 公网 10 个用例通过。随附 CNet、Crypto、CHttp
+  和 Salts Base DLL 的 SHA-256 与验证过的发布构建一致。主工作区 `.env` 保留原 SDK 选择。
+
+## 2026-11-24：Workbench HTTP 分区布局
+
+- Win32 的 `SetScrollInfo` 可以在布局期间改变请求面板的客户区宽度。收缩窗口或切换到
+  较高的编辑页时，先设置滚动范围，再测量可用宽度并布局发送按钮。
+- `build/native-release-workbench-ui` 使用已发布的匹配 TLS SDK。
+  `test_flowie_workbench` 49 个用例通过，HTTP 夹具检查双向 Query 同步、响应分区、
+  多行正文及 900×480 窗口中请求工具栏的可见区域。
+
+## 2026-11-24：Workbench WTL 命令工具栏
+
+- 顶部使用 `CToolBarCtrl`。普通按钮保留原有命令 ID，下拉按钮通过 `TBN_DROPDOWN`
+  进入相同的命令路由。按钮状态和文字通过 `TB_*` 查询与更新。
+- `build/native-release-workbench-toolbar` 的 Workbench 49 个用例通过。原生夹具根据
+  `TB_GETRECT` 得到的按钮位置驱动实际点击，验证 HTTP 发送、取消、保存和最小窗口布局。
+
+## 2026-11-24：EMQX CONNECT 间歇超时
+
+- Windows 默认 DNS 与 `223.5.5.5` 都将 `broker.emqx.io` 解析到
+  `34.243.217.54` 和 `44.232.241.40`。使用 SaltsCNet `0.1.20` 的正式公网 CTest
+  通过 8/10。TLS 8883 有一次 CONNECT 在 10 秒截止时返回 `-4050`，TCP 1883 有
+  一次 CONNECT/SUBSCRIBE 返回 `-4010`。
+- 用实际 EMQX 集合的临时 Workbench 夹具复测两轮。TLS 8883 和 WSS 8084 两轮均
+  收到 CONNACK、PINGRESP。WS 8083 首轮在 CONNECT 返回 `-4050`，第二轮通过。
+  TCP 1883 两轮均返回 `-4010`。独立 WebSocket 探针分别连接两条 A 记录，
+  对 8083 和 8084 均收到 HTTP 101、MQTT 5 CONNACK 和 PINGRESP。
+  WSS 的已验证集合参数为 `broker.emqx.io:8084/mqtt`。
+
+## 2026-11-24：EMQX Workbench 发布与回显
+
+- `flowie/client/app/examples/emqx-public-mqtt.json` 新增 `MQTT 5 · WSS · QoS 0 Publish`。
+  该条目在同一主题以 QoS 0 订阅和发布。收到 SUBACK 后发布，匹配主题及正文的 RX
+  记录确认回显。QoS 1 条目使用 PUBACK 确认 broker 响应，MQTT 5 reason 16 表示
+  broker 已确认消息且没有匹配订阅者。发布超时且缺少回显时无法确认投递。
+- 临时分支复用 CMake `native-release-user` 及正式
+  `ctest --test-dir build/emqx-publish-diagnostic -R '^test_flowie_workbench$'`。
+  夹具打开集合中的真实请求，通过 WTL 工具栏连接和发布，每次使用专用主题。
+  首轮 53/53，涵盖 WSS QoS 0 回显、WSS/TLS QoS 1 的 PUBACK 和回显，以及
+  WSS QoS 1 无匹配订阅时的 PUBACK reason 16。独立 Paho 客户端也验证了四种场景。
+- 将现有 `build/native-release-workbench-toolbar/bin` 的 DLL 复制到临时夹具后，
+  WSS 和 TLS 的 QoS 1 再次通过，回显正文与保存的正文一致。该轮另有两条 WSS
+  连接在 CONNECT 阶段返回 `-4050`，尚未发送 PUBLISH。
+- 让连接保持空闲后复现 `ERROR -4050`。旧版本在 CONNACK 或 SUBACK 后约 5 秒
+  将无数据的后台接收当成连接错误，早于 Workbench 15 秒自动 PING。TCP 和 WS 本地
+  QoS 1 回归用例在加入修复前都复现了连接关闭。
+- MQTT Worker 统一管理读取时限。无待完成 MQTT 报文的后台等待到期后回到命令循环，
+  保留连接及已提交的接收。命令响应和正在接收的 MQTT 报文仍有截止时间。
+  更新后的 CNet 读请求由 MQTT 截止时间管理，TLS 握手和发送继续使用原有时限。
+- 重建 `build/native-release-workbench-toolbar` 后，已启用的 6 项 CTest 全部通过。
+  修复后的临时窗口夹具做了两轮 WSS 发布测试，第二轮使用上述重建目录的 DLL。
+  两轮均在 SUBACK 后等待自动 PING 再发 QoS 1，收到 PUBACK 和匹配正文的 RX，
+  QoS 0 也收到匹配正文的 RX。两轮各另有一次 CONNECT 返回 `-4050`，对应的
+  无订阅空闲发布场景未进入 PUBLISH。

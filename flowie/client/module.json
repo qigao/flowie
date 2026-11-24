@@ -3,6 +3,7 @@
   "kind": "shared",
   "outputPrefix": "lib",
   "include": [
+    "app/module.json",
     "tests/module.json"
   ],
   "sources": {

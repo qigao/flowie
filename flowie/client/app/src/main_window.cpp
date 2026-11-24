@@ -8,6 +8,16 @@
 #include <stdexcept>
 
 namespace flowie::app {
+  std::wstring MainWindow::remote_endpoint() const {
+    auto address = text(host);
+    const auto service = text(port);
+    if (address.empty() || service.empty() || address.find_first_of(L"@/\\\r\n") != address.npos)
+      return {};
+    if (address.find(L':') != address.npos && address.front() != L'[')
+      address = L"[" + address + L"]";
+    return address + L":" + service;
+  }
+
   namespace {
     struct ErasePassword {
       std::string &value;

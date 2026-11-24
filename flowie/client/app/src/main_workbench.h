@@ -69,7 +69,11 @@ namespace flowie::app {
       refresh_ports_active,
       primary_request,
       request_actions,
-      first_recent = 600
+      run_collection,
+      remote_status,
+      command_toolbar,
+      first_recent = 600,
+      first_recent_collection = 700
     };
     explicit WorkbenchWindow(std::wstring history_key = kRecentConnectionKey,
                              std::filesystem::path library = {})
@@ -82,7 +86,7 @@ namespace flowie::app {
   private:
     struct Client {
       std::wstring label, shown_label;
-      std::string collection, saved_name;
+      std::string collection, saved_name, notes;
       std::filesystem::path source;
       std::variant<MainWindow, ProtocolWindow, UiPanel> window;
       HWND close_button = nullptr;
@@ -91,8 +95,8 @@ namespace flowie::app {
           : label(std::move(name)),
             window(std::in_place_type<MainWindow>, role, std::move(identifier),
                    [&owner](const RecentConnection &entry) { owner.remember_connection(entry); }) {}
-      Client(ToolKind kind, std::wstring name)
-          : label(std::move(name)), window(std::in_place_type<ProtocolWindow>, kind) {}
+      Client(ToolKind kind, std::wstring name, bool runner)
+          : label(std::move(name)), window(std::in_place_type<ProtocolWindow>, kind, runner) {}
       Client() : label(L"Manage Collections"), window(std::in_place_type<UiPanel>) {}
       bool manager() const { return std::holds_alternative<UiPanel>(window); }
       HWND hwnd() const {
@@ -113,7 +117,7 @@ namespace flowie::app {
       }
     };
     MainWindow &add(ClientRole role, std::wstring name = {});
-    ProtocolWindow &add_tool(ToolKind kind, std::wstring name = {});
+    ProtocolWindow &add_tool(ToolKind kind, std::wstring name = {}, bool runner = false);
     Client &add_tab(std::unique_ptr<Client> client);
     void open_connection(ClientRole role, const Connection *initial = nullptr);
     void show_connection(ClientRole role, std::vector<RecentConnection> recent, int index,
@@ -125,12 +129,15 @@ namespace flowie::app {
     void invoke_request(RequestAction action);
     std::optional<TaskLayout> task_layout() const;
     void set_task_layout(TaskLayout layout);
-    void show_toolbar_menu(HWND button, HMENU menu);
+    void create_toolbar();
+    void layout_toolbar(int width);
+    void show_toolbar_menu(Id command, HMENU menu);
     void update_request_toolbar();
     void choose_import(bool connection);
     void create_menu();
     void create_collections();
     void choose_collections_file();
+    void load_collection_file(const std::filesystem::path &file, bool remember = false);
     void open_collections_manager();
     void refresh_collections_manager(int selected = -1);
     void change_collection_file(bool unload);
@@ -145,12 +152,16 @@ namespace flowie::app {
     void rebuild_collections(const std::filesystem::path &file = {},
                              const SavedRequest *selection = nullptr);
     void update_collection_actions();
+    void run_selected_collection();
+    bool can_run_collection() const;
     struct RequestLocation {
       size_t file, request;
     };
     std::optional<RequestLocation> selected_request() const;
+    std::optional<RequestLocation> request_at(HTREEITEM node) const;
     std::optional<size_t> selected_collection_file() const;
     void save_active_request();
+    bool can_save_request() const;
     void open_selected_request();
     LRESULT on_collection_notice(const NMHDR &notification);
     void remember_connection(const RecentConnection &entry);
@@ -158,6 +169,7 @@ namespace flowie::app {
     bool can_add() const { return !opening_ && !closing_ && request_count() < kMaxClients; }
     void activate(size_t index);
     void update();
+    void update_status_bar();
     void layout();
     void close_all() noexcept;
     void close_client_at(size_t index);
@@ -181,7 +193,7 @@ namespace flowie::app {
     LRESULT OnDestroy(UINT, WPARAM, LPARAM, BOOL &);
     std::vector<std::unique_ptr<Client>> clients_;
     RecentConnections history_;
-    std::filesystem::path collections_file_;
+    std::filesystem::path collections_file_, collections_settings_;
     struct LoadedCollection {
       std::filesystem::path path;
       std::vector<SavedRequest> requests;
@@ -191,17 +203,20 @@ namespace flowie::app {
     std::vector<RequestLocation> sidebar_requests_;
     std::vector<RecentConnection> sidebar_recent_;
     std::vector<RecentConnection> menu_recent_;
+    std::vector<std::filesystem::path> menu_recent_collections_;
     HMENU file_menu_ = nullptr, session_menu_ = nullptr, recent_menu_ = nullptr;
+    HMENU recent_collections_menu_ = nullptr;
     HMENU new_tool_menu_ = nullptr;
     HMENU mqtt_menu_ = nullptr;
     HMENU request_menu_ = nullptr, view_menu_ = nullptr;
     size_t active_ = 0;
     uint64_t next_id_ = 1;
     HWND tabs_ = nullptr, summary_ = nullptr;
+    CToolBarCtrl toolbar_;
+    HWND status_bar_ = nullptr;
+    std::wstring shown_remote_, shown_connection_;
     HWND tooltip_ = nullptr;
-    HWND primary_ = nullptr, stop_ = nullptr, request_actions_ = nullptr;
     RequestAction shown_primary_ = RequestAction::send;
-    HWND new_request_ = nullptr, browse_collections_ = nullptr;
     HFONT font_ = nullptr;
     int dpi_ = 96;
     bool closing_ = false, faulted_ = false, opening_ = false;
@@ -211,7 +226,7 @@ namespace flowie::app {
     UiPanel collections_panel_;
     CTreeViewCtrl collections_tree_;
     HWND sidebar_tabs_ = nullptr, collections_empty_ = nullptr, sidebar_history_ = nullptr;
-    HWND save_request_ = nullptr;
+    HWND run_collection_ = nullptr;
     int sidebar_page_ = 0;
     std::wstring tab_padding_;
   };

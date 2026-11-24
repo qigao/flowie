@@ -20,7 +20,7 @@ namespace flowie::app {
     constexpr uint32_t kTick = 20;
     constexpr char kRpcId[] = "flowie-workbench";
 
-    cnet_client_config network_config(bool tls) {
+    cnet_client_config network_config(bool tls, size_t extra_send_bytes = 0) {
       cnet_client_config config{};
       config.backend = NATIVE_IO_BACKEND_IOCP;
       config.connection_capacity = 1;
@@ -28,7 +28,7 @@ namespace flowie::app {
       config.request_capacity = 8;
       config.completion_batch_capacity = 8;
       config.event_capacity = 16;
-      config.max_send_bytes = kToolBytes + kToolHeadersBytes + 4096;
+      config.max_send_bytes = kToolBytes + kToolHeadersBytes + 4096 + extra_send_bytes;
       config.receive_buffer_bytes = 4096;
       config.connect_timeout_ms = kTimeout;
       config.write_timeout_ms = kTimeout;
@@ -40,7 +40,7 @@ namespace flowie::app {
     }
 
     struct Endpoint {
-      std::string uri, authority, target;
+      std::string uri, authority, target, host;
       bool tls;
     };
     Endpoint endpoint(const std::string &text, bool http) {
@@ -62,7 +62,7 @@ namespace flowie::app {
       std::string target = *uri.path ? uri.path : "/";
       if (uri.component_flags & URI_COMPONENT_QUERY) target += std::string("?") + uri.query;
       return {(tls ? "tls://" : "tcp://") + host + ":" + port, has_port ? host + ":" + port : host,
-              std::move(target), tls};
+              std::move(target), std::move(host), tls};
     }
 
     using Json = std::unique_ptr<json_value_t, decltype(&json_free)>;
@@ -125,8 +125,19 @@ namespace flowie::app {
       throw std::runtime_error("Choose an HTTP method.");
     }
 
-    std::vector<std::pair<std::string, std::string>> http_headers(std::string_view text, bool rpc) {
+    void lower_ascii(std::string &text) {
+      for (auto &ch : text)
+        if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+    }
+
+    struct RequestHeaders {
       std::vector<std::pair<std::string, std::string>> entries;
+      bool manual_cookie = false;
+    };
+    RequestHeaders http_headers(std::string_view text, bool json) {
+      if (text.size() > kToolHeadersBytes)
+        throw std::runtime_error("HTTP headers exceed 8 KiB.");
+      RequestHeaders headers;
       bool content_type = false;
       while (!text.empty()) {
         const auto end = text.find('\n');
@@ -139,21 +150,51 @@ namespace flowie::app {
           throw std::runtime_error("Enter one Header: value per line.");
         const auto name = line.substr(0, colon);
         auto value = line.substr(colon + 1);
+        constexpr std::string_view punctuation("!#$%&'*+-.^`_|~");
+        if (std::any_of(name.begin(), name.end(), [&](unsigned char c) {
+              return !(c >= '0' && c <= '9') && !(c >= 'A' && c <= 'Z') &&
+                     !(c >= 'a' && c <= 'z') && punctuation.find(c) == punctuation.npos;
+            }) ||
+            std::any_of(value.begin(), value.end(), [](unsigned char c) {
+              return (c < 0x20 && c != '\t') || c == 0x7f;
+            }))
+          throw std::runtime_error("Invalid HTTP header name or value.");
         const auto first = value.find_first_not_of(" \t");
         value.remove_prefix(first == value.npos ? value.size() : first);
         std::string lower(name);
-        for (auto &ch : lower)
-          if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+        lower_ascii(lower);
         if (lower == "host" || lower == "content-length" || lower == "transfer-encoding")
           throw std::runtime_error(
               "Host and message framing headers are generated from the request.");
         content_type |= lower == "content-type";
-        entries.emplace_back(name, value);
-        if (entries.size() > 30)
+        headers.manual_cookie |= lower == "cookie";
+        headers.entries.emplace_back(name, value);
+        if (headers.entries.size() > 30)
           throw std::runtime_error("At most 30 custom headers are supported.");
       }
-      if (rpc && !content_type) entries.emplace_back("Content-Type", "application/json");
-      return entries;
+      if (json && !content_type) headers.entries.emplace_back("Content-Type", "application/json");
+      return headers;
+    }
+
+    struct HttpRequest {
+      Endpoint destination;
+      chttp_method method;
+      std::string body;
+      RequestHeaders headers;
+    };
+
+    HttpRequest prepare_http_request(const ToolDraft &draft) {
+      auto destination = endpoint(draft.endpoint, true);
+      const bool rpc = draft.kind == ToolKind::rpc;
+      const auto method = rpc ? CHTTP_METHOD_POST : http_method(draft.method);
+      auto body = rpc ? rpc_body(draft) : draft.body;
+      if (body.size() > kToolBytes) throw std::runtime_error("Encoded body exceeds 64 KiB.");
+      if (!rpc && draft.json_body && !body.empty()) {
+        std::string error;
+        if (!format_json(body, nullptr, error)) throw std::runtime_error(error);
+      }
+      return {std::move(destination), method, std::move(body),
+              http_headers(draft.headers, rpc || draft.json_body)};
     }
   } // namespace
 
@@ -171,6 +212,43 @@ namespace flowie::app {
     std::terminate();
   }
   bool request_tool(ToolKind kind) { return kind == ToolKind::http || kind == ToolKind::rpc; }
+
+  std::string collection_request_headers(std::string_view text, bool omit_credentials) {
+    const auto parsed = http_headers(text, false);
+    std::string stored;
+    for (const auto &[name, value] : parsed.entries) {
+      auto lower = name;
+      lower_ascii(lower);
+      if (lower == "authorization" || lower == "proxy-authorization" || lower == "cookie" ||
+          lower == "x-api-key" || lower == "x-auth-token" || lower == "x-access-token" ||
+          lower == "x-csrf-token") {
+        if (omit_credentials) continue;
+        throw std::runtime_error("Collection files cannot contain credential headers: " + name);
+      }
+      if (!stored.empty()) stored += '\n';
+      stored += name + (value.empty() ? ":" : ": " + value);
+    }
+    if (stored.size() > kToolHeadersBytes)
+      throw std::runtime_error("HTTP headers exceed 8 KiB.");
+    return stored;
+  }
+
+  std::string tool_remote(ToolKind kind, const std::string &address) {
+    if (kind == ToolKind::serial) return address;
+    const bool http = request_tool(kind);
+    const auto remote = endpoint(address, http);
+    return http ? std::string(remote.tls ? "https://" : "http://") + remote.authority
+                : remote.uri;
+  }
+
+  void validate_http_request(const ToolDraft &draft) {
+    (void)prepare_http_request(draft);
+  }
+
+  bool successful_http_result(const Event &event) {
+    return event.kind == Kind::received && event.status == SALTS_OK && event.reason >= 200 &&
+           event.reason < 400 && event.topic != "JSON-RPC remote error";
+  }
 
   std::string tool_payload(const ToolDraft &draft) {
     if (!draft.hex) return draft.body;
@@ -199,6 +277,11 @@ namespace flowie::app {
   }
   void ToolSession::reap() {
     if (state() == State::idle && worker_.joinable()) worker_.join();
+  }
+  void ToolSession::clear_cookies() {
+    if (state() != State::idle) throw std::runtime_error("Wait for the HTTP request to finish.");
+    reap();
+    cookies_.clear();
   }
   void ToolSession::start(ToolDraft draft) {
     if (state() != State::idle) throw std::runtime_error("The tab is busy.");
@@ -302,20 +385,25 @@ namespace flowie::app {
   }
 
   void ToolSession::http(const ToolDraft &draft) {
-    const auto destination = endpoint(draft.endpoint, true);
+    auto [destination, method, body, request_headers] = prepare_http_request(draft);
     const bool rpc = draft.kind == ToolKind::rpc;
-    const auto method = rpc ? CHTTP_METHOD_POST : http_method(draft.method);
-    const auto body = rpc ? rpc_body(draft) : draft.body;
-    if (body.size() > kToolBytes) throw std::runtime_error("Encoded body exceeds 64 KiB.");
-    const auto entries = http_headers(draft.headers, rpc);
+    auto origin = destination.uri;
+    lower_ascii(origin);
+    const auto path = std::string_view(destination.target).substr(0, destination.target.find('?'));
+    if (draft.use_cookies && !request_headers.manual_cookie) {
+      auto cookie = cookies_.header(origin, path);
+      if (!cookie.empty()) request_headers.entries.emplace_back("Cookie", std::move(cookie));
+    }
     std::vector<chttp_header> headers;
-    for (const auto &[key, value] : entries)
+    for (const auto &[key, value] : request_headers.entries)
       headers.push_back({key.c_str(), value.c_str()});
     struct Callback {
       ToolSession *session;
-      bool rpc, complete = false;
+      const Endpoint &destination;
+      std::string_view origin, path;
+      bool rpc, use_cookies, complete = false;
       std::string response_body;
-    } callback{this, rpc};
+    } callback{this, destination, origin, path, rpc, draft.use_cookies};
     const chttp_body_sink sink{[](void *context, const void *data, size_t size) noexcept -> int {
                                  auto &bytes = static_cast<Callback *>(context)->response_body;
                                  if (size > kToolBytes - bytes.size()) return SALTS_ENOBUFS;
@@ -350,22 +438,38 @@ namespace flowie::app {
       }
       try {
         std::string header_text;
+        std::optional<HttpCookies> updated_cookies;
+        bool cookie_capacity = true;
         for (size_t i = 0; i < response->header_count; ++i) {
-          header_text += response->headers[i].name;
+          const auto &header = response->headers[i];
+          std::string lower(header.name);
+          lower_ascii(lower);
+          const bool set_cookie = lower == "set-cookie";
+          if (set_cookie && cb.use_cookies && cookie_capacity) {
+            if (!updated_cookies) updated_cookies.emplace(cb.session->cookies_);
+            cookie_capacity = updated_cookies->store(cb.origin, cb.destination.host, cb.path,
+                                                      cb.destination.tls, header.value);
+          }
+          header_text += header.name;
           header_text += ": ";
-          header_text += response->headers[i].value;
+          header_text += set_cookie ? "[redacted]" : header.value;
           header_text += "\r\n";
         }
+        if (updated_cookies && cookie_capacity) cb.session->cookies_ = std::move(*updated_cookies);
         const std::string_view data = cb.response_body;
-        const auto label = cb.rpc ? rpc_result(data) : std::string_view("HTTP response");
-        const int status = label.rfind("Invalid", 0) == 0 ? SALTS_EPROTO : SALTS_OK;
+        const auto label = !cookie_capacity ? std::string_view("HTTP cookie limit exceeded")
+                           : cb.rpc        ? rpc_result(data)
+                                           : std::string_view("HTTP response");
+        const int status = !cookie_capacity ? SALTS_ENOBUFS
+                           : label.rfind("Invalid", 0) == 0 ? SALTS_EPROTO : SALTS_OK;
         cb.session->record(Kind::received, label, data, status, response->status_code, header_text);
       } catch (...) {
         cb.session->record(Kind::error, "Could not copy the HTTP response", {}, SALTS_ENOMEM);
       }
     };
     chttp_client_config config{};
-    config.network = network_config(destination.tls);
+    config.network = network_config(destination.tls, draft.use_cookies ? HttpCookies::header_limit
+                                                                     : 0);
     config.request_capacity = 1;
     config.max_start_line_bytes = 4096;
     config.max_header_count = 32;

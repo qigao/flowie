@@ -1,8 +1,8 @@
 #include "main_workbench.h"
 #include "ui/save_request_dialog.h"
 #include <algorithm>
+#include <map>
 #include <stdexcept>
-#include <tuple>
 
 namespace flowie::app {
   namespace {
@@ -17,10 +17,6 @@ namespace flowie::app {
       if (!window) throw std::runtime_error("Could not create a Collections control.");
       ::SendMessageW(window, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
       return window;
-    }
-
-    bool same_file(const std::filesystem::path &first, const std::filesystem::path &second) {
-      return ::CompareStringOrdinal(first.c_str(), -1, second.c_str(), -1, TRUE) == CSTR_EQUAL;
     }
 
     void list_item(HWND list, const std::wstring &text) {
@@ -63,13 +59,18 @@ namespace flowie::app {
                                      L"Loaded collections",
                                      WS_TABSTOP | WS_BORDER | TVS_HASBUTTONS | TVS_HASLINES |
                                          TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_INFOTIP));
+    run_collection_ = control(collections_panel_, font_, run_collection, L"BUTTON",
+                              L"&Run Collection", WS_TABSTOP);
     sidebar_history_ =
         control(collections_panel_, font_, sidebar_history, L"LISTBOX", L"Recent MQTT connections",
                 WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT);
     refresh_collections_theme();
     if (collections_file_.empty()) collections_file_ = default_collections_file();
+    collections_settings_ = collections_file_;
+    collections_settings_.replace_filename(L"collections.ini");
     try {
-      if (std::filesystem::exists(collections_file_)) load_collections(collections_file_);
+      if (std::filesystem::exists(collections_file_))
+        load_collection_file(collections_file_);
       else rebuild_collections();
     } catch (const std::exception &error) {
       has_error_ = true;
@@ -86,15 +87,17 @@ namespace flowie::app {
       ::MoveWindow(collections_empty_, scale(12), scale(43), scale(kSidebarWidth - 24), scale(35),
                    TRUE);
       const int content_height = std::max(0, height - scale(43));
-      collections_tree_.MoveWindow(scale(5), scale(35), scale(kSidebarWidth - 10), content_height,
-                                   TRUE);
+      collections_tree_.MoveWindow(scale(5), scale(35), scale(kSidebarWidth - 10),
+                                   std::max(0, content_height - scale(34)), TRUE);
+      ::MoveWindow(run_collection_, scale(5), std::max(scale(35), height - scale(34)),
+                   scale(kSidebarWidth - 10), scale(28), TRUE);
       ::MoveWindow(sidebar_history_, scale(5), scale(35), scale(kSidebarWidth - 10), content_height,
                    TRUE);
     }
     const auto focus = ::GetFocus();
     collections_panel_.ShowWindow(collections_visible_ ? SW_SHOWNA : SW_HIDE);
     if (!collections_visible_ && ::IsChild(collections_panel_, focus))
-      ::SetFocus(browse_collections_);
+      toolbar_.SetFocus();
   }
 
   void WorkbenchWindow::refresh_collections_theme() {
@@ -117,9 +120,13 @@ namespace flowie::app {
   }
 
   std::optional<WorkbenchWindow::RequestLocation> WorkbenchWindow::selected_request() const {
-    const auto selected = collections_tree_.GetSelectedItem();
-    if (!selected || !collections_tree_.GetParentItem(selected)) return std::nullopt;
-    const auto slot = static_cast<INT_PTR>(collections_tree_.GetItemData(selected));
+    return request_at(collections_tree_.GetSelectedItem());
+  }
+
+  std::optional<WorkbenchWindow::RequestLocation>
+  WorkbenchWindow::request_at(HTREEITEM node) const {
+    if (!node) return std::nullopt;
+    const auto slot = static_cast<INT_PTR>(collections_tree_.GetItemData(node));
     if (slot >= 0 || static_cast<size_t>(-slot) > sidebar_requests_.size()) return std::nullopt;
     return sidebar_requests_[static_cast<size_t>(-slot) - 1];
   }
@@ -141,31 +148,23 @@ namespace flowie::app {
     };
     HTREEITEM selected = nullptr;
     for (size_t file = 0; file < loaded_collections_.size(); ++file) {
-      auto &collection = loaded_collections_[file];
-      std::sort(collection.requests.begin(), collection.requests.end(),
-                [](const auto &a, const auto &b) {
-                  return std::tie(a.collection, a.name) < std::tie(b.collection, b.name);
-                });
+      const auto &collection = loaded_collections_[file];
       const auto root = insert(collection.path.filename().wstring(), TVI_ROOT, file + 1);
-      const bool selected_file = !path.empty() && same_file(collection.path, path);
+      const bool selected_file = !path.empty() && same_collection_file(collection.path, path);
       if (selected_file) selected = root;
-      HTREEITEM group = nullptr;
-      std::string last_group;
+      std::map<std::string, HTREEITEM> groups;
       for (size_t index = 0; index < collection.requests.size(); ++index) {
         const auto &entry = collection.requests[index];
-        if (entry.collection != last_group) {
-          if (group) collections_tree_.Expand(group);
-          group = insert(utf8_to_wide(entry.collection), root, 0);
-          last_group = entry.collection;
-        }
+        const auto [group, added] = groups.try_emplace(entry.collection, nullptr);
+        if (added) group->second = insert(utf8_to_wide(entry.collection), root, 0);
         sidebar_requests_.push_back({file, index});
-        const auto node =
-            insert(utf8_to_wide(entry.name), group, -static_cast<LPARAM>(sidebar_requests_.size()));
+        const auto node = insert(utf8_to_wide(entry.name), group->second,
+                                 -static_cast<LPARAM>(sidebar_requests_.size()));
         if (selected_file && selection && entry.collection == selection->collection &&
             entry.name == selection->name)
           selected = node;
       }
-      if (group) collections_tree_.Expand(group);
+      for (const auto &group : groups) collections_tree_.Expand(group.second);
       collections_tree_.Expand(root);
     }
     if (selected) collections_tree_.SelectItem(selected);
@@ -183,6 +182,8 @@ namespace flowie::app {
     TabCtrl_SetCurSel(sidebar_tabs_, page);
     const bool collections = page == kCollectionsPage;
     collections_tree_.ShowWindow(collections && !loaded_collections_.empty() ? SW_SHOWNA : SW_HIDE);
+    ::ShowWindow(run_collection_, collections && !loaded_collections_.empty() ? SW_SHOWNA
+                                                                             : SW_HIDE);
     ::ShowWindow(sidebar_history_, !collections && !sidebar_recent_.empty() ? SW_SHOWNA : SW_HIDE);
     const bool empty = collections ? loaded_collections_.empty() : sidebar_recent_.empty();
     ::SetWindowTextW(collections_empty_,
@@ -199,9 +200,14 @@ namespace flowie::app {
   }
 
   void WorkbenchWindow::load_collections(const std::filesystem::path &file) {
+    load_collection_file(file, true);
+  }
+
+  void WorkbenchWindow::load_collection_file(const std::filesystem::path &file,
+                                              bool remember) {
     auto path = std::filesystem::canonical(file);
     auto found = std::find_if(loaded_collections_.begin(), loaded_collections_.end(),
-                              [&](const auto &entry) { return same_file(entry.path, path); });
+                              [&](const auto &entry) { return same_collection_file(entry.path, path); });
     const auto index = static_cast<size_t>(found - loaded_collections_.begin());
     if (found == loaded_collections_.end() && index == kLoadedFilesLimit)
       throw std::runtime_error("The workspace can load up to 16 collection files.");
@@ -213,6 +219,7 @@ namespace flowie::app {
     rebuild_collections(loaded_collections_[index].path);
     select_sidebar(kCollectionsPage);
     refresh_collections_manager(static_cast<int>(index));
+    if (remember) remember_collection_file(collections_settings_, loaded_collections_[index].path);
   }
 
   void WorkbenchWindow::choose_collections_file() {
@@ -223,7 +230,7 @@ namespace flowie::app {
         ~Pick() { opening = false; }
       } guard{opening_};
       opening_ = true;
-      return choose_collection_file(m_hWnd);
+      return choose_collection_file(m_hWnd, read_collections_directory(collections_settings_));
     }();
     if (chosen && !faulted_ && !closing_) load_collections(*chosen);
   }
@@ -319,14 +326,12 @@ namespace flowie::app {
       refresh_collections_manager(
           std::min(index, static_cast<int>(loaded_collections_.size()) - 1));
     } else {
-      const auto path = loaded_collections_[index].path;
-      load_collections(path);
+      load_collection_file(loaded_collections_[index].path);
     }
   }
 
   void WorkbenchWindow::update_collection_actions() {
-    if (save_request_) ::EnableWindow(save_request_, active_tab() && !opening_);
-    ::EnableWindow(browse_collections_, !opening_ && !closing_);
+    ::EnableWindow(run_collection_, can_run_collection());
     if (const auto window = manager_window()) {
       ::EnableWindow(::GetDlgItem(window, browse_collections), !opening_ && !closing_);
       const bool selected =
@@ -336,17 +341,63 @@ namespace flowie::app {
     }
   }
 
+  bool WorkbenchWindow::can_save_request() const {
+    const auto *tab = active_tab();
+    if (!tab || opening_) return false;
+    const auto *tool = std::get_if<ProtocolWindow>(&tab->window);
+    return !tool || !tool->runner();
+  }
+
+  bool WorkbenchWindow::can_run_collection() const {
+    return !faulted_ && can_add() && sidebar_page_ == kCollectionsPage &&
+           selected_collection_file().has_value();
+  }
+
+  void WorkbenchWindow::run_selected_collection() {
+    if (!can_run_collection()) return;
+    const auto &file = loaded_collections_[*selected_collection_file()];
+    const auto node = collections_tree_.GetSelectedItem();
+    auto scope = request_at(node);
+    // A group node refers to the collection of its first member.
+    if (!scope && collections_tree_.GetParentItem(node))
+      scope = request_at(collections_tree_.GetChildItem(node));
+    const std::string *name = scope ? &file.requests[scope->request].collection : nullptr;
+    std::vector<CollectionStep> steps;
+    for (const auto &request : file.requests) {
+      if (name && request.collection != *name) continue;
+      if (!request.tool || !request_tool(request.tool->kind))
+        throw std::runtime_error("Run Collection supports HTTP and JSON-RPC. Check " +
+                                 request.name + ".");
+      try {
+        validate_http_request(*request.tool);
+      } catch (const std::exception &error) {
+        throw std::runtime_error(request.name + ": " + error.what());
+      }
+      steps.push_back({request.name, *request.tool});
+    }
+    if (steps.empty()) throw std::runtime_error("The selected collection is empty.");
+    const auto title = name ? utf8_to_wide(*name) : file.path.filename().wstring();
+    auto &runner = add_tool(ToolKind::http, L"Run " + title, true);
+    try {
+      runner.start_collection(std::move(steps));
+    } catch (...) {
+      ::SendMessageW(runner, WM_CLOSE, 0, 0);
+      throw;
+    }
+  }
+
   void WorkbenchWindow::save_active_request() {
+    if (!can_save_request()) return;
     auto *tab = active_tab();
-    if (!tab || opening_) return;
     const auto origin = tab->hwnd();
     auto request = std::get_if<ProtocolWindow>(&tab->window)
                        ? std::get<ProtocolWindow>(tab->window).capture_request()
                        : std::get<MainWindow>(tab->window).capture_request();
     request.collection = tab->collection;
     request.name = tab->saved_name;
+    request.notes = tab->notes;
     auto file = std::find_if(loaded_collections_.begin(), loaded_collections_.end(),
-                             [&](const auto &entry) { return same_file(entry.path, tab->source); });
+                             [&](const auto &entry) { return same_collection_file(entry.path, tab->source); });
     if (file == loaded_collections_.end()) {
       if (const auto selected = selected_collection_file())
         file = loaded_collections_.begin() + *selected;
@@ -380,6 +431,7 @@ namespace flowie::app {
       if (client->hwnd() != origin) continue;
       client->collection = request.collection;
       client->saved_name = request.name;
+      client->notes = request.notes;
       client->source = resolved;
       client->label = utf8_to_wide(request.name);
       break;
@@ -401,6 +453,7 @@ namespace flowie::app {
       auto &client = *clients_[active_];
       client.collection = request.collection;
       client.saved_name = request.name;
+      client.notes = request.notes;
       client.source = file.path;
       if (request.tool) std::get<ProtocolWindow>(client.window).restore_request(*request.tool);
       else std::get<MainWindow>(client.window).restore_request(std::move(request));
@@ -421,11 +474,18 @@ namespace flowie::app {
       if (notification.hwndFrom == sidebar_tabs_ && notification.code == TCN_SELCHANGE) {
         select_sidebar(TabCtrl_GetCurSel(sidebar_tabs_));
       } else if (notification.hwndFrom == collections_tree_) {
+        if (notification.code == TVN_SELCHANGEDW) update_collection_actions();
         if (notification.code == TVN_GETINFOTIPW) {
           auto &tip = reinterpret_cast<NMTVGETINFOTIPW &>(const_cast<NMHDR &>(notification));
           if (tip.lParam > 0 && static_cast<size_t>(tip.lParam) <= loaded_collections_.size())
             ::lstrcpynW(tip.pszText, loaded_collections_[tip.lParam - 1].path.c_str(),
                         tip.cchTextMax);
+          else if (tip.lParam < 0 && static_cast<size_t>(-tip.lParam) <= sidebar_requests_.size()) {
+            const auto location = sidebar_requests_[static_cast<size_t>(-tip.lParam) - 1];
+            const auto &notes = loaded_collections_[location.file].requests[location.request].notes;
+            if (!notes.empty())
+              ::lstrcpynW(tip.pszText, utf8_to_wide(notes).c_str(), tip.cchTextMax);
+          }
           return 0;
         }
         bool open = notification.code == NM_RETURN;

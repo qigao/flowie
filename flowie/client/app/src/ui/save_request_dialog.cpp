@@ -6,20 +6,24 @@
 
 namespace flowie::app {
   namespace {
-    std::string read_name(HWND control) {
-      wchar_t value[kSavedNameLimit + 1]{};
-      const int size = GetWindowTextW(control, value, static_cast<int>(std::size(value)));
-      const auto first = std::wstring_view(value, size).find_first_not_of(L' ');
-      if (first == std::wstring_view::npos) return {};
-      const auto last = std::wstring_view(value, size).find_last_not_of(L' ');
-      const int count = static_cast<int>(last - first + 1);
-      const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value + first, count,
+    std::string read_field(HWND control, bool trim) {
+      std::wstring value(static_cast<size_t>(GetWindowTextLengthW(control)) + 1, L'\0');
+      const int size = GetWindowTextW(control, value.data(), static_cast<int>(value.size()));
+      std::wstring_view text(value.data(), size);
+      if (trim) {
+        const auto first = text.find_first_not_of(L' ');
+        if (first == text.npos) return {};
+        text = text.substr(first, text.find_last_not_of(L' ') - first + 1);
+      }
+      if (text.empty()) return {};
+      const int count = static_cast<int>(text.size());
+      const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), count,
                                             nullptr, 0, nullptr, nullptr);
-      if (!bytes) throw std::runtime_error("The name contains invalid Unicode.");
+      if (!bytes) throw std::runtime_error("The text contains invalid Unicode.");
       std::string utf8(static_cast<size_t>(bytes), '\0');
-      if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value + first, count, utf8.data(),
+      if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), count, utf8.data(),
                               bytes, nullptr, nullptr) != bytes)
-        throw std::runtime_error("Could not encode the name.");
+        throw std::runtime_error("Could not encode the text.");
       return utf8;
     }
 
@@ -50,10 +54,12 @@ namespace flowie::app {
                                         : utf8_to_wide(request_.collection).c_str());
           if (request_.tool && request_tool(request_.tool->kind))
             SetDlgItemText(IDC_SAVE_REQUEST_HINT,
-                           L"Headers and URL query parameters are excluded.");
+                           L"Credential headers and URL query parameters are excluded.");
           else if (request_.tool) SetDlgItemText(IDC_SAVE_REQUEST_HINT, L"");
           SendDlgItemMessage(IDC_SAVE_REQUEST_NAME, EM_SETLIMITTEXT, kSavedNameLimit);
           SetDlgItemText(IDC_SAVE_REQUEST_NAME, utf8_to_wide(request_.name).c_str());
+          SendDlgItemMessage(IDC_SAVE_REQUEST_NOTES, EM_SETLIMITTEXT, kSavedNotesLimit);
+          SetDlgItemText(IDC_SAVE_REQUEST_NOTES, utf8_to_wide(request_.notes).c_str());
           ::SetFocus(GetDlgItem(IDC_SAVE_REQUEST_NAME));
           SendDlgItemMessage(IDC_SAVE_REQUEST_NAME, EM_SETSEL, 0, -1);
           return FALSE;
@@ -65,8 +71,9 @@ namespace flowie::app {
 
       LRESULT accept(WORD, WORD, HWND, BOOL &) {
         try {
-          request_.collection = read_name(GetDlgItem(IDC_SAVE_COLLECTION));
-          request_.name = read_name(GetDlgItem(IDC_SAVE_REQUEST_NAME));
+          request_.collection = read_field(GetDlgItem(IDC_SAVE_COLLECTION), true);
+          request_.name = read_field(GetDlgItem(IDC_SAVE_REQUEST_NAME), true);
+          request_.notes = read_field(GetDlgItem(IDC_SAVE_REQUEST_NOTES), false);
           validate_saved_names(request_);
           EndDialog(IDOK);
         } catch (const std::exception &error) {

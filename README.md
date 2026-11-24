@@ -205,8 +205,17 @@ slate test --preset release --build-dir build/slate-tests
 并使用 `slate test --preset cluster --label server/cluster` 运行集群测试。
 完整测试图可用 `slate graph --preset cluster --format json --tests` 查看。
 
-Workbench、Linux、MSVC、Android、发布打包、夜间 soak/fuzz 及外部服务资格测试
-沿用上文的 CMake/CTest 流程。
+Windows MQTT Workbench 使用 `workbench` 预设。将 `FLOWIE_OPENWTL_ROOT` 指向由
+`.env` 中固定版本和 SHA-256 验证后解压的 OpenWTL 目录。这一预设需要支持把任务输出
+作为链接输入的 Slate 构建，Ninja 会通过 LLVM-MinGW 的 `windres` 生成并链接资源。
+
+```powershell
+slate build --preset workbench --target flowie_mqtt_workbench
+slate test --preset workbench --label workbench
+slate install --preset workbench --target flowie_mqtt_workbench --components runtime,dev --prefix build/workbench-stage
+```
+
+Linux、MSVC、Android、发布打包、夜间 soak/fuzz 及外部服务资格测试使用上文的 CMake/CTest 流程。
 
 ## Upstream dependency versions
 

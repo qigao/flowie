@@ -1,0 +1,200 @@
+[
+  {
+    "collection": "httpbin",
+    "name": "GET /get",
+    "notes": "Expect HTTP 200 and a JSON response with the request URL and headers.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/get",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "HEAD /get",
+    "notes": "Verify the response status and headers. A HEAD response has no body.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/get",
+      "method": "HEAD",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "OPTIONS /get",
+    "notes": "Inspect the Allow response header to see which methods the endpoint advertises.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/get",
+      "method": "OPTIONS",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "POST /post · Echo body",
+    "notes": "Send the JSON body and verify that the response echoes it under json.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/post",
+      "method": "POST",
+      "body": "{\n  \"source\": \"flowie-workbench\",\n  \"message\": \"Hello, httpbin!\"\n}",
+      "json_body": true,
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "PUT /put · Echo body",
+    "notes": "Verify that httpbin parses the JSON body sent with PUT.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/put",
+      "method": "PUT",
+      "body": "{\n  \"source\": \"flowie-workbench\",\n  \"name\": \"updated example\",\n  \"enabled\": true\n}",
+      "json_body": true,
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "PATCH /patch · Echo body",
+    "notes": "Verify that the JSON response echoes enabled as false.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/patch",
+      "method": "PATCH",
+      "body": "{\n  \"enabled\": false\n}",
+      "json_body": true,
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "DELETE /delete · Echo request",
+    "notes": "Inspect the echoed request metadata for the DELETE call.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/delete",
+      "method": "DELETE",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /headers · Request headers",
+    "notes": "Add a header such as X-Workbench: example in the editor, then send.\nCheck the returned headers for its name and value.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/headers",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin Cookie Session",
+    "name": "Set demo cookie",
+    "notes": "Run the httpbin Cookie Session group. This first step returns a 302 response and sets flowie=workbench for the next request.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/cookies/set/flowie/workbench",
+      "method": "GET",
+      "body": "",
+      "use_cookies": true,
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin Cookie Session",
+    "name": "Read demo cookie",
+    "notes": "The JSON response should show cookies.flowie as workbench.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/cookies",
+      "method": "GET",
+      "headers": "Accept: application/json",
+      "body": "",
+      "use_cookies": true,
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /json · JSON response",
+    "notes": "Inspect the sample JSON returned by httpbin.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/json",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /status/204 · No Content",
+    "notes": "Expect HTTP 204 with an empty response body.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/status/204",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /status/404 · Not Found",
+    "notes": "Expect HTTP 404. Run this request on its own to inspect the response, or as a step to check that Run Collection stops at a client error.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/status/404",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /status/500 · Server Error",
+    "notes": "Expect HTTP 500. Run this request on its own to inspect the response, or as a step to check that Run Collection stops at a server error.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/status/500",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /relative-redirect/1 · Redirect",
+    "notes": "Inspect the 3xx response and its Location header for the next URL.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/relative-redirect/1",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  },
+  {
+    "collection": "httpbin",
+    "name": "GET /delay/1 · Delayed response",
+    "notes": "Expect the server to wait about one second before responding. Network time adds to the total.",
+    "tool": {
+      "kind": 0,
+      "endpoint": "https://httpbin.org/delay/1",
+      "method": "GET",
+      "body": "",
+      "hex": false
+    }
+  }
+]

@@ -1,0 +1,263 @@
+[
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 5 · WSS · QoS 0 Publish",
+    "notes": "Connect to broker.emqx.io:8084 using WSS with path /mqtt. In Topics, select the saved topic and click Subscribe. After SUBSCRIBE shows ACK 0, click Publish. Look for an RX row on the same topic with the sent payload. With QoS 0, PUBLISH status 0 means the send completed locally. The RX row confirms the broker forwarded the message.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8084,
+      "transport": "wss",
+      "protocol": "5",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/qos0/echo",
+        "qos": 0
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/qos0/echo",
+      "qos": 0,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"wss\",\"mqtt\":\"5\",\"qos\":0}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 5 · TCP",
+    "notes": "Connect using MQTT 5 over TCP on port 1883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 1883,
+      "transport": "tcp",
+      "protocol": "5",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"tcp\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 5 · TLS",
+    "notes": "Connect using MQTT 5 over TLS on port 8883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8883,
+      "transport": "tls",
+      "protocol": "5",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"tls\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 5 · WS",
+    "notes": "Connect using MQTT 5 over WebSocket on port 8083 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8083,
+      "transport": "ws",
+      "protocol": "5",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"ws\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 5 · WSS",
+    "notes": "Connect using MQTT 5 over WSS on port 8084 with path /mqtt. In Topics, select the saved topic and click Subscribe. After SUBSCRIBE shows ACK 1, click Publish. PUBLISH status 0 / reason 0 confirms PUBACK. Check the RX row for the echoed payload. PUBLISH status 0 / reason 16 means the broker acknowledged the message and found no matching subscribers. If publish times out, delivery is unknown without an RX or subscriber confirmation.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8084,
+      "transport": "wss",
+      "protocol": "5",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"wss\",\"mqtt\":\"5\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 3.1.1 · TCP",
+    "notes": "Connect using MQTT 3.1.1 over TCP on port 1883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 1883,
+      "transport": "tcp",
+      "protocol": "3.1.1",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"tcp\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 3.1.1 · TLS",
+    "notes": "Connect using MQTT 3.1.1 over TLS on port 8883.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8883,
+      "transport": "tls",
+      "protocol": "3.1.1",
+      "path": "",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"tls\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 3.1.1 · WS",
+    "notes": "Connect using MQTT 3.1.1 over WebSocket on port 8083 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8083,
+      "transport": "ws",
+      "protocol": "3.1.1",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"ws\",\"mqtt\":\"3.1.1\"}"
+    }
+  },
+  {
+    "collection": "EMQX Public Broker",
+    "name": "MQTT 3.1.1 · WSS",
+    "notes": "Connect using MQTT 3.1.1 over WebSocket over TLS on port 8084 with path /mqtt.\nSelect the saved topic, subscribe at QoS 1, then publish the draft. Check for a publish acknowledgement and the echoed payload.",
+    "connection": {
+      "role": "client",
+      "host": "broker.emqx.io",
+      "port": 8084,
+      "transport": "wss",
+      "protocol": "3.1.1",
+      "path": "/mqtt",
+      "ca_file": "",
+      "cert_file": "",
+      "key_file": ""
+    },
+    "topics": [
+      {
+        "filter": "flowie/workbench/d81b37e5a42c/emqx/echo",
+        "qos": 1
+      }
+    ],
+    "message": {
+      "topic": "flowie/workbench/d81b37e5a42c/emqx/echo",
+      "qos": 1,
+      "retain": false,
+      "format": "json",
+      "payload": "{\"source\":\"flowie-workbench\",\"broker\":\"emqx\",\"transport\":\"wss\",\"mqtt\":\"3.1.1\"}"
+    }
+  }
+]

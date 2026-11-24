@@ -20,6 +20,7 @@
   "env": [
     "FLOWIE_RE2C_ROOT",
     "LEMON_ROOT",
+    "FLOWIE_OPENWTL_ROOT",
     "SALTS_BASE_ROOT",
     "CMETA_ROOT",
     "SALTS_UTILS_ROOT",
@@ -29,6 +30,10 @@
     "TURBORAFT_ROOT"
   ],
   "tools": {
+    "cmake": {"program": "cmake"},
+    "windres": {
+      "program": "${envPath:LLVM_MINGW_ROOT}/bin/x86_64-w64-mingw32-windres${host:exe}"
+    },
     "re2c": {
       "program": "${envPath:FLOWIE_RE2C_ROOT}/bin/re2c.exe"
     },
@@ -68,6 +73,11 @@
       "inherits": "release",
       "config": "cluster",
       "buildDir": "build/slate-cluster"
+    },
+    "workbench": {
+      "inherits": "release",
+      "config": "workbench",
+      "buildDir": "build/slate-workbench"
     }
   }
 }

@@ -1148,7 +1148,6 @@ spec("Flowie Client logical TLS authority admission") {
 }
 #endif
 
-#if defined(FLOWIE_CLIENT_FAULT_TEST)
 enum {
   FLOWIE_CONTRACT_CONNECT,
   FLOWIE_CONTRACT_PUBLISH,
@@ -1438,6 +1437,7 @@ spec("Flowie client receive and command contracts") {
     if (f.server_initialized) check_equal(flowie_server_destroy(&f.server), SALTS_OK);
     check_equal(atomic_load(&f.closed_connections), atomic_load(&f.connects));
   }
+#if defined(FLOWIE_CLIENT_FAULT_TEST)
   it("allows only CONNACK and AUTH through the CONNECT packet gate") {
     for (int type = 0; type <= 15; ++type)
       check_equal(flowie_mqtt_client_test_connect_packet_admit((flowie_mqtt_packet_type_t)type),
@@ -1465,7 +1465,20 @@ spec("Flowie client receive and command contracts") {
     check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_OK);
     check_equal(atomic_load(&f.errors), 0);
   }
+#endif
   for (int websocket = 0; websocket <= 1; ++websocket) {
+    it("publishes at QoS 1 after an idle receive deadline, websocket=%d", websocket) {
+      flowie_client_contract_start(&f, websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WS
+                                               : FLOWIE_MQTT_CLIENT_TRANSPORT_TCP,
+                                    FLOWIE_CONTRACT_COMMAND_MS);
+      sleep_ms(2u * FLOWIE_CONTRACT_COMMAND_MS);
+      check_equal(flowie_mqtt_client_is_connected(f.client), 1);
+      flowie_client_contract_publish(&f, 1u);
+      flowie_client_contract_wait(&f.completions[FLOWIE_CONTRACT_PUBLISH], 1);
+      check_equal(atomic_load(&f.statuses[FLOWIE_CONTRACT_PUBLISH]), SALTS_OK);
+      check_equal(atomic_load(&f.publishes), 1);
+      check_equal(atomic_load(&f.errors), 0);
+    }
     it("shares one deadline across both QoS2 response stages, websocket=%d", websocket) {
       f.ack_delay_ms = FLOWIE_CONTRACT_STAGE_MS;
       flowie_client_contract_start(&f, websocket ? FLOWIE_MQTT_CLIENT_TRANSPORT_WS
@@ -1534,7 +1547,6 @@ spec("Flowie client receive and command contracts") {
     check_equal(flowie_mqtt_client_server_disconnect_reason(f.client, &reason), SALTS_EBUSY);
   }
 }
-#endif
 
 spec("Flowie MQTT client CNet and CHTTP transports") {
 #if !defined(FLOWIE_CLIENT_FAULT_TEST)

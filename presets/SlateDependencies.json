@@ -18,6 +18,16 @@
         "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libsaltscore_tinytest.a"]
       }
     },
+    "salts_serial": {
+      "kind": "prebuilt",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libserial.dll.a"],
+        "deps": ["salts_core"]
+      },
+      "runtimeBins": ["${envPath:SALTS_BASE_ROOT}/bin/libserial.dll"]
+    },
     "salts_coroutine": {
       "kind": "prebuilt",
       "public": {
@@ -64,6 +74,23 @@
         "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
         "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libltv_parser.a"],
         "deps": ["salts_uri"]
+      }
+    },
+    "salts_datetime_parser": {
+      "kind": "prebuilt",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libdatetime_parser.a"]
+      }
+    },
+    "salts_ini_parser": {
+      "kind": "prebuilt",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "public": {
+        "requiredIncludeDirs": ["${envPath:SALTS_BASE_ROOT}/include"],
+        "libs": ["${envPath:SALTS_BASE_ROOT}/lib/libini_parser.a"],
+        "deps": ["salts_core"]
       }
     },
     "salts_json_parser": {

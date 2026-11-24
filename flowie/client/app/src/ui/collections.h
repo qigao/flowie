@@ -4,8 +4,10 @@
 
 namespace flowie::app {
   constexpr size_t kSavedNameLimit = 64;
+  constexpr size_t kSavedNotesLimit = 2048;
   constexpr size_t kSavedTopicLimit = 128;
   constexpr size_t kSavedRequestLimit = 64;
+  constexpr size_t kRecentCollectionLimit = 12;
   struct SavedTopic {
     std::string filter;
     int qos;
@@ -16,8 +18,15 @@ namespace flowie::app {
     std::vector<SavedTopic> topics;
     std::optional<MessageSample> message;
     std::optional<ToolDraft> tool;
+    std::string notes;
   };
   std::filesystem::path default_collections_file();
+  bool same_collection_file(const std::filesystem::path &first,
+                            const std::filesystem::path &second);
+  std::filesystem::path read_collections_directory(const std::filesystem::path &settings);
+  std::vector<std::filesystem::path> read_recent_collections(const std::filesystem::path &settings);
+  void remember_collection_file(const std::filesystem::path &settings,
+                                const std::filesystem::path &file);
   void validate_saved_names(const SavedRequest &request);
 
   class CollectionStore {

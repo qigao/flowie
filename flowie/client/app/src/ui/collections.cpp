@@ -1,7 +1,11 @@
 #include "collections.h"
 #include "json_fields.h"
+#include <core/base64.h>
+#include <ini_parser.h>
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
+#include <memory>
 #include <shlobj.h>
 #include <stdexcept>
 #include <system_error>
@@ -11,6 +15,12 @@ namespace flowie::app {
   namespace {
     using namespace json_fields;
     constexpr size_t kLibraryBytes = 8 * 1024 * 1024;
+    // Allow one encoded Windows long path per recent file plus the last directory.
+    constexpr size_t kSettingsBytes = (kRecentCollectionLimit + 1) * 160 * 1024;
+    constexpr char kDirectorySection[] = "collections";
+    constexpr char kDirectoryKey[] = "last_directory_base64";
+    constexpr char kRecentSection[] = "recent_collections";
+    using Ini = std::unique_ptr<ini_t, decltype(&ini_free)>;
 
     [[noreturn]] void windows_error(DWORD code, const char *operation) {
       throw std::system_error(static_cast<int>(code), std::system_category(), operation);
@@ -30,6 +40,17 @@ namespace flowie::app {
       }
     };
 
+    File lock_collection_update(const std::filesystem::path &file) {
+      std::filesystem::create_directories(file.parent_path());
+      auto name = file;
+      name += L".lock";
+      const auto handle = CreateFileW(name.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, OPEN_ALWAYS,
+                                     FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
+                                     nullptr);
+      if (handle == INVALID_HANDLE_VALUE) windows_error(GetLastError(), "Lock Collections");
+      return File(handle);
+    }
+
     bool same_name(const SavedRequest &left, const SavedRequest &right) {
       return left.collection == right.collection && left.name == right.name;
     }
@@ -39,16 +60,28 @@ namespace flowie::app {
              (filter.front() != '$' || filter.rfind("$SYS/", 0) == 0);
     }
 
+    bool optional_boolean(const json_value_t *object, const char *key) {
+      const auto *value = json_object_get(object, key);
+      if (!value) return false;
+      if (json_type(value) != JSON_BOOL)
+        throw std::runtime_error(std::string(key) + " must be a boolean.");
+      return json_bool(value);
+    }
+
     SavedRequest decode(const json_value_t *value, const std::filesystem::path &file) {
-      require_fields(value, {"collection", "name", "connection", "topics", "message", "tool"});
+      require_fields(value, {"collection", "name", "notes", "connection", "topics", "message",
+                             "tool"});
       SavedRequest request;
       request.collection = read_string(value, "collection");
       request.name = read_string(value, "name");
+      request.notes = read_string(value, "notes", "");
+      if (utf8_to_wide(request.notes).size() > kSavedNotesLimit)
+        throw std::runtime_error("Request notes exceed 2048 characters.");
       validate_saved_names(request);
       if (const auto *tool = json_object_get(value, "tool")) {
-        require_fields(value, {"collection", "name", "tool"});
+        require_fields(value, {"collection", "name", "notes", "tool"});
         require_fields(tool, {"kind", "endpoint", "method", "body", "hex", "baud", "bits", "parity",
-                              "stop_bits", "flow"});
+                              "stop_bits", "flow", "json_body", "use_cookies", "headers"});
         ToolDraft draft;
         const int kind = read_integer(tool, "kind", -1, 0, 3);
         if (kind < 0) throw std::runtime_error("A saved tool requires its protocol kind.");
@@ -56,15 +89,26 @@ namespace flowie::app {
         draft.endpoint = read_string(tool, "endpoint");
         draft.method = read_string(tool, "method");
         draft.body = read_string(tool, "body");
+        draft.headers = read_string(tool, "headers", "");
         if (draft.endpoint.size() > 4096 || draft.method.size() > 128 ||
             draft.body.size() > kToolBytes)
           throw std::runtime_error("Saved request fields exceed their size limits.");
         (void)utf8_to_wide(draft.endpoint);
         (void)utf8_to_wide(draft.method);
         (void)utf8_to_wide(draft.body);
+        (void)utf8_to_wide(draft.headers);
+        if (!draft.headers.empty()) {
+          if (!request_tool(draft.kind))
+            throw std::runtime_error("Saved headers require an HTTP or JSON-RPC request.");
+          draft.headers = collection_request_headers(draft.headers, false);
+        }
         const auto *hex = json_object_get(tool, "hex");
         if (!hex || json_type(hex) != JSON_BOOL) throw std::runtime_error("hex must be a boolean.");
         draft.hex = json_bool(hex);
+        draft.json_body = optional_boolean(tool, "json_body");
+        draft.use_cookies = optional_boolean(tool, "use_cookies");
+        if (draft.kind != ToolKind::http && (draft.json_body || draft.use_cookies))
+          throw std::runtime_error("JSON body and cookie options apply to HTTP requests.");
         draft.baud = read_integer(tool, "baud", 115200, 1, 4000000);
         draft.bits = read_integer(tool, "bits", 8, 5, 8);
         draft.parity = read_integer(tool, "parity", 0, 0, 4);
@@ -134,6 +178,7 @@ namespace flowie::app {
       if (!value) throw std::bad_alloc();
       string(value.get(), "collection", request.collection);
       string(value.get(), "name", request.name);
+      if (!request.notes.empty()) string(value.get(), "notes", request.notes);
       if (request.tool) {
         const auto &draft = *request.tool;
         auto *tool = json_create_object();
@@ -142,7 +187,10 @@ namespace flowie::app {
         string(tool, "endpoint", draft.endpoint);
         string(tool, "method", draft.method);
         string(tool, "body", draft.body);
+        if (!draft.headers.empty()) string(tool, "headers", draft.headers);
         add(tool, "hex", json_create_bool(draft.hex));
+        if (draft.json_body) add(tool, "json_body", json_create_bool(true));
+        if (draft.use_cookies) add(tool, "use_cookies", json_create_bool(true));
         add(tool, "baud", json_create_int64(draft.baud));
         add(tool, "bits", json_create_int64(draft.bits));
         add(tool, "parity", json_create_int64(draft.parity));
@@ -189,7 +237,29 @@ namespace flowie::app {
       return value;
     }
 
-    void write_library(const std::filesystem::path &file, const char *bytes, DWORD size) {
+    std::string read_collections_file(const std::filesystem::path &file, size_t limit,
+                                      bool require_existing, const char *size_error) {
+      File input(CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+      if (input.handle == INVALID_HANDLE_VALUE) {
+        const auto error = GetLastError();
+        if (!require_existing && (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND))
+          return {};
+        windows_error(error, "Open Collections file");
+      }
+      LARGE_INTEGER size{};
+      if (!GetFileSizeEx(input.handle, &size)) windows_error(GetLastError(), "Size Collections file");
+      if (size.QuadPart <= 0 || static_cast<unsigned long long>(size.QuadPart) > limit)
+        throw std::runtime_error(size_error);
+      std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
+      DWORD received = 0;
+      if (!ReadFile(input.handle, bytes.data(), static_cast<DWORD>(bytes.size()), &received, nullptr))
+        windows_error(GetLastError(), "Read Collections file");
+      if (received != bytes.size()) throw std::runtime_error("Incomplete Collections read.");
+      return bytes;
+    }
+
+    void write_collections_file(const std::filesystem::path &file, const char *bytes, DWORD size) {
       GUID id{};
       wchar_t identifier[40]{};
       if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, identifier, 40))
@@ -218,6 +288,40 @@ namespace flowie::app {
         windows_error(GetLastError(), "Commit Collections");
       temporary.owned = false;
     }
+
+    Ini read_settings(const std::filesystem::path &settings) {
+      const auto bytes = read_collections_file(settings, kSettingsBytes, false,
+                                                "Invalid Collections history file size.");
+      if (bytes.empty()) return Ini(nullptr, ini_free);
+      Ini ini(ini_parse(bytes.data(), bytes.size()), ini_free);
+      if (!ini) throw std::runtime_error("Could not parse Collections history.");
+      return ini;
+    }
+
+    std::filesystem::path read_settings_path(ini_t *ini, const char *section, const char *key) {
+      const auto *encoded = ini_get(ini, section, key);
+      if (!encoded) return {};
+      const auto decoded = tn_base64_decode_ex(encoded);
+      if (!decoded.ok) throw std::runtime_error("Could not decode a Collections history path.");
+      const std::unique_ptr<uint8_t, decltype(&std::free)> data(decoded.value.data, std::free);
+      if (!decoded.value.len) throw std::runtime_error("A Collections history path is empty.");
+      const std::string_view utf8(reinterpret_cast<const char *>(data.get()), decoded.value.len);
+      if (utf8.find('\0') != utf8.npos)
+        throw std::runtime_error("Invalid Collections history path.");
+      std::filesystem::path path(utf8_to_wide(utf8));
+      if (!path.is_absolute()) throw std::runtime_error("Invalid Collections history path.");
+      return path;
+    }
+
+    std::string encode_settings_path(const std::filesystem::path &path) {
+      // The INI parser treats semicolons and hashes as comments, even inside values.
+      const auto utf8 = path.u8string();
+      const auto encoded =
+          tn_base64_encode_ex(reinterpret_cast<const uint8_t *>(utf8.data()), utf8.size());
+      if (!encoded.ok) throw std::runtime_error("Could not encode a Collections history path.");
+      const std::unique_ptr<char, decltype(&std::free)> data(encoded.value, std::free);
+      return data.get();
+    }
   } // namespace
 
   std::filesystem::path default_collections_file() {
@@ -226,6 +330,45 @@ namespace flowie::app {
     const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> owner(folder, CoTaskMemFree);
     if (FAILED(status)) throw std::runtime_error("Could not locate Local AppData for Collections.");
     return std::filesystem::path(folder) / L"Flowie" / L"MQTT Workbench" / L"collections.json";
+  }
+
+  bool same_collection_file(const std::filesystem::path &first,
+                            const std::filesystem::path &second) {
+    return CompareStringOrdinal(first.c_str(), -1, second.c_str(), -1, TRUE) == CSTR_EQUAL;
+  }
+
+  std::filesystem::path read_collections_directory(const std::filesystem::path &settings) {
+    const auto ini = read_settings(settings);
+    return read_settings_path(ini.get(), kDirectorySection, kDirectoryKey);
+  }
+
+  std::vector<std::filesystem::path> read_recent_collections(const std::filesystem::path &settings) {
+    const auto ini = read_settings(settings);
+    std::vector<std::filesystem::path> recent;
+    for (size_t i = 0; i < kRecentCollectionLimit; ++i) {
+      auto path = read_settings_path(ini.get(), kRecentSection, ("file_" + std::to_string(i)).c_str());
+      if (path.empty()) break;
+      recent.push_back(std::move(path));
+    }
+    return recent;
+  }
+
+  void remember_collection_file(const std::filesystem::path &settings,
+                                const std::filesystem::path &file) {
+    const auto lock = lock_collection_update(settings);
+    auto recent = read_recent_collections(settings);
+    recent.erase(std::remove_if(recent.begin(), recent.end(),
+                                [&](const auto &entry) { return same_collection_file(entry, file); }),
+                 recent.end());
+    if (recent.size() == kRecentCollectionLimit) recent.pop_back();
+    recent.insert(recent.begin(), file);
+    std::string bytes = std::string("[") + kDirectorySection + "]\n" + kDirectoryKey + "=" +
+                        encode_settings_path(file.parent_path()) + "\n\n[" + kRecentSection + "]\n";
+    for (size_t i = 0; i < recent.size(); ++i)
+      bytes += "file_" + std::to_string(i) + "=" + encode_settings_path(recent[i]) + "\n";
+    if (bytes.size() > kSettingsBytes)
+      throw std::runtime_error("Collections history exceeds its size limit.");
+    write_collections_file(settings, bytes.data(), static_cast<DWORD>(bytes.size()));
   }
 
   void validate_saved_names(const SavedRequest &request) {
@@ -241,23 +384,9 @@ namespace flowie::app {
 
   std::vector<SavedRequest> CollectionStore::load(bool require_existing) const {
     using namespace json_fields;
-    File input(CreateFileW(file_.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
-                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
-    if (input.handle == INVALID_HANDLE_VALUE) {
-      const auto error = GetLastError();
-      if (!require_existing && (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND))
-        return {};
-      windows_error(error, "Open Collections");
-    }
-    LARGE_INTEGER size{};
-    if (!GetFileSizeEx(input.handle, &size)) windows_error(GetLastError(), "Size Collections");
-    if (size.QuadPart <= 0 || static_cast<unsigned long long>(size.QuadPart) > kLibraryBytes)
-      throw std::runtime_error("Invalid Collections file size (8 MiB maximum).");
-    std::string bytes(static_cast<size_t>(size.QuadPart), '\0');
-    DWORD received = 0;
-    if (!ReadFile(input.handle, bytes.data(), static_cast<DWORD>(bytes.size()), &received, nullptr))
-      windows_error(GetLastError(), "Read Collections");
-    if (received != bytes.size()) throw std::runtime_error("Incomplete Collections read.");
+    const auto bytes = read_collections_file(file_, kLibraryBytes, require_existing,
+                                              "Invalid Collections file size (8 MiB maximum).");
+    if (bytes.empty()) return {};
     const auto root = parse(bytes);
     if (json_type(root.get()) != JSON_ARRAY || json_array_size(root.get()) > kSavedRequestLimit)
       throw std::runtime_error("Collections must contain at most 64 requests.");
@@ -282,12 +411,7 @@ namespace flowie::app {
     auto value = encode(request);
     // Validate the exact persisted representation before replacing an existing file.
     auto stored = decode(value.get(), file_);
-    std::filesystem::create_directories(file_.parent_path());
-    auto lock_name = file_;
-    lock_name += L".lock";
-    const File lock(CreateFileW(lock_name.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, OPEN_ALWAYS,
-                                FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr));
-    if (lock.handle == INVALID_HANDLE_VALUE) windows_error(GetLastError(), "Lock Collections");
+    const auto lock = lock_collection_update(file_);
     auto requests = load(require_existing);
     auto found = std::find_if(requests.begin(), requests.end(),
                               [&](const auto &entry) { return same_name(entry, stored); });
@@ -308,7 +432,7 @@ namespace flowie::app {
                                                                json_serialize_free);
     if (!data) throw std::runtime_error("Could not serialize Collections.");
     if (size > kLibraryBytes) throw std::runtime_error("Collections exceed the 8 MiB limit.");
-    write_library(file_, data.get(), static_cast<DWORD>(size));
+    write_collections_file(file_, data.get(), static_cast<DWORD>(size));
     return requests;
   }
 } // namespace flowie::app

@@ -51,6 +51,7 @@ target_link_libraries(flowie_workbench_model
 	PRIVATE
 		CHttp::Client
 		Salts::CNet
+		Salts::DateTimeParser
 		Salts::Serial
 		Salts::URI
 )
@@ -73,6 +74,8 @@ target_link_libraries(flowie_workbench_ui
 	PUBLIC
 		flowie_workbench_model
 		OpenWTL::WTL
+	PRIVATE
+		Salts::IniParser
 )
 target_compile_definitions(flowie_workbench_ui PUBLIC NOMINMAX)
 # workbench.rc embeds the manifest for the application and the window tests.

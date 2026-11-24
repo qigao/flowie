@@ -1,10 +1,47 @@
 #include "loopback_broker.h"
 #include "workbench.h"
+#include "workbench_cookies.h"
 #include <core/error.h>
 #include <functional>
 #include <tinytest.hpp>
 
 using namespace flowie::app;
+suite("Workbench HTTP cookie store") {
+  it("applies default paths, expiration and exact origins") {
+    HttpCookies jar;
+    constexpr std::string_view origin = "tls://example.test:443";
+    constexpr std::string_view host = "example.test";
+    check_true(jar.store(origin, host, "/api/login", true, "sid=one; Secure"));
+    check_true(jar.store(origin, host, "/api/login", true, "sid=root; Path=/"));
+    check_true(jar.store(origin, host, "/api/login", true, "foreign=no; Domain=test"));
+    check_equal(jar.header(origin, "/api/profile"), std::string("sid=one; sid=root"));
+    check_equal(jar.header(origin, "/apiary"), std::string("sid=root"));
+    check_true(jar.header("tcp://example.test:443", "/api/profile").empty());
+    check_true(jar.store(origin, host, "/api/login", true, "sid=; Path=/api; Max-Age=0"));
+    check_true(jar.store(origin, host, "/api/login", true,
+                         "sid=; Path=/; Expires=Sun, 06 Nov 1994 08:49:37 GMT"));
+    check_true(jar.header(origin, "/api/profile").empty());
+  }
+
+  it("reports storage and outgoing header limits without dropping live cookies") {
+    HttpCookies jar;
+    constexpr std::string_view origin = "tcp://example.test:80";
+    constexpr std::string_view host = "example.test";
+    for (int i = 0; i < 32; ++i)
+      check_true(jar.store(origin, host, "/", false, "key" + std::to_string(i) + "=value"));
+    check_false(jar.store(origin, host, "/", false, "overflow=extra"));
+    const auto header = jar.header(origin, "/");
+    check_true(header.find("key0=value") == 0);
+    check_true(header.find("key31=value") != header.npos);
+    check_true(header.find("overflow") == header.npos);
+    jar.clear();
+    const std::string value(3000, 'x');
+    check_true(jar.store(origin, host, "/", false, "first=" + value));
+    check_true(jar.store(origin, host, "/", false, "second=" + value));
+    check_throws_as(jar.header(origin, "/"), std::runtime_error);
+  }
+}
+
 namespace {
   bool until(Session &session, const std::function<bool(const std::vector<Event> &)> &predicate) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);

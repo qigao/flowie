@@ -5,7 +5,8 @@ CAppModule _Module;
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
   INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES |
-                                                      ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES};
+                                                      ICC_TAB_CLASSES | ICC_TREEVIEW_CLASSES |
+                                                      ICC_BAR_CLASSES};
   if (!InitCommonControlsEx(&controls)) return 1;
   RECT work{};
   if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) return 1;

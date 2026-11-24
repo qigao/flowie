@@ -71,6 +71,7 @@ namespace flowie::app {
     void set_task_layout(TaskLayout layout);
     TaskLayout task_layout() const { return task_layout_; }
     State state() const { return session_.state(); }
+    std::wstring remote_endpoint() const;
     bool closing() const { return closing_; }
     enum Id {
       host = 100,

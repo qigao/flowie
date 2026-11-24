@@ -1,0 +1,94 @@
+{
+  "include": ["tests/module.json"],
+  "targets": {
+    "flowie_openwtl": {
+      "kind": "header_only",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "public": {
+        "requiredIncludeDirs": [
+          "${envPath:FLOWIE_OPENWTL_ROOT}/wtl/Include",
+          "${envPath:FLOWIE_OPENWTL_ROOT}/alt/include"
+        ],
+        "defines": {
+          "UNICODE": null,
+          "_UNICODE": null,
+          "_WIN32_WINNT": "0x0601",
+          "WINVER": "0x0601",
+          "_WIN32_IE": "0x0601"
+        },
+        "libs": ["ole32", "oleaut32", "uuid", "advapi32", "comctl32", "gdi32", "user32",
+          "shell32", "shlwapi", "comdlg32", "uxtheme", "msimg32", "dwmapi"]
+      },
+      "install": {
+        "assets": [
+          {"from": "${envPath:FLOWIE_OPENWTL_ROOT}/LICENSE", "to": "share/licenses/Flowie/OpenWTL"},
+          {"from": "${envPath:FLOWIE_OPENWTL_ROOT}/wtl/MS-PL.txt", "to": "share/licenses/Flowie/OpenWTL"}
+        ]
+      }
+    },
+    "flowie_workbench_resources": {
+      "kind": "header_only",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "public": {"libs": ["$builddir/gen/workbench/workbench.res"]},
+      "preTasks": [
+        {
+          "name": "compile_resources",
+          "tool": "windres",
+          "inputs": ["src/workbench.rc", "src/workbench.manifest", "src/ui/connection_resource.h"],
+          "outputs": ["$builddir/gen/workbench/workbench.res"],
+          "args": ["-I", "$moduledir/src", "-i", "$moduledir/src/workbench.rc", "-O", "res",
+            "-o", "$builddir/gen/workbench/workbench.res"]
+        }
+      ]
+    },
+    "flowie_workbench_model": {
+      "kind": "static",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "sources": {"files": ["src/workbench.cpp", "src/workbench_cookies.cpp", "src/workbench_tools.cpp"]},
+      "public": {
+        "includeDirs": ["src"],
+        "deps": ["flowie_client", "salts_core", "salts_json_parser"]
+      },
+      "private": {"deps": ["chttp_client", "salts_cnet", "salts_datetime_parser", "salts_serial", "salts_uri"]}
+    },
+    "flowie_workbench_ui": {
+      "kind": "static",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "sources": {
+        "files": [
+          "src/main_protocol_window.cpp",
+          "src/main_window.cpp",
+          "src/main_window_layout.cpp",
+          "src/main_workbench.cpp",
+          "src/main_workbench_collections.cpp",
+          "src/main_workbench_menu.cpp",
+          "src/main_workbench_tabs.cpp",
+          "src/ui/collections.cpp",
+          "src/ui/connection_dialog.cpp",
+          "src/ui/import_files.cpp",
+          "src/ui/import_picker.cpp",
+          "src/ui/json_fields.cpp",
+          "src/ui/panel.cpp",
+          "src/ui/recent_connections.cpp",
+          "src/ui/save_request_dialog.cpp",
+          "src/ui/tabs.cpp",
+          "src/ui/theme.cpp"
+        ]
+      },
+      "public": {
+        "defines": {"NOMINMAX": null},
+        "deps": ["flowie_workbench_model", "flowie_openwtl"]
+      },
+      "private": {"deps": ["salts_ini_parser"]}
+    },
+    "flowie_mqtt_workbench": {
+      "kind": "executable",
+      "when": {"os": "windows", "driver": "llvm-mingw", "config": "workbench"},
+      "sources": {"files": ["src/main.cpp"]},
+      "private": {
+        "deps": ["flowie_workbench_ui", "flowie_workbench_resources"],
+        "linkFlags": ["-mwindows", "-municode"]
+      }
+    }
+  }
+}

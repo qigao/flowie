@@ -2,6 +2,7 @@
 #include "ui/connection_dialog.h"
 #include "ui/connection_resource.h"
 #include "ui/import_files.h"
+#include <algorithm>
 #include <atluser.h>
 #include <stdexcept>
 #include <system_error>
@@ -9,6 +10,7 @@
 namespace flowie::app {
   namespace {
     constexpr UINT kRecentMenuPosition = 4;
+    constexpr UINT kRecentCollectionsMenuPosition = 2;
     struct MenuAction {
       WorkbenchWindow::Id id;
       RequestAction action;
@@ -29,13 +31,25 @@ namespace flowie::app {
       if (!AppendMenuW(menu, flags, id, label))
         throw std::runtime_error("Could not build workspace menu");
     }
+    void clear_recent_menu(HMENU menu) {
+      for (int pos = GetMenuItemCount(menu); pos-- > 0;)
+        if (!DeleteMenu(menu, pos, MF_BYPOSITION))
+          throw std::runtime_error("Could not refresh workspace history menu.");
+    }
+    void append_recent(HMENU menu, UINT_PTR id, std::wstring label) {
+      // Win32 treats ampersands as menu mnemonics.
+      for (size_t amp = 0; (amp = label.find(L'&', amp)) != label.npos; amp += 2)
+        label.insert(amp, 1, L'&');
+      append(menu, MF_STRING, id, label.c_str());
+    }
   } // namespace
 
   void WorkbenchWindow::create_menu() {
-    CMenu bar, file, connection, recent, message, view, new_tool, mqtt;
+    CMenu bar, file, connection, recent, recent_collections, message, view, new_tool, mqtt;
     if (!bar.CreateMenu() || !file.CreatePopupMenu() || !connection.CreatePopupMenu() ||
         !recent.CreatePopupMenu() || !message.CreatePopupMenu() || !view.CreatePopupMenu() ||
-        !new_tool.CreatePopupMenu() || !mqtt.CreatePopupMenu())
+        !new_tool.CreatePopupMenu() || !mqtt.CreatePopupMenu() ||
+        !recent_collections.CreatePopupMenu())
       throw std::runtime_error("Could not create workspace menu");
     const auto add_popup = [](HMENU parent, CMenu &child, const wchar_t *label) {
       const auto handle = child.m_hMenu;
@@ -55,7 +69,10 @@ namespace flowie::app {
     append(new_tool, MF_STRING, add_serial, L"&Serial");
     new_tool_menu_ = add_popup(file, new_tool, L"&New Request\tCtrl+N");
     append(file, MF_STRING, browse_collections, L"Open &Collections...");
+    append(recent_collections, MF_STRING | MF_GRAYED, 0, L"No recent collections");
+    recent_collections_menu_ = add_popup(file, recent_collections, L"Recent Co&llections");
     append(file, MF_STRING, manage_collections, L"&Manage Collections");
+    append(file, MF_STRING, run_collection, L"&Run Collection");
     append(file, MF_STRING, save_request, L"&Save Request...\tCtrl+S");
     append(file, MF_SEPARATOR, 0, nullptr);
     append(file, MF_STRING, close_client, L"&Close Tab\tCtrl+W");
@@ -125,7 +142,8 @@ namespace flowie::app {
     const auto *tab = active_tab();
     if (!tab || opening_) return std::nullopt;
     if (const auto *mqtt = std::get_if<MainWindow>(&tab->window)) return mqtt->task_layout();
-    return std::get<ProtocolWindow>(tab->window).task_layout();
+    const auto &tool = std::get<ProtocolWindow>(tab->window);
+    return tool.runner() ? std::nullopt : std::optional{tool.task_layout()};
   }
 
   void WorkbenchWindow::set_task_layout(TaskLayout layout) {
@@ -135,12 +153,66 @@ namespace flowie::app {
     else std::get<ProtocolWindow>(tab->window).set_task_layout(layout);
   }
 
-  void WorkbenchWindow::show_toolbar_menu(HWND button, HMENU menu) {
+  void WorkbenchWindow::create_toolbar() {
+    constexpr DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
+                            TBSTYLE_FLAT | TBSTYLE_LIST | TBSTYLE_TOOLTIPS |
+                            CCS_NOPARENTALIGN | CCS_NORESIZE | CCS_NODIVIDER;
+    if (!toolbar_.Create(m_hWnd, nullptr, L"Workbench commands", style, 0, command_toolbar))
+      throw std::runtime_error("Could not create the Workbench toolbar.");
+    toolbar_.SetButtonStructSize();
+    toolbar_.SetFont(font_);
+    toolbar_.SetExtendedStyle(TBSTYLE_EX_MIXEDBUTTONS | TBSTYLE_EX_DRAWDDARROWS);
+    toolbar_.SetMaxTextRows(1);
+    toolbar_.SetIndent(scale(6));
+    toolbar_.SetPadding(scale(10), scale(8));
+    const int images = toolbar_.LoadStdImages(IDB_STD_SMALL_COLOR);
+    if (images < 0) throw std::runtime_error("Could not load standard toolbar images.");
+    const auto button = [](Id id, const wchar_t *caption, int image, BYTE style = BTNS_BUTTON) {
+      TBBUTTON item{};
+      item.iBitmap = image;
+      item.idCommand = id;
+      item.fsState = TBSTATE_ENABLED;
+      item.fsStyle = static_cast<BYTE>(style | BTNS_AUTOSIZE | BTNS_SHOWTEXT);
+      item.iString = reinterpret_cast<INT_PTR>(caption);
+      return item;
+    };
+    TBBUTTON separator{};
+    separator.iBitmap = scale(8);
+    separator.fsStyle = BTNS_SEP;
+    const TBBUTTON commands[] = {
+        button(choose_new_request, L"&New Request", images + STD_FILENEW, BTNS_WHOLEDROPDOWN),
+        button(browse_collections, L"Open Collections…", images + STD_FILEOPEN),
+        button(save_request, L"Save Request", images + STD_FILESAVE),
+        separator,
+        button(primary_request, L"Run", I_IMAGENONE),
+        button(disconnect_active, L"Stop", I_IMAGENONE),
+        button(request_actions, L"Actions", images + STD_PROPERTIES, BTNS_WHOLEDROPDOWN),
+    };
+    if (!toolbar_.AddButtons(static_cast<int>(std::size(commands)), commands))
+      throw std::runtime_error("Could not add the Workbench toolbar commands.");
+  }
+
+  void WorkbenchWindow::layout_toolbar(int width) {
+    toolbar_.AutoSize();
+    SIZE commands{};
+    if (!toolbar_.GetMaxSize(&commands))
+      throw std::runtime_error("Could not measure the Workbench toolbar.");
+    const int toolbar_width = std::min(width, static_cast<int>(commands.cx) + scale(6));
+    const int toolbar_height = scale(38);
+    const int y = std::max(0, (toolbar_height - static_cast<int>(commands.cy)) / 2);
+    ::MoveWindow(toolbar_, 0, y, toolbar_width, toolbar_height - y, TRUE);
+    const int summary_x = toolbar_width + scale(12);
+    ::MoveWindow(summary_, summary_x, scale(10), std::max(0, width - summary_x - scale(8)),
+                 scale(21), TRUE);
+  }
+
+  void WorkbenchWindow::show_toolbar_menu(Id command, HMENU menu) {
     const auto *tab = active_tab();
     const HWND target = tab ? tab->hwnd() : nullptr;
     RECT bounds{};
-    if (!::GetWindowRect(button, &bounds))
+    if (!toolbar_.GetRect(command, &bounds))
       throw std::runtime_error("Could not locate the toolbar menu.");
+    ::MapWindowPoints(toolbar_, nullptr, reinterpret_cast<POINT *>(&bounds), 2);
     const auto action = ::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RETURNCMD, bounds.left,
                                          bounds.bottom, 0, m_hWnd, nullptr);
     if (!action) return;
@@ -152,17 +224,40 @@ namespace flowie::app {
   }
 
   void WorkbenchWindow::update_request_toolbar() {
-    const auto update = [](HWND button, RequestCommand command, const wchar_t *fallback) {
+    const auto enable = [&](Id id, bool active) {
+      if ((toolbar_.IsButtonEnabled(id) != FALSE) != active &&
+          !toolbar_.EnableButton(id, active))
+        throw std::runtime_error("Could not update a toolbar command.");
+    };
+    bool labels_changed = false;
+    const auto update = [&](Id id, RequestCommand command, const wchar_t *fallback) {
       const auto label = command.label ? command.label : fallback;
-      wchar_t current[32]{};
-      ::GetWindowTextW(button, current, 32);
-      if (std::wstring_view(current) != label) ::SetWindowTextW(button, label);
-      ::EnableWindow(button, command.enabled);
+      wchar_t current[64]{};
+      TBBUTTONINFOW info{sizeof(info), TBIF_TEXT};
+      info.pszText = current;
+      info.cchText = static_cast<int>(std::size(current));
+      if (toolbar_.GetButtonInfo(id, &info) < 0)
+        throw std::runtime_error("Could not read a toolbar command.");
+      if (std::wstring_view(current) != label) {
+        info.pszText = const_cast<wchar_t *>(label);
+        if (!toolbar_.SetButtonInfo(id, &info))
+          throw std::runtime_error("Could not rename a toolbar command.");
+        labels_changed = true;
+      }
+      enable(id, command.enabled);
     };
     shown_primary_ = primary_action();
-    update(primary_, request_command(shown_primary_), L"Run");
-    update(stop_, request_command(RequestAction::stop), L"Stop");
-    ::EnableWindow(request_actions_, request_command(RequestAction::sample).enabled);
+    update(primary_request, request_command(shown_primary_), L"Run");
+    update(disconnect_active, request_command(RequestAction::stop), L"Stop");
+    enable(choose_new_request, can_add());
+    enable(browse_collections, !opening_ && !closing_);
+    enable(save_request, can_save_request());
+    enable(request_actions, request_command(RequestAction::sample).enabled);
+    if (labels_changed) {
+      RECT client{};
+      GetClientRect(&client);
+      layout_toolbar(client.right);
+    }
   }
 
   LRESULT WorkbenchWindow::OnMenuPopup(UINT, WPARAM wparam, LPARAM, BOOL &handled) {
@@ -172,8 +267,11 @@ namespace flowie::app {
     };
     if (popup == file_menu_) {
       enable(browse_collections, !opening_ && !closing_);
+      EnableMenuItem(popup, kRecentCollectionsMenuPosition,
+                     MF_BYPOSITION | (!opening_ && !closing_ && !faulted_ ? MF_ENABLED : MF_GRAYED));
       enable(manage_collections, !opening_ && !closing_);
-      enable(save_request, active_tab() && !opening_);
+      enable(run_collection, can_run_collection());
+      enable(save_request, can_save_request());
       enable(close_client, !clients_.empty() && can_close(*clients_[active_]));
       return 0;
     }
@@ -230,25 +328,28 @@ namespace flowie::app {
       }
       return 0;
     }
-    if (popup != recent_menu_) {
+    if (popup != recent_menu_ && popup != recent_collections_menu_) {
       handled = FALSE;
       return 0;
     }
     try {
-      menu_recent_.clear();
-      for (int pos = GetMenuItemCount(popup); pos-- > 0;)
-        if (!DeleteMenu(popup, pos, MF_BYPOSITION))
-          throw std::runtime_error("Could not refresh recent connections menu");
-      auto recent = history_.load();
-      if (recent.empty()) append(popup, MF_STRING | MF_GRAYED, 0, L"No recent connections");
-      for (size_t i = 0; i < recent.size(); ++i) {
-        auto label = connection_label(recent[i]);
-        // Win32 uses ampersand for menu mnemonics, including in broker-provided labels.
-        for (size_t amp = 0; (amp = label.find(L'&', amp)) != label.npos; amp += 2)
-          label.insert(amp, 1, L'&');
-        append(popup, MF_STRING, first_recent + i, label.c_str());
+      if (popup == recent_collections_menu_) {
+        menu_recent_collections_.clear();
+        clear_recent_menu(popup);
+        auto recent = read_recent_collections(collections_settings_);
+        if (recent.empty()) append(popup, MF_STRING | MF_GRAYED, 0, L"No recent collections");
+        for (size_t i = 0; i < recent.size(); ++i)
+          append_recent(popup, first_recent_collection + i, recent[i].wstring());
+        menu_recent_collections_ = std::move(recent);
+      } else {
+        menu_recent_.clear();
+        clear_recent_menu(popup);
+        auto recent = history_.load();
+        if (recent.empty()) append(popup, MF_STRING | MF_GRAYED, 0, L"No recent connections");
+        for (size_t i = 0; i < recent.size(); ++i)
+          append_recent(popup, first_recent + i, connection_label(recent[i]));
+        menu_recent_ = std::move(recent);
       }
-      menu_recent_ = std::move(recent);
     } catch (const std::exception &error) {
       has_error_ = true;
       ::SetWindowTextA(summary_, error.what());

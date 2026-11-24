@@ -20,14 +20,6 @@ namespace flowie::app {
       colors.hover = RGB(221, 234, 251);
       colors.pressed = RGB(192, 215, 246);
       colors.focus = RGB(34, 92, 174);
-      colors.chrome = RGB(76, 76, 76);
-      colors.chrome_text = RGB(250, 250, 250);
-      colors.chrome_muted = RGB(190, 190, 190);
-      colors.chrome_hover = RGB(92, 92, 92);
-      colors.chrome_pressed = RGB(56, 56, 56);
-      colors.chrome_focus = RGB(153, 218, 250);
-      colors.chrome_green = RGB(155, 220, 151);
-      colors.chrome_amber = RGB(255, 211, 139);
       return colors;
     }();
 
@@ -76,9 +68,7 @@ namespace flowie::app {
     colors.hover = highlight;
     colors.pressed = highlight;
     colors.focus = highlight;
-    colors.chrome = face;
     colors.chrome_text = face_ink;
-    colors.chrome_muted = disabled;
     return colors;
   }
   HBRUSH color_brush(HDC dc, COLORREF foreground, COLORREF background) {
@@ -86,72 +76,6 @@ namespace flowie::app {
     SetBkColor(dc, background);
     SetDCBrushColor(dc, background);
     return static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
-  }
-  LRESULT draw_command(const NMCUSTOMDRAW &draw, const UiTheme &theme, CommandGlyph glyph,
-                       int dpi) {
-    if (theme.system) return CDRF_DODEFAULT;
-    if (draw.dwDrawStage != CDDS_PREPAINT) return CDRF_DODEFAULT;
-    const int saved = SaveDC(draw.hdc);
-    const bool disabled = (draw.uItemState & CDIS_DISABLED) != 0;
-    const bool pressed = (draw.uItemState & CDIS_SELECTED) != 0;
-    const bool hot = (draw.uItemState & CDIS_HOT) != 0;
-    const auto background = pressed ? theme.chrome_pressed
-                            : hot   ? theme.chrome_hover
-                                    : theme.chrome;
-    const auto accent = disabled                      ? theme.chrome_muted
-                        : glyph == CommandGlyph::run  ? theme.chrome_green
-                        : glyph == CommandGlyph::stop ? theme.chrome_amber
-                                                      : theme.chrome_text;
-    FillRect(draw.hdc, &draw.rc, color_brush(draw.hdc, theme.chrome_text, background));
-    auto s = [=](int value) { return MulDiv(value, dpi, 96); };
-    const int x = draw.rc.left + s(10),
-              y = draw.rc.top + (draw.rc.bottom - draw.rc.top - s(18)) / 2;
-    HPEN pen = CreatePen(PS_SOLID, s(2), accent);
-    HGDIOBJ old_pen = SelectObject(draw.hdc, pen),
-            old_brush = SelectObject(draw.hdc, GetStockObject(NULL_BRUSH));
-    auto line = [&](int x1, int y1, int x2, int y2) {
-      MoveToEx(draw.hdc, x + s(x1), y + s(y1), nullptr);
-      LineTo(draw.hdc, x + s(x2), y + s(y2));
-    };
-    if (glyph == CommandGlyph::run) {
-      line(5, 3, 15, 9);
-      line(15, 9, 5, 15);
-      line(5, 15, 5, 3);
-    } else if (glyph == CommandGlyph::stop) {
-      Rectangle(draw.hdc, x + s(4), y + s(4), x + s(15), y + s(15));
-    } else if (glyph == CommandGlyph::request) {
-      line(3, 9, 16, 9);
-      line(9, 3, 9, 16);
-    } else if (glyph == CommandGlyph::open) {
-      line(2, 15, 2, 4);
-      line(2, 4, 7, 4);
-      line(7, 4, 9, 7);
-      line(9, 7, 17, 7);
-      line(17, 7, 14, 15);
-      line(14, 15, 2, 15);
-    } else if (glyph == CommandGlyph::save) {
-      Rectangle(draw.hdc, x + s(2), y + s(2), x + s(16), y + s(16));
-      line(5, 3, 5, 8);
-      line(5, 8, 12, 8);
-      line(5, 13, 12, 13);
-    } else {
-      line(4, 7, 9, 12);
-      line(9, 12, 14, 7);
-    }
-    SelectObject(draw.hdc, old_pen);
-    SelectObject(draw.hdc, old_brush);
-    DeleteObject(pen);
-    RECT text = draw.rc;
-    text.left += s(32);
-    text.right -= s(6);
-    draw_button_label(draw, text, disabled ? theme.chrome_muted : theme.chrome_text, DT_LEFT);
-    if (draw.uItemState & CDIS_FOCUS) {
-      RECT focus = draw.rc;
-      InflateRect(&focus, -s(2), -s(2));
-      outline(draw.hdc, focus, theme.chrome_focus, s(2));
-    }
-    RestoreDC(draw.hdc, saved);
-    return CDRF_SKIPDEFAULT;
   }
   LRESULT draw_form_button(const NMCUSTOMDRAW &draw, const UiTheme &theme, int dpi, bool primary) {
     if (theme.system || draw.dwDrawStage != CDDS_PREPAINT) return CDRF_DODEFAULT;
