@@ -26,6 +26,8 @@ cmake --build --preset native-release-user --target flowie_client
 ```
 
 公开头文件是 `flowie_mqtt_client.h`。所有配置结构必须从对应 `*_INIT` 宏初始化。
+
+`flowie_mqtt_publish` 是 CMake 构建中的单次 MQTT 5 mTLS 发布工具。按顺序传入主机、端口、CA 路径、客户端证书路径、私钥路径、认证主体、Client ID 和 Topic，通过标准输入传入最多 4096 字节的命令。工具使用 QoS 1，打印 `PUBACK` 及 MQTT 原因码，或打印 `ERROR` 及 Flowie 状态。发布被拒绝或 I/O 失败时以非零状态退出。PUBACK 表示 Broker 的协议回应，调用方需要通过自己的设备回执确认业务结果。
 `stream_recv_buffer_bytes`、`socket_recv_buffer_bytes` 和 `socket_send_buffer_bytes` 的层次、
 默认值与内存预算见 [Flowie 架构说明](ARCHITECTURE.md)。
 其中 `stream_recv_buffer_bytes` 是 MQTT 解码缓存硬上限；两个 `socket_*_buffer_bytes` 会经

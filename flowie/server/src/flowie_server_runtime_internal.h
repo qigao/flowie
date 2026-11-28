@@ -8,7 +8,8 @@ typedef struct flowie_server_runtime_s flowie_server_runtime_t;
 
 /* Exclusive product lifecycle. Config/database and callback contexts are borrowed
  * through destroy. check_only assembles the same graph without starting a listener.
- * Failure returns the original Salts error and leaves *out NULL after rollback;
+ * Failure returns the original Salts error and leaves *out NULL after rollback.
+ * A live owner after failed cleanup remains in *out for destroy.
  * operation, when supplied, receives a static diagnostic phase name. */
 int flowie_server_runtime_create(const flowie_server_config_t *config,
                                  const flowie_endpoint_config_t *endpoint_config,
@@ -19,6 +20,7 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
 
 /* Borrows the active graph; the view expires before destroy returns. */
 flowie_endpoint_core_t *flowie_server_runtime_endpoint(flowie_server_runtime_t *runtime);
+int flowie_server_runtime_management_port(const flowie_server_runtime_t *runtime, uint16_t *port);
 
 /* Stops the endpoint before releasing repository/security dependencies. NULL is
  * idempotent. A Component lifecycle error preserves *runtime for diagnosis/retry. */

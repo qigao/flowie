@@ -122,6 +122,9 @@ static int repo_create_schema(repo_state *repository) {
   REPO_SCHEMA("inflight",
               "client_id text not null, packet_id integer not null, qos integer not null, primary "
               "key (client_id, packet_id)");
+  REPO_SCHEMA("inflight_exchange",
+              "client_id text not null, packet_id integer not null, exchange %s not null, primary "
+              "key (client_id, packet_id)");
   REPO_SCHEMA("deliveries",
               "client_id text not null, packet_id integer not null, qos integer not null, state "
               "integer not null, expires_at bigint not null, packet %s not null, primary key "
@@ -441,7 +444,7 @@ static int repo_insert_child(repo_state *repository, orm_transaction_t *transact
 static int repo_replace_session_children(repo_state *repository, orm_transaction_t *transaction,
                                          const flowie_protocol_session_row_t *row) {
   static const char *const child_tables[] = {"principal_roles", "principal_groups", "subscriptions",
-                                             "inflight",        "deliveries",       "wills"};
+                                             "inflight", "inflight_exchange", "deliveries", "wills"};
   int rc = SALTS_OK;
   for (const char *table : child_tables) {
     rc = repo_delete_by_client(repository, transaction, table, row->client_id);
@@ -477,10 +480,14 @@ static int repo_replace_session_children(repo_state *repository, orm_transaction
     if (rc != SALTS_OK) return rc;
   }
   for (size_t i = 0u; i < row->inflight_count; ++i) {
-    const char *columns[] = {"packet_id", "qos"};
-    orm_value_t values[] = {repo_i64(row->inflight[i].packet_id), repo_i64(row->inflight[i].qos)};
-    rc =
-        repo_insert_child(repository, transaction, "inflight", row->client_id, columns, values, 2u);
+    const auto &entry = row->inflight[i];
+    const bool reserved = entry.exchange[6] != 0u;
+    const char *columns[] = {"packet_id", reserved ? "exchange" : "qos"};
+    const flowie_mqtt_span_t exchange{entry.exchange, sizeof(entry.exchange)};
+    orm_value_t values[] = {repo_i64(entry.packet_id),
+                            reserved ? repo_span(exchange, true) : repo_i64(entry.qos)};
+    rc = repo_insert_child(repository, transaction, reserved ? "inflight_exchange" : "inflight",
+                           row->client_id, columns, values, 2u);
     if (rc != SALTS_OK) return rc;
   }
   for (size_t i = 0u; i < row->delivery_count; ++i) {
@@ -551,7 +558,10 @@ static int repo_session_save_on_owner(repo_state *repository,
         row->subscriptions[i].retain_handling > 2u)
       return SALTS_EINVAL;
   for (size_t i = 0u; i < row->inflight_count; ++i)
-    if (row->inflight[i].packet_id == 0u || row->inflight[i].qos > 2u) return SALTS_EINVAL;
+    if (row->inflight[i].packet_id == 0u || row->inflight[i].qos > 2u ||
+        (row->inflight[i].exchange[6] && (row->inflight[i].qos != 2u ||
+                                        (row->inflight[i].exchange[6] & 0xf0u) != 0x40u)))
+      return SALTS_EINVAL;
   for (size_t i = 0u; i < row->delivery_count; ++i)
     if (row->deliveries[i].packet_id == 0u || row->deliveries[i].qos > 2u ||
         row->deliveries[i].state == 0u || !row->deliveries[i].packet.data ||
@@ -602,7 +612,7 @@ static int repo_session_save_on_owner(repo_state *repository,
 static int repo_session_delete_on_owner(repo_state *repository, flowie_mqtt_span_t client_id,
                                         uint64_t expected_revision) {
   static const char *const tables[] = {"principal_roles", "principal_groups", "subscriptions",
-                                       "inflight",        "deliveries",       "wills",
+                                       "inflight", "inflight_exchange", "deliveries", "wills",
                                        "replaced_wills",  "sessions"};
   orm_transaction_t *transaction = nullptr;
   orm_error_t error;
@@ -959,6 +969,25 @@ static int repo_inflight_visit(void *ctx, const flowie_orm_row_t *source, size_t
   return SALTS_OK;
 }
 
+static int repo_inflight_exchange_visit(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
+  auto *state = static_cast<repo_session_children *>(ctx);
+  if (row_index >= state->repository->limits.max_inflight_per_session - state->row->inflight_count)
+    return SALTS_EPROTO;
+  auto *entries = const_cast<flowie_protocol_inflight_row_t *>(state->row->inflight);
+  auto &row = entries[state->row->inflight_count + row_index];
+  const int64_t packet_id = flowie_orm_row_int64(source, 0u);
+  const tstr exchange = flowie_orm_row_buffer(source, 1u);
+  if (packet_id <= 0 || packet_id > UINT16_MAX || !exchange ||
+      tstr_len(exchange) != sizeof(row.exchange) || (exchange[6] & 0xf0u) != 0x40u)
+    return SALTS_EPROTO;
+  for (size_t i = 0; i < state->row->inflight_count; ++i)
+    if (entries[i].packet_id == packet_id) return SALTS_EPROTO;
+  row.packet_id = (uint16_t)packet_id;
+  row.qos = 2u;
+  std::memcpy(row.exchange, exchange, sizeof(row.exchange));
+  return SALTS_OK;
+}
+
 static int repo_delivery_visit(void *ctx, const flowie_orm_row_t *source, size_t row_index) {
   auto *state = static_cast<repo_session_children *>(ctx);
   auto *row = &const_cast<flowie_protocol_delivery_row_t *>(state->row->deliveries)[row_index];
@@ -1042,6 +1071,8 @@ static int repo_session_load_children(repo_state *repository, flowie_protocol_se
       {"subscription_identifier", FLOWIE_ORM_COLUMN_UINT64}};
   static const flowie_orm_column_t inflight_columns[] = {{"packet_id", FLOWIE_ORM_COLUMN_INT64},
                                                          {"qos", FLOWIE_ORM_COLUMN_INT64}};
+  static const flowie_orm_column_t exchange_columns[] = {{"packet_id", FLOWIE_ORM_COLUMN_INT64},
+                                                         {"exchange", FLOWIE_ORM_COLUMN_BLOB}};
   static const flowie_orm_column_t delivery_columns[] = {{"packet_id", FLOWIE_ORM_COLUMN_INT64},
                                                          {"qos", FLOWIE_ORM_COLUMN_INT64},
                                                          {"state", FLOWIE_ORM_COLUMN_INT64},
@@ -1055,7 +1086,7 @@ static int repo_session_load_children(repo_state *repository, flowie_protocol_se
   const orm_value_t key = repo_span(row->client_id, false);
   repo_principal_child_context roles{&row->principal, true};
   repo_principal_child_context groups{&row->principal, false};
-  size_t role_count = 0u, group_count = 0u, will_count = 0u;
+  size_t role_count = 0u, group_count = 0u, will_count = 0u, exchange_count = 0u;
   int rc;
   std::memset(children, 0, sizeof(*children));
   children->row = row;
@@ -1088,6 +1119,13 @@ static int repo_session_load_children(repo_state *repository, flowie_protocol_se
     rc = repo_select_visit(repository, "inflight", inflight_columns, 2u, "client_id", &key, nullptr,
                            repository->limits.max_inflight_per_session, repo_inflight_visit,
                            children, &row->inflight_count);
+  if (rc == SALTS_OK) {
+    const size_t remaining = repository->limits.max_inflight_per_session - row->inflight_count;
+    rc = repo_select_visit(repository, "inflight_exchange", exchange_columns, 2u, "client_id",
+                           &key, nullptr, remaining ? remaining : 1u, repo_inflight_exchange_visit, children,
+                           &exchange_count);
+    if (rc == SALTS_OK) row->inflight_count += exchange_count;
+  }
   if (rc == SALTS_OK)
     rc = repo_select_visit(repository, "deliveries", delivery_columns, 5u, "client_id", &key,
                            nullptr, repository->limits.max_inflight_per_session,

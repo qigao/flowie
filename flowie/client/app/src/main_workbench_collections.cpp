@@ -153,8 +153,8 @@ namespace flowie::app {
       const bool selected_file = !path.empty() && same_collection_file(collection.path, path);
       if (selected_file) selected = root;
       std::map<std::string, HTREEITEM> groups;
-      for (size_t index = 0; index < collection.requests.size(); ++index) {
-        const auto &entry = collection.requests[index];
+      for (size_t index = 0; index < collection.document.requests.size(); ++index) {
+        const auto &entry = collection.document.requests[index];
         const auto [group, added] = groups.try_emplace(entry.collection, nullptr);
         if (added) group->second = insert(utf8_to_wide(entry.collection), root, 0);
         sidebar_requests_.push_back({file, index});
@@ -211,10 +211,10 @@ namespace flowie::app {
     const auto index = static_cast<size_t>(found - loaded_collections_.begin());
     if (found == loaded_collections_.end() && index == kLoadedFilesLimit)
       throw std::runtime_error("The workspace can load up to 16 collection files.");
-    auto requests = CollectionStore(path).load(true);
+    auto document = CollectionStore(path).load_document(true);
     if (found == loaded_collections_.end())
-      loaded_collections_.push_back({std::move(path), std::move(requests)});
-    else found->requests = std::move(requests);
+      loaded_collections_.push_back({std::move(path), std::move(document)});
+    else found->document = std::move(document);
 
     rebuild_collections(loaded_collections_[index].path);
     select_sidebar(kCollectionsPage);
@@ -300,8 +300,9 @@ namespace flowie::app {
     const auto font = dc.SelectFont(font_);
     LONG width = 0;
     for (const auto &entry : loaded_collections_) {
-      auto text = entry.path.wstring() + L"   (" + std::to_wstring(entry.requests.size()) +
-                  (entry.requests.size() == 1 ? L" request)" : L" requests)");
+      const auto count = entry.document.requests.size();
+      auto text = entry.path.wstring() + L"   (" + std::to_wstring(count) +
+                  (count == 1 ? L" request)" : L" requests)");
       list_item(list, text);
       SIZE size{};
       dc.GetTextExtent(text.c_str(), static_cast<int>(text.size()), &size);
@@ -361,19 +362,21 @@ namespace flowie::app {
     // A group node refers to the collection of its first member.
     if (!scope && collections_tree_.GetParentItem(node))
       scope = request_at(collections_tree_.GetChildItem(node));
-    const std::string *name = scope ? &file.requests[scope->request].collection : nullptr;
+    const auto &document = file.document;
+    const std::string *name = scope ? &document.requests[scope->request].collection : nullptr;
     std::vector<CollectionStep> steps;
-    for (const auto &request : file.requests) {
+    for (const auto &request : document.requests) {
       if (name && request.collection != *name) continue;
       if (!request.tool || !request_tool(request.tool->kind))
         throw std::runtime_error("Run Collection supports HTTP and JSON-RPC. Check " +
                                  request.name + ".");
       try {
-        validate_http_request(*request.tool);
+        auto draft = expand_collection_tool(*request.tool, document.bindings());
+        validate_http_request(draft);
+        steps.push_back({request.name, std::move(draft)});
       } catch (const std::exception &error) {
         throw std::runtime_error(request.name + ": " + error.what());
       }
-      steps.push_back({request.name, *request.tool});
     }
     if (steps.empty()) throw std::runtime_error("The selected collection is empty.");
     const auto title = name ? utf8_to_wide(*name) : file.path.filename().wstring();
@@ -411,22 +414,22 @@ namespace flowie::app {
       ~Reset() { flag = false; }
     } reset{opening_};
     opening_ = true;
-    if (!name_saved_request(m_hWnd, request, loaded ? file->requests : empty, path)) return;
+    if (!name_saved_request(m_hWnd, request, loaded ? file->document.requests : empty, path)) return;
     if (faulted_ || closing_) return;
     const CollectionStore store(path);
-    auto committed = store.save(request, false, loaded);
+    auto committed = store.save_document(request, false, loaded);
     if (!committed) {
       const auto name = utf8_to_wide(request.collection + " / " + request.name);
       if (::MessageBoxW(m_hWnd,
                         (L"Replace " + name + L" in " + path.filename().wstring() + L"?").c_str(),
                         L"Save Request", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
         return;
-      committed = store.save(request, true, loaded);
+      committed = store.save_document(request, true, loaded);
     }
     const auto resolved = std::filesystem::canonical(path);
     if (file == loaded_collections_.end())
       loaded_collections_.push_back({resolved, std::move(*committed)});
-    else file->requests = std::move(*committed);
+    else file->document = std::move(*committed);
     for (auto &client : clients_) {
       if (client->hwnd() != origin) continue;
       client->collection = request.collection;
@@ -445,7 +448,7 @@ namespace flowie::app {
     const auto selected = selected_request();
     if (!can_add() || !selected) return;
     const auto &file = loaded_collections_[selected->file];
-    auto request = file.requests[selected->request];
+    auto request = file.document.requests[selected->request];
     const auto name = utf8_to_wide(request.name);
     const auto window = request.tool ? add_tool(request.tool->kind, name).m_hWnd
                                      : add(request.profile.role, name).m_hWnd;
@@ -455,8 +458,10 @@ namespace flowie::app {
       client.saved_name = request.name;
       client.notes = request.notes;
       client.source = file.path;
-      if (request.tool) std::get<ProtocolWindow>(client.window).restore_request(*request.tool);
-      else std::get<MainWindow>(client.window).restore_request(std::move(request));
+      if (request.tool)
+        std::get<ProtocolWindow>(client.window).restore_request(*request.tool, file.document.variables);
+      else
+        std::get<MainWindow>(client.window).restore_request(std::move(request), file.document.variables);
     } catch (...) {
       ::SendMessageW(window, WM_CLOSE, 0, 0);
       throw;
@@ -482,7 +487,8 @@ namespace flowie::app {
                         tip.cchTextMax);
           else if (tip.lParam < 0 && static_cast<size_t>(-tip.lParam) <= sidebar_requests_.size()) {
             const auto location = sidebar_requests_[static_cast<size_t>(-tip.lParam) - 1];
-            const auto &notes = loaded_collections_[location.file].requests[location.request].notes;
+            const auto &notes =
+                loaded_collections_[location.file].document.requests[location.request].notes;
             if (!notes.empty())
               ::lstrcpynW(tip.pszText, utf8_to_wide(notes).c_str(), tip.cchTextMax);
           }

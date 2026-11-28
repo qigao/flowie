@@ -7,18 +7,27 @@
   "sources": {
     "files": [
       "src/flowie_server.c",
+      "src/flowie_rulesforge_package.c",
+      "src/flowie_rulesforge_pipeline.c",
+      "src/flowie_rulesforge_worker.c",
       "src/flowie_server_config.c",
       "src/flowie_server_http_security.c",
+      "src/flowie_server_release.c",
       "src/flowie_server_runtime.c",
-      "src/flowie_server_turbodb_config.c"
+      "src/flowie_server_turbodb_config.c",
+      "src/flowie_workflow_host.c",
+      "src/flowie_workflow_https_sink.c"
     ]
   },
   "private": {
     "deps": [
       "flowie",
+      "flowie_control_release_http",
       "turbodb_orm",
       "chttp_client",
       "salts_cmd_parser",
+      "salts_core",
+      "salts_crypto",
       "salts_cyaml",
       "salts_json_parser",
       "salts_uri",

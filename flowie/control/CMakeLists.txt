@@ -1,5 +1,8 @@
 set(FLOWIE_CONTROL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+find_package(zstd CONFIG REQUIRED
+  PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/zstd" NO_DEFAULT_PATH)
+
 cmake_add_grammar(
 	FLOWIE_CONTROL_ACL
 	LEXER_RE
@@ -242,6 +245,14 @@ add_library(flowie_control_core STATIC
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_management_session_internal.h
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_validation.c
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_validation_internal.h
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_manifest.c
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_manifest_internal.h
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_archive.c
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_archive_internal.h
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_store.c
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_store_internal.h
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_mqtt.c
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_mqtt_internal.h
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_database.c
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_database_internal.h
 	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_store_schema.c
@@ -273,6 +284,11 @@ target_include_directories(flowie_control_core
 target_link_libraries(flowie_control_core
 	PRIVATE
 		Salts::Core
+		Salts::Crypto
+		Salts::JsonParser
+		Salts::CYaml
+		Salts::CYamlJsonAdapter
+		zstd::libzstd_static
 		CMeta::CSTL
 		monocypher
 		$<LINK_ONLY:flowie>
@@ -284,6 +300,37 @@ add_dependencies(flowie_control_core
 	flowie_control_data_ddl
 	flowie_control_store_ddl
 )
+
+set(FLOWIE_CONTROL_RELEASE_UI_SOURCES)
+foreach(asset IN ITEMS html css js)
+	set(input "${CMAKE_CURRENT_SOURCE_DIR}/assets/release-packages.${asset}")
+	set(output "${CMAKE_CURRENT_BINARY_DIR}/flowie_release_ui_${asset}.c")
+	add_custom_command(
+		OUTPUT "${output}"
+		COMMAND "${CMAKE_COMMAND}" "-DINPUT=${input}" "-DOUTPUT=${output}"
+			"-DSYMBOL=flowie_release_ui_${asset}_bytes"
+			-DHEADER=flowie_control_release_ui_assets_internal.h
+			"-DFUNCTION=flowie_release_ui_${asset}" -P
+			"${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+		DEPENDS "${input}" "${PROJECT_SOURCE_DIR}/cmake/EmbedGeneratedText.cmake"
+		VERBATIM
+	)
+	list(APPEND FLOWIE_CONTROL_RELEASE_UI_SOURCES "${output}")
+endforeach()
+
+add_library(flowie_control_release_http STATIC
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_http.c
+	${FLOWIE_CONTROL_SOURCE_DIR}/flowie_control_release_http_internal.h
+	${FLOWIE_CONTROL_RELEASE_UI_SOURCES}
+)
+cmake_config_target(flowie_control_release_http NO_INSTALL FOLDER "flowie/control/internal")
+target_link_libraries(flowie_control_release_http
+	PUBLIC flowie_control_core Salts::CNet
+	PRIVATE CHttp::App Salts::Core Salts::Crypto Salts::JsonParser)
+
+if(NOT FLOWIE_BUILD_CONTROL)
+	return()
+endif()
 
 install(
 	FILES

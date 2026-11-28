@@ -1,23 +1,63 @@
 cmake_add_test(
+  test_flowie_rulesforge_worker
+  SOURCES
+  test_flowie_rulesforge_worker.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_rulesforge_worker.c
+  LIBS
+  Salts::Core
+  Salts::TinyTest
+  INCLUDES
+  ${FLOWIE_SERVER_SOURCE_DIR}
+  FOLDER
+  "flowie/server/tests")
+set_tests_properties(test_flowie_rulesforge_worker PROPERTIES
+  LABELS "flowie;flowie-release;product-contract;ownership" TIMEOUT 30)
+
+cmake_add_test(
+  test_flowie_workflow_host
+  SOURCES
+  test_flowie_workflow_host.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_workflow_host.c
+  LIBS
+  Salts::Core
+  Salts::TinyTest
+  INCLUDES
+  ${FLOWIE_SERVER_SOURCE_DIR}
+  FOLDER
+  "flowie/server/tests")
+set_tests_properties(test_flowie_workflow_host PROPERTIES
+  LABELS "flowie;flowie-release;product-contract;ownership" TIMEOUT 20)
+
+cmake_add_test(
   test_flowie_server_runtime
   SOURCES
   test_flowie_server_runtime.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_rulesforge_package.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_rulesforge_pipeline.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_workflow_https_sink.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_rulesforge_worker.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_release.c
   ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_runtime.c
   ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_config.c
   ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_http_security.c
   ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_turbodb_config.c
   LIBS
   Flowie::App
+  flowie_control_release_http
   Orm::C
   CHttp::Client
+  CHttp::App
   CMeta::ACE
   CMeta::CMeta
   Salts::CYaml
+  Salts::Crypto
+  GmSSL::GmSSL
   Salts::JsonParser
   Salts::URI
   Salts::TinyTest
   INCLUDES
   ${FLOWIE_SERVER_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/flowie/control/tests
   ${PROJECT_SOURCE_DIR}/flowie/core/include
   ${PROJECT_SOURCE_DIR}/flowie/transport/include
   ${PROJECT_SOURCE_DIR}/tests/support
@@ -64,6 +104,8 @@ cmake_add_test(
   SOURCES
   test_flowie_server_http_security.c
   ${FLOWIE_SERVER_SOURCE_DIR}/flowie_server_http_security.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_workflow_host.c
+  ${FLOWIE_SERVER_SOURCE_DIR}/flowie_workflow_https_sink.c
   LIBS
   Flowie::Protocol
   Orm::C
@@ -76,6 +118,7 @@ cmake_add_test(
   Salts::TinyTest
   INCLUDES
   ${FLOWIE_SERVER_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/flowie/control/src
   ${PROJECT_SOURCE_DIR}/flowie/core/include
   ${PROJECT_SOURCE_DIR}/flowie/transport/include
   ${PROJECT_SOURCE_DIR}/tests/support

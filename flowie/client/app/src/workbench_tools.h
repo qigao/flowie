@@ -11,12 +11,14 @@ namespace flowie::app {
     std::string endpoint, method, headers, body;
     bool hex = false;
     int baud = 115200, bits = 8, parity = 0, stop_bits = 1, flow = 0;
-    bool json_body = false, use_cookies = false;
+    bool json_body = false, use_cookies = false, resolve_cookie_variables = false;
   };
   const wchar_t *tool_label(ToolKind kind);
   bool request_tool(ToolKind kind);
   std::string tool_payload(const ToolDraft &draft);
-  std::string collection_request_headers(std::string_view text, bool omit_credentials);
+  std::string collection_request_headers(std::string_view text, bool omit_credentials,
+                                         bool allow_cookie_variables = false);
+  ToolDraft expand_collection_tool(ToolDraft draft, const CollectionVariables *variables);
   std::string tool_remote(ToolKind kind, const std::string &address);
   void validate_http_request(const ToolDraft &draft);
   bool successful_http_result(const Event &event);

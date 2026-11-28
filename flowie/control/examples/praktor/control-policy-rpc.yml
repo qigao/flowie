@@ -1,0 +1,54 @@
+provider:
+  kind: exe
+  path: curl
+config:
+  args:
+    - --disable
+    - --silent
+    - --show-error
+    - --fail
+    - --proto
+    - '=https'
+    - --http1.1
+    - --no-alpn
+    - --connect-timeout
+    - '3'
+    - --max-time
+    - '6'
+    - --max-filesize
+    - '65536'
+    - --variable
+    - '%FLOWIE_CONTROL_ORIGIN'
+    - --variable
+    - '%FLOWIE_CONTROL_MANAGEMENT_TOKEN'
+    - --variable
+    - '%FLOWIE_CONTROL_CA_FILE'
+    - --variable
+    - '%FLOWIE_ACL_DOMAIN'
+    - --variable
+    - '%FLOWIE_ACL_USER'
+    - --variable
+    - '%FLOWIE_ACL_TOPIC'
+    - --variable
+    - '%FLOWIE_ACL_REQUEST_ID'
+    - --variable
+    - '%FLOWIE_ACL_EXPIRES_AT'
+    - --expand-variable
+    - >-
+      rule="subject_kind":"user","subject_id":"{{FLOWIE_ACL_USER:json}}",
+      "ordinal":10,"connection":"allow","entries":[
+      {"effect":"allow","access":"write","topic":"{{FLOWIE_ACL_TOPIC:json}}"},
+      {"effect":"deny","access":"read","topic":"{{FLOWIE_ACL_TOPIC:json}}"}]
+    - --expand-variable
+    - 'put_id={{FLOWIE_ACL_REQUEST_ID}}-put'
+    - --expand-variable
+    - 'publish_id={{FLOWIE_ACL_REQUEST_ID}}-publish'
+    - --expand-cacert
+    - '{{FLOWIE_CONTROL_CA_FILE}}'
+    - --expand-header
+    - 'Authorization: Bearer {{FLOWIE_CONTROL_MANAGEMENT_TOKEN}}'
+    - --expand-url
+    - '{{FLOWIE_CONTROL_ORIGIN}}/v2/control/rpc'
+    - --expand-json
+    - $request
+  timeout_ms: 8000

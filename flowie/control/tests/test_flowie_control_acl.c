@@ -1,4 +1,7 @@
 #include "flowie_control_acl_internal.h"
+#include "flowie_control_validation_internal.h"
+
+#include <stdlib.h>
 #include "flowie.h"
 
 #include "tinytest.h"
@@ -207,6 +210,39 @@ spec("Flowie Control subject-scoped ACL grammar") {
     check_equal(flowie_security_realm_evaluate(realm, &request, 1u, &decision), SALTS_OK);
     check_equal(decision.effect, FLOWIE_SECURITY_DENY);
     flowie_security_realm_destroy(realm);
+  }
+
+  it("compiles a signed ACL bundle with independent subjects and keeps single-subject parse behavior") {
+    static const char text[] = "user gateway allow {\n  write topic root-a/commands\n}\n"
+                               "user device allow {\n  read topic root-a/commands\n}\n"
+                               "group suspended deny";
+    flowie_control_acl_document_t document = FLOWIE_CONTROL_ACL_DOCUMENT_INIT;
+    check_equal(flowie_control_acl_parse(text, sizeof(text) - 1u, &document), SALTS_EPROTO);
+    flowie_security_rule_t *rules = NULL;
+    size_t count = 0;
+    check_equal(flowie_control_acl_bundle_compile("root-a", text, sizeof(text) - 1u, &rules, &count), SALTS_OK);
+    check_equal(count, 5u);
+    check_equal(rules[1].action_mask, FLOWIE_SECURITY_ACTION_PUBLISH);
+    check_equal(rules[3].action_mask, FLOWIE_SECURITY_ACTION_SUBSCRIBE);
+    check_equal(rules[4].effect, FLOWIE_SECURITY_DENY);
+    free(rules);
+  }
+
+  it("discards all compiled rules if a later subject is invalid") {
+    static const char *const cases[] = {
+        "user gateway allow\nuser gateway deny",
+        "user gateway allow\nuser device allow {\n  read topic other/commands\n}",
+        "user gateway allow\nuser device allow {",
+        "user gateway allow\n\nuser device allow",
+        "user gateway allow\nuser device allow\n",
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+      flowie_security_rule_t *rules = NULL;
+      size_t count = 0;
+      check_equal(flowie_control_acl_bundle_compile("root-a", cases[i], strlen(cases[i]), &rules, &count), SALTS_EPROTO);
+      check_equal(rules == NULL, 1);
+      check_equal(count, 0u);
+    }
   }
 
   it("rejects malformed generic topics unknown subjects duplicate alternatives and denied blocks") {

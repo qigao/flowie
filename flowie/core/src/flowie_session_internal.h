@@ -154,6 +154,7 @@ typedef struct flowie_session_publish_begin_result_s {
   uint8_t has_ack;
   flowie_publish_message_view_t message;
   flowie_session_ack_intent_t ack;
+  uuid_t exchange;
 } flowie_session_publish_begin_result_t;
 
 #define FLOWIE_SESSION_PUBLISH_BEGIN_RESULT_INIT                                                   \
@@ -162,7 +163,7 @@ typedef struct flowie_session_publish_begin_result_s {
    0u,                                                                                             \
    0u,                                                                                             \
    FLOWIE_PUBLISH_MESSAGE_VIEW_INIT,                                                               \
-   FLOWIE_SESSION_ACK_INTENT_INIT}
+   FLOWIE_SESSION_ACK_INTENT_INIT, {0}}
 
 FLOWIE_C_API flowie_session_owner_t *
 flowie_session_owner_create(const flowie_session_config_t *config);

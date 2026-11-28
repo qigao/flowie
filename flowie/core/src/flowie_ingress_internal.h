@@ -3,6 +3,7 @@
 
 #include "flowie_mqtt_protocol.h"
 #include "flowie_message.h"
+#include "flowie_security.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -69,6 +70,9 @@ FLOWIE_C_API int flowie_ingress_set_route(flowie_ingress_t *ingress,
                                        const flowie_protocol_route_t *route);
 FLOWIE_C_API int flowie_ingress_set_protocol_settlement(
     flowie_ingress_t *ingress, const flowie_protocol_settlement_envelope_t *settlement);
+/* Borrow the authenticated principal for the current same-lane application dispatch. */
+void flowie_ingress_set_publish_context(flowie_ingress_t *ingress,
+    const flowie_security_principal_t *principal, const uint8_t *exchange);
 
 /**
  * Replace the packet selected by the current prepare callback before application delivery.

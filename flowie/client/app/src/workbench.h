@@ -5,9 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -17,6 +19,11 @@ namespace flowie::app {
   constexpr size_t kHistoryRecords = 500;
   constexpr size_t kHistoryBytes = 8 * 1024 * 1024;
   constexpr size_t kPayloadBytes = 1024 * 1024 - 65536;
+
+  using CollectionVariables = std::map<std::string, std::string, std::less<>>;
+  bool valid_collection_variable(std::string_view name);
+  std::string expand_collection_text(std::string_view text, const CollectionVariables *variables,
+                                     size_t limit);
 
   enum class Operation { none, connect, publish, subscribe, unsubscribe, ping, disconnect };
   enum class Kind { received, transmitted, completed, error, closed };

@@ -6,6 +6,38 @@
 #include <system_error>
 
 namespace flowie::app {
+  bool valid_collection_variable(std::string_view name) {
+    constexpr std::string_view initial = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_";
+    constexpr std::string_view rest = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789";
+    return !name.empty() && name.size() <= 64 && initial.find(name.front()) != initial.npos &&
+           name.find_first_not_of(rest) == name.npos;
+  }
+
+  std::string expand_collection_text(std::string_view text, const CollectionVariables *variables,
+                                     size_t limit) {
+    if (!variables) return std::string(text);
+    std::string result;
+    const auto append = [&](std::string_view value) {
+      if (value.size() > limit - result.size())
+        throw std::runtime_error("Expanded collection field exceeds its size limit.");
+      result += value;
+    };
+    for (auto begin = text.find("{{"); begin != text.npos; begin = text.find("{{")) {
+      append(text.substr(0, begin));
+      text.remove_prefix(begin + 2);
+      const auto end = text.find("}}");
+      const auto name = text.substr(0, end);
+      if (end == text.npos || !valid_collection_variable(name))
+        throw std::runtime_error("Invalid collection variable reference.");
+      const auto value = variables->find(name);
+      if (value == variables->end())
+        throw std::runtime_error("Undefined collection variable: " + std::string(name));
+      append(value->second);
+      text.remove_prefix(end + 2);
+    }
+    append(text);
+    return result;
+  }
   namespace {
     flowie_mqtt_span_t span(const std::string &value) {
       return {reinterpret_cast<const uint8_t *>(value.data()), value.size()};

@@ -223,6 +223,54 @@ share an in-memory cookie session for that run. A 3xx response completes the ste
 and the next saved request starts. The bottom status bar shows the active tab's
 remote endpoint and connection state or collection progress.
 
+### Collection variables
+
+To share values across requests in one file, use a JSON object with `variables`
+and `requests`. Move existing entries into `requests`. Original array files
+continue to use literal values. Edit the variable definitions in the JSON file,
+then reload it for the next collection run or newly opened request tab.
+
+```json
+{
+  "variables": {
+    "base_url": "https://gateway.example.test",
+    "domain": "device-a"
+  },
+  "requests": [
+    {
+      "collection": "Gateway",
+      "name": "Read active package",
+      "tool": {
+        "kind": 0,
+        "endpoint": "{{base_url}}/domains/{{domain}}/active-release",
+        "method": "GET",
+        "headers": "Accept: application/json",
+        "body": "",
+        "hex": false
+      }
+    }
+  ]
+}
+```
+
+Use `{{name}}` in endpoints, ordinary HTTP or JSON-RPC header values and bodies, JSON-RPC
+method names, MQTT broker hosts and WebSocket paths, subscription filters,
+and MQTT publish topics and payloads. TCP and Serial endpoints and bodies also
+accept variables. Names are case-sensitive and use ASCII letters, digits and
+underscores, starting with a letter or underscore. Each value is a literal
+string of up to 4 KiB, with up to 64 variables per file. Workbench substitutes
+values once and validates the result before sending. Variables and templates
+stay in the file when a request is saved. Values are stored in plain text.
+
+For an HTTP service that accepts a session cookie value as a Bearer token, set
+`tool.use_cookies` to `true` on the step receiving `Set-Cookie` and on the later
+step. Set the later step's `tool.headers` to
+`Authorization: Bearer {{cookie.session_id}}`, using the actual cookie name.
+This reference reads the matching cookie from the tab or run at send time. It
+uses the same origin, path, expiry and Secure checks as the cookie jar. A missing
+or out-of-scope cookie fails the step before transmission. Only the reference is
+saved in the Collection.
+
 Opening a request creates an idle tab. For MQTT, supply any credentials and choose
 **Connect**. On the **Topics** page, choose a **Saved topic** to fill the filter
 and QoS, then choose **Subscribe**. Use **Publish** to send the restored draft.

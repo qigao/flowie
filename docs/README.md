@@ -20,6 +20,7 @@ Repository 本地 Auth 或第三方 HTTPS Auth。第三方 credential、OIDC、L
 - [架构说明](ARCHITECTURE.md)：Flowie 架构设计、分层模型与核心流程
 - [配置式 Broker 概念与术语](CONFIGURED_BROKER_CONCEPTS.md)：Flowie 概念定义、模式与术语字典
 - [服务端使用指南](SERVER_GUIDE.md)介绍 `flowie_server` 的 CLI、YAML 预检、监听器和协议存储
+- [IoT 网关部署](../deploy/server/README.md#iot-网关部署)介绍 Domain Configuration、Domain Packages、设备认证与下游接入
 - [Flowie Control 部署与配置指南](CONTROL_GUIDE.md)：控制面 `flowie-control` 架构、部署与安全配置
 - [第三方系统接入指南](THIRD_PARTY_INTEGRATION.md)：Domain、管理 API、service credential、MQTT 客户端与 ACL 接入流程
 - [Flowie Control ACL 文法与使用](ACL_GRAMMAR.md)：Role/Group/User ACL、通用 topic filter 与发布流程
@@ -36,6 +37,7 @@ Repository 本地 Auth 或第三方 HTTPS Auth。第三方 credential、OIDC、L
 - [Control 与 Domain 归属](ADR_AUTH_DOMAIN_SERVICE.md)记录权限模型和 Broker/Control 部署边界
 - [MQTT 集群归属](ADR_MQTT_CLUSTER_OWNERSHIP.md)记录实验集群的提交、快照与恢复边界
 - [HTTPS 认证服务设计](ADR_HTTPS_AUTH_SERVICE.md)：HTTPS Auth Provider 信任边界与 API 规范
+- [Domain Packages 与网关激活](ADR_DOMAIN_RELEASE.md)记录签名包、身份与授权边界及 RulesForge 投递
 - [分层 ACL 主体与通用 MQTT Topic](ADR_SUBJECT_SCOPED_MQTT_ACL.md)：Role/Group/User 共享规则、deny veto、Domain 隔离与兼容决策
 - [动态 ACL Bundle 设计](ADR_DYNAMIC_ACL_BUNDLE.md)：版本化 ACL Bundle 格式、发布机制与同步
 - [控制面启动参数决策](ADR_CONTROL_STARTUP_OPTIONS.md)：`flowie-control` CLI / Environment / DotEnv 优先顺序与配置隔离

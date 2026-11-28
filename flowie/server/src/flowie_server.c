@@ -259,7 +259,7 @@ int main(int argc, char **argv) {
     CmdArgerDesc arguments[] = {
         cmd_arger_desc_flag(&check_only, "check", "Validate options and exit"),
         cmd_arger_desc_flag(&require_security, "require-security",
-                            "Reject configurations without remote Auth and ACL providers"),
+                            "Require a domain release profile or configured Auth and ACL providers"),
         cmd_arger_desc_string(&config_path, "config", "Flowie YAML configuration file"),
         cmd_arger_desc_string(&profile_name, "profile", "Flowie profile name (default: flowie)"),
         cmd_arger_desc_string(&host, "host", "Listener host (default: 0.0.0.0)"),
@@ -429,6 +429,19 @@ int main(int argc, char **argv) {
     exit_status = EXIT_SUCCESS;
     goto done;
   }
+  const flowie_server_release_config_t *release = flowie_server_config_release(server_config);
+  if (release) {
+    uint16_t management_port = 0;
+    rc = flowie_server_runtime_management_port(runtime, &management_port);
+    if (rc != SALTS_OK) {
+      SALTS_LOG_ERRORF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                       "release-https-port-failed status={} reason={}", rc, error_code_string(rc));
+      goto done;
+    }
+    SALTS_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
+                    "release-https-started domain={} host={} port={}",
+                    release->domain, release->management_host, (unsigned int)management_port);
+  }
   SALTS_LOG_INFOF(logger, FLOWIE_SERVER_LOG_COMPONENT,
                   "server-started transport={} host={} port={}",
                   flowie_server_transport_name(endpoint_config.transport), endpoint_config.host,
@@ -452,7 +465,9 @@ done:
       SALTS_LOG_INFO(logger, FLOWIE_SERVER_LOG_COMPONENT, "server-stopped status=0");
   }
   flowie_server_logging_destroy(logger);
-  flowie_server_turbodb_config_destroy(turbodb);
-  flowie_server_config_destroy(server_config);
+  if (!runtime) {
+    flowie_server_turbodb_config_destroy(turbodb);
+    flowie_server_config_destroy(server_config);
+  }
   return exit_status;
 }

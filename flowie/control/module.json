@@ -24,6 +24,10 @@
           "src/flowie_control_management_service.c",
           "src/flowie_control_management_session.c",
           "src/flowie_control_validation.c",
+          "src/flowie_control_release_manifest.c",
+          "src/flowie_control_release_archive.c",
+          "src/flowie_control_release_store.c",
+          "src/flowie_control_release_mqtt.c",
           "src/flowie_control_database.c",
           "src/flowie_control_store_schema.c",
           "src/flowie_control_store.c"
@@ -35,7 +39,7 @@
       },
       "private": {
         "includeDirs": ["../detail", "$builddir/generated/control"],
-        "deps": ["salts_core", "cmeta_cstl", "monocypher", "flowie"]
+        "deps": ["salts_core", "salts_crypto", "salts_json_parser", "salts_cyaml", "salts_cyaml_json_adapter", "zstd", "cmeta_cstl", "monocypher", "flowie"]
       },
       "preTasks": [
         {
@@ -230,6 +234,66 @@
           "salts_json_parser"
         ]
       }
+    },
+    "flowie_control_release_http": {
+      "kind": "static",
+      "sources": {
+        "files": [
+          "src/flowie_control_release_http.c",
+          "$builddir/generated/control/flowie_release_ui_html.c",
+          "$builddir/generated/control/flowie_release_ui_css.c",
+          "$builddir/generated/control/flowie_release_ui_js.c"
+        ]
+      },
+      "public": {"deps": ["flowie_control_core", "salts_cnet"]},
+      "private": {"includeDirs": ["src"], "deps": ["chttp_app", "salts_core", "salts_crypto", "salts_json_parser"]},
+      "preTasks": [
+        {
+          "name": "embed_release_ui_html",
+          "program": "cmake",
+          "inputs": ["assets/release-packages.html", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_release_ui_html.c"],
+          "args": [
+            "-DINPUT=$moduledir/assets/release-packages.html",
+            "-DOUTPUT=$builddir/generated/control/flowie_release_ui_html.c",
+            "-DSYMBOL=flowie_release_ui_html_bytes",
+            "-DHEADER=flowie_control_release_ui_assets_internal.h",
+            "-DFUNCTION=flowie_release_ui_html",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        },
+        {
+          "name": "embed_release_ui_css",
+          "program": "cmake",
+          "inputs": ["assets/release-packages.css", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_release_ui_css.c"],
+          "args": [
+            "-DINPUT=$moduledir/assets/release-packages.css",
+            "-DOUTPUT=$builddir/generated/control/flowie_release_ui_css.c",
+            "-DSYMBOL=flowie_release_ui_css_bytes",
+            "-DHEADER=flowie_control_release_ui_assets_internal.h",
+            "-DFUNCTION=flowie_release_ui_css",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        },
+        {
+          "name": "embed_release_ui_js",
+          "program": "cmake",
+          "inputs": ["assets/release-packages.js", "$root/cmake/EmbedGeneratedText.cmake"],
+          "outputs": ["$builddir/generated/control/flowie_release_ui_js.c"],
+          "args": [
+            "-DINPUT=$moduledir/assets/release-packages.js",
+            "-DOUTPUT=$builddir/generated/control/flowie_release_ui_js.c",
+            "-DSYMBOL=flowie_release_ui_js_bytes",
+            "-DHEADER=flowie_control_release_ui_assets_internal.h",
+            "-DFUNCTION=flowie_release_ui_js",
+            "-P",
+            "$root/cmake/EmbedGeneratedText.cmake"
+          ]
+        }
+      ]
     },
     "flowie_control_http": {
       "kind": "static",

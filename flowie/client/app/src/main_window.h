@@ -64,7 +64,8 @@ namespace flowie::app {
     void apply_connection(Connection &connection, bool connect_now);
     void apply_sample(const MessageSample &sample);
     SavedRequest capture_request() const;
-    void restore_request(SavedRequest request);
+    void restore_request(SavedRequest request,
+                         const std::optional<CollectionVariables> &variables = {});
     bool can_publish() const { return !closing_ && role_ != ClientRole::subscriber; }
     RequestCommand request_command(RequestAction action) const;
     void invoke_request(RequestAction action);
@@ -142,6 +143,7 @@ namespace flowie::app {
     void command(int id);
     std::wstring text(int id) const;
     std::string utf8(int id) const;
+    std::string request_text(int id, size_t limit) const;
     int selection(int id) const;
     int scale(int value) const;
     LRESULT OnCreate(UINT, WPARAM, LPARAM, BOOL &);
@@ -173,6 +175,7 @@ namespace flowie::app {
     std::function<void(const RecentConnection &)> remember_;
     State shown_state_ = State::idle;
     Session session_;
+    std::optional<CollectionVariables> collection_variables_;
     std::optional<RecentConnection> pending_connection_;
     History history_;
     std::vector<size_t> visible_records_;

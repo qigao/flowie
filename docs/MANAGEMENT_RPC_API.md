@@ -254,10 +254,18 @@ Reserved roles are exact, case-sensitive strings:
 | `policy_admin` | Policy candidate dry-run, draft writes, and publish. It does not imply `viewer`. |
 | `security_admin` | All Domain-scoped management operations, including credential, password, role, audit, user, Group, and policy operations. |
 | `system_admin` | All operations when effective in the `system` Domain, plus Domain creation/listing and explicit cross-Domain administration. It is ignored outside `system`. |
+| `domain_admin` | Domain Packages read, upload, validation, and activation in the authenticated Domain. Grants a personal password change. |
 | `password_change_required` | Masks all other permissions until the caller changes its own password. |
 
 In the method tables below, the listed role is the minimum specialized permission.
 `security_admin` and effective `system_admin` are also accepted for Domain-scoped methods.
+
+For gateway package authorization, register the Domain and assign `domain_admin` to its human
+operator. An effective `system_admin` can operate across registered Domains. A Service Account
+uses `release.read`, `release.upload`, `release.validate` or `release.activate` to operate on its own
+Domain through the gateway. A deployment can give CI upload and validation rights and keep
+activation with the human operator. These release roles grant package operations via the gateway.
+[Gateway authorization setup](CONTROL_GUIDE.md#domain-packages-账号与远程授权)
 
 ## Result types
 
@@ -359,7 +367,7 @@ remote assertion request counters.
 | `control.user.create` | `user_admin` | `domain_id?`, `principal_id`, `principal_type`, `write` | Command result. It does not create a password or machine credential. |
 | `control.user.disable` | `user_admin` | `domain_id?`, `principal_id`, `write` | Command result. The row and audit history remain; current draft or published policy references block disabling. |
 | `control.password.set` | `security_admin` | `domain_id?`, `principal_id`, `new_password`, `mode`, `write` | Command result. `mode` is exactly `create` or `replace`. |
-| `control.password.change` | `password_change_required`, `security_admin`, or `system_admin` | `new_password`, `request_id` | Changes the authenticated caller's own password and returns a command result. No target or Domain can be supplied. |
+| `control.password.change` | `password_change_required`, `domain_admin`, `security_admin`, or `system_admin` | `new_password`, `request_id` | Changes the authenticated caller's own password and returns a command result. No target or Domain can be supplied. |
 | `control.credential.generate` | `security_admin` | `domain_id?`, `principal_id`, `write` | `{token}`; creates the first random machine credential. |
 | `control.credential.rotate` | `security_admin` | `domain_id?`, `principal_id`, `write` | `{token}`; replaces and re-enables the machine credential. |
 | `control.credential.revoke` | `security_admin` | `domain_id?`, `principal_id`, `write` | Command result; removes credential validity without deleting history. |

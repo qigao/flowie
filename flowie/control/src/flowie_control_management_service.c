@@ -31,6 +31,8 @@ flowie_control_management_permissions(const flowie_control_effective_roles_view_
       permissions |= FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN;
     else if (strcmp(role, FLOWIE_CONTROL_MANAGEMENT_ROLE_SYSTEM_ADMIN) == 0)
       permissions |= FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN;
+    else if (strcmp(role, FLOWIE_CONTROL_MANAGEMENT_ROLE_DOMAIN_ADMIN) == 0)
+      permissions |= FLOWIE_CONTROL_MANAGEMENT_DOMAIN_ADMIN;
   }
   return password_change_required ? FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE : permissions;
 }
@@ -65,7 +67,8 @@ static int flowie_control_management_caller_valid(const flowie_control_managemen
   uint32_t known =
       FLOWIE_CONTROL_MANAGEMENT_VIEWER | FLOWIE_CONTROL_MANAGEMENT_USER_ADMIN |
       FLOWIE_CONTROL_MANAGEMENT_POLICY_ADMIN | FLOWIE_CONTROL_MANAGEMENT_SECURITY_ADMIN |
-      FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN | FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE;
+      FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN | FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE |
+      FLOWIE_CONTROL_MANAGEMENT_DOMAIN_ADMIN;
   size_t root_size;
   size_t actor_size;
   if (!caller || caller->size < sizeof(*caller) || !caller->domain_id || !caller->actor ||
@@ -353,7 +356,8 @@ int flowie_control_management_password_change(
       request_size + sizeof(complete_suffix) - 1u > FLOWIE_CONTROL_REQUEST_ID_MAX)
     return SALTS_EINVAL;
   rc = flowie_control_management_authorize(service, caller,
-                                           FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE);
+      (caller->permissions & FLOWIE_CONTROL_MANAGEMENT_DOMAIN_ADMIN) ?
+          FLOWIE_CONTROL_MANAGEMENT_DOMAIN_ADMIN : FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE);
   if (rc != SALTS_OK) return rc;
   password_change_required = caller->permissions == FLOWIE_CONTROL_MANAGEMENT_PASSWORD_CHANGE;
   (void)snprintf(credential_request, sizeof(credential_request), "%s%s", command->request_id,

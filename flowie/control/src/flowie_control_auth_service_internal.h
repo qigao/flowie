@@ -19,7 +19,12 @@ typedef uint64_t (*flowie_control_auth_clock_fn)(void *ctx);
 
 typedef enum flowie_control_service_permission_e {
   FLOWIE_CONTROL_SERVICE_AUTHENTICATE = 1u << 0,
-  FLOWIE_CONTROL_SERVICE_ACL_CHECK = 1u << 1
+  FLOWIE_CONTROL_SERVICE_ACL_CHECK = 1u << 1,
+  FLOWIE_CONTROL_SERVICE_RELEASE_READ = 1u << 2,
+  FLOWIE_CONTROL_SERVICE_RELEASE_UPLOAD = 1u << 3,
+  FLOWIE_CONTROL_SERVICE_RELEASE_VALIDATE = 1u << 4,
+  FLOWIE_CONTROL_SERVICE_RELEASE_ACTIVATE = 1u << 5,
+  FLOWIE_CONTROL_RELEASE_SYSTEM_EXECUTE = 1u << 6
 } flowie_control_service_permission_t;
 
 typedef int (*flowie_control_auth_policy_version_fn)(void *ctx, const char *domain_id,

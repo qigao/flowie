@@ -130,6 +130,21 @@ namespace flowie::app {
         if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
     }
 
+    std::string_view cookie_bearer(std::string_view name, std::string_view value) {
+      constexpr std::string_view prefix = "Bearer {{cookie.";
+      if (name != "authorization" || value.size() <= prefix.size() + 2 ||
+          value.substr(0, prefix.size()) != prefix || value.substr(value.size() - 2) != "}}")
+        return {};
+      const auto cookie = value.substr(prefix.size(), value.size() - prefix.size() - 2);
+      return valid_http_cookie_name(cookie) ? cookie : std::string_view{};
+    }
+
+    bool credential_header(std::string_view name) {
+      return name == "authorization" || name == "proxy-authorization" || name == "cookie" ||
+             name == "x-api-key" || name == "x-auth-token" || name == "x-access-token" ||
+             name == "x-csrf-token";
+    }
+
     struct RequestHeaders {
       std::vector<std::pair<std::string, std::string>> entries;
       bool manual_cookie = false;
@@ -213,15 +228,15 @@ namespace flowie::app {
   }
   bool request_tool(ToolKind kind) { return kind == ToolKind::http || kind == ToolKind::rpc; }
 
-  std::string collection_request_headers(std::string_view text, bool omit_credentials) {
+  std::string collection_request_headers(std::string_view text, bool omit_credentials,
+                                         bool allow_cookie_variables) {
     const auto parsed = http_headers(text, false);
     std::string stored;
     for (const auto &[name, value] : parsed.entries) {
       auto lower = name;
       lower_ascii(lower);
-      if (lower == "authorization" || lower == "proxy-authorization" || lower == "cookie" ||
-          lower == "x-api-key" || lower == "x-auth-token" || lower == "x-access-token" ||
-          lower == "x-csrf-token") {
+      if (credential_header(lower) &&
+          (!allow_cookie_variables || cookie_bearer(lower, value).empty())) {
         if (omit_credentials) continue;
         throw std::runtime_error("Collection files cannot contain credential headers: " + name);
       }
@@ -231,6 +246,38 @@ namespace flowie::app {
     if (stored.size() > kToolHeadersBytes)
       throw std::runtime_error("HTTP headers exceed 8 KiB.");
     return stored;
+  }
+
+  ToolDraft expand_collection_tool(ToolDraft draft, const CollectionVariables *variables) {
+    if (!variables) return draft;
+    draft.endpoint = expand_collection_text(draft.endpoint, variables, 4096);
+    draft.body = expand_collection_text(draft.body, variables, kToolBytes);
+    if (!request_tool(draft.kind)) return draft;
+    if (draft.kind == ToolKind::rpc)
+      draft.method = expand_collection_text(draft.method, variables, 128);
+    const auto parsed = http_headers(draft.headers, false);
+    draft.headers.clear();
+    for (const auto &[name, value] : parsed.entries) {
+      auto lower = name;
+      lower_ascii(lower);
+      auto expanded = value;
+      if (!cookie_bearer(lower, value).empty()) {
+        if (draft.kind != ToolKind::http || !draft.use_cookies)
+          throw std::runtime_error(
+              "Cookie variables require an HTTP request with Use cookies enabled.");
+        draft.resolve_cookie_variables = true;
+      } else if (!credential_header(lower)) {
+        expanded = expand_collection_text(value, variables, kToolHeadersBytes);
+        if (expanded.find_first_of("\r\n") != expanded.npos)
+          throw std::runtime_error("A collection variable cannot add HTTP header lines.");
+      }
+      if (!draft.headers.empty()) draft.headers += '\n';
+      draft.headers += name + ": " + expanded;
+      if (draft.headers.size() > kToolHeadersBytes)
+        throw std::runtime_error("HTTP headers exceed 8 KiB.");
+    }
+    (void)http_headers(draft.headers, false);
+    return draft;
   }
 
   std::string tool_remote(ToolKind kind, const std::string &address) {
@@ -390,6 +437,23 @@ namespace flowie::app {
     auto origin = destination.uri;
     lower_ascii(origin);
     const auto path = std::string_view(destination.target).substr(0, destination.target.find('?'));
+    if (draft.resolve_cookie_variables) {
+      for (auto &[key, value] : request_headers.entries) {
+        auto lower = key;
+        lower_ascii(lower);
+        const auto name = cookie_bearer(lower, value);
+        if (name.empty()) continue;
+        const auto token = cookies_.value(origin, path, name);
+        if (!token || token->empty())
+          throw std::runtime_error("No matching session cookie for collection variable: " +
+                                   std::string(name));
+        constexpr std::string_view bearer_chars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/=";
+        if (token->find_first_not_of(bearer_chars) != token->npos)
+          throw std::runtime_error("The session cookie cannot be sent as a Bearer token.");
+        value = "Bearer " + *token;
+      }
+    }
     if (draft.use_cookies && !request_headers.manual_cookie) {
       auto cookie = cookies_.header(origin, path);
       if (!cookie.empty()) request_headers.entries.emplace_back("Cookie", std::move(cookie));

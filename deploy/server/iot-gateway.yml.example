@@ -1,0 +1,64 @@
+# Domain Configuration for one MQTT IoT gateway.
+profiles:
+  flowie:
+    endpoint: mqtt
+    auth_provider: mqtt.users
+    domain_release:
+      domain: device-a
+      environment: production
+      validation_policy_revision: gateway-1
+      mqtt_client_ca_file: /etc/flowie/mqtt-client-ca.pem
+      management:
+        host: 127.0.0.1
+        port: 9443
+        cert_file: /etc/flowie/management.pem
+        key_file: /etc/flowie/management-key.pem
+        client_ca_file: /etc/flowie/operator-ca.pem
+        authorization:
+          url: https://auth.internal.example/internal/release/authorize
+          ca_file: /etc/flowie/control-ca.pem
+          timeout_ms: 2000
+      signer:
+        reference: publisher
+        anchor_der: /etc/flowie/publisher-ca.der
+        leaf_der: /etc/flowie/publisher.der
+        cms_identity: Flowie release publisher
+        issuer_identity: "1234567812345678"
+        revocation: not_checked
+      limits:
+        package_count: 32
+        package_bytes: 67108864
+      rulesforge:
+        executable: /opt/rulesforge/bin/rulesforge_stream_worker
+        provider: /opt/rulesforge/lib/librulesforge_toad.so
+        staging_root: /var/lib/flowie/rules
+        journal_file: /var/lib/flowie/rules-journal.sqlite3
+        timeout_ms: 2000
+        sinks:
+          - name: alerts
+            url: https://backend.internal.example/ingest
+            ca_file: /etc/flowie/backend-ca.pem
+            cert_file: /etc/flowie/backend-client.pem
+            key_file: /etc/flowie/backend-client-key.pem
+
+adapters:
+  mqtt:
+    config:
+      transport: tls
+      host: 0.0.0.0
+      port: 8883
+
+channels:
+  mqtt.users:
+    kind: auth_provider
+    config:
+      backend: https
+      url: https://auth.internal.example/v4/authenticate
+      method: password
+      service_id: broker-main
+      service_domain: platform-services
+      service_token_ref: env://FLOWIE_AUTH_SERVICE_TOKEN
+      timeout_ms: 2000
+      max_secret_size: 4096
+      tls:
+        ca_file: /etc/flowie/auth-ca.pem

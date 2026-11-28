@@ -356,10 +356,22 @@ typedef struct flowie_endpoint_bindings_s {
 
 #define FLOWIE_ENDPOINT_BINDINGS_INIT {sizeof(flowie_endpoint_bindings_t), NULL, NULL, NULL, NULL}
 
+/** Borrowed for one direct authenticated PUBLISH and its synchronous settlement. */
+typedef struct flowie_direct_publish_context_s {
+  const flowie_security_principal_t *principal;
+  uuid_t qos2_exchange;
+  void (*on_qos2_committed)(void *context, const uint8_t *exchange);
+  void *commit_context;
+} flowie_direct_publish_context_t;
+
 /**
  * Direct application dispatch for one standalone MQTT endpoint Core.
  *
  * The message is borrowed for this same-lane call. Clone it before retaining it.
+ * For a directly received authenticated PUBLISH, transport_context holds a borrowed
+ * flowie_direct_publish_context_t for this call. Clear it on any retained copy.
+ * The optional QoS 2 observer runs after local PUBREC state commits and before
+ * sending the response. It must not stop or destroy the same Core.
  * Set result->status to the processing result and, when the configured MQTT
  * settlement policy requires ACCEPTED or DURABLE, set result->protocol_settlement
  * to the boundary actually completed. The callback must not stop or destroy the

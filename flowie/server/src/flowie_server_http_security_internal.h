@@ -3,14 +3,22 @@
 
 #include "flowie_security.h"
 #include "flowie_server_config_internal.h"
+#include "flowie_control_release_access_internal.h"
 
 #include <stddef.h>
 
 typedef struct flowie_server_http_security_s flowie_server_http_security_t;
+typedef struct flowie_server_http_endpoint_s flowie_server_http_endpoint_t;
+
+int flowie_server_release_authority_create(const flowie_server_http_provider_config_t *config,
+    flowie_server_http_endpoint_t **out);
+int flowie_server_release_authorize(void *context, const flowie_release_access_request_t *request,
+    char actor[FLOWIE_RELEASE_ACCESS_ACTOR_MAX + 1u]);
 
 int flowie_server_http_security_create(const flowie_server_http_provider_config_t *auth,
                                        const flowie_server_http_provider_config_t *acl,
                                        flowie_server_http_security_t **out);
+int flowie_server_http_security_check_auth_tls(const flowie_server_http_security_t *security);
 void flowie_server_http_security_destroy(flowie_server_http_security_t *security);
 const flowie_security_auth_provider_t *flowie_server_http_security_auth_provider(
     const flowie_server_http_security_t *security);

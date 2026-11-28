@@ -3,8 +3,12 @@
 本文说明 Flowie Control 的主体化 ACL 文档、MQTT 权限语义、受限 topic filter，以及通过
 Control UI 或 Management JSON-RPC 发布规则的方法。
 
-该语法由 Flowie 控制面实现，不是第三方集成提供的语法，也不是 Mosquitto ACL 文件格式。Broker
-只消费 Control 发布的 typed rule bundle；第三方系统通过 Management API 提交同一份 canonical 文档。
+共享 Control profile 通过 Management API 接收本文的 ACL 文档并发布 typed rule bundle。
+独立 IoT 网关在签名清单的 `entrypoints.acl` 指定 ACL 文件，校验候选包时编译同一套规则语法。
+激活后，网关以认证服务提供的规范身份执行包内规则。 [Domain Packages](CONTROL_GUIDE.md#使用-domain-packages-页面)
+
+签名包可按顺序放入多个规范主体文档，文档之间一个 LF，最后一个文档后无需换行。单主体管理
+接口继续逐主体提交。签名包拒绝相同类型与 ID 的重复主体，并对所有 Topic 检查当前 Domain。
 
 实现事实源为：
 

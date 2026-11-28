@@ -1,5 +1,25 @@
 if(BUILD_TESTS)
   cmake_add_test(
+    test_flowie_control_release_manifest
+    SOURCES
+    test_flowie_control_release_manifest.c
+    LIBS
+    flowie_control_core
+    flowie_control_release_http
+    Flowie::App
+    CHttp::Client
+    Salts::CNet
+    Salts::Core
+    Salts::Crypto
+    Salts::TinyTest
+    GmSSL::GmSSL
+    INCLUDES
+    ${PROJECT_SOURCE_DIR}/tests/support
+    FOLDER
+    "flowie/control/tests")
+  set_tests_properties(test_flowie_control_release_manifest
+    PROPERTIES LABELS "flowie;flowie/control-plane;security-contract" TIMEOUT 30)
+  cmake_add_test(
     test_flowie_control_http_failure
     SOURCES
     test_flowie_control_http_failure.c
@@ -76,6 +96,7 @@ if(BUILD_TESTS)
     CHttp::Server
     Salts::Coroutine
     Salts::Core
+    Salts::JsonParser
     Salts::TinyTest
     GmSSL::GmSSL
     INCLUDES

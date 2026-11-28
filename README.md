@@ -14,6 +14,11 @@ or normal installation directory. Its selected GUI dependency is recorded in `.e
 
 See the [documentation index](docs/README.md) for guides, deployment and architecture decisions.
 
+For an MQTT IoT gateway, **Domain Configuration** is the deployment YAML for authentication,
+TLS and downstream connections. Operators use **Domain Packages** to upload, validate and activate
+signed packages containing the Domain's ACL and RulesForge pipeline. The gateway acknowledges durable MQTT admission
+and the backend delivers rule outputs to the configured HTTPS processors. [IoT gateway deployment](deploy/server/README.md#iot-网关部署)
+
 ## Built on Salts
 
 Flowie is intentionally layered on the shared Salts foundation:
@@ -196,7 +201,8 @@ Common options include:
   to `ON` when configuring a full local regression run. `BUILD_TESTING` controls CTest and protocol tests.
 - `FLOWIE_BUILD_CLUSTER` includes the experimental TurboRaft cluster module. See
   the cluster configuration below.
-- `FLOWIE_BUILD_CONTROL` — enable optional flowie/control-plane components.
+- `FLOWIE_BUILD_CONTROL` — build the separate Control executable and its tools. The standalone
+  broker includes the signed Domain Release service when `FLOWIE_BUILD_SERVER` is enabled.
 
 ### Slate 本地构建
 

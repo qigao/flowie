@@ -68,10 +68,14 @@ typedef struct flowie_control_acl_lexer_s {
   flowie_control_acl_lexer_mode_t mode;
 } flowie_control_acl_lexer_t;
 
+typedef int (*flowie_control_acl_visit_fn)(const flowie_control_acl_document_t *document, void *context);
+
 typedef struct flowie_control_acl_parse_ctx_s {
   flowie_control_acl_document_t document;
   int status;
   int accepted;
+  flowie_control_acl_visit_fn visit;
+  void *context;
 } flowie_control_acl_parse_ctx_t;
 
 void flowie_control_acl_document_init(flowie_control_acl_document_t *document);
@@ -93,6 +97,8 @@ void flowie_control_acl_entry_add(flowie_control_acl_parse_ctx_t *ctx,
 
 int flowie_control_acl_parse(const char *text, size_t text_size,
                              flowie_control_acl_document_t *out);
+int flowie_control_acl_parse_each(const char *text, size_t text_size,
+                                 flowie_control_acl_visit_fn visit, void *context);
 int flowie_control_acl_format(const flowie_control_acl_document_t *document, char *text_out,
                               size_t text_capacity, size_t *text_size_out);
 int flowie_control_acl_compile(const flowie_control_acl_document_t *document,

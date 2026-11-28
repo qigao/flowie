@@ -2,6 +2,7 @@
 #define FLOWIE_PROTOCOL_REPOSITORY_H
 
 #include <core/platform.h>
+#include <core/uuid.h>
 #include "flowie_export.h"
 #include "flowie_mqtt_protocol.h"
 #include "flowie_security.h"
@@ -54,6 +55,8 @@ typedef struct flowie_protocol_subscription_row_s {
 typedef struct flowie_protocol_inflight_row_s {
   uint16_t packet_id;
   uint8_t qos;
+  /* Zero for PUBREC already committed, UUID for a reserved QoS 2 PUBLISH. */
+  uuid_t exchange;
 } flowie_protocol_inflight_row_t;
 
 typedef struct flowie_protocol_delivery_row_s {

@@ -997,6 +997,106 @@ suite("Workbench saved Collections") {
     }
   }
 
+  it("expands collection templates for individual requests and runs within cookie scope") {
+    ToolPeer session(ToolPeer::Mode::http, "ready", "Set-Cookie: session-id=opaque-test; Path=/api\r\n",
+                     3, "302 Found");
+    ToolPeer other(ToolPeer::Mode::http, "unexpected");
+    ImportFiles files;
+    const auto library = files.write(L"collections.json", R"({"variables":{"origin":"http://127.0.0.1:)" +
+        std::to_string(session.port) + R"(","other":"http://127.0.0.1:)" + std::to_string(other.port) +
+        R"(","domain":"sample"},"requests":[
+          {"collection":"Sequence","name":"Login","tool":{"kind":0,"endpoint":"{{origin}}/api/login",
+            "method":"GET","body":"","hex":false,"use_cookies":true}},
+          {"collection":"Sequence","name":"Read","tool":{"kind":0,"endpoint":"{{origin}}/api/{{domain}}",
+            "method":"POST","body":"{\"domain\":\"{{domain}}\"}","hex":false,"json_body":true,"use_cookies":true,
+            "headers":"X-Domain: {{domain}}\nAuthorization: Bearer {{cookie.session-id}}"}},
+          {"collection":"Sequence","name":"Wrong origin","tool":{"kind":0,"endpoint":"{{other}}/api/{{domain}}",
+            "method":"GET","body":"","hex":false,"use_cookies":true,
+            "headers":"Authorization: Bearer {{cookie.session-id}}"}}
+        ]})");
+
+    WorkspaceFixture view(false, {}, library);
+    const auto tree = find_control(view.window, WorkbenchWindow::collections_tree);
+    const auto group = TreeView_GetChild(tree, TreeView_GetRoot(tree));
+    view.open_request(tree, TreeView_GetChild(tree, group));
+    const auto pane = view.active();
+    check_true(view.text(pane, ProtocolWindow::target) == L"{{origin}}/api/login");
+    view.action(WorkbenchWindow::primary_request);
+    check_true(pump_until([&] { return session.request_count.load() == 1; }));
+    check_true(session.request().find("GET /api/login HTTP/1.1") != std::string::npos);
+
+    TreeView_SelectItem(tree, group);
+    view.action(WorkbenchWindow::run_collection);
+    check_true(pump_until([&] {
+      return view.status(1).find(L"Collection stopped at step 3") != std::wstring::npos;
+    }));
+    check_equal(session.request_count.load(), size_t{3});
+    const auto sent = session.request();
+    check_true(sent.find("POST /api/sample HTTP/1.1") != std::string::npos);
+    check_true(sent.find("X-Domain: sample\r\n") != std::string::npos);
+    check_true(sent.find("Authorization: Bearer opaque-test\r\n") != std::string::npos);
+    check_true(sent.find("{\"domain\":\"sample\"}") != std::string::npos);
+    check_false(other.received.load());
+    check_true(view.text(view.active(), ProtocolWindow::detail).find(L"No matching session cookie") !=
+               std::wstring::npos);
+  }
+
+  it("preserves variable definitions and templates through saves and rejects header injection") {
+    using namespace flowie::app;
+    ImportFiles files;
+    const auto file = files.write(L"collections.json", R"({"variables":{"domain":"sample"},"requests":[
+      {"collection":"Group","name":"Request","tool":{"kind":0,"endpoint":"http://localhost/{{domain}}",
+        "method":"GET","body":"","hex":false,"use_cookies":true,
+        "headers":"Authorization: Bearer {{cookie.sid}}"}}
+    ]})");
+    const CollectionStore store(file);
+    auto request = store.load(true).front();
+    request.notes = "Updated";
+    check_true(store.save(request, true, true).has_value());
+    const auto document = store.load_document(true);
+    check_equal(document.variables->at("domain"), std::string("sample"));
+    check_equal(document.requests.front().tool->endpoint, std::string("http://localhost/{{domain}}"));
+    check_equal(document.requests.front().tool->headers,
+                std::string("Authorization: Bearer {{cookie.sid}}"));
+    request.tool->endpoint = "http://localhost/{{undefined}}";
+    check_throws_as(store.save(request, true, true), std::runtime_error);
+    const auto after_failure = store.load(true);
+    check_equal(after_failure.front().notes, std::string("Updated"));
+
+    const CollectionVariables multiline{{"domain", "sample\r\nX-Injected: yes"}};
+    request.tool->endpoint = "http://localhost/";
+    request.tool->headers = "X-Domain: {{domain}}";
+    check_throws_as(expand_collection_tool(*request.tool, &multiline), std::runtime_error);
+    check_equal(expand_collection_tool(*request.tool, nullptr).headers, request.tool->headers);
+  }
+
+  it("expands MQTT broker and topic fields without replacing the saved templates") {
+    RoutingBroker broker;
+    ImportFiles files;
+    const auto library = files.write(L"collections.json",
+        R"({"variables":{"host":"127.0.0.1","domain":"sample","item":"sensor"},"requests":[
+          {"collection":"MQTT variables","name":"Client","connection":{"host":"{{host}}","port":)" +
+        std::to_string(broker.port) + R"(},"topics":[{"filter":"tenant/{{domain}}/#","qos":0}],
+            "message":{"topic":"tenant/sample/{{item}}","format":"json","retain":false,
+              "payload":"{\"domain\":\"{{domain}}\"}"}}
+        ]})");
+    WorkspaceFixture view(false, {}, library);
+    const auto tree = find_control(view.window, WorkbenchWindow::collections_tree);
+    const auto group = TreeView_GetChild(tree, TreeView_GetRoot(tree));
+    view.open_request(tree, TreeView_GetChild(tree, group));
+    const auto pane = view.active();
+    check_true(view.text(pane, MainWindow::host) == L"{{host}}");
+    check_true(view.text(pane, MainWindow::filter) == L"tenant/{{domain}}/#");
+    view.click(pane, MainWindow::connect_button);
+    check_true(pump_until([&] { return view.ready(pane); }));
+    view.click(pane, MainWindow::subscribe_button);
+    check_true(pump_until([&] { return view.ready(pane); }));
+    view.click(pane, MainWindow::publish_button);
+    check_true(pump_until([&] { return view.counters(pane, 1, 1); }));
+    check_true(view.text(pane, MainWindow::payload) == L"{\"domain\":\"{{domain}}\"}");
+    check_equal(broker.failure.load(), 0);
+  }
+
   it("runs one selected collection in file order and stops after the first failure") {
     ToolPeer session(ToolPeer::Mode::http, "ready", "Set-Cookie: run=ready; Path=/\r\n", 2,
                      "302 Found");

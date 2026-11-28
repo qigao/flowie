@@ -455,11 +455,15 @@ namespace flowie::app {
     if (extra != value.endpoint.npos) value.endpoint.resize(extra);
     if (value.endpoint.find('@') != value.endpoint.npos)
       throw std::runtime_error("Remove credentials from the endpoint before saving.");
-    if (request_tool(kind_)) value.headers = collection_request_headers(value.headers, true);
+    if (request_tool(kind_))
+      value.headers =
+          collection_request_headers(value.headers, true, collection_variables_.has_value());
     request.tool = std::move(value);
     return request;
   }
-  void ProtocolWindow::restore_request(const ToolDraft &draft) {
+  void ProtocolWindow::restore_request(const ToolDraft &draft,
+                                       const std::optional<CollectionVariables> &variables) {
+    collection_variables_ = variables;
     ::SetWindowTextW(get(target), utf8_to_wide(draft.endpoint).c_str());
     ::SetWindowTextW(get(body), utf8_to_wide(draft.body).c_str());
     if (get(headers)) {
@@ -496,7 +500,9 @@ namespace flowie::app {
   std::wstring ProtocolWindow::remote_endpoint() const {
     if (runner_) return collection_remote_;
     try {
-      return utf8_to_wide(tool_remote(kind_, read_text(get(target))));
+      const auto address = expand_collection_text(read_text(get(target)),
+          collection_variables_ ? &*collection_variables_ : nullptr, 4096);
+      return utf8_to_wide(tool_remote(kind_, address));
     } catch (const std::runtime_error &) {
       return {};
     }
@@ -632,15 +638,18 @@ namespace flowie::app {
     if (!request_command(action).enabled) return;
     switch (action) {
     case RequestAction::open:
-    case RequestAction::send:
+    case RequestAction::send: {
+      auto request = expand_collection_tool(draft(),
+          collection_variables_ ? &*collection_variables_ : nullptr);
       if (action == RequestAction::send && !request_tool(kind_)) {
-        session_.send(tool_payload(draft()));
+        session_.send(tool_payload(request));
       } else {
-        session_.start(draft());
+        session_.start(std::move(request));
         connection_status_.clear();
         ::SetWindowTextW(get(report), L"Starting...");
       }
       break;
+    }
     case RequestAction::stop:
       if (runner_) collection_canceled_ = true;
       session_.stop();
@@ -654,7 +663,10 @@ namespace flowie::app {
       std::string formatted;
       const bool format = action == RequestAction::format_json;
       if (get(request_tabs)) select_request_page(RequestPage::body);
-      check_json(kind_, read_text(get(body)), format ? &formatted : nullptr);
+      auto input = read_text(get(body));
+      if (!format && collection_variables_)
+        input = expand_collection_text(input, &*collection_variables_, kToolBytes);
+      check_json(kind_, input, format ? &formatted : nullptr);
       if (format) apply_sample(formatted);
       ::SetWindowTextW(get(report), format ? L"JSON formatted" : L"JSON is valid");
       break;

@@ -30,7 +30,14 @@ typedef struct flowie_session_inflight_s {
   uint16_t packet_id;
   uint8_t qos;
   flowie_session_inflight_state_t state;
+  uuid_t exchange;
+  uint8_t can_replay;
 } flowie_session_inflight_t;
+
+static int flowie_session_has_exchange(const uuid_t exchange) {
+  /* Version nibble is nonzero for every generated UUID v4. */
+  return exchange[6] != 0u;
+}
 
 typedef enum flowie_session_delivery_state_e {
   FLOWIE_SESSION_DELIVERY_RESERVED = 1,
@@ -185,7 +192,8 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
   for (size_t i = 0u; i < vec_size(&owner->inflight); ++i) {
     const flowie_session_inflight_t *entry =
         (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
-    if (entry && entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) ++persisted_inflight;
+    if (entry && (entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE ||
+                  flowie_session_has_exchange(entry->exchange))) ++persisted_inflight;
   }
   for (size_t i = 0u; i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *entry =
@@ -222,9 +230,14 @@ int flowie_session_owner_repository_snapshot(const flowie_session_owner_t *owner
   for (size_t i = 0u, target_index = 0u; i < vec_size(&owner->inflight); ++i) {
     const flowie_session_inflight_t *source =
         (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, i);
-    if (!source || source->state != FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) continue;
-    ((flowie_protocol_inflight_row_t *)row.inflight)[target_index++] =
-        (flowie_protocol_inflight_row_t){source->packet_id, source->qos};
+    if (!source || (source->state != FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE &&
+                    !flowie_session_has_exchange(source->exchange))) continue;
+    flowie_protocol_inflight_row_t *target =
+        &((flowie_protocol_inflight_row_t *)row.inflight)[target_index++];
+    target->packet_id = source->packet_id;
+    target->qos = source->qos;
+    if (source->state == FLOWIE_SESSION_INFLIGHT_SETTLEMENT)
+      memcpy(target->exchange, source->exchange, sizeof(target->exchange));
   }
   for (size_t i = 0u, target_index = 0u; i < vec_size(&owner->deliveries); ++i) {
     const flowie_session_delivery_t *source =
@@ -307,7 +320,12 @@ int flowie_session_owner_repository_restore(const flowie_session_config_t *confi
   }
   for (size_t i = 0u; i < row->inflight_count; ++i) {
     flowie_session_inflight_t entry = {row->inflight[i].packet_id, row->inflight[i].qos,
-                                       FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE};
+                                       FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE, {0}, 0};
+    if (flowie_session_has_exchange(row->inflight[i].exchange)) {
+      entry.state = FLOWIE_SESSION_INFLIGHT_SETTLEMENT;
+      entry.can_replay = 1u;
+      memcpy(entry.exchange, row->inflight[i].exchange, sizeof(entry.exchange));
+    }
     rc = flowie_stl_error(vec_push(&owner->inflight, &entry));
     if (rc != SALTS_OK) goto fail;
   }
@@ -380,12 +398,13 @@ static void flowie_session_subscriptions_destroy(vec_t *subscriptions) {
   vec_destroy(subscriptions);
 }
 
-static void flowie_session_inflight_clear(flowie_session_owner_t *owner, int keep_qos2_release) {
+static void flowie_session_inflight_clear(flowie_session_owner_t *owner, int keep_qos2) {
   size_t index = 0u;
   while (index < vec_size(&owner->inflight)) {
-    const flowie_session_inflight_t *entry =
-        (const flowie_session_inflight_t *)vec_at_const(&owner->inflight, index);
-    if (keep_qos2_release && entry && entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) {
+    flowie_session_inflight_t *entry = (flowie_session_inflight_t *)vec_at(&owner->inflight, index);
+    if (keep_qos2 && entry && (entry->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE ||
+                               flowie_session_has_exchange(entry->exchange))) {
+      entry->can_replay = entry->state == FLOWIE_SESSION_INFLIGHT_SETTLEMENT;
       ++index;
     } else {
       (void)flowie_stl_error(vec_swap_remove(&owner->inflight, index, NULL));
@@ -1577,6 +1596,12 @@ int flowie_session_owner_publish_begin(flowie_session_owner_t *owner,
     if (existing->state == FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE) {
       result.has_ack = 1u;
       result.ack = flowie_session_ack(FLOWIE_SESSION_ACK_PUBREC, publish->packet_id);
+    } else if (existing->can_replay) {
+      if (owner->resource_generation == UINT64_MAX) return SALTS_ERANGE;
+      existing->can_replay = 0;
+      ++owner->resource_generation;
+      result.admit_application = 1u;
+      memcpy(result.exchange, existing->exchange, sizeof(result.exchange));
     }
     *out = result;
     return SALTS_OK;
@@ -1584,10 +1609,16 @@ int flowie_session_owner_publish_begin(flowie_session_owner_t *owner,
   if (vec_size(&owner->inflight) >= owner->config.max_inflight) return SALTS_ENOSPC;
   if (owner->resource_generation == UINT64_MAX) return SALTS_ERANGE;
   {
-    flowie_session_inflight_t added;
+    flowie_session_inflight_t added = {0};
     added.packet_id = publish->packet_id;
     added.qos = publish->qos;
     added.state = FLOWIE_SESSION_INFLIGHT_SETTLEMENT;
+    if (publish->qos == 2u && !publish->retain &&
+        owner->config.settlement.qos2 == FLOWIE_PROTOCOL_SETTLE_PROCESSED) {
+      rc = uuid_v4_generate(added.exchange);
+      if (rc != SALTS_OK) return rc;
+      memcpy(result.exchange, added.exchange, sizeof(result.exchange));
+    }
     rc = flowie_stl_error(vec_push(&owner->inflight, &added));
     if (rc != SALTS_OK) return rc;
   }
@@ -1639,6 +1670,7 @@ int flowie_session_owner_publish_settle(flowie_session_owner_t *owner,
   } else {
     ack = flowie_session_ack(FLOWIE_SESSION_ACK_PUBREC, entry->packet_id);
     entry->state = FLOWIE_SESSION_INFLIGHT_QOS2_RELEASE;
+    memset(entry->exchange, 0, sizeof(entry->exchange));
   }
   owner->resource_generation += 1u;
   *out = ack;
@@ -2048,7 +2080,7 @@ int flowie_session_owner_record_restore(const flowie_session_config_t *config,
       }
       ++option_index;
     } else if (type == 5u) {
-      flowie_session_inflight_t inflight;
+      flowie_session_inflight_t inflight = {0};
       if (value_size != 3u || value[2] != 2u ||
           vec_size(&owner->inflight) + vec_size(&owner->deliveries) >= config->max_inflight) {
         rc = SALTS_EPROTO;

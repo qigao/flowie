@@ -68,7 +68,26 @@ namespace flowie::app {
       return json_bool(value);
     }
 
-    SavedRequest decode(const json_value_t *value, const std::filesystem::path &file) {
+    CollectionVariables read_variables(const json_value_t *object) {
+      if (!object || json_type(object) != JSON_OBJECT || json_object_size(object) > 64)
+        throw std::runtime_error("A collection must declare at most 64 variables in an object.");
+      CollectionVariables variables;
+      for (size_t i = 0; i < json_object_size(object); ++i) {
+        std::string name(json_object_key(object, i), json_object_key_len(object, i));
+        if (!valid_collection_variable(name))
+          throw std::runtime_error("Invalid collection variable name.");
+        auto value = read_string(object, name.c_str());
+        if (value.size() > 4096)
+          throw std::runtime_error("Collection variables are limited to 4 KiB.");
+        (void)utf8_to_wide(value);
+        if (!variables.emplace(std::move(name), std::move(value)).second)
+          throw std::runtime_error("Duplicate collection variable name.");
+      }
+      return variables;
+    }
+
+    SavedRequest decode(const json_value_t *value, const std::filesystem::path &file,
+                        const CollectionVariables *variables) {
       require_fields(value, {"collection", "name", "notes", "connection", "topics", "message",
                              "tool"});
       SavedRequest request;
@@ -100,7 +119,7 @@ namespace flowie::app {
         if (!draft.headers.empty()) {
           if (!request_tool(draft.kind))
             throw std::runtime_error("Saved headers require an HTTP or JSON-RPC request.");
-          draft.headers = collection_request_headers(draft.headers, false);
+          draft.headers = collection_request_headers(draft.headers, false, variables != nullptr);
         }
         const auto *hex = json_object_get(tool, "hex");
         if (!hex || json_type(hex) != JSON_BOOL) throw std::runtime_error("hex must be a boolean.");
@@ -114,14 +133,16 @@ namespace flowie::app {
         draft.parity = read_integer(tool, "parity", 0, 0, 4);
         draft.stop_bits = read_integer(tool, "stop_bits", 1, 1, 2);
         draft.flow = read_integer(tool, "flow", 0, 0, 3);
+        if (variables) (void)expand_collection_tool(draft, variables);
         request.tool = std::move(draft);
         return request;
       }
       const auto *profile = json_object_get(value, "connection");
       require_fields(profile, {"role", "host", "port", "transport", "protocol", "path", "ca_file",
                                "cert_file", "key_file"});
-      request.profile = read_profile(profile, file);
-      if (request.profile.connection.path.find_first_of("?#") != std::string::npos)
+      request.profile = read_profile(profile, file, variables);
+      const auto path = expand_collection_text(request.profile.connection.path, variables, 4096);
+      if (path.find_first_of("?#") != std::string::npos)
         throw std::runtime_error("Saved WebSocket paths cannot contain queries or fragments.");
       const auto *topics = json_object_get(value, "topics");
       if (!topics || json_type(topics) != JSON_ARRAY || json_array_size(topics) > kSavedTopicLimit)
@@ -130,7 +151,7 @@ namespace flowie::app {
         const auto *topic = json_array_get(topics, i);
         require_fields(topic, {"filter", "qos"});
         auto filter = read_string(topic, "filter");
-        if (!valid_saved_filter(filter))
+        if (!valid_saved_filter(expand_collection_text(filter, variables, 4096)))
           throw std::runtime_error("Invalid saved subscription filter.");
         if (std::any_of(request.topics.begin(), request.topics.end(),
                         [&](const auto &entry) { return entry.filter == filter; }))
@@ -150,6 +171,8 @@ namespace flowie::app {
             (format != "text" && format != "json"))
           throw std::runtime_error("Invalid saved publish draft.");
         (void)utf8_to_wide(payload);
+        (void)expand_collection_text(topic, variables, 4096);
+        (void)expand_collection_text(payload, variables, kPayloadBytes);
         const auto *retain = json_object_get(message, "retain");
         if (!retain || json_type(retain) != JSON_BOOL)
           throw std::runtime_error("retain must be boolean.");
@@ -383,36 +406,56 @@ namespace flowie::app {
   }
 
   std::vector<SavedRequest> CollectionStore::load(bool require_existing) const {
+    return load_document(require_existing).requests;
+  }
+
+  CollectionDocument CollectionStore::load_document(bool require_existing) const {
     using namespace json_fields;
     const auto bytes = read_collections_file(file_, kLibraryBytes, require_existing,
                                               "Invalid Collections file size (8 MiB maximum).");
     if (bytes.empty()) return {};
     const auto root = parse(bytes);
-    if (json_type(root.get()) != JSON_ARRAY || json_array_size(root.get()) > kSavedRequestLimit)
+    CollectionDocument document;
+    const auto *entries = root.get();
+    if (json_type(root.get()) == JSON_OBJECT) {
+      require_fields(root.get(), {"variables", "requests"});
+      document.variables = read_variables(json_object_get(root.get(), "variables"));
+      entries = json_object_get(root.get(), "requests");
+    }
+    if (!entries || json_type(entries) != JSON_ARRAY || json_array_size(entries) > kSavedRequestLimit)
       throw std::runtime_error("Collections must contain at most 64 requests.");
-    std::vector<SavedRequest> requests;
-    for (size_t i = 0; i < json_array_size(root.get()); ++i) {
-      auto request = decode(json_array_get(root.get(), i), file_);
+    auto &requests = document.requests;
+    for (size_t i = 0; i < json_array_size(entries); ++i) {
+      auto request = decode(json_array_get(entries, i), file_, document.bindings());
       if (std::any_of(requests.begin(), requests.end(),
                       [&](const auto &entry) { return same_name(entry, request); }))
         throw std::runtime_error("Duplicate request name in a collection.");
       requests.push_back(std::move(request));
     }
-    return requests;
+    return document;
   }
 
   std::optional<std::vector<SavedRequest>>
   CollectionStore::save(const SavedRequest &request, bool replace, bool require_existing) const {
+    auto document = save_document(request, replace, require_existing);
+    if (!document) return std::nullopt;
+    return std::move(document->requests);
+  }
+
+  std::optional<CollectionDocument>
+  CollectionStore::save_document(const SavedRequest &request, bool replace,
+                                 bool require_existing) const {
     using namespace json_fields;
     validate_saved_names(request);
     if (request.topics.size() > kSavedTopicLimit ||
         (request.message && request.message->payload.size() > kPayloadBytes))
       throw std::runtime_error("The saved request exceeds its topic or payload limit.");
     auto value = encode(request);
-    // Validate the exact persisted representation before replacing an existing file.
-    auto stored = decode(value.get(), file_);
     const auto lock = lock_collection_update(file_);
-    auto requests = load(require_existing);
+    auto document = load_document(require_existing);
+    // Use the variables from the file we locked for this write.
+    auto stored = decode(value.get(), file_, document.bindings());
+    auto &requests = document.requests;
     auto found = std::find_if(requests.begin(), requests.end(),
                               [&](const auto &entry) { return same_name(entry, stored); });
     if (found != requests.end()) {
@@ -427,12 +470,22 @@ namespace flowie::app {
     if (!root) throw std::bad_alloc();
     for (const auto &entry : requests)
       add(root.get(), nullptr, encode(entry).release());
+    if (document.variables) {
+      Json object(json_create_object(), json_free);
+      if (!object) throw std::bad_alloc();
+      auto *variables = json_create_object();
+      add(object.get(), "variables", variables);
+      for (const auto &[name, value] : *document.variables)
+        string(variables, name.c_str(), value);
+      add(object.get(), "requests", root.release());
+      root = std::move(object);
+    }
     size_t size = 0;
     std::unique_ptr<char, decltype(&json_serialize_free)> data(json_serialize(root.get(), &size),
                                                                json_serialize_free);
     if (!data) throw std::runtime_error("Could not serialize Collections.");
     if (size > kLibraryBytes) throw std::runtime_error("Collections exceed the 8 MiB limit.");
     write_collections_file(file_, data.get(), static_cast<DWORD>(size));
-    return requests;
+    return document;
   }
 } // namespace flowie::app

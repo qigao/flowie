@@ -1,4 +1,5 @@
 #include "flowie_server_http_security_internal.h"
+#include "flowie_workflow_https_sink_internal.h"
 
 #include "tinytest.h"
 #include <core/error.h>
@@ -10,6 +11,7 @@
 #include <core/fmt.h>
 
 #include <string.h>
+#include <stdio.h>
 
 static int test_set_environment(const char *name, const char *value) {
 #ifdef _WIN32
@@ -60,6 +62,8 @@ typedef struct test_http_reply {
   const char *body; /* Static test body, borrowed until server stop. */
   unsigned int status;
   int token_received; /* Application worker writes; test reads after close joins it. */
+  uint16_t workflow_ports[2];
+  size_t workflow_posts;
   salts_configurator_provider_binding provider;
   salts_configurator_deployment deployment;
   chttp_controller controller;
@@ -68,6 +72,41 @@ typedef struct test_http_reply {
 cmeta_reflect_data(test_http_reply, "flowie.test.HttpReply", cmeta_field(int, token_received));
 cmeta_component_empty(FlowieTestHttpReply);
 CHTTP_ACTION(test_http_reply_handler);
+
+typedef struct test_workflow_outcomes {
+  chttp_client *client;
+  chttp_client_config client_config;
+  size_t count;
+  int statuses[2];
+} test_workflow_outcomes;
+
+static int test_workflow_start(void *context) {
+  test_workflow_outcomes *fixture = context;
+  return chttp_client_init(fixture->client, &fixture->client_config);
+}
+
+static int test_workflow_stop(void *context) {
+  test_workflow_outcomes *fixture = context;
+  return chttp_client_destroy(fixture->client, 1000u);
+}
+
+static int test_workflow_decide(void *context, const flowie_workflow_event_t *event,
+                                flowie_workflow_decision_t *decision) {
+  (void)context;
+  *decision = (flowie_workflow_decision_t){.generation = event->generation, .event_id = event->id,
+      .action = FLOWIE_WORKFLOW_FORWARD, .sink_size = sizeof("loopback") - 1u, .sink = "loopback"};
+  return SALTS_OK;
+}
+
+static void test_workflow_complete(void *context, const flowie_workflow_event_t *event,
+                                   flowie_workflow_phase_t phase, int status) {
+  test_workflow_outcomes *outcomes = context;
+  (void)event;
+  if (outcomes->count < 2u) {
+    outcomes->statuses[outcomes->count] = phase == FLOWIE_WORKFLOW_DELIVERY ? status : SALTS_EINVAL;
+  }
+  ++outcomes->count;
+}
 
 static cmeta_status test_http_component_create(void *user, const cmeta_data_desc *data,
     const void *config, const salts_configurator_dependency *dependencies, size_t count,
@@ -82,6 +121,11 @@ int test_http_reply_handler(void *context, const chttp_invocation *invocation) {
   const chttp_server_request_view *request = chttp_invocation_request(invocation);
   test_http_reply *reply = context;
   const char *token = chttp_server_request_header(request, "Authorization");
+  if (request->body_size == 2u && request->peer && reply->workflow_posts < 2u) {
+    const unsigned char *body = request->body;
+    if (body[0] == 0u && body[1] == 0xa5u)
+      reply->workflow_ports[reply->workflow_posts++] = request->peer->port;
+  }
   reply->token_received = token && strcmp(token, "Bearer test-only-token") == 0;
   return chttp_invocation_respond(invocation, reply->status, "application/json", reply->body,
                             strlen(reply->body));
@@ -120,6 +164,13 @@ spec("Flowie server HTTPS Interceptor") {
   static chttp_application server;
   static flowie_server_http_security_t *security;
   static test_http_reply reply;
+  static chttp_client workflow_client;
+  static chttp_tls_profile workflow_tls;
+  static flowie_workflow_host_t *workflow_host;
+  static flowie_workflow_https_sink_t workflow_sink;
+  static test_workflow_outcomes workflow_outcomes;
+  static char workflow_uri[64];
+  static char workflow_authority[32];
   static uint16_t port;
   static char ca_file[1025];
   static char cert_file[1025];
@@ -129,6 +180,10 @@ spec("Flowie server HTTPS Interceptor") {
     server = (chttp_application){0};
     security = NULL;
     reply = (test_http_reply){.body = "", .status = 200u};
+    workflow_client = (chttp_client){0};
+    workflow_tls = (chttp_tls_profile){0};
+    workflow_host = NULL;
+    workflow_outcomes = (test_workflow_outcomes){0};
     port = 0u;
     ca_file[0] = cert_file[0] = key_file[0] = '\0';
     check_equal(test_set_environment("FLOWIE_TEST_NATIVE_HTTP_TOKEN", "test-only-token"), 0);
@@ -157,12 +212,62 @@ spec("Flowie server HTTPS Interceptor") {
   }
 
   after_each() {
+    check_equal(flowie_workflow_host_destroy(&workflow_host), SALTS_OK);
+    check_null(workflow_client.impl);
+    if (workflow_tls.impl) check_equal(chttp_tls_profile_destroy(&workflow_tls), SALTS_OK);
     flowie_server_http_security_destroy(security);
     check_equal(chttp_application_close(&server, 1000u), SALTS_OK);
     tls_test_remove_file(key_file);
     tls_test_remove_file(cert_file);
     if (ca_file[0]) tls_test_remove_file(ca_file);
     check_equal(test_set_environment("FLOWIE_TEST_NATIVE_HTTP_TOKEN", NULL), 0);
+  }
+
+  it("forwards two workflow events over one verified HTTPS connection") {
+    check_equal(chttp_application_start(&server), SALTS_OK);
+    check_equal(chttp_application_port(&server, &port), SALTS_OK);
+    check_true(snprintf(workflow_authority, sizeof(workflow_authority), "127.0.0.1:%u",
+                        (unsigned int)port) > 0);
+    check_true(snprintf(workflow_uri, sizeof(workflow_uri), "tls://%s", workflow_authority) > 0);
+    const cnet_tls_client_config tls = {.size = sizeof(tls), .ca_file = ca_file,
+                                       .server_name = "127.0.0.1"};
+    check_equal(chttp_tls_profile_init(&workflow_tls, &tls), SALTS_OK);
+    workflow_outcomes.client = &workflow_client;
+    workflow_outcomes.client_config = (chttp_client_config){
+        .network = {
+            .backend = test_http_server_config(NULL).network.backend,
+            .connection_capacity = 1u, .command_capacity = 8u, .request_capacity = 4u,
+            .completion_batch_capacity = 4u, .event_capacity = 8u, .max_send_bytes = 8192u,
+            .receive_buffer_bytes = 4096u, .connect_timeout_ms = 1000u, .read_timeout_ms = 1000u,
+            .write_timeout_ms = 1000u, .tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES,
+            .tls_handshake_timeout_ms = 1000u},
+        .request_capacity = 1u, .max_start_line_bytes = 2048u, .max_header_count = 16u,
+        .max_header_bytes = 1024u, .max_request_body_bytes = 4096u, .max_response_body_bytes = 4096u,
+        .max_informational_responses = 4u};
+    workflow_sink = (flowie_workflow_https_sink_t){.client = &workflow_client,
+        .request = {.connection_uri = workflow_uri, .authority = workflow_authority,
+            .target = "/v3/auth", .timeout_ms = 1000u, .tls = &workflow_tls,
+            .protocol = CHTTP_HTTP_1_1}};
+    const flowie_workflow_sink_t binding = {"loopback", flowie_workflow_https_deliver, &workflow_sink};
+    const flowie_workflow_host_config_t config = {.generation = 1u, .event_capacity = 2u,
+        .max_event_bytes = 16u, .max_pending_bytes = 32u, .sinks = &binding,
+        .sink_count = 1u, .start = test_workflow_start, .stop = test_workflow_stop,
+        .decide = test_workflow_decide, .complete = test_workflow_complete,
+        .context = &workflow_outcomes};
+    check_equal(flowie_workflow_host_create(&config, &workflow_host), SALTS_OK);
+    flowie_workflow_event_t event = {.generation = 1u, .id = 1u, .topic = "input", .topic_size = 5u,
+                                    .payload = "\0\xA5", .payload_size = 2u};
+    check_equal(flowie_workflow_host_submit(workflow_host, &event), SALTS_OK);
+    event.id = 2u;
+    check_equal(flowie_workflow_host_submit(workflow_host, &event), SALTS_OK);
+    check_equal(flowie_workflow_host_destroy(&workflow_host), SALTS_OK);
+    check_equal(chttp_application_close(&server, 1000u), SALTS_OK);
+    check_equal(workflow_outcomes.count, 2u);
+    check_equal(workflow_outcomes.statuses[0], SALTS_OK);
+    check_equal(workflow_outcomes.statuses[1], SALTS_OK);
+    check_equal(reply.workflow_posts, 2u);
+    check_true(reply.workflow_ports[0] != 0u);
+    check_equal(reply.workflow_ports[0], reply.workflow_ports[1]);
   }
 
   it("unwinds successful authentication and keeps the caller request borrowed") {

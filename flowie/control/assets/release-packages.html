@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Domain Packages · Flowie</title>
+  <link rel="stylesheet" href="packages/app.css">
+  <script src="packages/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to Domain Packages</a>
+  <header class="topbar">
+    <div class="shell topbar-content">
+      <span class="brand">Flowie Control</span>
+      <span id="scope">Domain management</span>
+    </div>
+  </header>
+  <main id="main" class="shell">
+    <div class="page-heading">
+      <h1>Domain Packages</h1>
+      <button class="secondary" type="button" id="refresh">Refresh</button>
+    </div>
+    <form id="management-session" class="panel" hidden>
+      <label for="management-token">Control session token</label>
+      <input id="management-token" type="password" required autocomplete="off" aria-describedby="management-session-help">
+      <button type="submit">Use session</button>
+      <p id="management-session-help">Sign in to Flowie Control and enter your management session token.</p>
+    </form>
+    <section class="panel active-panel" aria-labelledby="active-heading">
+      <div class="section-heading">
+        <h2 id="active-heading">Active release</h2>
+        <span id="runtime" class="state">Checking gateway ACL</span>
+      </div>
+      <dl class="metrics">
+        <div><dt>Generation</dt><dd id="generation">—</dd></div>
+        <div><dt>ACL version</dt><dd id="acl-version">—</dd></div>
+        <div class="digest-metric"><dt>Release digest</dt><dd class="mono" id="active-digest">—</dd></div>
+      </dl>
+    </section>
+    <section class="panel" aria-labelledby="upload-heading">
+      <h2 id="upload-heading">Upload package</h2>
+      <form id="upload-form">
+        <div class="file-field">
+          <label for="archive">Signed archive</label>
+          <input id="archive" name="archive" type="file" accept=".tar.zst,application/zstd"
+                 required aria-describedby="archive-help">
+          <p id="archive-help">Choose a signed .tar.zst with a package name in its manifest.</p>
+        </div>
+        <button type="submit" id="upload" disabled>Upload</button>
+      </form>
+      <details id="certificates" class="certificates" hidden>
+        <summary>Certificates</summary>
+        <div class="certificate-grid">
+          <section aria-labelledby="operator-certificate-heading">
+            <h3 id="operator-certificate-heading">Operator client certificate</h3>
+            <p>Verified by management HTTPS for this session.</p>
+            <dl>
+              <div><dt>Operator</dt><dd id="operator-id"></dd></div>
+              <div><dt>SHA-256 fingerprint</dt><dd id="operator-fingerprint" class="mono"></dd></div>
+            </dl>
+          </section>
+          <section aria-labelledby="package-certificate-heading">
+            <h3 id="package-certificate-heading">Configured package signing certificate</h3>
+            <p>Used to verify SM2/SM3-signed packages for this Domain.</p>
+            <dl>
+              <div><dt>Signer</dt><dd id="signer-reference"></dd></div>
+              <div><dt>SHA-256 fingerprint</dt><dd id="signer-fingerprint" class="mono"></dd></div>
+            </dl>
+          </section>
+        </div>
+      </details>
+    </section>
+    <p id="feedback" role="status"></p>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="history-heading">
+        <h2 id="history-heading">Package history</h2>
+        <p id="empty-history">Loading packages…</p>
+        <ul id="history"></ul>
+        <button class="secondary" type="button" id="more" hidden>Load more</button>
+      </section>
+      <section class="panel" aria-labelledby="candidate-heading">
+        <h2 id="candidate-heading" tabindex="-1">Package details</h2>
+        <p id="selection-hint">Select a package to preview its signed ACL.</p>
+        <div id="candidate" hidden>
+          <dl class="candidate-meta">
+            <div><dt>Package name</dt><dd id="package-name">—</dd></div>
+            <div><dt>Digest</dt><dd id="package-digest" class="mono"></dd></div>
+          </dl>
+          <div class="acl-preview">
+            <h3 id="acl-path">Signed ACL</h3>
+            <pre id="acl-text" tabindex="0" aria-labelledby="acl-path"></pre>
+          </div>
+          <p id="validation" aria-live="polite">Validate this package before activation.</p>
+          <div class="actions">
+            <button class="secondary" type="button" id="validate" disabled>Validate package</button>
+            <button type="button" id="activate" disabled>Activate package</button>
+            <a id="download">Download archive</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

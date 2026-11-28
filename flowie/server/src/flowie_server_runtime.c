@@ -1,5 +1,6 @@
 #include "flowie_server_runtime_internal.h"
 #include "flowie_server_http_security_internal.h"
+#include "flowie_server_release_internal.h"
 
 #include <cmeta/data_reflect.h>
 #include <cmeta/component.h>
@@ -23,7 +24,20 @@ typedef struct flowie_server_runtime_config {
   const orm_config_t *database;
   const flowie_endpoint_core_options_t *options;
   int check_only;
+  flowie_server_release_t *release;
 } flowie_server_runtime_config;
+
+static int flowie_server_release_dispatch(flowie_endpoint_core_t *endpoint, flowie_message_t *message,
+    flowie_publish_result_t *result, void *context) {
+  const flowie_server_runtime_config *config = context;
+  int handled = 0;
+  const int rc = flowie_server_release_publish(config->release, message, &handled);
+  if (rc == SALTS_OK && !handled)
+    return config->options->on_message(endpoint, message, result, config->options->message_ctx);
+  result->status = rc;
+  if (rc == SALTS_OK) result->protocol_settlement = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
+  return rc;
+}
 
 /* VIEW describes native configuration without claiming copy/value ownership. */
 cmeta_reflect_data(flowie_server_runtime_config, "flowie.server.RuntimeConfig",
@@ -76,6 +90,7 @@ cmeta_component_configured(FlowieServerEndpoint,
 
 static const flowie_endpoint_security_binding_t *flowie_server_security_binding(void *self) {
   flowie_server_component_state *state = self;
+  if (state->config->release) return flowie_server_release_binding(state->config->release);
   return state->resource.security.realm ? &state->resource.security.binding : NULL;
 }
 
@@ -147,6 +162,7 @@ static int flowie_server_security_create(flowie_server_component_state *state) {
   flowie_endpoint_security_binding_t *binding = &state->resource.security.binding;
   int rc;
   state->operation = "security-runtime-create";
+  if (state->config->release) return SALTS_OK;
   if (!config || !flowie_server_config_realm_name(config)) return SALTS_OK;
   if (state->config->endpoint->max_connections == 0u) return SALTS_EINVAL;
   rc = flowie_server_http_security_create(flowie_server_config_auth(config),
@@ -210,8 +226,20 @@ static cmeta_status flowie_server_endpoint_create(flowie_server_component_state 
   bindings.security = flowie_server_security_service_binding(&security_service);
   persistence.repository = flowie_server_repository_service_repository(&repository_service);
   bindings.persistence = &persistence;
+  if (state->config->release && !state->config->check_only) {
+    state->operation = "release-admission-reconcile";
+    state->status = flowie_server_release_reconcile(state->config->release, persistence.repository);
+    if (state->status != SALTS_OK) return CMETA_CALLBACK_ERROR;
+    state->operation = "endpoint-create";
+  }
+  flowie_endpoint_core_options_t options = *state->config->options;
+  const flowie_server_release_config_t *release = flowie_server_config_release(state->config->server);
+  if (release && release->rulesforge.timeout_ms) {
+    options.on_message = flowie_server_release_dispatch;
+    options.message_ctx = (void *)state->config;
+  }
   state->status = flowie_endpoint_core_create_ex("mqtt", state->config->endpoint,
-      state->config->options, &execution, &bindings, &state->resource.endpoint);
+      &options, &execution, &bindings, &state->resource.endpoint);
   return state->status == SALTS_OK ? CMETA_OK : CMETA_CALLBACK_ERROR;
 }
 
@@ -256,6 +284,8 @@ static void SALTS_CONFIGURATOR_CALL flowie_server_endpoint_deactivate(void *cont
 
 struct flowie_server_runtime_s {
   flowie_server_runtime_config config;
+  flowie_endpoint_config_t endpoint_config;
+  int graph_active;
   salts_configurator_context context;
   salts_configurator_provider_binding providers[FLOWIE_SERVER_COMPONENT_COUNT];
   salts_configurator_deployment deployments[FLOWIE_SERVER_COMPONENT_COUNT];
@@ -277,8 +307,10 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
       cmeta_component_meta(FlowieServerSecurity), cmeta_component_meta(FlowieServerRepository),
       cmeta_component_meta(FlowieServerEndpoint)};
   int rc = SALTS_EIO;
+  const char *ignored_operation;
+  if (!operation) operation = &ignored_operation;
   if (out) *out = NULL;
-  if (operation) *operation = "component-configure";
+  *operation = "component-configure";
   if (!out || !endpoint_config || !database || !options || (check_only != 0 && check_only != 1))
     return SALTS_EINVAL;
   runtime = calloc(1u, sizeof(*runtime));
@@ -286,6 +318,28 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
   runtime->context = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
   runtime->config = (flowie_server_runtime_config){config, endpoint_config, database, options,
                                                   check_only};
+  const flowie_server_release_config_t *release = flowie_server_config_release(config);
+  if (release) {
+    *operation = "release-endpoint-configure";
+    if (endpoint_config->transport != FLOWIE_TRANSPORT_TLS || !endpoint_config->manage_sessions ||
+        endpoint_config->reuse_port) {
+      rc = SALTS_EINVAL;
+      goto failed;
+    }
+    runtime->endpoint_config = *endpoint_config;
+    runtime->endpoint_config.tls_client_ca_file = release->mqtt_client_ca_file;
+    if (release->rulesforge.timeout_ms) {
+      runtime->endpoint_config.settlement.qos1 = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
+      runtime->endpoint_config.settlement.qos2 = FLOWIE_PROTOCOL_SETTLE_PROCESSED;
+      const uint64_t timeout = (uint64_t)release->rulesforge.timeout_ms * 4u;
+      if (runtime->endpoint_config.timeout_ms < timeout) runtime->endpoint_config.timeout_ms = timeout;
+    }
+    runtime->config.endpoint = &runtime->endpoint_config;
+    rc = flowie_server_release_prepare(release, database, check_only, &runtime->config.release,
+                                       operation);
+    if (rc != SALTS_OK) goto failed;
+    *operation = "component-configure";
+  }
   for (size_t index = 0u; index < FLOWIE_SERVER_COMPONENT_COUNT; ++index) {
     runtime->states[index].kind = (int)index;
     runtime->providers[index] = (salts_configurator_provider_binding){
@@ -304,39 +358,62 @@ int flowie_server_runtime_create(const flowie_server_config_t *config,
   if (status == SALTS_CONFIGURATOR_OK) status = salts_configurator_context_resolve(&runtime->context);
   if (status == SALTS_CONFIGURATOR_OK) status = salts_configurator_context_start(&runtime->context);
   if (status != SALTS_CONFIGURATOR_OK) {
+    rc = SALTS_EIO;
     const salts_configurator_failure *failure = salts_configurator_context_failure(&runtime->context);
     if (failure && failure->component_index < FLOWIE_SERVER_COMPONENT_COUNT) {
       const flowie_server_component_state *failed = &runtime->states[failure->component_index];
       if (failed->status != SALTS_OK) rc = failed->status;
-      if (operation && failed->operation) *operation = failed->operation;
+      if (failed->operation) *operation = failed->operation;
     }
-    free(runtime); /* start rolls back valid partial ObjectRefs before returning. */
-    return rc;
+    goto failed; /* start rolls back valid partial ObjectRefs before returning. */
   }
+  runtime->graph_active = 1;
   status = salts_configurator_context_find_service(&runtime->context,
       flowie_server_endpoint_service_interface(), &service);
   if (status != SALTS_CONFIGURATOR_OK || flowie_server_endpoint_service_borrow_from_object(
           service.object, service.interfaces, &runtime->endpoint) != CMETA_OK) {
-    (void)salts_configurator_context_stop(&runtime->context);
-    free(runtime);
-    return SALTS_EIO;
+    rc = SALTS_EIO;
+    goto failed;
+  }
+  if (release && !check_only) {
+    *operation = "release-https-start";
+    rc = flowie_server_release_start(runtime->config.release);
+    if (rc != SALTS_OK) goto failed;
   }
   *out = runtime;
   return SALTS_OK;
+
+failed:
+  (void)flowie_server_runtime_destroy(&runtime);
+  *out = runtime;
+  return rc;
 }
 
 flowie_endpoint_core_t *flowie_server_runtime_endpoint(flowie_server_runtime_t *runtime) {
-  return runtime ? flowie_server_endpoint_service_endpoint(&runtime->endpoint) : NULL;
+  return runtime && runtime->graph_active ? flowie_server_endpoint_service_endpoint(&runtime->endpoint) : NULL;
+}
+
+int flowie_server_runtime_management_port(const flowie_server_runtime_t *runtime, uint16_t *port) {
+  return runtime ? flowie_server_release_port(runtime->config.release, port) : SALTS_EINVAL;
 }
 
 int flowie_server_runtime_destroy(flowie_server_runtime_t **runtime) {
-  int rc;
   if (!runtime) return SALTS_EINVAL;
   if (!*runtime) return SALTS_OK;
-  if (salts_configurator_context_stop(&(*runtime)->context) != SALTS_CONFIGURATOR_OK)
-    return SALTS_EIO;
-  rc = (*runtime)->states[FLOWIE_SERVER_ENDPOINT_COMPONENT].status;
-  free(*runtime);
+  flowie_server_runtime_t *owner = *runtime;
+  int settled = 0;
+  int rc = flowie_server_release_stop(owner->config.release, &settled);
+  if (!settled) return rc;
+  if (owner->graph_active) {
+    if (salts_configurator_context_stop(&owner->context) != SALTS_CONFIGURATOR_OK)
+      return rc == SALTS_OK ? SALTS_EIO : rc;
+    if (rc == SALTS_OK) rc = owner->states[FLOWIE_SERVER_ENDPOINT_COMPONENT].status;
+    owner->graph_active = 0;
+  }
+  const int release_status = flowie_server_release_destroy(&owner->config.release);
+  if (rc == SALTS_OK) rc = release_status;
+  if (owner->config.release) return rc;
+  free(owner);
   *runtime = NULL;
   return rc;
 }

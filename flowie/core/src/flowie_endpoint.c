@@ -5153,6 +5153,9 @@ static int flowie_endpoint_prepare_publish(flowie_endpoint_connection_t *connect
   if (rc != SALTS_OK) return rc;
   *publish_packet = begin.admit_application != 0u;
   if (begin.has_ack) return flowie_endpoint_ack_enqueue(connection, packet->version, &begin.ack);
+  if (*publish_packet && connection->endpoint->application_dispatch &&
+      connection->endpoint->security_enabled)
+    flowie_ingress_set_publish_context(ingress, &connection->session->principal, begin.exchange);
   if (!begin.admit_application || publish.qos == 0u) return SALTS_OK;
   settlement.message = begin.message.metadata;
   settlement.point = publish.qos == 1u ? connection->endpoint->settlement.qos1
@@ -5249,6 +5252,11 @@ static int flowie_endpoint_publish_complete(void *ctx, flowie_ingress_t *ingress
   }
   flowie_session_owner_destroy(staged);
   if (rc != SALTS_OK) return rc;
+  if (ack.kind == FLOWIE_SESSION_ACK_PUBREC && message && message->transport_context) {
+    const flowie_direct_publish_context_t *publish = message->transport_context;
+    if (publish->on_qos2_committed)
+      publish->on_qos2_committed(publish->commit_context, publish->qos2_exchange);
+  }
   return flowie_endpoint_ack_enqueue(connection, version, &ack);
 }
 

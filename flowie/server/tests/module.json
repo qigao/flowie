@@ -1,21 +1,56 @@
 {
   "targets": {
+    "test_flowie_rulesforge_worker": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_rulesforge_worker.c", "../src/flowie_rulesforge_worker.c"]
+      },
+      "private": {
+        "deps": ["salts_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "ownership"]
+      }
+    },
+    "test_flowie_workflow_host": {
+      "kind": "executable",
+      "sources": {
+        "files": ["test_flowie_workflow_host.c", "../src/flowie_workflow_host.c"]
+      },
+      "private": {
+        "deps": ["salts_core", "salts_tinytest"],
+        "includeDirs": ["../src"]
+      },
+      "test": {
+        "labels": ["flowie", "flowie-release", "product-contract", "ownership"]
+      }
+    },
     "test_flowie_server_runtime": {
       "kind": "executable",
       "sources": {
         "files": [
           "test_flowie_server_runtime.c",
+          "../src/flowie_rulesforge_package.c",
+          "../src/flowie_rulesforge_pipeline.c",
+          "../src/flowie_workflow_https_sink.c",
+          "../src/flowie_rulesforge_worker.c",
           "../src/flowie_server_runtime.c",
           "../src/flowie_server_config.c",
           "../src/flowie_server_http_security.c",
+          "../src/flowie_server_release.c",
           "../src/flowie_server_turbodb_config.c"
         ]
       },
       "private": {
         "deps": [
           "flowie",
+          "flowie_control_release_http",
+          "salts_crypto",
+          "gmssl",
           "turbodb_orm",
           "chttp_client",
+          "chttp_app",
           "cmeta_ace",
           "cmeta_cmeta",
           "salts_cyaml",
@@ -23,7 +58,7 @@
           "salts_uri",
           "salts_tinytest"
         ],
-        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/tests/support"],
+        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/flowie/control/tests", "$root/tests/support"],
         "defines": {
           "FLOWIE_TEST_MULTI_CONFIG": "\"$moduledir/flowie_server_network_workers.yml\""
         }
@@ -53,7 +88,7 @@
     "test_flowie_server_http_security": {
       "kind": "executable",
       "sources": {
-        "files": ["test_flowie_server_http_security.c", "../src/flowie_server_http_security.c"]
+        "files": ["test_flowie_server_http_security.c", "../src/flowie_server_http_security.c", "../src/flowie_workflow_host.c", "../src/flowie_workflow_https_sink.c"]
       },
       "private": {
         "deps": [
@@ -67,7 +102,7 @@
           "cmeta_cmeta",
           "salts_tinytest"
         ],
-        "includeDirs": ["../src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/tests/support"]
+        "includeDirs": ["../src", "$root/flowie/control/src", "$root/flowie/core/include", "$root/flowie/transport/include", "$root/tests/support"]
       },
       "test": {
         "labels": ["flowie", "flowie-release", "product-contract", "security-contract"]

@@ -516,6 +516,151 @@ local immutable snapshot lookup.
 5. Product acceptance requirements and the current SDK pipeline are documented in
    [SDK qualification and release requirements](RELEASE_GATE.md).
 
+## Domain Release HTTP redesign
+
+The standalone IoT gateway separates **Domain Configuration** and **Domain Packages**.
+The deployment YAML configures listeners, TLS trust, the MQTT identity source, and the
+downstream connections. The management HTTPS listener verifies and activates named
+`.tar.zst` packages. Their signed manifests bind the Domain, environment, base digest and
+file inventory. The active package controls ACL permissions, MQTT source bindings, RFL
+rules, DataBind schemas and ToadScript modules. The package refers to downstream connections
+by the sink names declared in the deployment YAML.
+
+The management listener can use Control to authorize human sessions and per-Domain release
+Service Accounts over management mTLS. Control owns account and credential lifecycle, while
+the gateway owns package storage, validation and activation. [Account setup and permissions](CONTROL_GUIDE.md#domain-packages-账号与远程授权)
+
+The gateway uses the [HTTPS Auth contract](ADR_HTTPS_AUTH_SERVICE.md) for MQTT CONNECT when
+that identity source is configured. The Auth service resolves the canonical principal and
+the gateway authorizes that principal with the active package. Flowie owns MQTT ingress,
+worker lifecycle and delivery. RulesForge owns the window and rule state for each processing
+generation.
+
+[The Domain Release ADR](ADR_DOMAIN_RELEASE.md) defines the archive and HTTP contracts,
+certificate policy, bounded Zstd decompression and activation fencing.
+
+### HTTP contracts and ownership
+
+| Surface | Responsibility |
+| --- | --- |
+| `POST /domains/{domain}/releases` | Verify the named, signed `application/zstd` package and its USTAR contents. Store the immutable candidate by SHA-256 of the compressed package. |
+| `POST /domains/{domain}/releases/{digest}/validate` | Compile the signed ACL, check the rules and configured sink bindings, and report whether the candidate can activate. The activated package serves traffic. |
+| `PUT /domains/{domain}/active-release` | Select a validated digest. Check its signed base and HTTP precondition in the activation transaction. Require `If-Match` for replacement and `If-None-Match: *` for initialization. Record the acting principal, signer, digest, and new generation. |
+| `GET /domains/{domain}/releases`, `GET /domains/{domain}/releases/{digest}`, and `GET /domains/{domain}/active-release` | List release history, read a verified package by digest, and read the committed generation and its strong ETag. |
+| `GET /healthz` and `GET /domains/{domain}/status` | Report management listener liveness and Domain release state. The current status endpoint reports committed and observed generations and MQTT ACL readiness. Queue depth, connectivity, and delivery fields return `null`. |
+
+The release API replaces the JSON-RPC and Dashboard configuration write surface. CLI and CI
+manage releases over HTTPS. Runtime owners authenticate principals, authorize operations,
+and move business data. The Broker binds the configured authentication
+provider and evaluates the activated ACL snapshot. Identity setup, credential issuance and
+revocation belong to the identity provider or its operator tools. MQTT connection, session,
+retained, and inflight state belongs to the Broker and protocol repository. Business records
+belong to the configured storage owners. Data deletion and migration are separate operations
+owned by those stores.
+
+Gateway management HTTPS publishes the release owner's observations. The Portal backend owns
+the Monitor query and subscription interface and obtains business outcomes from the services
+that execute those operations. [Status ownership and subscriptions](ADR_DOMAIN_RELEASE.md#status-ownership-and-subscriptions)
+
+### Release admission
+
+The Control repository is the authority for the active Domain generation. CMeta Component
+Configurator resolves the runtime's typed providers and rejects missing or ambiguous bindings.
+The upload path authenticates the caller before accepting package data and enforces limits on archive
+bytes, expanded bytes, and entries. Validation checks the signer scope, file digests, and the
+exact set of files. The platform provides the management policy and signing trust from outside
+the archive.
+
+### Release certificates and algorithm policy
+
+Control uses `Salts::Crypto` for release signatures and content digests. The readable USTAR
+payload contains manifest bytes authenticated by detached SM2/SM3 CMS SignedData. The configured
+profile selects the CMS OID family and digest algorithm explicitly. The signed manifest binds
+each payload entry's path, length and SM3 digest. Verify the exact manifest bytes before
+interpreting them, then compare the full set of entries and stream their digests under the
+archive limits before preparing any release component. Keep the manifest within the SDK's
+64 KiB CMS content limit and allocate bounded verification buffers outside the I/O coroutine
+stack.
+
+Deployment configuration authorizes signing identities for a Domain and target environment.
+For SM2 release signing, provision the trust anchor, expected leaf key, explicit leaf-first
+certificate path and SM2 signer/issuer IDs outside the archive. Require `digitalSignature` and
+the `codeSigning` EKU and validate at the server's admission time. Select revocation explicitly.
+Where required, use the `Salts::Crypto` SM2 CRL verifier with operator-managed, authenticated
+CRL snapshots and freshness and rollback limits. Reject unapproved profiles, signature or
+digest mismatches, and any failure required by the chosen trust policy. Recheck that the
+signer remains authorized when activating a stored release. New signature algorithms require
+an explicitly enabled release profile with its own verifier and trust policy.
+
+SM4-GCM is available through the SM2 CMS envelope API for opt-in recipient encryption when a
+separate artifact requires confidentiality. Release admission uses the signed `.tar.zst`.
+HTTPS and MQTT TLS keep their own server or client certificate profiles and trust roots. A
+release-signing certificate authorizes artifact publication only.
+
+### Generation preparation and activation
+
+Prepare the complete candidate before changing the active record. Preparation acquires validated
+resource bindings and builds graphs. Message admission and delivery start at activation.
+When activation commits, workers may admit new work only at the active generation. A worker
+that has yet to load that generation reports itself as unready for the Domain. Status records
+the committed generation independently from each worker's observed generation. Old scopes can
+drain admitted work under their original configuration. The sink owner serializes the current
+permission check with external-write admission. This fences writes from old scopes to revoked
+destinations. The Broker owns MQTT acknowledgement and settlement.
+
+Track the ACL policy version separately from the Domain release generation. A release with
+the same ACL preserves the ACL version. After an ACL change, the Broker evaluates
+protected operations under the new snapshot. It refreshes the principal through a supported
+authentication flow or requires a new connection when the principal's policy version is stale.
+Repeated activation of the same digest with the same idempotency identity returns the original
+result. A competing activation fails its precondition and leaves the committed release intact.
+
+### Domain forwarding and downstream delivery
+
+The Flowie frontend receives MQTT messages, checks identity and ACL, and admits
+events to the committed Domain generation. The signed Domain rules execute in a
+resident RulesForge Program-backed Continuous Session. The session runs
+event-time windows and ToadScript, and emits actions with a backend binding name
+and payload. The RulesForge SDK worker runs in a separate process.
+
+Flowie validates each output against the named deployment binding for its generation
+and sends an mTLS HTTPS POST to the downstream processor. The frontend commits the event
+to a SQLite inbox before QoS 1/2 acknowledgement. The backend records rule execution,
+the output intent before sending, and the delivery result before retiring the task.
+An accepted POST records delivery to the configured receiving endpoint. The downstream
+service owns completion of its business operation.
+
+The current ACL release profile can manually submit Praktor instructions to a separate
+receiver. The internal FIFO and HTTPS sink exercise event-correlated decisions in loopback.
+The RulesForge worker and its output batch integration are specified in the
+[Domain Release ADR](ADR_DOMAIN_RELEASE.md#ingress-rulesforge-pipelines-and-downstream-business-services).
+
+### Cutover, rollback, and verification
+
+Choose a clean service cutover. Extending the existing RPC mutation methods would give the
+signed package and mutable drafts independent paths to active configuration. A compatibility
+facade would also retain the old direct-publish and bootstrap contracts. Keeping the HTTPS
+transport and replacing the application contracts lets the release repository enforce one
+activation authority.
+
+Before cutover, stop legacy configuration writes, take a consistent repository backup, and
+export and sign each Domain's initial release. In a separate deployment, verify these packages,
+prepare their components, and exercise Broker Auth/ACL and representative input-to-output flows.
+Replace Control, the Broker's Control HTTP security adapter, the provisioning tool, and
+CI API bindings as one deployment step. Keep the original runtime and backup available
+for deployment recovery.
+After accepting new state in the redesigned service, recovery to the old runtime requires
+reconciling or restoring that state explicitly. A configuration rollback within the redesigned
+service re-signs prior content against the current base, verifies it against current permissions,
+and activates it as a new generation.
+
+Acceptance covers archive limits, signature and digest failures, cross-Domain access, duplicate
+upload and activation, concurrent activation, candidate startup failure, generation drain,
+stale status observations, and cutover with existing MQTT connections. The initial end-to-end
+gate uses a signed ACL release and real local MQTT PUBLISH and SUBSCRIBE outcomes. The full
+forwarding gate exercises a Flowie route through a real egress sink, downstream timeout,
+a saturated queue, and a generation change during forwarding.
+
 ## Current implementation boundary
 
 The packet envelope, CONNECT/PUBLISH/SUBSCRIBE/UNSUBSCRIBE typed decoders, bounded

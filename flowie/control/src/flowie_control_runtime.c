@@ -16,11 +16,14 @@
 #include "flowie_control_management_rpc_internal.h"
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_service_credential_internal.h"
+#include "flowie_control_release_access_internal.h"
+#include "flowie_control_validation_internal.h"
 #include "monocypher.h"
 #include <core/error.h>
 #include <threads/threads.h>
 
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -295,6 +298,89 @@ static int flowie_control_runtime_resolve_caller(void *ctx, const Req *request,
   caller_out->actor = identity->principal_id;
   caller_out->permissions = identity->permissions;
   return SALTS_OK;
+}
+
+static uint32_t flowie_control_release_permission(const char *action) {
+  if (!action) return 0u;
+  if (strcmp(action, FLOWIE_RELEASE_ACCESS_READ) == 0) return FLOWIE_CONTROL_SERVICE_RELEASE_READ;
+  if (strcmp(action, FLOWIE_RELEASE_ACCESS_UPLOAD) == 0) return FLOWIE_CONTROL_SERVICE_RELEASE_UPLOAD;
+  if (strcmp(action, FLOWIE_RELEASE_ACCESS_VALIDATE) == 0) return FLOWIE_CONTROL_SERVICE_RELEASE_VALIDATE;
+  if (strcmp(action, FLOWIE_RELEASE_ACCESS_ACTIVATE) == 0) return FLOWIE_CONTROL_SERVICE_RELEASE_ACTIVATE;
+  if (strcmp(action, FLOWIE_RELEASE_ACCESS_PRAKTOR) == 0) return FLOWIE_CONTROL_RELEASE_SYSTEM_EXECUTE;
+  return 0u;
+}
+
+static void flowie_control_runtime_release_authorize(Req *request, Res *response) {
+  static const char prefix[] = "Bearer ";
+  flowie_control_runtime_t *runtime = flowie_control_http_app_lookup_context(
+      request->app, FLOWIE_CONTROL_RUNTIME_SESSION_CONTEXT);
+  const char *domain = NULL, *action = NULL, *authorization = NULL, *service_domain = NULL, *service_id = NULL;
+  if (request->body_len ||
+      flowie_control_http_header_exact(request, FLOWIE_RELEASE_ACCESS_DOMAIN, &domain) != SALTS_OK ||
+      flowie_control_http_header_exact(request, FLOWIE_RELEASE_ACCESS_ACTION, &action) != SALTS_OK ||
+      !flowie_control_text_valid(domain, FLOWIE_SECURITY_ID_MAX) ||
+      flowie_control_http_header_optional_exact(request, "X-Flowie-Service-Domain", &service_domain) != SALTS_OK ||
+      flowie_control_http_header_optional_exact(request, "X-Flowie-Service-Id", &service_id) != SALTS_OK ||
+      !!service_domain != !!service_id) {
+    send_json(response, BAD_REQUEST, "{\"code\":\"invalid_release_access_request\"}");
+    return;
+  }
+  const uint32_t permission = flowie_control_release_permission(action);
+  if (!permission) {
+    send_json(response, BAD_REQUEST, "{\"code\":\"invalid_release_action\"}");
+    return;
+  }
+  if (flowie_control_http_header_exact(request, "Authorization", &authorization) != SALTS_OK ||
+      strncmp(authorization, prefix, sizeof(prefix) - 1u) != 0 || !authorization[sizeof(prefix) - 1u]) {
+    send_json(response, UNAUTHORIZED, "{\"code\":\"release_credentials_required\"}");
+    return;
+  }
+  flowie_control_management_caller_t human = FLOWIE_CONTROL_MANAGEMENT_CALLER_INIT;
+  flowie_control_verified_caller_t service = FLOWIE_CONTROL_VERIFIED_CALLER_INIT;
+  const char *actor_domain = NULL, *actor_id = NULL;
+  if (service_id) {
+    const char *token = authorization + sizeof(prefix) - 1u;
+    const int rc = strcmp(service_domain, domain) == 0 ?
+        flowie_control_service_credential_resolve(runtime->service_credentials, service_domain,
+            service_id, (const uint8_t *)token, strlen(token), permission, &service) : SALTS_EPERM;
+    if (rc == SALTS_OK) {
+      actor_domain = service.domain_id;
+      actor_id = service.service_id;
+    } else if (rc != SALTS_EPERM && rc != SALTS_EAUTH && rc != SALTS_ENOENT && rc != SALTS_EINVAL) {
+      send_json(response, SERVICE_UNAVAILABLE, "{\"code\":\"release_authority_unavailable\"}");
+      return;
+    }
+  } else if (flowie_control_runtime_resolve_caller(runtime, request, &human) != SALTS_OK) {
+    send_json(response, UNAUTHORIZED, "{\"code\":\"release_credentials_required\"}");
+    return;
+  } else if ((human.permissions & FLOWIE_CONTROL_MANAGEMENT_SYSTEM_ADMIN) ||
+      (permission != FLOWIE_CONTROL_RELEASE_SYSTEM_EXECUTE &&
+       (human.permissions & FLOWIE_CONTROL_MANAGEMENT_DOMAIN_ADMIN) &&
+       strcmp(human.domain_id, domain) == 0)) {
+    actor_domain = human.domain_id;
+    actor_id = human.actor;
+  }
+  if (!actor_id) {
+    send_json(response, FORBIDDEN, "{\"code\":\"release_access_denied\"}");
+    return;
+  }
+  flowie_control_domain_view_t target = FLOWIE_CONTROL_DOMAIN_VIEW_INIT;
+  const int target_rc = runtime->repository->user->domain_get(runtime->repository->ctx, domain, &target);
+  if (target_rc != SALTS_OK) {
+    send_json(response, target_rc == SALTS_ENOENT ? FORBIDDEN : SERVICE_UNAVAILABLE,
+        "{\"code\":\"release_domain_unavailable\"}");
+    return;
+  }
+  char actor[FLOWIE_RELEASE_ACCESS_ACTOR_MAX + 1u];
+  /* Length prefix makes the identity unambiguous even when an ID contains '/'. */
+  const int written = snprintf(actor, sizeof(actor), "%zu:%s/%s", strlen(actor_domain),
+      actor_domain, actor_id);
+  if (written < 0 || (size_t)written >= sizeof(actor)) {
+    send_json(response, INTERNAL_SERVER_ERROR, "{\"code\":\"invalid_release_actor\"}");
+    return;
+  }
+  set_header(response, FLOWIE_RELEASE_ACCESS_ACTOR, actor);
+  reply(response, NO_CONTENT, "text/plain; charset=utf-8", NULL, 0u);
 }
 
 static int flowie_control_runtime_resolve_session(
@@ -574,8 +660,6 @@ static int flowie_control_runtime_create_management_sessions(flowie_control_runt
 }
 
 static int flowie_control_runtime_create_auth(flowie_control_runtime_t *runtime) {
-  flowie_control_service_credential_config_t credential_config =
-      FLOWIE_CONTROL_SERVICE_CREDENTIAL_CONFIG_INIT;
   flowie_control_auth_service_config_t service_config = FLOWIE_CONTROL_AUTH_SERVICE_CONFIG_INIT;
   flowie_control_auth_iris_adapter_config_t adapter_config =
       FLOWIE_CONTROL_AUTH_IRIS_ADAPTER_CONFIG_INIT;
@@ -608,11 +692,6 @@ static int flowie_control_runtime_create_auth(flowie_control_runtime_t *runtime)
   if (runtime->config.auth.jwt_jwks.enabled) return SALTS_ENOTSUP;
 #endif
   rc = flowie_control_auth_service_create(&service_config, &runtime->auth_service);
-  if (rc != SALTS_OK) return rc;
-  credential_config.listener_id = runtime->config.auth.listener_id;
-  credential_config.repository = runtime->repository;
-  rc = flowie_control_service_credential_resolver_create(&credential_config,
-                                                         &runtime->service_credentials);
   if (rc != SALTS_OK) return rc;
   adapter_config.service = runtime->auth_service;
   rc = flowie_control_auth_iris_adapter_create(&adapter_config, &runtime->auth_adapter);
@@ -683,6 +762,11 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
   if (rc != SALTS_OK) goto fail;
   rc = flowie_control_runtime_create_management_sessions(runtime);
   if (rc != SALTS_OK) goto fail;
+  flowie_control_service_credential_config_t credentials = FLOWIE_CONTROL_SERVICE_CREDENTIAL_CONFIG_INIT;
+  credentials.listener_id = runtime->config.auth.enabled ? runtime->config.auth.listener_id : "release-authority";
+  credentials.repository = runtime->repository;
+  rc = flowie_control_service_credential_resolver_create(&credentials, &runtime->service_credentials);
+  if (rc != SALTS_OK) goto fail;
   management_config.repository = runtime->repository;
   rc = flowie_control_management_service_create(&management_config, &runtime->management_service);
   if (rc != SALTS_OK) goto fail;
@@ -698,6 +782,9 @@ int flowie_control_runtime_create(const flowie_control_config_t *config,
     goto fail;
   }
   rc = flowie_control_http_app_use(runtime->app, flowie_control_runtime_session_middleware);
+  if (rc != SALTS_OK) goto fail;
+  rc = flowie_control_http_app_post(runtime->app, FLOWIE_RELEASE_ACCESS_PATH,
+      flowie_control_runtime_release_authorize);
   if (rc != SALTS_OK) goto fail;
   limits = (flowie_control_http_limits_t){
       runtime->config.listener.limits.max_header_name_length,

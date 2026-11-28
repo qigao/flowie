@@ -1,5 +1,14 @@
 {
   "targets": {
+    "test_flowie_control_release_manifest": {
+      "kind": "executable",
+      "sources": {"files": ["test_flowie_control_release_manifest.c"]},
+      "private": {
+        "deps": ["flowie_control_core", "flowie_control_release_http", "flowie", "chttp_client", "salts_cnet", "salts_core", "salts_crypto", "salts_tinytest", "gmssl"],
+        "includeDirs": ["$root/tests/support"]
+      },
+      "test": {"labels": ["flowie", "flowie/control-plane", "security-contract"]}
+    },
     "test_flowie_control_http_failure": {
       "kind": "executable",
       "sources": {
@@ -67,6 +76,7 @@
           "chttp_server",
           "salts_coroutine",
           "salts_core",
+          "salts_json_parser",
           "salts_tinytest",
           "gmssl",
           "salts_crypto"

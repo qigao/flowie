@@ -359,6 +359,14 @@
         "name": "libpq"
       }
     },
+    "zstd": {
+      "kind": "external",
+      "package": {
+        "provider": "vcpkg",
+        "name": "zstd",
+        "pc": "libzstd"
+      }
+    },
     "gmssl": {
       "kind": "external",
       "package": {

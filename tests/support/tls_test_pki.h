@@ -30,12 +30,13 @@ static X509_KEY *tls_test_pki_generate_key(void) {
   return key;
 }
 
-/* Generated identities use P-256.
- * Bounds cover the fixed key type, bounded CN, localhost SAN and extensions. */
-static tls_test_certificate *tls_test_pki_make_certificate(
+/* Bounds cover the fixture key types, bounded CN, localhost SAN and extensions. */
+static tls_test_certificate *tls_test_pki_make_certificate_with_signature(
     X509_KEY *key, const tls_test_certificate *issuer, X509_KEY *issuer_key,
     unsigned char serial, const char *common_name, int is_ca, int localhost_san,
-    int purpose, long not_before_offset, long not_after_offset) {
+    int purpose, long not_before_offset, long not_after_offset,
+    int signature_algorithm, int canonical_extensions, const char *issuer_id,
+    size_t issuer_id_size) {
   tls_test_certificate *cert = NULL;
   uint8_t subject[256], extensions[512], names[64];
   size_t subject_size = 0, extensions_size = 0, names_size = 0, issuer_size;
@@ -51,13 +52,15 @@ static tls_test_certificate *tls_test_pki_make_certificate(
   issuer_size = subject_size;
   if (issuer && x509_cert_get_subject(issuer->der, issuer->size, &issuer_name, &issuer_size) != 1)
     return NULL;
-  if (x509_exts_add_basic_constraints(extensions, &extensions_size, sizeof(extensions),
-                                      1, is_ca, is_ca ? 1 : -1) != 1 ||
-      x509_exts_add_key_usage(extensions, &extensions_size, sizeof(extensions), 1,
+  if ((is_ca || !canonical_extensions) &&
+      x509_exts_add_basic_constraints(extensions, &extensions_size, sizeof(extensions),
+                                      1, is_ca, is_ca ? 1 : -1) != 1) return NULL;
+  if (x509_exts_add_key_usage(extensions, &extensions_size, sizeof(extensions), 1,
           is_ca ? X509_KU_KEY_CERT_SIGN | X509_KU_CRL_SIGN : X509_KU_DIGITAL_SIGNATURE) != 1)
     return NULL;
   if (!is_ca && purpose && x509_exts_add_ext_key_usage(extensions, &extensions_size,
-                                        sizeof(extensions), 0, &purpose, 1) != 1) return NULL;
+                          sizeof(extensions), canonical_extensions ? 1 : 0, &purpose, 1) != 1)
+    return NULL;
   if (localhost_san &&
       (x509_general_names_add_dns_name(names, &names_size, sizeof(names), "localhost") != 1 ||
        x509_general_names_add_general_name(names, &names_size, sizeof(names),
@@ -67,14 +70,23 @@ static tls_test_certificate *tls_test_pki_make_certificate(
   cert = (tls_test_certificate *)calloc(1, sizeof(*cert));
   if (!cert) return NULL;
   out = cert->der;
-  if (x509_cert_sign_to_der(X509_version_v3, &serial, 1, OID_ecdsa_with_sha256,
+  if (x509_cert_sign_to_der(X509_version_v3, &serial, 1, signature_algorithm,
          issuer_name, issuer_size, now + not_before_offset, now + not_after_offset,
          subject, subject_size, key, NULL, 0, NULL, 0, extensions, extensions_size,
-         issuer_key ? issuer_key : key, NULL, 0, &out, &cert->size) != 1) {
+         issuer_key ? issuer_key : key, issuer_id, issuer_id_size, &out, &cert->size) != 1) {
     free(cert);
     return NULL;
   }
   return cert;
+}
+
+static tls_test_certificate *tls_test_pki_make_certificate(
+    X509_KEY *key, const tls_test_certificate *issuer, X509_KEY *issuer_key,
+    unsigned char serial, const char *common_name, int is_ca, int localhost_san,
+    int purpose, long not_before_offset, long not_after_offset) {
+  return tls_test_pki_make_certificate_with_signature(key, issuer, issuer_key, serial,
+      common_name, is_ca, localhost_san, purpose, not_before_offset, not_after_offset,
+      OID_ecdsa_with_sha256, 0, NULL, 0u);
 }
 
 static tls_test_certificate *tls_test_pki_generate_self_signed(

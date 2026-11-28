@@ -1,10 +1,12 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace flowie::app {
+  bool valid_http_cookie_name(std::string_view name);
   class HttpCookies {
   public:
     static constexpr size_t header_limit = 4096;
@@ -13,6 +15,8 @@ namespace flowie::app {
     bool store(std::string_view origin, std::string_view host, std::string_view path, bool tls,
                std::string_view header);
     std::string header(std::string_view origin, std::string_view path);
+    std::optional<std::string> value(std::string_view origin, std::string_view path,
+                                     std::string_view name);
     void clear() noexcept { cookies_.clear(); }
 
   private:

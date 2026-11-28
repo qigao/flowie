@@ -29,13 +29,22 @@ namespace flowie::app {
                                 const std::filesystem::path &file);
   void validate_saved_names(const SavedRequest &request);
 
+  struct CollectionDocument {
+    std::vector<SavedRequest> requests;
+    std::optional<CollectionVariables> variables;
+    const CollectionVariables *bindings() const { return variables ? &*variables : nullptr; }
+  };
+
   class CollectionStore {
   public:
     explicit CollectionStore(std::filesystem::path file) : file_(std::move(file)) {}
     std::vector<SavedRequest> load(bool require_existing = false) const;
+    CollectionDocument load_document(bool require_existing = false) const;
     // Empty result means the named request already exists and replacement was not authorized.
     std::optional<std::vector<SavedRequest>> save(const SavedRequest &request, bool replace,
                                                   bool require_existing = false) const;
+    std::optional<CollectionDocument> save_document(const SavedRequest &request, bool replace,
+                                                    bool require_existing = false) const;
 
   private:
     std::filesystem::path file_;

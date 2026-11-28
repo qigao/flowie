@@ -9,7 +9,12 @@
 
 namespace flowie::app {
   std::wstring MainWindow::remote_endpoint() const {
-    auto address = text(host);
+    std::wstring address;
+    try {
+      address = utf8_to_wide(request_text(host, 4096));
+    } catch (const std::runtime_error &) {
+      return {};
+    }
     const auto service = text(port);
     if (address.empty() || service.empty() || address.find_first_of(L"@/\\\r\n") != address.npos)
       return {};
@@ -389,6 +394,11 @@ namespace flowie::app {
     return connection;
   }
 
+  std::string MainWindow::request_text(int id, size_t limit) const {
+    return expand_collection_text(utf8(id), collection_variables_ ? &*collection_variables_ : nullptr,
+                                  limit);
+  }
+
   SavedRequest MainWindow::capture_request() const {
     SavedRequest request;
     request.profile = {role_, connection_fields()};
@@ -402,9 +412,21 @@ namespace flowie::app {
       std::map<std::string, int> topics;
       for (const auto &preset : saved_topics_)
         topics.emplace(preset.filter, preset.qos);
-      for (const auto &[name, qos] : subscriptions_)
-        topics[name] = qos;
       const auto draft = utf8(filter);
+      if (collection_variables_) {
+        std::map<std::string, std::string> templates;
+        for (const auto &preset : saved_topics_)
+          templates.emplace(expand_collection_text(preset.filter, &*collection_variables_, 4096),
+                            preset.filter);
+        if (!draft.empty()) templates[request_text(filter, 4096)] = draft;
+        for (const auto &[name, qos] : subscriptions_) {
+          const auto original = templates.find(name);
+          topics[original == templates.end() ? name : original->second] = qos;
+        }
+      } else {
+        for (const auto &[name, qos] : subscriptions_)
+          topics[name] = qos;
+      }
       if (!draft.empty()) topics[draft] = selection(sub_qos);
       if (topics.size() > kSavedTopicLimit)
         throw std::runtime_error("This request has more than 128 distinct topics.");
@@ -419,7 +441,9 @@ namespace flowie::app {
     return request;
   }
 
-  void MainWindow::restore_request(SavedRequest request) {
+  void MainWindow::restore_request(SavedRequest request,
+                                   const std::optional<CollectionVariables> &variables) {
+    collection_variables_ = variables;
     apply_connection(request.profile.connection, false);
     if (request.message) apply_sample(*request.message);
     saved_topics_ = std::move(request.topics);
@@ -455,6 +479,8 @@ namespace flowie::app {
     switch (id) {
     case connect_button: {
       auto connection = connection_fields();
+      connection.host = request_text(host, 4096);
+      if (selection(transport) >= 2) connection.path = request_text(path, 4096);
       connection.client_id = utf8(client_id);
       connection.username = utf8(username);
       connection.password = utf8(password);
@@ -471,7 +497,7 @@ namespace flowie::app {
       break;
     case subscribe_button:
     case unsubscribe_button: {
-      const auto value = utf8(filter);
+      const auto value = request_text(filter, 4096);
       const auto qos = selection(sub_qos);
       if (id == subscribe_button && !subscriptions_.count(value) &&
           subscriptions_.size() == kSavedTopicLimit) {
@@ -489,7 +515,7 @@ namespace flowie::app {
       break;
     }
     case publish_button: {
-      const auto data = utf8(payload), name = utf8(topic);
+      const auto data = request_text(payload, kPayloadBytes), name = request_text(topic, 4096);
       std::string error;
       if (selection(mode) == 1 && !format_json(data, nullptr, error)) {
         report(wide(error));
@@ -515,7 +541,8 @@ namespace flowie::app {
     case validate_button:
     case format_button: {
       std::string formatted, error;
-      if (!format_json(utf8(payload), id == format_button ? &formatted : nullptr, error))
+      const auto input = id == format_button ? utf8(payload) : request_text(payload, kPayloadBytes);
+      if (!format_json(input, id == format_button ? &formatted : nullptr, error))
         report(wide(error));
       else {
         if (id == format_button) ::SetWindowTextW(controls_.at(payload), wide(formatted).c_str());

@@ -72,7 +72,8 @@ namespace flowie::app {
     void set_task_layout(TaskLayout layout);
     TaskLayout task_layout() const { return task_layout_; }
     SavedRequest capture_request() const;
-    void restore_request(const ToolDraft &draft);
+    void restore_request(const ToolDraft &draft,
+                         const std::optional<CollectionVariables> &variables = {});
     bool runner() const { return runner_; }
     void start_collection(std::vector<CollectionStep> steps);
     std::wstring remote_endpoint() const;
@@ -119,6 +120,7 @@ namespace flowie::app {
     UiPanel request_, response_;
     std::array<HWND, response_headers - target + 1> controls_{};
     ToolSession session_;
+    std::optional<CollectionVariables> collection_variables_;
     History history_;
     std::vector<CollectionStep> collection_steps_;
     size_t collection_index_ = 0;

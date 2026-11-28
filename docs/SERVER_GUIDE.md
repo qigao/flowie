@@ -4,6 +4,9 @@
 它负责 MQTT 连接、会话、订阅、消息投递和协议持久化。Control 作为独立进程提供管理、
 Auth 和 ACL 服务。容器内的进程组合与配置见 [Compose 部署指南](../deploy/server/README.md)。
 
+用作 IoT 网关时，选择 `domain_release` profile。**Domain Configuration** 配置 MQTT、
+HTTPS 认证和下游服务。**Domain Packages** 管理签名 ACL 与 RulesForge 发布。 [IoT 网关部署](../deploy/server/README.md#iot-网关部署)
+
 ## 构建
 
 按[根 README](../README.md#build-and-test)恢复依赖后，在同一 PowerShell 会话中执行：

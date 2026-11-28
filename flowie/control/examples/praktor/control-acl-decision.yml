@@ -1,0 +1,58 @@
+provider:
+  kind: exe
+  path: curl
+config:
+  args:
+    - --disable
+    - --silent
+    - --show-error
+    - --fail
+    - --proto
+    - '=https'
+    - --http1.1
+    - --no-alpn
+    - --connect-timeout
+    - '3'
+    - --max-time
+    - '6'
+    - --max-filesize
+    - '65536'
+    - --variable
+    - '%FLOWIE_CONTROL_ORIGIN'
+    - --variable
+    - '%FLOWIE_CONTROL_CA_FILE'
+    - --variable
+    - '%FLOWIE_CONTROL_ACL_TOKEN'
+    - --variable
+    - '%FLOWIE_CONTROL_ACL_SERVICE_ID'
+    - --variable
+    - '%FLOWIE_CONTROL_ACL_SERVICE_DOMAIN'
+    - --variable
+    - '%FLOWIE_ACL_DOMAIN'
+    - --variable
+    - '%FLOWIE_ACL_USER'
+    - --variable
+    - '%FLOWIE_ACL_TOPIC'
+    - --expand-cacert
+    - '{{FLOWIE_CONTROL_CA_FILE}}'
+    - --expand-header
+    - 'Authorization: Bearer {{FLOWIE_CONTROL_ACL_TOKEN}}'
+    - --expand-header
+    - 'X-Flowie-Service-Id: {{FLOWIE_CONTROL_ACL_SERVICE_ID}}'
+    - --expand-header
+    - 'X-Flowie-Service-Domain: {{FLOWIE_CONTROL_ACL_SERVICE_DOMAIN}}'
+    - --expand-url
+    - '{{FLOWIE_CONTROL_ORIGIN}}/v4/acl/check'
+    - --json
+    - $operation
+    - --expand-json
+    - >-
+      ,"topic":"{{FLOWIE_ACL_TOPIC:json}}","username":"{{FLOWIE_ACL_USER:json}}",
+      "client_id":"flowie-praktor-acl-probe","principal":{"id":"{{FLOWIE_ACL_USER:json}}",
+      "type":"operator","domain":"{{FLOWIE_ACL_DOMAIN:json}}","expires_at":0,
+      "roles":[],"groups":[],"policy_version":
+    - --json
+    - $policy_version
+    - --json
+    - '}}'
+  timeout_ms: 8000

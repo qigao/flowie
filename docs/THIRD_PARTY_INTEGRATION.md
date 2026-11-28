@@ -1,11 +1,14 @@
 # Flowie 第三方系统接入指南
 
-本文说明第三方业务系统如何接入 Flowie Control 和 Flowie Broker。接入方可以管理自己
+本文说明第三方业务系统如何接入共享的 Flowie Control 和 Broker。接入方可以管理自己
 Domain 内的用户、密码、Group 和 ACL，也可以让 MQTT 客户端使用已创建的身份连接 Broker。
 
-Flowie Broker 不配置、选择或拥有业务 Domain。Domain 是 Flowie Control 数据库中的第三方系统
-接入 ID；认证成功后由 Auth service 返回用户所属 Domain，ACL 再用该 Domain 的已发布策略判定
-topic 操作。
+共享 Broker 由 Auth service 返回用户所属 Domain，Control 按该 Domain 的已发布策略判定
+Topic 操作。
+
+独立 IoT 网关通过 **Domain Configuration** 在部署 YAML 中绑定一个 Domain 和 HTTPS 认证
+服务。认证方管理设备身份，网关使用 **Domain Packages** 内已激活的 ACL。下游处理器通过
+mTLS HTTPS 接收规则输出，并按自己的业务协议写库、告警或转发。 [IoT 下游接入](CONTROL_GUIDE.md#下游处理器接入)
 
 ## 身份与凭据边界
 

@@ -1,4 +1,5 @@
 #include "flowie_ingress_internal.h"
+#include "flowie.h"
 
 #include <core/bytes.h>
 #include <core/error.h>
@@ -18,6 +19,7 @@ struct flowie_ingress_s {
   void *prepare_ctx;
   flowie_protocol_settlement_envelope_t protocol_settlement;
   tstr publish_packet_override;
+  flowie_direct_publish_context_t publish_context;
   int has_protocol_settlement;
   int has_route;
   int terminal_error;
@@ -124,6 +126,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
       int publish_packet = 1;
       int stop_pump = 0;
       ingress->has_protocol_settlement = 0;
+      ingress->publish_context = (flowie_direct_publish_context_t){0};
       rc = ingress->prepare(ingress->prepare_ctx, ingress, &packet, &publish_packet, &stop_pump);
       if (rc != SALTS_OK) {
         if (rc == SALTS_EPROTO)
@@ -153,6 +156,7 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
     tstr_freep(&ingress->publish_packet_override);
     ingress->has_protocol_settlement = 0;
     if (rc != SALTS_OK) return rc;
+    if (ingress->publish_context.principal) msg.transport_context = &ingress->publish_context;
     rc = bytes_consume(&ingress->framing, consumed);
     {
       flowie_publish_result_t result = FLOWIE_PUBLISH_RESULT_INIT;
@@ -170,6 +174,12 @@ static int flowie_ingress_pump(flowie_ingress_t *ingress, size_t *published) {
     if (stop_after_publish) break;
   }
   return SALTS_OK;
+}
+
+void flowie_ingress_set_publish_context(flowie_ingress_t *ingress,
+    const flowie_security_principal_t *principal, const uint8_t *exchange) {
+  ingress->publish_context.principal = principal;
+  memcpy(ingress->publish_context.qos2_exchange, exchange, sizeof(ingress->publish_context.qos2_exchange));
 }
 
 static int flowie_ingress_terminal(flowie_ingress_t *ingress, int rc) {

@@ -14,6 +14,9 @@ extern "C" {
 int flowie_control_text_valid(const char *value, size_t limit);
 
 /** Parse one canonical subject ACL document and require every topic to remain in domain_id. */
+int flowie_control_acl_bundle_compile(const char *domain_id, const char *text, size_t size,
+    flowie_security_rule_t **out, size_t *count);
+
 int flowie_control_acl_document_syntax_validate(const char *domain_id, const char *document_text,
                                                 size_t document_size,
                                                 flowie_control_acl_document_t *document_out);

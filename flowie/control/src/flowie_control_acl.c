@@ -34,6 +34,10 @@ void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
                                      flowie_control_acl_token_t subject,
                                      flowie_security_effect_t connection_effect) {
   if (!ctx || ctx->status != SALTS_OK) return;
+  if (ctx->accepted && !ctx->visit) {
+    flowie_control_acl_set_error(ctx, SALTS_EPROTO);
+    return;
+  }
   if (subject_kind != FLOWIE_SECURITY_SUBJECT_PRINCIPAL &&
       subject_kind != FLOWIE_SECURITY_SUBJECT_ROLE &&
       subject_kind != FLOWIE_SECURITY_SUBJECT_GROUP) {
@@ -52,6 +56,10 @@ void flowie_control_acl_parse_accept(flowie_control_acl_parse_ctx_t *ctx,
   ctx->document.subject_kind = subject_kind;
   ctx->document.connection_effect = connection_effect;
   ctx->accepted = 1;
+  if (ctx->visit) {
+    ctx->status = ctx->visit(&ctx->document, ctx->context);
+    flowie_control_acl_document_init(&ctx->document);
+  }
 }
 
 static int flowie_control_acl_topic_static_char(unsigned char value, int allow_dollar) {
@@ -229,20 +237,21 @@ void flowie_control_acl_document_init(flowie_control_acl_document_t *document) {
   document->connection_effect = FLOWIE_SECURITY_DENY;
 }
 
-int flowie_control_acl_parse(const char *text, size_t text_size,
-                             flowie_control_acl_document_t *out) {
+static int flowie_control_acl_parse_documents(const char *text, size_t text_size,
+    flowie_control_acl_document_t *out, flowie_control_acl_visit_fn visit, void *context) {
   flowie_control_acl_parse_ctx_t *ctx = NULL;
   flowie_control_acl_lexer_t lexer;
   flowie_control_acl_token_t token;
   void *parser = NULL;
   int token_id = FLOWIE_CONTROL_ACL_LEX_END;
   int rc = SALTS_OK;
-  if (out && out->size >= sizeof(*out)) flowie_control_acl_document_init(out);
   if (!text || text_size == 0u || text_size > FLOWIE_CONTROL_ACL_DOCUMENT_MAX ||
-      memchr(text, '\0', text_size) || !out || out->size < sizeof(*out))
+      memchr(text, '\0', text_size))
     return SALTS_EINVAL;
   ctx = (flowie_control_acl_parse_ctx_t *)calloc(1u, sizeof(*ctx));
   if (!ctx) return SALTS_ENOMEM;
+  ctx->visit = visit;
+  ctx->context = context;
   flowie_control_acl_document_init(&ctx->document);
   parser = FlowieControlAclParseAlloc(malloc);
   if (!parser) {
@@ -264,9 +273,22 @@ int flowie_control_acl_parse(const char *text, size_t text_size,
   FlowieControlAclParseFree(parser, free);
   rc = ctx->status != SALTS_OK || !ctx->accepted ? (ctx->status ? ctx->status : SALTS_EPROTO)
                                                   : SALTS_OK;
-  if (rc == SALTS_OK) *out = ctx->document;
+  if (rc == SALTS_OK && out) *out = ctx->document;
   free(ctx);
   return rc;
+}
+
+int flowie_control_acl_parse(const char *text, size_t text_size,
+                             flowie_control_acl_document_t *out) {
+  if (!out || out->size < sizeof(*out)) return SALTS_EINVAL;
+  flowie_control_acl_document_init(out);
+  return flowie_control_acl_parse_documents(text, text_size, out, NULL, NULL);
+}
+
+int flowie_control_acl_parse_each(const char *text, size_t text_size,
+                                 flowie_control_acl_visit_fn visit, void *context) {
+  if (!visit) return SALTS_EINVAL;
+  return flowie_control_acl_parse_documents(text, text_size, NULL, visit, context);
 }
 
 static const char *flowie_control_acl_access_name(uint32_t action_mask) {

@@ -39,6 +39,14 @@ target_link_libraries(${TARGET_NAME}
 
 install(FILES ${FLOWIE_CLIENT_HEADERS} DESTINATION include)
 
+file(GLOB FLOWIE_PUBLISH_SOURCES CONFIGURE_DEPENDS tools/publish/*.c)
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${FLOWIE_PUBLISH_SOURCES})
+cmake_add_executable(flowie_mqtt_publish
+	SOURCES ${FLOWIE_PUBLISH_SOURCES}
+	LIBS Flowie::Client Salts::Core
+	FOLDER "flowie/client/tools"
+)
+
 if(WIN32)
 	add_subdirectory(app)
 endif()

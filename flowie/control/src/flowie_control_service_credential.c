@@ -1,4 +1,5 @@
 #include "flowie_control_service_credential_internal.h"
+#include "flowie_control_release_access_internal.h"
 
 #include "monocypher.h"
 #include <core/error.h>
@@ -33,6 +34,14 @@ static uint32_t flowie_control_service_permissions(
       permissions |= FLOWIE_CONTROL_SERVICE_AUTHENTICATE;
     else if (strcmp(role, FLOWIE_CONTROL_SERVICE_ROLE_ACL_CLIENT) == 0)
       permissions |= FLOWIE_CONTROL_SERVICE_ACL_CHECK;
+    else if (strcmp(role, FLOWIE_RELEASE_ACCESS_READ) == 0)
+      permissions |= FLOWIE_CONTROL_SERVICE_RELEASE_READ;
+    else if (strcmp(role, FLOWIE_RELEASE_ACCESS_UPLOAD) == 0)
+      permissions |= FLOWIE_CONTROL_SERVICE_RELEASE_UPLOAD;
+    else if (strcmp(role, FLOWIE_RELEASE_ACCESS_VALIDATE) == 0)
+      permissions |= FLOWIE_CONTROL_SERVICE_RELEASE_VALIDATE;
+    else if (strcmp(role, FLOWIE_RELEASE_ACCESS_ACTIVATE) == 0)
+      permissions |= FLOWIE_CONTROL_SERVICE_RELEASE_ACTIVATE;
   }
   return permissions;
 }

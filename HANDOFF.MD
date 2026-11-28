@@ -1,5 +1,16 @@
 # 构建与依赖排障
 
+## RulesForge 0.1.1 GitHub SDK 联调
+
+- 常驻 worker 与 Toad provider 已由 [RulesForge v0.1.1](https://github.com/qigao/RulesForge/releases/tag/v0.1.1) 发布。核对发布包摘要、平台清单和 [CI 运行](https://github.com/qigao/RulesForge/actions/runs/46116433189) 后，用下载的 Windows worker/provider 运行 `IoTPortal/npm run test:flowie`，签名包、RulesForge 规则输出及 Retro 支付回执全部通过。
+- Windows SDK 有 worker、RulesForge DLL 和 Toad provider。配套的 `libdata_bind.dll`、`libtoad_script.dll`、`libsalts.dll` 和 LLVM-MinGW 的 `libc++.dll`、`libunwind.dll` 放入该 SDK 的 worker `bin`。这使 worker 使用 SDK 清单对应的依赖，同时允许 Flowie 用各自的 DLL。
+
+
+Retro 支付回执直接来自 Camera 的 v3 MQTT 事件，使用 UTC 秒 `time`，而普通 RulesForge 事实使用 `time_ms`。
+签名包配置 `format: "retro_v3"`，由 RFL 将付款应用事件的 `body` 送到终端专属 Portal mTLS sink。
+本机 `IoTPortal/npm run test:flowie` 使用同轮 CMake 的 `flowie_server` 与 `flowie_mqtt_publish` 验证上下行。
+MQTT 的正常 PUBACK 也可能出现在终端离线时。Portal 依据业务回执计时并重发，避免把 PUBACK 记为设备已应用。
+
 ## 2026-11-18：Chttp 0.1.2 / TurboRaft 0.3.2
 
 - `.env` 是非密钥配置的唯一指定源，`.env.example` 只作为模板。恢复脚本验证完整发布后，原子回写
@@ -900,3 +911,255 @@ Windows Release 完整 CTest 75 项通过、1 项禁用。适配后的 MQTT 5 TC
   两轮均在 SUBACK 后等待自动 PING 再发 QoS 1，收到 PUBACK 和匹配正文的 RX，
   QoS 0 也收到匹配正文的 RX。两轮各另有一次 CONNECT 返回 `-4050`，对应的
   无订阅空闲发布场景未进入 PUBLISH。
+
+## 2026-11-25：Praktor 编排 Flowie Control ACL 发布
+
+- `flowie/control/examples/praktor/acl-policy.yml` 把同一份用户规则依次用于
+  `control.policy.dry_run` 和草稿写入，再校验并发布整个测试 Domain 的草稿。发布返回的版本
+  用于 `/v4/acl/check` 的两次探测。管理会话和 ACL 服务凭据分别由 curl 从环境读取。
+- 直连测试 HTTPS listener 时，curl 提供 ALPN 会收到 `no application protocol`。
+  示例使用 `--http1.1 --no-alpn`。Windows 系统 curl 随后因临时测试证书缺少吊销状态而
+  拒绝握手。临时 fixture 将两个 service 的 `provider.path` 指向 LibreSSL 版 curl 8.17.0，
+  保留 CA 和主机名校验。
+- 用已发布 Praktor 0.2.0 和配套运行库，在临时分支通过 CMake `native-release-user` 构建并用
+  `ctest --test-dir build/praktor-acl -R '^test_flowie_control_https_integration$'` 执行现有
+  HTTPS 夹具。合法试跑成功，非法 topic 在写草稿前失败且版本仍为 1。发布后版本为 2，
+  PUBLISH 获准，SUBSCRIBE 返回 `deny_rule`。使用同一请求 ID 重跑后仍为版本 2。
+  正式 HTTPS、ACL、Repository 和管理 RPC CTest 共 4 项通过。
+
+## 常驻工作流宿主的 HTTPS 线程归属
+
+- 阻塞 CHttp 客户端也由 CNet 在初始化时绑定线程。若主线程初始化客户端，Domain worker
+  的 POST 会返回 `SALTS_EPERM`。通过宿主的 `start` / `stop` 在同一个 worker 建立和
+  销毁客户端。关闭失败时保留该 worker，供持有者再次调用销毁并继续资源回收。
+- 用 `native-release-user` preset 构建后运行 `test_flowie_workflow_host` 和
+  `test_flowie_server_http_security`。后者的 loopback TLS 夹具验证两次 POST 的原始
+  二进制正文和相同的 TCP 来源端口。Praktor v0.2.0 发布 SDK 的任务输出另行用同一
+  进程连续三次调用验证。夹具使用 SDK 结果结构，未经过生产级 Release 激活或 SDK 进程桥接。
+
+## Domain Release SM2/SM3 清单夹具
+
+- Control 用锁定的 vcpkg-cache 0.1.9 Zstd 库检查帧长度和窗口，再由 `Salts::Core` 解压
+  一个完整的 `.tar.zst`。`test_flowie_control_release_manifest` 用 Salts Crypto 0.1.20
+  验证真实 USTAR 归档的分离 CMS 签名、证书用途和文件摘要，密钥由 GmSSL 夹具按用例生成。
+- 严格 DER 的 SM2 夹具使用省略叶证书 `basicConstraints`、显式 critical 的 EKU 和
+  默认 SM2 证书签发 ID。分别通过证书公钥提取、私钥匹配和签名验证定位了格式与身份差异。
+  Control 验签继续使用部署配置的签名与签发 ID。
+- Salts JSON DOM 会合并同名键。清单在 CMS 验签成功后先用 SAX 按解码后的键查重，
+  再用 DOM 检查字段类型与文件引用。单独使用 DOM 无法覆盖此回归。
+
+## 签名包激活和 MQTT ACL 热切换
+
+- `test_flowie_control_release_manifest` 使用真实 SQLite 和 loopback MQTT 5。先验签、
+  入库和编译，再在单 Domain 准入锁内提交并切换策略。旧会话的 ACL 版本失效后返回
+  `0x87`。重连后按新包处理 PUBLISH/SUBSCRIBE。ACL 不变的包只增加发布代次。
+- `flowie_control_acl_compile` 的 MQTT 主题规则使用 Adapter 匹配，创建策略 realm 时
+  必须绑定 `flowie_mqtt_security_matcher_init`。已激活版本与 principal 版本不符时，
+  本地 provider 返回 `SALTS_EPERM`。成功的 provider 结果带不同版本会被 Core 判为
+  `SALTS_EPROTO`，导致连接收到协议错误。
+- 旧激活键重放只返回历史结果。用 `native-release-user` CMake 构建并运行同名 CTest，
+  验证持久化、热切换和重开恢复。
+
+## Domain Release 的 HTTPS 准入
+
+- CHttp 0.1.6 的默认 App 选项同时开启 HTTP/2 和对应容量。配置 HTTP/1.1 管理监听器时，
+  HTTP/2 容量必须清零，HTTPS 还要求显式的 TLS 握手超时和 I/O 缓冲，否则初始化返回
+  `SALTS_EINVAL`。
+- `test_flowie_control_release_manifest` 用不同的 mTLS 操作员证书与 SM2 发布签名证书，
+  通过 CNet 只发送带 `Expect: 100-continue` 的请求头。错误证书指纹或 signer 得到
+  `403`，正确请求先收到 `100`。HTTPS 完整请求再验证回执、事务、原包下载和实时 ACL 切换。
+- `ctest --preset native-release-user --test-dir build/native-release-workflow-host -R '^test_flowie_control_release_manifest$'`
+  使用配套 Windows SDK。
+
+## 独立 Broker 的 Domain Release 配置
+
+- `flowie_server` 通过 `profiles.<profile>.domain_release` 选择本地包仓库、MQTT 策略和管理
+  HTTPS。预检加载签名链、Broker TLS 和 HTTPS TLS，验证已提交发布并保持两个端口关闭。
+  正常启动先启动 MQTT，再开放管理 HTTPS。HTTPS 绑定失败回收 MQTT，关闭时先排空
+  HTTPS，再释放 MQTT、ACL 与包仓库。
+- 原生 MQTT 文档中的指纹前缀与实际 CNet 回调不同。当前 MQTT TLS 传递 64 位小写十六进制
+  指纹，新的本地证书 provider 按这个实际契约比较。若按带 `sha256:` 的字符串比较，合法
+  客户端会收到 MQTT 5 的 `0x86`。管理 HTTPS 和 MQTT 分别绑定相应证书指纹。
+- `test_flowie_server_runtime` 使用真实证书、SQLite、HTTPS 和 MQTT 5，验证首次激活、
+  证书身份隔离、端口冲突回滚及重启恢复。关闭独立 Control 构建开关时，Broker 仍联入
+  包管理库。
+- 新 ACL 包可省略 `entrypoints.routes` 和 `routes.yml`。先前签名的空路由包仍可恢复。
+  Flowie 的 Domain 转发由 Flowie 管理，Praktor 转发独立部署。
+
+## 发布包中的 Praktor 指令
+
+- `entrypoints.praktor` 指向签名保护的 YAML。操作员用独立 POST 提交执行，
+  包上传、ACL 校验和激活没有执行副作用。接收器先持久化任务再返回 `202`。
+- CHttp 0.1.6 客户端须在同一个管理 worker 创建、提交和关闭。跨线程提交或关闭会
+  返回 `SALTS_EPERM`。发送使用单次有界请求，幂等由接收器实现。
+- `test_flowie_server_runtime` 验证真实双向 TLS 转交、原始字节、请求身份及过载返回。
+  Windows 回环接收器测试使用已发布 Praktor v0.2.0，验证实际执行和 SQLite 幂等记录。
+- 带附属文件的发布从 Broker 移交已验签的完整 USTAR，接收器在持久化前重查路径和文件集，
+  再把工作内容写入私有目录。旧 ACL＋YAML 和已有 SQLite 任务沿用 YAML 类型。Windows
+  CTest 比对了完整 TAR；接收器回环用 Praktor v0.2.0 和 Node.js 测试宿主执行包内
+  WASM 的导出函数，并验证拒绝目录穿越和 Windows 设备路径。
+- 已安装 Praktor v0.2.0 的公开 ABI 可消费宿主事件，但缺少无副作用准备和受限 WASM
+  动作绑定。现存 Windows TurboWasm 暂存 SDK 的 CMake 依赖仍使用单体 `SALTS_ROOT`。
+  生产 MQTT 状态机路径需要对应的公开接口及匹配的 SDK。
+
+## 常驻 Praktor 的逐事件判断（历史验证）
+
+- Windows Praktor v0.2.0 SDK 一次 `praktor_execute_with_events` 接收 `seq=1` 和
+  `seq=2`，同一状态机依次进入 `waiting`、`seen` 和 `accepted`。SDK 目前只在
+  整次执行结束时返回结果。逐事件输出在 [Praktor #89](https://github.com/qigao/praktor/issues/89)
+  跟踪。
+- Flowie 内部调度器接收带代次与事件 ID 的 `drop` / `forward` 决策，过滤、规则失败和
+  HTTPS 投递各自结算。对应 CTest 为 `test_flowie_workflow_host` 和
+  `test_flowie_server_http_security`。Praktor #89 跟踪通用工作流接口。Flowie 的生产
+  MQTT 数据处理改用 RulesForge。
+
+## MQTT 数据处理选用 RulesForge
+
+- RulesForge 公开 C API 分别提供 Continuous Session 和 ToadScript Program Session。
+  前者由宿主推进水位线并确认输出批次。后者保留 RFL facts，单次 Toad 调用使用新的
+  实例。冷链示例验证了 Program 的长度窗口和 Toad 计算。事件时间窗口与 Toad
+  组合按两个会话阶段设计，端到端交付和重放待验证。
+- Flowie 与当前本地 RulesForge 的 Salts SDK 版本不同。采用独立本地 worker
+  进程的方案，分别装载各自的 SDK。上游 Windows CTest 使用
+  `rulesforge/build/llvm-mingw-x64-release-user` 的现有程序及同目录运行库，79/79
+  通过，含 `continuous_session_test.engine`、`capi_test`、`script_program_test`
+  和 `cold_chain_test`。较旧的 `build/native-release-user` 在
+  `examples_cli_and_data` 中因示例程序仍暴露旧 CLI 选项而失败。验证以包含当前
+  CLI 和业务场景的 LLVM-MinGW 构建目录为准。
+- [Domain Release 设计](docs/ADR_DOMAIN_RELEASE.md#ingress-rulesforge-pipelines-and-downstream-business-services)
+  记录签名内容、会话与批次边界和切换条件。生产 MQTT worker 及批次投递待接入。
+
+## RulesForge 独立进程接口
+
+- 本地 RulesForge 现有 `ruleforge_program_create_continuous_session` 和
+  `rulesforge_stream_worker`。同一会话处理事件时间窗口和 ToadScript。
+  worker 通过有长度上限的 stdio 帧收事件和水位线，输出命名目标和正文，支持有序批次确认。
+- Flowie 使用不同版本的 Salts SDK。进程接入使用 `process_spawn_with_stdio`
+  绑定独立管道，Salts Process 的标准捕获上限统计子进程整个生命周期的累计输出。
+  MQTT 入站、签名发布启用和按发布代次限制写入仍需接入。
+- RulesForge 的 LLVM-MinGW Release 完整构建及 CTest 80/80 通过。新进程夹具验证
+  两条乱序事件、水位线输出、批次确认、超长帧和未确认退出。Flowie 的四项发布与运行时
+  CTest 在现有构建目录复跑 4/4。首轮 `test_flowie_server_runtime` 的预检返回
+  `SALTS_EPERM`，复跑未复现，原因未确定。
+
+## Flowie 端 RulesForge 进程所有者
+
+- `flowie_rulesforge_worker.c` 通过 Salts `process_spawn_with_stdio` 管理进程树。
+  Windows 使用可取消的重叠管道，POSIX 使用非阻塞本地 socketpair。每次交换共用一个
+  截止时间。只允许一个未确认批次，读写超时或坏帧保留首个错误，关闭时回收进程树。
+- Windows LLVM-MinGW 下 Flowie 完整 CTest 61 项通过，公网测试按 preset 禁用。
+  单独重跑 `test_flowie_rulesforge_worker` 时，设置
+  `FLOWIE_TEST_RULESFORGE_EXECUTABLE` 和 `FLOWIE_TEST_RULESFORGE_BUNDLE`，
+  验证本地 CMake 安装的真实 worker 和原 SDK DLL。两条乱序事件、水位线和空批次均
+  正常确认。模拟子进程同时覆盖启动超时、发送阻塞、错误批次及未确认关闭。
+- RulesForge Program 的 RFL schema 导入现在限定到 Program 目录。绝对路径和
+  父目录越界的重新加载会失败，已发布代次仍可执行。RulesForge 全量 CTest 80/80。
+  生产中的签名包激活、MQTT 入站和下游投递还需接入。
+
+## Domain 规则包管理页面
+
+- `domain_release` 的管理 HTTPS 提供 `/domains/{domain}/packages`。页面、静态资源
+  和 ACL 预览沿用操作员 mTLS 证书固定及 Domain 准入。ACL 预览重新验证存储包后
+  返回原始文本。页面嵌入 Flowie Server，同一 CMake 构建产物带齐资源。
+- 浏览器保留校验前的 ETag，并在激活响应丢失时复用该次幂等键。Windows 完整构建及
+  相关 CTest 5/5 通过。Edge 使用模拟 HTTP 响应验证上传、只读 ACL、首次激活、
+  重试、旧 ETag 和窄屏。Slate release HTTP 图已解析。
+
+## 签名包准备 RulesForge 候选进程
+
+- `flowie_rulesforge_package_prepare` 接收已验证的包，检查 `rules/program.json` 及
+  同目录的规则、schema、ToadScript。描述文件不能加载原生模块。原生 provider 由部署
+  提供，以常规文件复制到私有候选目录，避免发布包控制加载目标。
+- RulesForge worker 的二进制及其依赖 DLL 使用自己的 SDK。设置
+  `FLOWIE_TEST_RULESFORGE_EXECUTABLE` 为 RulesForge 构建目录 `bin` 中的
+  `rulesforge_stream_worker.exe`，设置 `FLOWIE_TEST_RULESFORGE_PROVIDER` 为
+  `stage-stream-worker/lib/librulesforge_toad.dll` 的绝对路径。执行
+  `ctest --preset native-release-user --test-dir build/native-release-workflow-host -R '^test_flowie_server_runtime$' -V`。
+- 正式夹具用真实 SM2 签名、RFL 和 ToadScript 启动 worker，验证两条乱序事件、
+  水位线过期、批次确认和临时目录回收。还覆盖伪装的原生模块键、重复 provider 键、
+  包内 DLL、provider 缺失和子进程启动失败。
+- 现在需在签名清单中显式声明 `entrypoints.rulesforge: rules/program.json`。在上述
+  CTest 中，绑定真实 RulesForge provider 后通过 mTLS 验证校验、联合激活、失败回收、
+  幂等重放及从重新打开的 SQLite 恢复。重复激活请求先读幂等结果，避免重新启动进程。
+  配置 `domain_release.rulesforge` 后，正式服务器入口使用已签名的 `rules/flow.json`，
+  将 ACL 授权的 MQTT 发布交给常驻 worker，并由代次独占线程向后端发 mTLS POST。
+  MQTT 只确认持久化接收。后端通过 `flowie_rule_event` 和 `flowie_rule_output` 记录
+  处理过程、输出和投递结果。真实夹具让后端阻塞，验证 MQTT 先完成确认，并核对
+  后端 202 与 503 的持久化记录。重启继续处理未启动任务，运行中断记录为中断。
+- Broker 会话与后台日志曾共用 SQLite 文件，真实夹具复跑出现一次 MQTT 确认提前中断。
+  将 `domain_release.rulesforge.journal_file` 配置为独立 SQLite 文件后，真实夹具和
+  相关 CTest 连续三轮通过。启动检查拒绝与 Broker 会话主文件相同的日志文件。
+
+## 2026-11-25：本地 Broker 验证 Praktor ACL 切换
+
+- 在 Windows 使用 Flowie v1.0.8、Praktor v0.2.0 和 LibreSSL curl 启动隔离的
+  Control 与 Broker。两者均只监听 loopback，使用独立 SQLite 文件。Praktor 服务
+  声明仅在本地副本中指定 curl 路径。Broker 通过 HTTPS IPv4 loopback 调用 Control，
+  测试证书含 `127.0.0.1` IP SAN，管理和 Broker 调用均校验 CA 与地址。
+- 通过管理 HTTPS API 创建测试 Domain，发布基线策略版本 1。MQTT 5 客户端收到
+  PUBACK/SUBACK `0x87`。Praktor `preview` 后版本仍为 1，`verify` 发布版本 2。
+  客户端新建连接后收到 PUBACK `0x00` 与 SUBACK `0x87`。同一请求重跑仍为版本 2。
+  本地重跑命令为 `python -B build/local-praktor-acl/run.py`，退出时停止两个临时监听器。
+
+## RulesForge 日志故障与 QoS 2 恢复验证
+
+- `test_flowie_server_runtime` 用真实 RulesForge worker 和 provider 运行。夹具分别
+  拒绝 Broker 保存 PUBREC 状态和日志写入任务终态，验证重连重传只复用一条队列任务，
+  以及日志恢复后只补写终态且下游请求次数不变。夹具还占用管理 HTTPS 端口，核对存量
+  任务在启动失败时保持待处理。
+- 上述夹具的网关 profile 同时启用 HTTPS Auth 和具名 mTLS 下游。MQTT 登录名由 Auth
+  映射成包内 ACL 使用的规范身份，规则日志以该身份记录每条入站任务。
+- SQLite 触发器正文含分号。Control 的批量 `flowie_control_database_exec` 会先拆分
+  分号，应在故障夹具中用 `flowie_control_database_prepare` 执行单条完整的
+  `CREATE TRIGGER`。上面的仓库、日志文件和故障触发器均由夹具创建。
+- 真实 worker 测试的 `FLOWIE_TEST_RULESFORGE_BUNDLE` 指向受信任夹具的
+  `bundle.json` 绝对路径。传入 SDK 目录时，worker 无法读取描述文件，Flowie
+  会在就绪握手返回 `SALTS_EPROTO`。
+- Windows 完整 CTest 以 `-j2` 执行时，`MQTT-SOAK-003` 有一次在 1000 ms 内
+  未回到线程数基线，句柄数保持 83，线程数由 2 变为 4。同一构建通过现有
+  `test_flowie_mqtt_soak` CTest 串行复测，耗时 271.5 秒。两轮结果保留在
+  `build/native-release-workflow-host/flowie-iot-gateway-ctest.log` 和
+  `flowie-iot-gateway-soak-ctest.log`。
+
+## IoTPortal 本地 Flowie 重启与验证
+
+- 2026-11-26 本机 Flowie 进程仍在，但 MQTT `8883` 和管理 HTTPS `9443` 都已
+  停止监听。重启时仅传 `--config flowie.yml` 会打开工作目录下默认的
+  `flowie-protocol.sqlite3`，管理 HTTPS 可达，但活动包返回 `404`，ACL 未就绪。
+- 本地实例原有的协议仓库是 `%LOCALAPPDATA%\IoTPortal\flowie\broker.sqlite3`。
+  启动前设置 `FLOWIE_PROTOCOL_STORE_DRIVER=sqlite`，并在
+  `FLOWIE_PROTOCOL_STORE_OPTIONS` 的 JSON 中将 `filename` 指向该文件的绝对路径。
+  继续使用现有 `flowie.yml`、构建对应的 DLL 和 MQTT TLS 文件。重启后从原库恢复
+  `device-a` 的代次 1，RulesForge 仍使用单独的 `rules.sqlite3`。
+- 本地夹具 `node "$env:LOCALAPPDATA/IoTPortal/local-flowie.mjs" verify` 发送一条
+  带唯一 ID 的 MQTT 5 mTLS 报文，核对活动代次、Monitor SSE、SQLite 查询结果和
+  同一报文的下游 HTTP `201`。本次确认 `meter-01` 的游标 2。旧进程丢失监听的
+  原因尚未确认。
+- 2026-11-27 曾观测到 `8883` 继续监听且 `9443` 拒绝连接。用原二进制和配置重启时，
+  若父环境缺少 MQTT TLS 证书和私钥路径，启动会返回 `endpoint-start-failed`、
+  `SALTS_EINVAL (-4016)`，管理端也无法监听。启动前设置现有的 `SALTS_TLS_CERT_FILE`、
+  `SALTS_TLS_KEY_FILE`，并在 `FLOWIE_PROTOCOL_STORE_OPTIONS` 指定已有的 `broker.sqlite3`
+  和本实例匹配的 `flowie.driver_module` 绝对路径。恢复后验证两个端口以及 mTLS 管理端的
+  `device-a` 生效包和运行代次 1。Portal 重启后，本机夹具再次确认 HTTP `201`、SQLite 游标 20
+  和 Monitor SSE。原监听丢失的原因仍待定位。
+- Portal 重启后，以及同一 Flowie 进程首条投递成功后再空闲一段时间，后续
+  MQTT 报文已进入规则日志，但 HTTPS 输出返回 `SALTS_EIO (-4017)`，无 HTTP
+  状态。Portal 的接收监听现在每条 mTLS 连接处理一次投递并在回执发送
+  `Connection: close`。同一 Flowie 进程在间隔 7 秒的两次本机投递均返回
+  `201`，Monitor SSE 确认游标 4 和 5。Portal 的 `npm run test:flowie`
+  也覆盖一次 6.5 秒空闲后的投递。
+
+## IoTPortal MQTT 设备任务
+
+- `flowie_mqtt_publish` 由 CMake 构建并链接 `Flowie::Client`。设置 CONNECT 的 `username`
+  时必须显式设置 `has_username`，否则客户端在编码边界返回 `SALTS_EPROTO (-4042)`。
+  通过真实 Flowie CMake 产物和 Portal 的 `npm run test:flowie` 验证 QoS 1 PUBACK。
+- 设备业务回执由签名包中的 RulesForge 规则转发到 Portal mTLS sink，任务结果以该回执为准。
+  Portal 单独保存 MQTT PUBACK、设备结果和回执发布摘要。签名包通过 LF 分隔多个规范主体文档，
+  通过真实服务证书和设备证书验证双向权限隔离。单主体包继续由原 CTest 验证。
+- 正在运行的 `build/native-release-workflow-host/bin/flowie_server.exe` 会锁住该目录的 CNet 与
+  Crypto DLL。保留在线实例，使用 `cmake --preset native-release-user -B build/native-release-v1-acl`
+  配置独立构建，启用该构建目录和 SDK 对应的运行库。`test_flowie_control_acl`、
+  `test_flowie_control_release_manifest` 与 Portal 的 `npm run test:flowie` 均通过。
+  完整本机 preset 共登记 62 项 CTest，61 项通过，公网 MQTT 项按既有配置禁用。
+  日志位于 `build/native-release-v1-acl/v1-acl-ctest.log`。

@@ -20,7 +20,7 @@ enum {
   FLOWIE_SERVER_HTTP_DESTROY_TIMEOUT_MS = 5000u
 };
 
-typedef struct flowie_server_http_endpoint_s {
+struct flowie_server_http_endpoint_s {
   char connection_uri[320];
   char authority[320];
   char target[2048];
@@ -29,7 +29,7 @@ typedef struct flowie_server_http_endpoint_s {
   size_t max_request_size;
   size_t max_response_size;
   uint32_t timeout_ms;
-} flowie_server_http_endpoint_t;
+};
 
 struct flowie_server_http_security_s {
   flowie_server_http_provider_config_t auth_config;
@@ -526,34 +526,30 @@ flowie_server_http_client_config(const flowie_server_http_endpoint_t *endpoint) 
       .max_informational_responses = 4u};
 }
 
-static int flowie_server_http_post(const flowie_server_http_endpoint_t *endpoint,
-                                   const flowie_server_http_provider_config_t *config,
-                                   const char *token, const void *body, size_t body_size,
-                                   chttp_response *response) {
+static int flowie_server_http_tls_profile(const flowie_server_http_endpoint_t *endpoint,
+                                           chttp_tls_profile *profile) {
+  const cnet_tls_client_config config = {.size = sizeof(config), .ca_file = endpoint->ca_file,
+                                        .server_name = endpoint->server_name};
+  return chttp_tls_profile_init(profile, &config);
+}
+
+int flowie_server_http_security_check_auth_tls(const flowie_server_http_security_t *security) {
+  chttp_tls_profile profile = {0};
+  const int rc = flowie_server_http_tls_profile(&security->auth_endpoint, &profile);
+  return rc == SALTS_OK ? chttp_tls_profile_destroy(&profile) : rc;
+}
+
+static int flowie_server_http_request(const flowie_server_http_endpoint_t *endpoint,
+    const chttp_header *headers, size_t header_count, const void *body, size_t body_size,
+    chttp_response *response) {
   chttp_client client = {0};
   chttp_tls_profile tls_profile = {0};
-  cnet_tls_client_config tls_config;
   chttp_error error = {0};
   chttp_client_config client_config;
   chttp_options options;
-  chttp_header headers[5];
-  char authorization[sizeof("Bearer ") + 4096u];
-  int written;
   int rc;
-  if (!endpoint || !config || !token || !body || body_size == 0u || !response)
-    return SALTS_EINVAL;
-  written = snprintf(authorization, sizeof(authorization), "Bearer %s", token);
-  if (written <= 0 || (size_t)written >= sizeof(authorization)) return SALTS_ERANGE;
-  headers[0] = (chttp_header){"Content-Type", "application/json"};
-  headers[1] = (chttp_header){"Accept", "application/json"};
-  headers[2] = (chttp_header){"X-Flowie-Service-Id", config->service_id};
-  headers[3] = (chttp_header){"X-Flowie-Service-Domain", config->service_domain};
-  headers[4] = (chttp_header){"Authorization", authorization};
   client_config = flowie_server_http_client_config(endpoint);
-  tls_config = (cnet_tls_client_config){.size = sizeof(tls_config),
-                                        .ca_file = endpoint->ca_file,
-                                        .server_name = endpoint->server_name};
-  rc = chttp_tls_profile_init(&tls_profile, &tls_config);
+  rc = flowie_server_http_tls_profile(endpoint, &tls_profile);
   if (rc != SALTS_OK) goto done;
   rc = chttp_client_init(&client, &client_config);
   if (rc != SALTS_OK) goto done;
@@ -561,7 +557,7 @@ static int flowie_server_http_post(const flowie_server_http_endpoint_t *endpoint
                             .authority = endpoint->authority,
                             .target = endpoint->target,
                             .headers = headers,
-                            .header_count = 5u,
+                            .header_count = header_count,
                             .body = body,
                             .body_size = body_size,
                             .timeout_ms = endpoint->timeout_ms,
@@ -574,7 +570,56 @@ done:
     if (rc == SALTS_OK && destroy_rc != SALTS_OK) rc = destroy_rc;
   }
   (void)chttp_tls_profile_destroy(&tls_profile);
+  return rc;
+}
+
+static int flowie_server_http_post(const flowie_server_http_endpoint_t *endpoint,
+    const flowie_server_http_provider_config_t *config, const char *token, const void *body,
+    size_t body_size, chttp_response *response) {
+  if (!endpoint || !config || !token || !body || !body_size || !response) return SALTS_EINVAL;
+  char authorization[sizeof("Bearer ") + 4096u];
+  const int written = snprintf(authorization, sizeof(authorization), "Bearer %s", token);
+  if (written <= 0 || (size_t)written >= sizeof(authorization)) return SALTS_ERANGE;
+  const chttp_header headers[] = {{"Content-Type", "application/json"}, {"Accept", "application/json"},
+      {"X-Flowie-Service-Id", config->service_id}, {"X-Flowie-Service-Domain", config->service_domain},
+      {"Authorization", authorization}};
+  const int rc = flowie_server_http_request(endpoint, headers, 5u, body, body_size, response);
   flowie_server_secure_clear(authorization, sizeof(authorization));
+  return rc;
+}
+
+int flowie_server_release_authority_create(const flowie_server_http_provider_config_t *config,
+    flowie_server_http_endpoint_t **out) {
+  *out = NULL;
+  flowie_server_http_endpoint_t *endpoint = calloc(1u, sizeof(*endpoint));
+  if (!endpoint) return SALTS_ENOMEM;
+  int rc = flowie_server_http_endpoint_init(endpoint, config, 4096u);
+  chttp_tls_profile tls = {0};
+  if (rc == SALTS_OK) rc = flowie_server_http_tls_profile(endpoint, &tls);
+  if (rc == SALTS_OK) rc = chttp_tls_profile_destroy(&tls);
+  if (rc == SALTS_OK) *out = endpoint;
+  else free(endpoint);
+  return rc;
+}
+
+int flowie_server_release_authorize(void *context, const flowie_release_access_request_t *request,
+    char actor[FLOWIE_RELEASE_ACCESS_ACTOR_MAX + 1u]) {
+  const chttp_header headers[] = {{FLOWIE_RELEASE_ACCESS_DOMAIN, request->domain},
+      {FLOWIE_RELEASE_ACCESS_ACTION, request->action}, {"Authorization", request->authorization},
+      {"X-Flowie-Service-Domain", request->service_domain}, {"X-Flowie-Service-Id", request->service_id}};
+  chttp_response response = {0};
+  int rc = flowie_server_http_request(context, headers, request->service_id ? 5u : 3u, NULL, 0u, &response);
+  if (rc == SALTS_OK) {
+    if (response.status_code == 204u) {
+      const char *identity = chttp_response_header(&response, FLOWIE_RELEASE_ACCESS_ACTOR);
+      const size_t size = identity ? strnlen(identity, FLOWIE_RELEASE_ACCESS_ACTOR_MAX + 1u) : 0u;
+      if (!size || size > FLOWIE_RELEASE_ACCESS_ACTOR_MAX) rc = SALTS_EPROTO;
+      else memcpy(actor, identity, size + 1u);
+    } else if (response.status_code == 401u) rc = SALTS_EAUTH;
+    else if (response.status_code == 403u) rc = SALTS_EPERM;
+    else rc = SALTS_EIO;
+  } else rc = SALTS_EIO;
+  chttp_response_destroy(&response);
   return rc;
 }
 
@@ -756,29 +801,30 @@ int flowie_server_http_security_create(const flowie_server_http_provider_config_
   int rc;
   if (out) *out = NULL;
   if (!flowie_server_http_config_valid(auth, 1) ||
-      !flowie_server_http_config_valid(acl, 0) || !out)
+      (acl && !flowie_server_http_config_valid(acl, 0)) || !out)
     return SALTS_EINVAL;
   security = (flowie_server_http_security_t *)calloc(1u, sizeof(*security));
   if (!security) return SALTS_ENOMEM;
   security->auth_config = *auth;
-  security->acl_config = *acl;
   rc = flowie_server_http_token_copy(auth->service_token_ref, &security->auth_token);
-  if (rc == SALTS_OK)
-    rc = flowie_server_http_token_copy(acl->service_token_ref, &security->acl_token);
   if (rc == SALTS_OK)
     rc = flowie_server_http_endpoint_init(&security->auth_endpoint, &security->auth_config,
                                           FLOWIE_SERVER_SECURITY_RESPONSE_LIMIT);
-  if (rc == SALTS_OK)
-    rc = flowie_server_http_endpoint_init(&security->acl_endpoint, &security->acl_config,
-                                          security->acl_config.max_body_size);
+  if (rc == SALTS_OK && acl) {
+    security->acl_config = *acl;
+    rc = flowie_server_http_token_copy(acl->service_token_ref, &security->acl_token);
+    if (rc == SALTS_OK)
+      rc = flowie_server_http_endpoint_init(&security->acl_endpoint, &security->acl_config,
+                                            security->acl_config.max_body_size);
+    security->acl_provider = (flowie_security_authorization_provider_t){
+        sizeof(security->acl_provider), security, flowie_server_http_authorize};
+  }
   if (rc != SALTS_OK) {
     flowie_server_http_security_destroy(security);
     return rc;
   }
   security->auth_provider = (flowie_security_auth_provider_t){
       sizeof(security->auth_provider), security, flowie_server_http_authenticate};
-  security->acl_provider = (flowie_security_authorization_provider_t){
-      sizeof(security->acl_provider), security, flowie_server_http_authorize};
   *out = security;
   return SALTS_OK;
 }
@@ -798,5 +844,5 @@ const flowie_security_auth_provider_t *flowie_server_http_security_auth_provider
 
 const flowie_security_authorization_provider_t *flowie_server_http_security_acl_provider(
     const flowie_server_http_security_t *security) {
-  return security ? &security->acl_provider : NULL;
+  return security && security->acl_provider.authorize ? &security->acl_provider : NULL;
 }

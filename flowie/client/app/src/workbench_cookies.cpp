@@ -8,6 +8,14 @@
 #include <stdexcept>
 
 namespace flowie::app {
+  bool valid_http_cookie_name(std::string_view name) {
+    constexpr std::string_view punctuation("!#$%&'*+-.^`_|~");
+    return !name.empty() && std::all_of(name.begin(), name.end(), [&](unsigned char c) {
+      return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+             punctuation.find(c) != punctuation.npos;
+    });
+  }
+
   namespace {
     constexpr size_t kCookieCount = 32;
     constexpr auto kSessionExpiry = std::numeric_limits<int64_t>::max();
@@ -28,13 +36,6 @@ namespace flowie::app {
       return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
                return lower(x) == lower(y);
              });
-    }
-    bool cookie_name(std::string_view name) {
-      constexpr std::string_view punctuation("!#$%&'*+-.^`_|~");
-      return !name.empty() && std::all_of(name.begin(), name.end(), [&](unsigned char c) {
-        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-               punctuation.find(c) != punctuation.npos;
-      });
     }
     bool cookie_value(std::string_view value) {
       if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
@@ -74,7 +75,7 @@ namespace flowie::app {
     if (pair.find('=') == pair.npos) return true;
     const auto name = trim(take(pair, '='));
     const auto value = trim(pair);
-    if (!cookie_name(name) || !cookie_value(value)) return true;
+    if (!valid_http_cookie_name(name) || !cookie_value(value)) return true;
 
     const auto directory = path.rfind('/');
     auto scope = directory == 0 || directory == path.npos ? std::string_view("/")
@@ -150,5 +151,18 @@ namespace flowie::app {
       result += cookie->value;
     }
     return result;
+  }
+
+  std::optional<std::string> HttpCookies::value(std::string_view origin, std::string_view path,
+                                                std::string_view name) {
+    expire(static_cast<int64_t>(std::time(nullptr)));
+    const Cookie *match = nullptr;
+    for (const auto &cookie : cookies_) {
+      if (cookie.origin == origin && cookie.name == name && path_matches(cookie.path, path) &&
+          (!match || cookie.path.size() > match->path.size()))
+        match = &cookie;
+    }
+    if (!match) return std::nullopt;
+    return match->value;
   }
 } // namespace flowie::app

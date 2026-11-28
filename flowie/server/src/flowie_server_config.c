@@ -69,6 +69,7 @@ struct flowie_server_config_s {
   char auth_method[FLOWIE_SECURITY_TYPE_MAX + 1u];
   flowie_server_http_provider_config_t auth;
   flowie_server_http_provider_config_t acl;
+  flowie_server_release_config_t *release;
   int security_enabled;
 };
 
@@ -107,6 +108,165 @@ static int flowie_yaml_string(const cyaml_doc_t *doc, cyaml_node_t *mapping,
   }
   memcpy(out, value, length + 1u);
   free(value);
+  return SALTS_OK;
+}
+
+static int flowie_yaml_u64(const cyaml_doc_t *doc, cyaml_node_t *mapping,
+                           const char *key, uint64_t *out, int required);
+
+static int flowie_server_parse_http_provider(const cyaml_doc_t *doc, cyaml_node_t *channels,
+    const char *name, int auth_provider, flowie_server_http_provider_config_t *out);
+
+static int flowie_server_release_pin_valid(const char *pin) {
+  return strspn(pin, "0123456789abcdef") == FLOWIE_SERVER_RELEASE_PIN_LENGTH &&
+         pin[FLOWIE_SERVER_RELEASE_PIN_LENGTH] == 0;
+}
+
+static int flowie_server_parse_release(const cyaml_doc_t *doc, cyaml_node_t *profile,
+    cyaml_node_t *channels, cyaml_node_t *endpoint, cyaml_node_t *mapping, flowie_server_config_t *config) {
+  const int has_http_auth = cyaml_get(doc, profile, "auth_provider") != NULL;
+  if (cyaml_map_len(profile) != 2u + has_http_auth || cyaml_get(doc, endpoint, "security_realm") ||
+      cyaml_get(doc, endpoint, "auth_method") || config->endpoint.transport != FLOWIE_TRANSPORT_TLS ||
+      !config->endpoint.manage_sessions || config->endpoint.reuse_port)
+    return SALTS_EINVAL;
+  cyaml_node_t *management = flowie_yaml_mapping(doc, mapping, "management");
+  cyaml_node_t *authority = management ? cyaml_get(doc, management, "authorization") : NULL;
+  cyaml_node_t *signer = flowie_yaml_mapping(doc, mapping, "signer");
+  cyaml_node_t *limits = flowie_yaml_mapping(doc, mapping, "limits");
+  cyaml_node_t *clients = cyaml_get(doc, mapping, "mqtt_clients");
+  cyaml_node_t *praktor = cyaml_get(doc, mapping, "praktor");
+  cyaml_node_t *rulesforge = cyaml_get(doc, mapping, "rulesforge");
+  if (!cyaml_is_map(mapping) || !management || !signer || !limits ||
+      (has_http_auth ? clients != NULL : !cyaml_is_seq(clients)) ||
+      cyaml_map_len(mapping) != 7u + !has_http_auth + (praktor != NULL) + (rulesforge != NULL) ||
+      cyaml_map_len(management) != (authority ? 6u : 7u) ||
+      cyaml_map_len(signer) != 6u || cyaml_map_len(limits) != 2u) return SALTS_EPROTO;
+  const size_t count = has_http_auth ? 0u : cyaml_seq_len(clients);
+  if (!has_http_auth && (count == 0u || count > FLOWIE_SERVER_RELEASE_MAX_CLIENTS)) return SALTS_ERANGE;
+
+  flowie_server_release_config_t *release = calloc(1, sizeof(*release));
+  if (!release) return SALTS_ENOMEM;
+  config->release = release;
+  int rc;
+  if (has_http_auth) {
+    char auth_name[FLOWIE_SECURITY_ID_MAX + 1u];
+    rc = flowie_yaml_string(doc, profile, "auth_provider", auth_name, sizeof(auth_name), 1);
+    if (rc != SALTS_OK) return rc;
+    rc = flowie_server_parse_http_provider(doc, channels, auth_name, 1, &release->auth);
+    if (rc != SALTS_OK) return rc;
+  }
+#define RELEASE_STRING(node, key, member)                                                          \
+  do {                                                                                             \
+    rc = flowie_yaml_string(doc, node, key, release->member, sizeof(release->member), 1);            \
+    if (rc != SALTS_OK) return rc;                                                                  \
+  } while (0)
+  RELEASE_STRING(mapping, "domain", domain);
+  RELEASE_STRING(mapping, "environment", environment);
+  RELEASE_STRING(mapping, "validation_policy_revision", validation_policy_revision);
+  RELEASE_STRING(mapping, "mqtt_client_ca_file", mqtt_client_ca_file);
+  RELEASE_STRING(management, "host", management_host);
+  RELEASE_STRING(management, "cert_file", management_cert_file);
+  RELEASE_STRING(management, "key_file", management_key_file);
+  RELEASE_STRING(management, "client_ca_file", management_client_ca_file);
+  if (authority) {
+    if (!cyaml_is_map(authority) || cyaml_map_len(authority) != 3u) return SALTS_EPROTO;
+    RELEASE_STRING(authority, "url", management_authority.url);
+    RELEASE_STRING(authority, "ca_file", management_authority.ca_file);
+    uint64_t timeout;
+    rc = flowie_yaml_u64(doc, authority, "timeout_ms", &timeout, 1);
+    if (rc != SALTS_OK) return rc;
+    if (!timeout || timeout > 15000u) return SALTS_ERANGE;
+    release->management_authority.timeout_ms = (uint32_t)timeout;
+    release->management_authority.max_body_size = 4096u;
+  } else {
+    RELEASE_STRING(management, "operator_id", operator_id);
+    RELEASE_STRING(management, "operator_sha256", operator_sha256);
+  }
+  RELEASE_STRING(signer, "reference", signer_reference);
+  RELEASE_STRING(signer, "anchor_der", signer_anchor_der);
+  RELEASE_STRING(signer, "leaf_der", signer_leaf_der);
+  RELEASE_STRING(signer, "cms_identity", signer_identity);
+  RELEASE_STRING(signer, "issuer_identity", issuer_identity);
+  if (praktor) {
+    if (!cyaml_is_map(praktor) || cyaml_map_len(praktor) != 5u) return SALTS_EPROTO;
+    RELEASE_STRING(praktor, "url", praktor.url);
+    RELEASE_STRING(praktor, "ca_file", praktor.ca_file);
+    RELEASE_STRING(praktor, "cert_file", praktor.cert_file);
+    RELEASE_STRING(praktor, "key_file", praktor.key_file);
+    uint64_t timeout;
+    rc = flowie_yaml_u64(doc, praktor, "timeout_ms", &timeout, 1);
+    if (rc != SALTS_OK) return rc;
+    if (!timeout || timeout > 15000u) return SALTS_ERANGE;
+    release->praktor.timeout_ms = (uint32_t)timeout;
+  }
+  if (rulesforge) {
+    cyaml_node_t *sinks = cyaml_get(doc, rulesforge, "sinks");
+    if (!cyaml_is_map(rulesforge) || cyaml_map_len(rulesforge) != 6u || !cyaml_is_seq(sinks))
+      return SALTS_EPROTO;
+    RELEASE_STRING(rulesforge, "executable", rulesforge.executable);
+    RELEASE_STRING(rulesforge, "provider", rulesforge.provider);
+    RELEASE_STRING(rulesforge, "staging_root", rulesforge.staging_root);
+    RELEASE_STRING(rulesforge, "journal_file", rulesforge.journal_file);
+    uint64_t timeout;
+    rc = flowie_yaml_u64(doc, rulesforge, "timeout_ms", &timeout, 1);
+    if (rc != SALTS_OK) return rc;
+    if (!timeout || timeout > FLOWIE_SERVER_RULESFORGE_MAX_TIMEOUT_MS ||
+        !fs_path_is_absolute(release->rulesforge.executable) ||
+        !fs_path_is_absolute(release->rulesforge.provider) ||
+        !fs_path_is_absolute(release->rulesforge.staging_root) ||
+        !fs_path_is_absolute(release->rulesforge.journal_file)) return SALTS_EINVAL;
+    release->rulesforge.timeout_ms = (uint32_t)timeout;
+    const size_t sink_count = cyaml_seq_len(sinks);
+    if (!sink_count || sink_count > FLOWIE_SERVER_RULESFORGE_MAX_SINKS) return SALTS_ERANGE;
+    release->rulesforge.sink_count = sink_count;
+    for (size_t i = 0; i < sink_count; ++i) {
+      cyaml_node_t *sink = cyaml_seq_get(sinks, i);
+      if (!cyaml_is_map(sink) || cyaml_map_len(sink) != 5u) return SALTS_EPROTO;
+      RELEASE_STRING(sink, "name", rulesforge.sinks[i].name);
+      RELEASE_STRING(sink, "url", rulesforge.sinks[i].url);
+      RELEASE_STRING(sink, "ca_file", rulesforge.sinks[i].ca_file);
+      RELEASE_STRING(sink, "cert_file", rulesforge.sinks[i].cert_file);
+      RELEASE_STRING(sink, "key_file", rulesforge.sinks[i].key_file);
+      for (size_t j = 0; j < i; ++j) {
+        if (!strcmp(release->rulesforge.sinks[i].name, release->rulesforge.sinks[j].name))
+          return SALTS_EINVAL;
+      }
+    }
+  }
+  release->client_count = count;
+  for (size_t i = 0; i < count; ++i) {
+    cyaml_node_t *client = cyaml_seq_get(clients, i);
+    if (!cyaml_is_map(client) || cyaml_map_len(client) != 2u) return SALTS_EPROTO;
+    RELEASE_STRING(client, "principal", clients[i].principal);
+    RELEASE_STRING(client, "sha256", clients[i].sha256);
+    if (!flowie_server_release_pin_valid(release->clients[i].sha256) ||
+        strcmp(release->clients[i].sha256, release->operator_sha256) == 0)
+      return SALTS_EINVAL;
+    for (size_t j = 0; j < i; ++j) {
+      if (strcmp(release->clients[j].sha256, release->clients[i].sha256) == 0)
+        return SALTS_EINVAL;
+    }
+  }
+#undef RELEASE_STRING
+  if (!authority && !flowie_server_release_pin_valid(release->operator_sha256)) return SALTS_EINVAL;
+  char revocation[24];
+  rc = flowie_yaml_string(doc, signer, "revocation", revocation, sizeof(revocation), 1);
+  if (rc != SALTS_OK) return rc;
+  if (strcmp(revocation, "not_checked") != 0) return SALTS_ENOTSUP;
+  uint64_t number;
+  rc = flowie_yaml_u64(doc, management, "port", &number, 1);
+  if (rc != SALTS_OK) return rc;
+  if (number > UINT16_MAX) return SALTS_ERANGE;
+  release->management_port = (uint16_t)number;
+  rc = flowie_yaml_u64(doc, limits, "package_count", &number, 1);
+  if (rc != SALTS_OK) return rc;
+  if (!number || number > INT64_MAX) return SALTS_ERANGE;
+  release->package_count = (int64_t)number;
+  rc = flowie_yaml_u64(doc, limits, "package_bytes", &number, 1);
+  if (rc != SALTS_OK) return rc;
+  if (!number || number > INT64_MAX) return SALTS_ERANGE;
+  release->package_bytes = (int64_t)number;
+  config->endpoint.tls_client_ca_file = release->mqtt_client_ca_file;
   return SALTS_OK;
 }
 
@@ -427,24 +587,43 @@ int flowie_server_config_load(const char *path, const char *profile_name, int re
                                    "endpoint configuration is invalid");
     goto done;
   }
-  rc = flowie_server_parse_security(doc, profile, channels, endpoint, require_security, config);
-  if (rc != SALTS_OK) {
-    rc = flowie_server_config_fail(error, rc, "$.profiles.*.auth_provider",
-                                   "complete HTTPS Auth and ACL configuration is required");
-    goto done;
+  cyaml_node_t *release = cyaml_get(doc, profile, "domain_release");
+  if (release) {
+    rc = flowie_server_parse_release(doc, profile, channels, endpoint, release, config);
+    if (rc != SALTS_OK) {
+      rc = flowie_server_config_fail(error, rc, "$.profiles.*.domain_release",
+                                     "invalid signed release deployment");
+      goto done;
+    }
+  } else {
+    rc = flowie_server_parse_security(doc, profile, channels, endpoint, require_security, config);
+    if (rc != SALTS_OK) {
+      rc = flowie_server_config_fail(error, rc, "$.profiles.*.auth_provider",
+                                     "complete HTTPS Auth and ACL configuration is required");
+      goto done;
+    }
   }
   *out = config;
   config = NULL;
   rc = SALTS_OK;
 
 done:
-  free(config);
+  flowie_server_config_destroy(config);
   cyaml_free(doc);
   fs_buf_free(&bytes);
   return rc;
 }
 
-void flowie_server_config_destroy(flowie_server_config_t *config) { free(config); }
+void flowie_server_config_destroy(flowie_server_config_t *config) {
+  if (!config) return;
+  free(config->release);
+  free(config);
+}
+
+const flowie_server_release_config_t *flowie_server_config_release(
+    const flowie_server_config_t *config) {
+  return config ? config->release : NULL;
+}
 
 const flowie_endpoint_config_t *flowie_server_config_endpoint(
     const flowie_server_config_t *config) {

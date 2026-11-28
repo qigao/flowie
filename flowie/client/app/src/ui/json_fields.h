@@ -11,5 +11,6 @@ namespace flowie::app::json_fields {
   std::string read_string(const json_value_t *root, const char *key,
                           const char *default_value = nullptr);
   int read_integer(const json_value_t *root, const char *key, int fallback, int min, int max);
-  ConnectionProfile read_profile(const json_value_t *root, const std::filesystem::path &file);
+  ConnectionProfile read_profile(const json_value_t *root, const std::filesystem::path &file,
+                                 const CollectionVariables *variables = nullptr);
 } // namespace flowie::app::json_fields

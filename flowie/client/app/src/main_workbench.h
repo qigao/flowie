@@ -196,7 +196,7 @@ namespace flowie::app {
     std::filesystem::path collections_file_, collections_settings_;
     struct LoadedCollection {
       std::filesystem::path path;
-      std::vector<SavedRequest> requests;
+      CollectionDocument document;
     };
     static constexpr size_t kLoadedFilesLimit = 16;
     std::vector<LoadedCollection> loaded_collections_;

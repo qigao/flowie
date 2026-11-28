@@ -3,6 +3,9 @@
 ## 1. 定义范围
 
 本文规定 Flowie 服务端配置与应用集成的术语。独立 `flowie_server` 支持 CLI 和 YAML 两种入口。
+独立 IoT 网关使用 **Domain Configuration** 配置部署资源，使用 **Domain Packages** 激活
+签名 ACL 与常驻 RulesForge 流水线。 [IoT 网关部署](../deploy/server/README.md#iot-网关部署)
+
 使用 TurboFlow 的宿主还可从 provider registry 选择能力、用 YAML 创建具名实例，再用 `.flow` Graph
 连接它们。
 

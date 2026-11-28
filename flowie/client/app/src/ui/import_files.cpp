@@ -62,7 +62,8 @@ namespace flowie::app {
   }
 
   ConnectionProfile json_fields::read_profile(const json_value_t *root,
-                                              const std::filesystem::path &file) {
+                                              const std::filesystem::path &file,
+                                              const CollectionVariables *variables) {
     require_fields(root, {"role", "host", "port", "transport", "protocol", "path", "username",
                           "ca_file", "cert_file", "key_file"});
     ConnectionProfile profile;
@@ -73,7 +74,7 @@ namespace flowie::app {
       throw std::runtime_error("role must be client, publisher or subscriber.");
     auto &connection = profile.connection;
     connection.host = read_string(root, "host");
-    if (!valid_broker_host(utf8_to_wide(connection.host)))
+    if (!valid_broker_host(utf8_to_wide(expand_collection_text(connection.host, variables, 4096))))
       throw std::runtime_error("Invalid broker host.");
     connection.port = read_integer(root, "port", 1883, 1, 65535);
     const auto transport = read_string(root, "transport", "tcp");
@@ -96,7 +97,8 @@ namespace flowie::app {
     }
     const bool websocket = transport == "ws" || transport == "wss";
     const bool tls = transport == "tls" || transport == "wss";
-    if (websocket && (connection.path.empty() || connection.path.front() != '/'))
+    const auto resolved_path = expand_collection_text(connection.path, variables, 4096);
+    if (websocket && (resolved_path.empty() || resolved_path.front() != '/'))
       throw std::runtime_error("WebSocket path must start with /.");
     if (!tls && (!connection.ca_file.empty() || !connection.cert_file.empty() ||
                  !connection.key_file.empty()))

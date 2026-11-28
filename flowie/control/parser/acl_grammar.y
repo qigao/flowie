@@ -21,7 +21,11 @@
 
 %start_symbol document
 
-document ::= subject_kind(K) IDENT(S) connection_effect(E) optional_entries. {
+document ::= subjects.
+subjects ::= subject.
+subjects ::= subjects subject.
+
+subject ::= subject_kind(K) IDENT(S) connection_effect(E) optional_entries. {
   flowie_control_acl_parse_accept(ctx, K, S, E);
 }
 

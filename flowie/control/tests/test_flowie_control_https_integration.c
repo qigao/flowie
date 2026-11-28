@@ -3,11 +3,13 @@
 #include "flowie_control_management_session_internal.h"
 #include "flowie_control_runtime_internal.h"
 #include "flowie_control_service_credential_internal.h"
+#include "flowie_control_release_access_internal.h"
 #include "flowie_control_test_turbodb.h"
 
 #include <core/platform.h>
 #include <core/base64.h>
 #include <http_client/http.h>
+#include <json_parser.h>
 #include "tinytest.h"
 #include "tls_test_pki.h"
 #include <crypto/sha256.h>
@@ -991,6 +993,97 @@ static http_response_t *control_test_dashboard_action(http_client_t *client, con
                       form, strlen(form));
 }
 
+static int control_test_release_access(http_client_t *client, const char *token, const char *domain,
+    const char *action, const char *service, unsigned int expected) {
+  char bearer[256], target[100], operation[100], service_id[100];
+  snprintf(bearer, sizeof(bearer), "Authorization: Bearer %s", token);
+  snprintf(target, sizeof(target), FLOWIE_RELEASE_ACCESS_DOMAIN ": %s", domain);
+  snprintf(operation, sizeof(operation), FLOWIE_RELEASE_ACCESS_ACTION ": %s", action);
+  if (service) snprintf(service_id, sizeof(service_id), "X-Flowie-Service-Id: %s", service);
+  const char *headers[] = {bearer, target, operation, "X-Flowie-Service-Domain: root-a", service_id};
+  http_response_t *response = http_request(client, HTTP_POST, FLOWIE_RELEASE_ACCESS_PATH,
+      headers, service ? 5u : 3u, NULL, 0u);
+  char *actor = response ? http_response_get_header(response, FLOWIE_RELEASE_ACCESS_ACTOR) : NULL;
+  const int ok = response && response->status_code == expected && response->error_code == HTTP_ERROR_NONE &&
+      (expected == 204u ? actor && actor[0] : !actor);
+  if (!ok) fprintf(stderr, "release authority domain=%s action=%s status=%u expected=%u\n",
+      domain, action, response ? response->status_code : 0u, expected);
+  free(actor);
+  http_response_free(response);
+  return ok;
+}
+
+static int control_test_release_rpc(http_client_t *client, const char *method, const char *params,
+    char *token, size_t capacity) {
+  char body[768];
+  snprintf(body, sizeof(body), "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"control.%s\",\"params\":%s}",
+      method, params);
+  http_response_t *response = http_post_json(client, "/v2/control/rpc", body);
+  json_value_t *doc = response && response->status_code == 200 && response->body ?
+      json_parse(response->body, strlen(response->body)) : NULL;
+  const json_value_t *result = doc ? json_object_get(doc, "result") : NULL;
+  const char *secret = result && token ? json_string(json_object_get(result, "token")) : NULL;
+  const int ok = result && (!token || (secret && strlen(secret) < capacity));
+  if (!ok) fprintf(stderr, "release account setup failed method=%s\n", method);
+  if (ok && token) strcpy(token, secret);
+  json_free(doc);
+  http_response_free(response);
+  return ok;
+}
+
+static int control_test_release_accounts(const control_http_state_t *state, http_client_t *client,
+    http_cookie_jar_t *jar) {
+  static const struct { const char *method; const char *params; } provision[] = {
+      {"role.create", "{\"role_id\":\"domain_admin\",\"request_id\":\"package-role\"}"},
+      {"role.create", "{\"role_id\":\"release.upload\",\"request_id\":\"upload-role\"}"},
+      {"user.create", "{\"principal_id\":\"package-admin\",\"principal_type\":\"human\",\"request_id\":\"package-user\"}"},
+      {"user.create", "{\"principal_id\":\"package-ci\",\"principal_type\":\"service\",\"request_id\":\"package-ci\"}"},
+      {"password.set", "{\"principal_id\":\"package-admin\",\"new_password\":\"integration-package-password\","
+          "\"mode\":\"create\",\"request_id\":\"package-password\"}"},
+      {"role.assign", "{\"principal_id\":\"package-admin\",\"role_id\":\"domain_admin\",\"request_id\":\"package-user-role\"}"},
+      {"role.assign", "{\"principal_id\":\"package-ci\",\"role_id\":\"release.upload\",\"request_id\":\"package-ci-role\"}"}};
+  for (size_t i = 0; i < sizeof(provision) / sizeof(provision[0]); ++i)
+    if (!control_test_release_rpc(client, provision[i].method, provision[i].params, NULL, 0u)) return 0;
+  char service[128] = {0};
+  if (!control_test_release_rpc(client, "credential.generate",
+      "{\"principal_id\":\"package-ci\",\"request_id\":\"package-credential\"}", service, sizeof(service))) return 0;
+  http_client_set_cookie_jar(client, NULL);
+  http_response_t *login = control_test_management_login_request(state, client, "root-a", "package-admin",
+      "integration-package-password");
+  char *cookie = login && login->status_code == 303 ? http_response_get_header(login, "Set-Cookie") : NULL;
+  static const char key[] = "flowie_session=";
+  char user[FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE + 1u] = {0};
+  if (cookie && strncmp(cookie, key, sizeof(key) - 1u) == 0 &&
+      strlen(cookie + sizeof(key) - 1u) >= FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE)
+    memcpy(user, cookie + sizeof(key) - 1u, FLOWIE_CONTROL_MANAGEMENT_SESSION_TOKEN_SIZE);
+  if (!user[0]) fprintf(stderr, "package administrator login failed status=%u\n",
+      login ? login->status_code : 0u);
+  free(cookie);
+  http_response_free(login);
+  int ok = user[0] && control_test_release_access(client, user, "root-a", FLOWIE_RELEASE_ACCESS_ACTIVATE, NULL, 204u) &&
+      control_test_release_access(client, user, "system", FLOWIE_RELEASE_ACCESS_READ, NULL, 403u) &&
+      control_test_release_access(client, service, "root-a", FLOWIE_RELEASE_ACCESS_UPLOAD, "package-ci", 204u) &&
+      control_test_release_access(client, service, "root-a", FLOWIE_RELEASE_ACCESS_ACTIVATE, "package-ci", 403u) &&
+      control_test_release_access(client, service, "system", FLOWIE_RELEASE_ACCESS_UPLOAD, "package-ci", 403u);
+  http_client_set_cookie_jar(client, jar);
+  char rotated[128] = {0};
+  ok = ok && control_test_release_rpc(client, "credential.rotate",
+      "{\"principal_id\":\"package-ci\",\"request_id\":\"package-rotate\"}", rotated, sizeof(rotated));
+  http_client_set_cookie_jar(client, NULL);
+  ok = ok && control_test_release_access(client, service, "root-a", FLOWIE_RELEASE_ACCESS_UPLOAD, "package-ci", 403u) &&
+      control_test_release_access(client, rotated, "root-a", FLOWIE_RELEASE_ACCESS_UPLOAD, "package-ci", 204u);
+  http_client_set_cookie_jar(client, jar);
+  ok = ok && control_test_release_rpc(client, "credential.revoke",
+      "{\"principal_id\":\"package-ci\",\"request_id\":\"package-revoke\"}", NULL, 0u);
+  http_client_set_cookie_jar(client, NULL);
+  ok = ok && control_test_release_access(client, rotated, "root-a", FLOWIE_RELEASE_ACCESS_UPLOAD, "package-ci", 403u);
+  http_client_set_cookie_jar(client, jar);
+  memset(service, 0, sizeof(service));
+  memset(rotated, 0, sizeof(rotated));
+  memset(user, 0, sizeof(user));
+  return ok;
+}
+
 static int control_test_management_workflow(control_http_state_t *state) {
   http_client_t *client = NULL;
   http_cookie_jar_t *jar = NULL;
@@ -1020,6 +1113,7 @@ static int control_test_management_workflow(control_http_state_t *state) {
   if (http_client_set_tls_client_config(client, &tls) != SALTS_OK) goto done;
 
   if (!control_test_management_login(state, client, jar, first_token)) goto done;
+  if (!control_test_release_accounts(state, client, jar)) goto done;
   response = http_post_json(client, "/v2/control/rpc", CONTROL_INTEGRATION_STATUS_RPC_BODY);
   state->session_rpc_ok = response && response->status_code == 200 &&
                           response->error_code == HTTP_ERROR_NONE && response->body &&
@@ -1176,6 +1270,9 @@ static int control_test_bootstrap_password_rotation(control_http_state_t *state)
     goto done;
   memcpy(initial_token, token, sizeof(initial_token));
   http_response_free(response);
+  response = NULL;
+  if (!control_test_release_access(client, initial_token, "root-a", FLOWIE_RELEASE_ACCESS_READ, NULL, 403u))
+    goto done;
   response =
       http_request(client, HTTP_GET, FLOWIE_CONTROL_DASHBOARD_PASSWORD_PATH, NULL, 0, NULL, 0u);
   state->bootstrap_password_page_ok =
@@ -1257,6 +1354,9 @@ static int control_test_bootstrap_password_rotation(control_http_state_t *state)
   if (!state->bootstrap_new_password_ok) goto done;
 
   http_client_set_cookie_jar(client, NULL);
+  if (!control_test_release_access(client, rotated_token, "root-a", FLOWIE_RELEASE_ACCESS_ACTIVATE, NULL, 204u) ||
+      !control_test_release_access(client, rotated_token, "unregistered", FLOWIE_RELEASE_ACCESS_READ, NULL, 403u))
+    goto done;
   if (snprintf(form, sizeof(form), "Cookie: %s=%s", FLOWIE_CONTROL_MANAGEMENT_SESSION_COOKIE,
                rotated_token) <= 0)
     goto done;

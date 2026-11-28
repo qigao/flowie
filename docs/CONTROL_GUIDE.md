@@ -12,6 +12,256 @@ HA/migration 和完整安全发布 gate，因此不能据此宣称整个控制�
 外部系统接入、认证、并发控制、错误码与方法契约见
 [Management JSON-RPC API](MANAGEMENT_RPC_API.md)。
 
+## 使用签名发布包管理独立 Broker
+
+`flowie_server --config <file> --profile flowie --require-security` 支持单 Domain 的
+`domain_release` 配置。作为 IoT 网关，Flowie 接收 MQTT 消息，验证设备身份并执行
+当前 Domain 的 ACL。已映射的消息先持久化入队，再交给常驻 RulesForge，输出由下游处理器接收。
+首次部署通过管理 HTTPS 激活基线包，Broker 随即按该包接受设备连接。
+
+| 职责 | 入口 |
+| --- | --- |
+| Domain Configuration | 通过部署 YAML 设置 MQTT 监听、HTTPS 用户认证、证书信任、RulesForge 运行时和下游连接。 |
+| Domain Packages | 通过管理 HTTPS 上传、校验和激活命名的签名包。包内定义 Domain 的 ACL、规则、schema、脚本和逻辑输出名。 |
+| 设备管理 | 在认证服务管理设备身份、凭据和 Domain 归属。 |
+| 下游处理 | 在独立的 mTLS HTTPS 接收端执行写库、告警或转发。 |
+
+### Domain Configuration
+
+以 [IoT 网关 YAML 示例](../deploy/server/iot-gateway.yml.example) 为起点。替换 Domain、
+证书和服务地址。通过
+`SALTS_TLS_CERT_FILE` 与 `SALTS_TLS_KEY_FILE` 指定 MQTT 服务端证书及私钥。
+管理 HTTPS 的证书和私钥从 `management` 读取。Windows 部署使用带盘符的绝对路径，
+RulesForge provider 文件名使用部署 SDK 提供的 DLL。
+
+示例使用 [HTTPS 用户认证](#domain-发布模式的-https-用户认证)。部署也可选择本地身份表，
+移除 profile 的 `auth_provider` 并在 `domain_release.mqtt_clients` 中为每张证书指定
+`principal` 和 `sha256`。此时 MQTT username 使用 `principal`，一个配置最多登记 64 张证书。
+发布签名使用
+部署方配置的 SM2 代码签名证书，由配置中的 SM2 CA 直接签发。签名私钥保存在发布方。
+当前使用证书公钥固定和有效期校验，部署方显式选择 `revocation: not_checked`。
+更改信任、资源或验证器时更新 `validation_policy_revision`，候选包需要重新校验。
+
+使用同一套配置先运行 `flowie_server --check --config <file> --profile flowie --require-security`
+验证证书、包仓库和已激活发布。预检打开仓库但不监听端口。正常启动去掉 `--check`。
+通过现有 `--protocol-store-driver` 与 `--protocol-store-options` 指定持久化数据库。
+一个运行中的 Broker 独占该 Domain 的验证与激活权。每个 Domain Package 对应一个 Domain 和环境。
+新包必须在签名的 `manifest.json` 中填写 `name`，例如 `device-a-rules`，并用
+`entrypoints.acl` 指向该 Domain 在包内的 ACL 文件。ACL 与随包规则、schema 和脚本
+都列入签名清单的 `files`。上传成功后返回签名中的 `name` 和发布摘要。
+签名包可以在同一 ACL 文件中为多个主体声明权限。每个主体沿用 [ACL 文法](ACL_GRAMMAR.md)，
+主体之间使用一个 LF，不添加尾随换行。重复的主体类型与 ID、跨 Domain Topic 或任一主体的
+语法错误都会拒绝整个候选包。可为 Portal 服务证书只授予命令发布权限，并分别授权设备订阅
+命令及发布回执。已有单主体 ACL 文件可继续使用。
+包名可跨发布复用，激活使用摘要。回滚时以当前激活包为签名基线，重新发布所选历史配置。
+仓库中的历史无名包仍可读取、验证和恢复。
+新的 ACL 包可省略 `routes.yml`。已签名的空路由包仍可激活和恢复。
+初次激活使用 `If-None-Match: *`，后续激活使用读取到的 `If-Match`。
+含 RulesForge Program 的包在 `entrypoints.rulesforge` 声明 `rules/program.json`，并在
+`files` 中列出描述文件、`rules/flow.json` 和规则资产。校验会返回
+`rulesforge_runtime_required`，直到部署绑定该 Domain 的执行运行时。
+[发布协议及回滚方式](ADR_DOMAIN_RELEASE.md#control-api-and-storage)
+
+### 启用 RulesForge 数据链路
+
+在 `domain_release` 配置中加入 `rulesforge`。运行时和日志文件使用绝对路径，
+`staging_root` 由部署方创建并设为 Flowie 服务账户私有。worker 和 provider
+使用同一套 RulesForge SDK。常驻 worker 的发布基线为 [RulesForge 0.1.1](https://github.com/qigao/RulesForge/releases/tag/v0.1.1)。
+按部署平台下载 SDK，核对 `SHA256SUMS` 和 `rulesforge-sdk-manifest.json`。Windows 工作进程使用该
+清单对应的依赖 DLL 和编译器运行库，放在 worker 的 `bin` 目录，使其从本身的安装目录加载依赖。
+后端的 CA 和 Flowie 专用 mTLS 凭据留在部署配置。
+
+```yaml
+rulesforge:
+  executable: /opt/rulesforge/bin/rulesforge_stream_worker
+  provider: /opt/rulesforge/lib/librulesforge_toad.so
+  staging_root: /var/lib/flowie/rules
+  journal_file: /var/lib/flowie/rules-journal.sqlite3
+  timeout_ms: 2000
+  sinks:
+    - name: alerts
+      url: https://backend.example.com/ingest
+      ca_file: /etc/flowie/backend-ca.pem
+      cert_file: /etc/flowie/backend-client.pem
+      key_file: /etc/flowie/backend-client-key.pem
+```
+
+签名包里的 `rules/flow.json` 绑定精确 MQTT 主题、RulesForge 入口及事实类型。
+主题必须在该 Domain 下。ACL 控制数据发布者和水位线发布者的权限。发布包只需要
+指定逻辑输出名，例如 `alerts`，部署方提供目的地址和凭据。
+
+```json
+{
+  "sources": [{"topic": "device-a/event", "entry_point": "orders", "fact_type": "Order"}],
+  "watermark_topic": "device-a/watermark",
+  "sinks": ["alerts"]
+}
+```
+
+数据消息格式为 `{"id":"order-1","time_ms":200,"data":{"amount":15,"total":0,"done":false}}`。
+`id` 在发布者身份内唯一，`time_ms` 是非负整数。水位线主题接收 `{"time_ms":201}`，
+发布者负责按顺序推进水位线。规则主题要求普通非 retained 的 PUBLISH，MQTT 遗嘱及
+未映射主题沿用 Broker 投递。规则主题的 MQTT QoS 1/2 确认表示 Flowie 已将消息提交至
+持久化入站队列。后端独立按队列顺序处理。QoS 2 持久会话保留每次交换的标识。
+若入队已提交而 PUBREC 状态尚未提交，重连后的重传复用已提交的任务。
+
+Retro v3 的上行 Topic 可在 `sources` 条目添加 `"format":"retro_v3"`。该输入使用数字 `version:3`、
+`id`、`kind`、`name`、UTC 秒 `time` 和对象 `data`。ACK 可以省略 `name`。Flowie 按发布者和 ID 隔离工作项，
+校验时间转换到毫秒时不会溢出，再将 `kind`、`name` 和完整 JSON 字符串 `body` 交给 RulesForge。
+签名包声明 `message RetroReceipt { string kind; string name; string body; }`。
+规则可按 `kind`、`name` 选择回执，并把 `body` 作为 HTTPS sink 输出。已有来源省略 `format` 后沿用
+`time_ms` 和 `data` 输入。该格式用于透传协议事件，支付终态、回执关联和持久化由 Portal 与支付服务处理。
+
+### 下游处理器接入
+
+下游按部署配置的 sink 名提供可达的 mTLS HTTPS 端点，校验 Flowie 客户端证书并接收
+`POST`。内容类型为 `application/octet-stream`，正文是规则输出的原始字节。
+请求带 `Flowie-Domain`、`Flowie-Generation`、`Flowie-Release-Digest`、`Flowie-Sink` 和
+`Idempotency-Key`。下游可在写库、告警或转发时使用幂等键去重。返回 `2xx` 表示已接受。
+
+Flowie 后端记录规则处理开始、完成时间和状态。它在发送前记录输出正文和投递标识，
+随后记录投递状态及 HTTP 状态码。下游处理器记录自己的业务结果。MQTT 设备只收到接收确认。
+收到完整的
+非 2xx HTTP 响应时，后端记录失败并继续处理后续消息。一次投递出现不确定结果时，
+后续该代次消息会记录执行不可用。终态写入暂时失败时，后端只重试日志写入。
+服务成功启动后，已排队的消息继续处理，中断中的任务标记为中断并保留记录。
+RulesForge 窗口按重新加载的发布包重新建立。
+
+SQLite 表 `flowie_rule_event` 保存输入和处理过程，`flowie_rule_output` 保存输出及
+投递状态。每代最多 256 条未完成任务。每个 Domain 的输入、输出各保留最多 8192 条。
+达到历史容量时，写入事务淘汰最早可回收的已完成记录。未完成或投递结果未知的记录会保留，
+没有可回收记录时返回容量错误。需要保留更长历史的部署可定期备份 SQLite 日志。
+
+`journal_file` 使用独立的 SQLite 文件，和 Broker 会话数据库分开。运行日志通过
+`flowie_rule_generation` 关联签名发布摘要。恢复时应使用同一备份点的两份数据库。
+未完成记录缺少摘要归属，或归属与当前发布不符时，服务启动失败。升级前请让旧服务处理完
+已接收的任务，并在停止写入后备份两份数据库。
+旧代次还有未完成任务时，激活请求会返回忙，待任务达成终态后可重新提交。
+
+### 网关状态与 Monitor 订阅
+
+通过 `GET /domains/{domain}/status` 查询当前发布状态。`expected_generation` 是已提交代次。
+`ready` 表示网关已加载与该代次及摘要匹配的 MQTT ACL。未就绪时，`observed_generation`
+为 `null`。当前 `queue_depth`、`connectivity` 和 `delivery` 均为 `null`，表示暂无观测值。
+
+接入 IoTPortal 时，Monitor 从 Portal 后端查询状态快照并订阅变化。下游服务负责报告写库、
+告警和业务转发的完成结果。任务服务收到经验证的设备或协议适配器回执后，按任务 ID 和设备 ID
+更新逐设备执行结果。[状态归属与订阅](ADR_DOMAIN_RELEASE.md#status-ownership-and-subscriptions)
+
+### 使用 Domain Packages 页面
+
+使用受信的管理客户端证书访问
+`https://<management-host>:<port>/domains/<domain>/packages`。页面可以上传
+发布方已经签名的 `.tar.zst`、查看包名和摘要、下载原包及预览包内 ACL。
+选择候选包后，先点击 **Validate package**，再点击 **Activate package**。
+页面显示当前发布代次、ACL 版本和网关 ACL 就绪状态。用一条符合规则的 MQTT 消息及其
+下游接收记录验收端到端连通性。
+集中授权模式下，向 Control 的 `POST /v2/control/login` 提交 Domain、账号和密码。
+将响应 `Set-Cookie` 中的 `flowie_session` 值填入网关页面。页面在当前标签页内持有 token。
+[Control 登录接口](MANAGEMENT_RPC_API.md#create-a-management-session)
+
+展开 **Certificates** 可查看当前操作者、管理客户端证书指纹和配置的发布签名者。
+
+| 证书 | 配置与使用 |
+| --- | --- |
+| 管理 HTTPS 服务端证书 | 服务端配置 `management.cert_file` 和 `management.key_file`，浏览器信任该证书的签发 CA。 |
+| 管理客户端证书 | 浏览器或远程发布系统使用客户端证书建立 mTLS，网关配置 `management.client_ca_file`。本地操作员模式额外配置 `management.operator_sha256`。 |
+| Domain 包签名证书 | 发布方使用 SM2 私钥生成签名。Flowie 通过 `signer.anchor_der` 和 `signer.leaf_der` 验证签名。 |
+| MQTT 客户端证书 | Broker 依据 `mqtt_client_ca_file` 校验证书链。本地身份表按 `mqtt_clients[].sha256` 绑定身份，HTTPS 认证模式将已验证的证书指纹交给认证服务。 |
+
+### Domain Packages 账号与远程授权
+
+在网关的 `domain_release.management` 配置 `authorization.url`、`ca_file` 和
+`timeout_ms`，将授权地址指向 Control 的 `POST /internal/release/authorize`。集中授权模式
+使用管理客户端 CA 和 Control 的账号授权。本地操作员模式使用 `operator_id` 和
+`operator_sha256`。变更授权配置后重启网关。
+
+- **超级管理员** 使用 `system` 域内的 `system_admin`。通过现有 Control RPC 创建
+  Domain、初始化用户和分配角色。该账号可跨已登记 Domain 管理包。
+- **Domain 管理员** 由超级管理员在目标 Domain 创建 `human` 账号，设置个人凭据并分配
+  `domain_admin`。可同时分配 `password_change_required` 要求初次改密。这个角色可读取、
+  上传、校验和激活本 Domain 的包，使用 Control 登录后的管理会话。
+- **发布 Service Account** 由超级管理员在目标 Domain 创建 `service` 主体，按需分配
+  `release.read`、`release.upload`、`release.validate` 和 `release.activate`。
+  Control 凭据管理员通过 `control.credential.generate`、`control.credential.rotate`
+  和 `control.credential.revoke` 管理机器凭据。
+  每个远程系统或 CI 使用独立凭据，可单独授予激活权限。
+
+远程 API 调用使用 mTLS 和 `Authorization: Bearer <token>`。人工使用 Control 管理会话 token。
+机器使用生成的服务 token，并发送 `X-Flowie-Service-Domain` 和 `X-Flowie-Service-Id`，
+其中 Service Domain 必须与目标 Domain 匹配。网关在处理每个包 API 请求时调用 Control
+确认当前权限。凭据失效、权限撤销或 Control 不可用时拒绝该请求。管理客户端 CA 和
+MQTT 客户端 CA 分别服务于管理连接和设备连接。
+
+上传、校验和激活的日志包含调用者、Domain、摘要和操作结果。成功激活的调用者和摘要
+同时存入发布 SQLite。发布包仍由配置的签名者签名，远程发布权限用于提交和激活签名产物。
+[账号与凭据 API](MANAGEMENT_RPC_API.md#users-passwords-and-credentials)
+
+### Domain 发布模式的 HTTPS 用户认证
+
+在 Broker profile 中设置 `auth_provider`，引用现有 HTTPS Auth channel，并省略
+`domain_release.mqtt_clients`。同一个 profile 只选择一种身份来源。下面的字段合并到
+完整的 Domain 发布配置中，保留 `domain_release.mqtt_client_ca_file`。
+
+```yaml
+profiles:
+  flowie:
+    auth_provider: mqtt.users
+
+channels:
+  mqtt.users:
+    kind: auth_provider
+    config:
+      backend: https
+      url: https://auth.internal.example/v4/authenticate
+      method: password
+      service_id: broker-main
+      service_domain: platform-services
+      service_token_ref: env://FLOWIE_AUTH_SERVICE_TOKEN
+      timeout_ms: 2000
+      max_secret_size: 4096
+      tls:
+        ca_file: /etc/flowie/auth-ca.pem
+```
+
+认证服务可使用现有 `flowie-control` 的 `POST /v4/authenticate`。在 Control 启用
+`auth.enabled`，为 Broker 配置持有 `flowie_auth_client` 角色的服务凭据，由 Control 管理用户和凭据。
+此示例中，客户端使用 MQTT username、password 和 TLS 客户端证书连接。Broker 将凭据及
+已验证的证书指纹交给认证服务。返回的主体必须属于当前部署 Domain。Broker 按主体的
+规范 ID 和本地已激活发布包的 ACL 版本做授权。认证拒绝、服务不可用和响应 Domain
+不匹配均拒绝连接。管理 HTTPS 使用独立的管理客户端 CA，并按配置执行 Control 授权或本地操作员校验。
+
+### 上传并执行 Praktor 指令
+
+操作员可通过本接口手动提交包内的 YAML 和 WASM。MQTT 数据处理采用独立的
+RulesForge 流水线设计。[Domain Release 设计](ADR_DOMAIN_RELEASE.md#ingress-rulesforge-pipelines-and-downstream-business-services)
+
+在签名清单的 `entrypoints.praktor` 填入指令文件路径，例如 `praktor.yml`，并在
+`files` 中记录该文件的长度和 SM3。YAML 最大 64 KiB，接收器检查 UTF-8 编码。
+WASM 等随包文件也在 `files` 里声明。YAML 可从发布包根目录引用随包文件。
+包校验和 ACL 激活各有独立 API。
+
+为 `domain_release` 增加接收器配置。接收器的 CA 和 Flowie 移交专用客户端证书由
+部署方提供。
+
+```yaml
+praktor:
+  url: https://127.0.0.1:9444/jobs
+  ca_file: /etc/flowie/praktor-ca.pem
+  cert_file: /etc/flowie/praktor-client.pem
+  key_file: /etc/flowie/praktor-client-key.pem
+  timeout_ms: 5000
+```
+
+启动下面的接收器后，操作员先上传包，再对
+`POST /domains/{domain}/releases/{digest}/praktor` 发出空请求，带
+`Idempotency-Key`。Flowie 重新验证签名和 Domain。带随包文件的发布移交已验证的完整
+USTAR，由接收器落盘并执行入口 YAML。仅含 ACL 和 Praktor 指令的包继续移交原始 YAML。
+收到 `202` 表示接收器已持久化该任务，执行状态可在接收器的 SQLite 任务表中查看。
+提交超时或确认丢失时，可在接收器数据库查询该幂等键，或用同一个键重交同一包。
+
+[启动 Praktor 接收器](../deploy/server/README.md#praktor-指令接收器)
+
 ## 构建与预检
 
 按[根 README](../README.md#build-and-test)恢复匹配的 SDK，然后构建：
@@ -45,6 +295,45 @@ $env:FLOWIE_CONTROL_CONFIG = "C:/flowie/control.yml"
 CA/certificate/private key；它不打开 listener、不连接第三方服务或控制数据库，也不执行 schema
 migration。证书、私钥、CA 或 secret reference 无法加载时立即失败，不回退到 HTTP、其他 TurboDB
 driver 或本地 credential。
+
+## 用 Praktor 发布并验证 ACL
+
+[ACL 工作流](../flowie/control/examples/praktor/acl-policy.yml)通过现有 HTTPS 接口试跑、
+写入、校验并发布 ACL，再用发布返回的版本请求两次授权判定。示例给一个测试用户允许向指定主题
+PUBLISH，并显式拒绝对同一主题 SUBSCRIBE。验证使用该用户的测试 principal，roles 和 groups
+为空，覆盖 Control 的 ACL Decision API。
+
+在仓库根目录运行，使用 Praktor 0.2.0 及其配套运行库，以及支持变量展开的 curl。
+Windows 的临时 CA 若触发系统 Schannel 的吊销状态错误，可在
+[`control-policy-rpc.yml`](../flowie/control/examples/praktor/control-policy-rpc.yml) 和
+[`control-acl-decision.yml`](../flowie/control/examples/praktor/control-acl-decision.yml)
+中将 `provider.path` 配置为 [LibreSSL 版 curl](https://curl.se/windows/) 的绝对路径。本地夹具
+通过该版本执行 HTTPS 校验。为隔离的测试 Domain 准备已启用的 operator 用户和以下进程环境变量。
+
+| 变量 | 值 |
+| --- | --- |
+| `FLOWIE_CONTROL_ORIGIN` | Control HTTPS origin，例如 `https://control.example.com:8443` |
+| `FLOWIE_CONTROL_CA_FILE` | 对该 HTTPS 服务有效的 CA PEM 文件 |
+| `FLOWIE_CONTROL_MANAGEMENT_TOKEN` | 目标 Domain 的 `policy_admin` 管理会话 token，按[管理登录契约](MANAGEMENT_RPC_API.md#create-a-management-session)取得 |
+| `FLOWIE_CONTROL_ACL_TOKEN` | 拥有 `flowie_acl_client` 权限的服务凭据 |
+| `FLOWIE_CONTROL_ACL_SERVICE_ID`、`FLOWIE_CONTROL_ACL_SERVICE_DOMAIN` | ACL 服务凭据对应的主体和 Domain |
+| `FLOWIE_ACL_DOMAIN`、`FLOWIE_ACL_USER` | 待修改 ACL 的测试 Domain 和 operator 用户 |
+| `FLOWIE_ACL_TOPIC` | 属于该 Domain 的具体测试主题，例如 `root-a/praktor/telemetry` |
+| `FLOWIE_ACL_REQUEST_ID` | 此次规则变更的唯一 ID。重试同一变更时沿用，改变输入时换新 ID |
+| `FLOWIE_ACL_EXPIRES_AT` | 发布策略的 Unix 秒级到期时间，`0` 表示无到期时间 |
+
+令牌由 curl 从进程环境读取。请求采用 HTTP/1.1 over TLS，校验证书和主机名。用 `preview` 只试跑，
+用 `verify` 执行完整流程。
+
+```text
+praktor --config flowie/control/examples/praktor/acl-policy.yml --task preview --timeout-ms 60000
+praktor --config flowie/control/examples/praktor/acl-policy.yml --task verify --timeout-ms 60000
+```
+
+`verify` 会替换该用户的整份草稿规则，占用 ordinal 10，并发布该 Domain 的**全部草稿**。
+执行期间应只由该工作流修改此测试 Domain 的草稿。现有发布 RPC 在写事务内重新校验，
+试跑与发布之间的草稿修改仍可能影响发布内容。写草稿和发布是两次独立事务。
+如果发布后的探测失败，用 `control.policy.status` 确认当前版本。
 
 ## Auth 来源选择
 

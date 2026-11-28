@@ -15,12 +15,16 @@ suite("Workbench HTTP cookie store") {
     check_true(jar.store(origin, host, "/api/login", true, "sid=root; Path=/"));
     check_true(jar.store(origin, host, "/api/login", true, "foreign=no; Domain=test"));
     check_equal(jar.header(origin, "/api/profile"), std::string("sid=one; sid=root"));
+    check_equal(jar.value(origin, "/api/profile", "sid").value_or(""), std::string("one"));
+    check_equal(jar.value(origin, "/apiary", "sid").value_or(""), std::string("root"));
     check_equal(jar.header(origin, "/apiary"), std::string("sid=root"));
     check_true(jar.header("tcp://example.test:443", "/api/profile").empty());
+    check_false(jar.value("tcp://example.test:443", "/api/profile", "sid").has_value());
     check_true(jar.store(origin, host, "/api/login", true, "sid=; Path=/api; Max-Age=0"));
     check_true(jar.store(origin, host, "/api/login", true,
                          "sid=; Path=/; Expires=Sun, 06 Nov 1994 08:49:37 GMT"));
     check_true(jar.header(origin, "/api/profile").empty());
+    check_false(jar.value(origin, "/api/profile", "sid").has_value());
   }
 
   it("reports storage and outgoing header limits without dropping live cookies") {

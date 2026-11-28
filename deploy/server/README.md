@@ -1,4 +1,37 @@
-# Flowie Server、Control 与 PostgreSQL
+# Flowie Server 部署
+
+## IoT 网关部署
+
+使用 [Domain Configuration YAML 示例](iot-gateway.yml.example) 配置单 Domain 的
+`flowie_server`。示例连接 HTTPS 认证服务和名为 `alerts` 的 mTLS 下游。网关需要匹配的
+RulesForge worker 与 provider、MQTT 服务端证书和私钥，以及单独的协议 SQLite 和规则日志 SQLite。
+创建示例中的 `staging_root`，仅授予 Flowie 服务账户访问权限。
+
+1. 部署认证服务并登记设备。可使用 `flowie-control` 的 `POST /v4/authenticate`，通过服务账户的
+   `FLOWIE_AUTH_SERVICE_TOKEN` 验证网关身份。设备使用自己的 TLS 客户端证书和 MQTT 凭据。
+2. 替换示例中的签名信任、管理客户端 CA、Control 授权地址、认证服务与下游地址。将配置保存到
+   `/etc/flowie/iot-gateway.yml`，为服务设置 `SALTS_TLS_CERT_FILE` 和 `SALTS_TLS_KEY_FILE`。
+   Windows 使用带盘符的绝对路径及匹配的 RulesForge DLL。
+3. 用以下命令预检，通过后去掉 `--check` 启动。部署 YAML 变更通过重启生效。
+
+```sh
+flowie_server --check --require-security --profile flowie \
+  --config /etc/flowie/iot-gateway.yml \
+  --protocol-store-driver sqlite \
+  --protocol-store-options '{"filename":"/var/lib/flowie/protocol.sqlite3"}'
+```
+
+4. 用管理客户端证书打开 **Domain Packages**，路径为 `/domains/device-a/packages`。
+   使用 Control 管理会话登录页面，或使用发布 Service Account 调用 API。
+   上传含签名 `name` 的 `.tar.zst`，依次校验和激活。包内 `rules/flow.json` 的输出名必须与 YAML
+   中的 sink 对应。激活更新 ACL 和规则代次。
+5. 设备向包内允许的 Topic 上报。下游端点接收 RulesForge 输出的 HTTPS POST，并在接收后返回
+   `2xx`。Flowie 通过规则日志 SQLite 记录处理和投递结果。用真实设备消息和下游记录核对整条链路。
+
+[完整配置、发布包与下游接口](../../docs/CONTROL_GUIDE.md#使用签名发布包管理独立-broker) ·
+[账号与远程发布](../../docs/CONTROL_GUIDE.md#domain-packages-账号与远程授权)
+
+## Compose Broker、Control 与 PostgreSQL
 
 该目录构建一个同时包含 `flowie_server` 与 `flowie-control` 的运行镜像。Compose 创建
 `flowie-server` 和 `flowie-postgres` 两个 service；前者由 `flowie-combined-entrypoint` 在同一容器内监督
@@ -7,12 +40,11 @@ Server 与 Control 两个独立进程，后者为二者提供同一个 PostgreSQ
 loopback。直接运行镜像而不覆盖 entrypoint 时仍保持 Broker-only，但必须挂载 `flowie.yml`；协议库默认
 使用 SQLite。
 
-## 运行契约
+### Compose 运行契约
 
-`flowie_server` 只拥有 MQTT listener、连接、会话、订阅、上下行收发和协议状态。账号、租户、设备及 ACL
+此 Compose profile 的 `flowie_server` 管理 MQTT listener、连接、会话、订阅、上下行收发和协议状态。账号、租户、设备及 ACL
 以 `flowie-control` Repository 为唯一事实源：MQTT CONNECT 通过 HTTPS `/v4/authenticate` 认证，PUBLISH/
-SUBSCRIBE 通过 HTTPS `/v4/acl/check` 逐请求判定。Flowie 不提供业务 HTTP API，也不加载 RulesForge、
-TurboFlow、FlowMQ 或 TurboRaft。
+SUBSCRIBE 通过 HTTPS `/v4/acl/check` 逐请求判定。上面的 IoT 网关 profile 使用签名包 ACL 和 RulesForge。
 
 入口脚本只装配配置、profile 与协议库：
 
@@ -278,3 +310,31 @@ docker inspect --format '{{.State.Health.Status}}' flowie-server
 provider、共享 Salts executor、endpoint，并打开 flowie/protocol store 创建或校验 schema 后退出；它不会启动 MQTT
 listener，也不会向 flowie-control 发出认证/授权请求。可配合内存 SQLite 做无持久化预检。TLS/WSS listener
 投入生产前仍需完成服务端证书路径和握手验收；`flowie.yml` 中的 flowie/transport 才是最终有效值。
+## Praktor 指令接收器
+
+`praktor_receiver.py` 用 Python 3 标准库接收 Flowie 移交的 YAML 或完整 USTAR，并用
+已安装的 Praktor 执行指定任务。用独立于 Broker 的账户和运行目录部署它。接收器只接受指定 Domain 和
+固定的 Flowie 客户端证书。该证书需通过接收器配置的客户端 CA 校验；`--flowie-pin`
+是证书 DER 的 64 位小写 SHA-256。
+
+```bash
+python3 deploy/server/praktor_receiver.py \
+  --host 127.0.0.1 --port 9444 --domain device-a \
+  --cert /etc/praktor/receiver.pem --key /etc/praktor/receiver-key.pem \
+  --client-ca /etc/praktor/flowie-ca.pem --flowie-pin "$FLOWIE_CLIENT_SHA256" \
+  --database /var/lib/praktor/jobs.sqlite3 \
+  --executable /opt/praktor/bin/praktor --task deploy --timeout-ms 30000
+```
+
+安装 Praktor 配套运行库，并用接收器账户配置该任务需要的文件和网络权限。签名发布方
+和提交操作员共同授权在该账户下执行指令。接收器校验路径和文件集合，按包内相对路径把
+已验证的 YAML、WASM 等文件写入私有工作目录，再调用 Praktor。Praktor 任务使用部署
+提供的 WASM 执行工具。接收器启动 Praktor 时使用部署配置指定的可执行文件和任务名。
+
+每个接收器使用一个独占 SQLite 文件。状态包括 `queued`、`running`、
+`succeeded`、`failed` 和 `unknown`，可按 `digest`、`job_key` 查询
+`jobs` 表。上限是 32 个待处理和运行中的任务、64 MiB 的活动任务负载和 1024 条
+幂等记录。任务结束后释放负载存储，保留终态和幂等记录。容量耗尽时返回 `503`。
+需要增加容量时，按部署
+维护窗口管理接收器和数据库。重启后继续处理队列，曾处于 `running` 的任务标为
+`unknown`。

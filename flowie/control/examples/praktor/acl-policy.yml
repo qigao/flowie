@@ -1,0 +1,143 @@
+name: Flowie ACL policy publication
+description: Preview a user rule, publish the Domain's draft, and verify both ACL outcomes
+services:
+  policy_rpc: flowie/control/examples/praktor/control-policy-rpc.yml
+  acl_decision: flowie/control/examples/praktor/control-acl-decision.yml
+
+tasks:
+  - name: preview
+    actions:
+      Sequence:
+        - Tool:
+            service: policy_rpc
+            with:
+              request: >-
+                {"jsonrpc":"2.0","id":"preview","method":"control.policy.dry_run",
+                "params":{"domain_id":"{{FLOWIE_ACL_DOMAIN:json}}",
+                "changes":[{"operation":"put",{{rule}}}]}}
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.result.valid'
+            output_key: candidate_valid
+            result: one
+        - assert:
+            guard: {fields: [candidate_valid], match: '$candidate_valid == "true"'}
+            message: Control rejected the proposed ACL rule
+            actual: $candidate_valid
+
+  - name: write_draft
+    depends_on: [preview]
+    actions:
+      Sequence:
+        - assert:
+            guard: {fields: [FLOWIE_ACL_EXPIRES_AT], expr: '$FLOWIE_ACL_EXPIRES_AT >= 0'}
+            message: FLOWIE_ACL_EXPIRES_AT must be a nonnegative Unix timestamp
+        - Tool:
+            service: policy_rpc
+            with:
+              request: >-
+                {"jsonrpc":"2.0","id":"write-draft","method":"control.policy.subject_rule.put",
+                "params":{"domain_id":"{{FLOWIE_ACL_DOMAIN:json}}","request_id":"{{put_id:json}}",{{rule}}}}
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.result.replayed'
+            output_key: draft_replayed
+            result: one
+        - assert:
+            guard: {fields: [draft_replayed], match: '$draft_replayed in ["false", "true"]'}
+            message: Control did not confirm the draft write
+
+  - name: validate_draft
+    depends_on: [write_draft]
+    actions:
+      Sequence:
+        - Tool:
+            service: policy_rpc
+            with:
+              request: >-
+                {"jsonrpc":"2.0","id":"validate-draft","method":"control.policy.validate",
+                "params":{"domain_id":"{{FLOWIE_ACL_DOMAIN:json}}"}}
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.result.rule_count'
+            output_key: rule_count
+            result: one
+        - assert:
+            guard: {fields: [rule_count], expr: '$rule_count > 0'}
+            message: The Domain draft has no valid ACL rules
+
+  - name: publish
+    depends_on: [validate_draft]
+    outputs: [$policy_version]
+    actions:
+      Sequence:
+        - Tool:
+            service: policy_rpc
+            with:
+              request: >-
+                {"jsonrpc":"2.0","id":"publish","method":"control.policy.publish",
+                "params":{"domain_id":"{{FLOWIE_ACL_DOMAIN:json}}",
+                "request_id":"{{publish_id:json}}","expires_at":{{FLOWIE_ACL_EXPIRES_AT}}}}
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.result.policy_version'
+            output_key: policy_version
+            result: one
+        - assert:
+            guard: {fields: [policy_version], expr: '$policy_version > 0'}
+            message: Control did not return a published ACL version
+
+  - name: verify
+    depends_on: [publish]
+    outputs: [$write_allowed, $read_allowed, $deny_reason]
+    actions:
+      Sequence:
+        - Tool:
+            service: acl_decision
+            with:
+              operation: '{"version":4,"access":"write"'
+              policy_version: $policy_version
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.allowed'
+            output_key: write_allowed
+            result: one
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.policy_version'
+            output_key: write_version
+            result: one
+        - assert:
+            guard:
+              fields: [write_allowed]
+              match: '$write_allowed == "true"'
+            message: The published rule did not allow MQTT PUBLISH
+        - assert:
+            guard: {fields: [write_version, policy_version], expr: '$write_version == $policy_version'}
+            message: MQTT PUBLISH probe evaluated a different ACL version
+        - Tool:
+            service: acl_decision
+            with:
+              operation: '{"version":4,"access":"read"'
+              policy_version: $policy_version
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.allowed'
+            output_key: read_allowed
+            result: one
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.reason'
+            output_key: deny_reason
+            result: one
+        - ParseJson:
+            input_key: $shell_output
+            path: '$.policy_version'
+            output_key: read_version
+            result: one
+        - assert:
+            guard: {fields: [read_allowed, deny_reason], match: '$read_allowed == "false" && $deny_reason == "deny_rule"'}
+            message: The published rule did not explicitly deny MQTT SUBSCRIBE
+        - assert:
+            guard: {fields: [read_version, policy_version], expr: '$read_version == $policy_version'}
+            message: MQTT SUBSCRIBE probe evaluated a different ACL version
